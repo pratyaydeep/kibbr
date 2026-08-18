@@ -1,0 +1,4 @@
+/target
+
+# Generated on demand - `triedb gen-logs` reproduces it from the seed.
+/testdata/sample.ndjson
