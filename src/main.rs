@@ -57,7 +57,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            report(&e);
+            error::report(&e);
             ExitCode::FAILURE
         }
     }
@@ -110,15 +110,4 @@ fn is_broken_pipe(e: &CliError) -> bool {
         _ => None,
     };
     io_error.is_some_and(|inner| inner.kind() == io::ErrorKind::BrokenPipe)
-}
-
-/// Print the error and every cause below it, so a `#[source]` chain is not lost.
-fn report(e: &CliError) {
-    let mut stderr = io::stderr().lock();
-    let _ = writeln!(stderr, "triedb: {e}");
-    let mut source = std::error::Error::source(e);
-    while let Some(cause) = source {
-        let _ = writeln!(stderr, "  caused by: {cause}");
-        source = cause.source();
-    }
 }

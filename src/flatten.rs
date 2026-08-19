@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::error::DetectorError;
+use crate::error::{DetectorError, DetectorErrorKind};
 use crate::infer::infer;
 use crate::types::{ColValue, ColumnType, Typed};
 
@@ -57,11 +57,11 @@ impl ParsedLog {
 /// Flatten one JSON object into sorted dotted keys paired with their leaf values.
 /// Arrays are never flattened - they are stored as their raw JSON string, because
 /// flattening them would make the fingerprint depend on array length.
-pub fn flatten(root: &Value) -> Result<Vec<(String, Value)>, DetectorError> {
+pub fn flatten(root: &Value) -> Result<Vec<(String, Value)>, DetectorErrorKind> {
     let obj = match root {
         Value::Object(o) => o,
         other => {
-            return Err(DetectorError::NotAnObject {
+            return Err(DetectorErrorKind::NotAnObject {
                 found: kind_of(other),
             })
         }
@@ -79,7 +79,7 @@ fn walk(
     prefix: &mut String,
     depth: usize,
     out: &mut Vec<(String, Value)>,
-) -> Result<(), DetectorError> {
+) -> Result<(), DetectorErrorKind> {
     for (key, value) in obj {
         let restore = prefix.len();
         if !prefix.is_empty() {
@@ -90,7 +90,7 @@ fn walk(
         match value {
             Value::Object(inner) => {
                 if depth + 1 > MAX_DEPTH {
-                    return Err(DetectorError::NestingTooDeep {
+                    return Err(DetectorErrorKind::NestingTooDeep {
                         key: prefix.clone(),
                         limit: MAX_DEPTH,
                     });
@@ -126,12 +126,18 @@ fn kind_of(v: &Value) -> &'static str {
 }
 
 /// Flatten, type, promote, fingerprint. `raw_line` is kept verbatim.
+///
+/// Every way this fails comes back tagged with `line_no`, so the caller can say where
+/// without having to know what went wrong.
 pub fn parse_line(raw_line: &[u8], line_no: usize) -> Result<ParsedLog, DetectorError> {
-    let root: Value =
-        serde_json::from_slice(raw_line).map_err(|source| DetectorError::InvalidJson {
-            line: line_no,
-            source,
-        })?;
+    parse_bytes(raw_line).map_err(|kind| DetectorError::new(line_no, kind))
+}
+
+/// `raw_line` is bytes, not `&str`: bytes that are not UTF-8 are one bad line for
+/// `serde_json` to reject, not a decoding failure that takes the whole stream with it.
+fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
+    let root: Value = serde_json::from_slice(raw_line)
+        .map_err(|source| DetectorErrorKind::InvalidJson { source })?;
     let pairs = flatten(&root)?;
 
     let mut keys = Vec::with_capacity(pairs.len());
