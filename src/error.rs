@@ -12,6 +12,13 @@ pub enum DetectorErrorKind {
     #[error("nesting deeper than {limit} levels at key `{key}`")]
     NestingTooDeep { key: String, limit: usize },
 
+    /// Arrays are stored whole, so the object depth limit does not apply inside one.
+    /// A ceiling still has to: the array is materialised before it can be stored as
+    /// text, and materialising it is recursive. This is the one that fires there,
+    /// counting containers of either kind from the outermost `[`.
+    #[error("nesting deeper than {limit} levels inside the array at `{key}`")]
+    ArrayNestingTooDeep { key: String, limit: usize },
+
     #[error("top-level JSON value is {found}, expected an object")]
     NotAnObject { found: &'static str },
 

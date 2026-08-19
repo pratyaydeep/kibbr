@@ -1,4 +1,4 @@
-//! `triedb parse` - the M0 observable surface. Per line: the fingerprint, then
+//! `triedb parse` - the observable surface. Per line: the fingerprint, then
 //! every value with the type the ladder gave it.
 
 use std::collections::HashSet;

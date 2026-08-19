@@ -6,3 +6,4 @@
 
 # Malformed-input repros for the F1/F3 checks - scratch, not fixtures.
 /testdata/f1/
+/testdata/f2/

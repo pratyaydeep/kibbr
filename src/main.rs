@@ -1,4 +1,4 @@
-//! TrieDB - M0. Two subcommands: generate hostile logs, and parse them.
+//! TrieDB. Two subcommands: generate hostile logs, and parse them.
 
 mod error;
 mod flatten;

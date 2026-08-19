@@ -9,7 +9,20 @@ use crate::infer::infer;
 use crate::types::{ColValue, ColumnType, Typed};
 
 /// A guard against pathological or hostile input, not a real-world constraint.
+/// Counted over objects only, and only outside arrays - see `MAX_ARRAY_DEPTH`.
 pub const MAX_DEPTH: usize = 8;
+
+/// The ceiling on nesting inside an array, counting containers of either kind from
+/// the outermost `[`.
+///
+/// Arrays are not flattened, so `MAX_DEPTH` does not apply to what is inside one - but
+/// "no limit" is not a thing that can be built. An array is stored as its raw JSON
+/// text, which means `serde_json` has to materialise it first, and materialising is
+/// recursive descent: with `serde_json`'s own limit removed, a 100 000-deep array
+/// overflows the stack and aborts the process. So the choice is not whether there is a
+/// ceiling, only whether it is ours and documented or `serde_json`'s and accidental.
+/// This is ours. 8 + 64 leaves `serde_json`'s 128 unreachable.
+pub const MAX_ARRAY_DEPTH: usize = 64;
 
 /// Keys whose values are low-cardinality enough to be promoted into the fingerprint
 /// itself as `key=value`, which is what makes the trie branch usefully.
@@ -105,6 +118,149 @@ fn walk(
     Ok(())
 }
 
+/// One open container, while the depth scan is inside it.
+struct Frame {
+    is_array: bool,
+    /// Byte range of the member key whose value is being read at this level, quotes
+    /// included. `None` at the root, inside arrays, and between `{` and the first key.
+    cur_key: Option<std::ops::Range<usize>>,
+    /// Whether the next string at this level is a key rather than a value.
+    expect_key: bool,
+}
+
+/// Reject over-deep input before `serde_json` builds anything.
+///
+/// The depth rule has to be enforced on the raw bytes, because the tree `walk` descends
+/// does not exist until `serde_json` has already recursed to build it. `serde_json`
+/// stops at 128 nested containers and calls it a syntax error, so without this pass
+/// anything deeper comes back as `InvalidJson` - valid JSON reported as malformed, and
+/// the diagnostic getting less accurate exactly as the input gets more hostile. Scanning
+/// first keeps both ceilings ours and reachable at any depth, including 100 000.
+///
+/// This is a depth scan, not a validator. Every other way a line can be wrong - bad
+/// syntax, an unterminated string, trailing bytes - is left for `serde_json` to
+/// describe, so those messages are unchanged.
+fn check_nesting(bytes: &[u8]) -> Result<(), DetectorErrorKind> {
+    let mut stack: Vec<Frame> = Vec::new();
+    // Objects outside any array, which is what `MAX_DEPTH` bounds, and containers of
+    // either kind from the outermost `[`, which is the ceiling on a value stored whole.
+    let mut obj_depth = 0usize;
+    let mut arr_depth = 0usize;
+    let mut open_arrays = 0usize;
+
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // Skipped as one unit, so a brace inside a string is text, not structure.
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => i += 2,
+                        b'"' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+                // Past the end only if the string was unterminated, which is
+                // `serde_json`'s to report; clamp and carry on.
+                let end = i.min(bytes.len());
+                if let Some(frame) = stack.last_mut() {
+                    if frame.expect_key {
+                        frame.cur_key = Some(start..end);
+                        frame.expect_key = false;
+                    }
+                }
+                continue;
+            }
+            b'{' | b'[' => {
+                let is_array = bytes[i] == b'[';
+                // Inside an array everything below is stored as text and never walked,
+                // so object depth stops counting there and the array ceiling takes over.
+                if open_arrays > 0 || is_array {
+                    arr_depth += 1;
+                    if arr_depth > MAX_ARRAY_DEPTH {
+                        return Err(DetectorErrorKind::ArrayNestingTooDeep {
+                            key: key_path(&stack, bytes),
+                            limit: MAX_ARRAY_DEPTH,
+                        });
+                    }
+                } else {
+                    obj_depth += 1;
+                    if obj_depth > MAX_DEPTH {
+                        return Err(DetectorErrorKind::NestingTooDeep {
+                            key: key_path(&stack, bytes),
+                            limit: MAX_DEPTH,
+                        });
+                    }
+                }
+                if is_array {
+                    open_arrays += 1;
+                }
+                stack.push(Frame {
+                    is_array,
+                    cur_key: None,
+                    expect_key: !is_array,
+                });
+            }
+            b'}' | b']' => {
+                if let Some(frame) = stack.pop() {
+                    if frame.is_array {
+                        open_arrays -= 1;
+                    }
+                    // `open_arrays` is now what it was when this container opened, so
+                    // this picks the same counter that was incremented then.
+                    if open_arrays > 0 || frame.is_array {
+                        arr_depth = arr_depth.saturating_sub(1);
+                    } else {
+                        obj_depth = obj_depth.saturating_sub(1);
+                    }
+                }
+            }
+            b',' => {
+                if let Some(frame) = stack.last_mut() {
+                    if !frame.is_array {
+                        frame.expect_key = true;
+                        frame.cur_key = None;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+/// The dotted path to the container the scan is about to enter, in the form `walk`
+/// builds - so a rejection reads the same whichever pass caught it.
+fn key_path(stack: &[Frame], bytes: &[u8]) -> String {
+    let path = stack
+        .iter()
+        .filter_map(|f| f.cur_key.clone())
+        .map(|range| key_text(&bytes[range]))
+        .collect::<Vec<_>>()
+        .join(".");
+    if path.is_empty() {
+        // No enclosing key: the offending container is the top-level value itself.
+        "<top level>".to_string()
+    } else {
+        path
+    }
+}
+
+/// A key as it reads, escapes resolved. Quotes are included in `raw`, so it is a whole
+/// JSON string; only a key the scan clipped at end of input fails to decode.
+fn key_text(raw: &[u8]) -> String {
+    serde_json::from_slice::<String>(raw).unwrap_or_else(|_| {
+        let inner = raw.strip_prefix(b"\"").unwrap_or(raw);
+        String::from_utf8_lossy(inner.strip_suffix(b"\"").unwrap_or(inner)).into_owned()
+    })
+}
+
 /// The raw text of a leaf value. Strings are their own contents (not re-quoted);
 /// everything else is its JSON encoding, which is how arrays survive intact.
 pub fn raw_text(v: &Value) -> String {
@@ -136,6 +292,10 @@ pub fn parse_line(raw_line: &[u8], line_no: usize) -> Result<ParsedLog, Detector
 /// `raw_line` is bytes, not `&str`: bytes that are not UTF-8 are one bad line for
 /// `serde_json` to reject, not a decoding failure that takes the whole stream with it.
 fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
+    // Before `from_slice`, not after: past 128 levels `serde_json` refuses to build the
+    // value at all, and its refusal is a syntax error. The depth rules only stay
+    // reachable if they are checked on the bytes first.
+    check_nesting(raw_line)?;
     let root: Value = serde_json::from_slice(raw_line)
         .map_err(|source| DetectorErrorKind::InvalidJson { source })?;
     let pairs = flatten(&root)?;
@@ -200,8 +360,8 @@ fn is_promotable(key: &str, typed: &Typed, raw: &str) -> bool {
 }
 
 /// FNV-1a over the fingerprint. The trie hands out sequential ids from an
-/// `AtomicU64`, but there is no trie until M1; a content hash is
-/// deterministic and order-independent, which is all M0 needs.
+/// `AtomicU64`, but there is no trie yet; a content hash is deterministic and
+/// order-independent, which is all the parse surface needs.
 fn template_id(fingerprint: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in fingerprint.as_bytes() {

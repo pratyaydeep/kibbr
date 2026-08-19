@@ -53,6 +53,28 @@ fn run_stdin(args: &[&str], input: &str) -> String {
     String::from_utf8(out.stdout).expect("stdout was not utf-8")
 }
 
+/// `parse` over stdin, returning stdout and stderr whatever the exit status.
+///
+/// `run_stdin` cannot stand in: it asserts the run succeeded, and a run that rejected
+/// a line exits non-zero by contract, so it would panic before the test asserted
+/// anything. It also leaves stderr uncaptured, which is where a rejection is reported.
+fn run_stdin_rejecting(input: &str) -> (String, String) {
+    let mut child = triedb()
+        .args(["parse", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn triedb");
+    let writer = feed(&mut child, input);
+    let out = child.wait_with_output().expect("failed to wait on triedb");
+    writer.join().expect("stdin writer thread panicked");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
 /// Split `parse` output into one block of lines per `line N` record.
 fn blocks(stdout: &str) -> Vec<Vec<&str>> {
     let mut out: Vec<Vec<&str>> = Vec::new();
@@ -78,7 +100,7 @@ fn row<'a>(block: &[&'a str], key: &str) -> Vec<&'a str> {
     line.split_whitespace().collect()
 }
 
-/// The milestone's done-when: every value in the hand-labelled fixture gets the
+/// The done-when for type inference: every value in the hand-labelled fixture gets the
 /// labelled type, ambiguous ones included.
 #[test]
 fn every_fixture_value_gets_its_labelled_type() {
@@ -229,20 +251,96 @@ fn nesting_beyond_the_limit_is_rejected() {
     for i in 0..9 {
         line = format!("{{\"k{i}\":{line}}}");
     }
-    let mut child = triedb()
-        .args(["parse", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn triedb");
-    let writer = feed(&mut child, &format!("{line}\n"));
-    let out = child.wait_with_output().expect("failed to wait on triedb");
-    writer.join().expect("stdin writer thread panicked");
-
-    assert!(!out.status.success(), "deep nesting was accepted");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let (stdout, stderr) = run_stdin_rejecting(&format!("{line}\n"));
+    assert!(blocks(&stdout).is_empty(), "deep nesting was accepted");
     assert!(stderr.contains("nesting deeper than 8"), "stderr: {stderr}");
+}
+
+/// `{"d":{"a":{"a":...1...}}}`, nested `depth` levels below `d`.
+fn nested_object(depth: usize) -> String {
+    format!(
+        "{{\"d\":{}1{}}}",
+        "{\"a\":".repeat(depth),
+        "}".repeat(depth)
+    )
+}
+
+/// `{"d":[[[...1...]]]}`, nested `depth` levels.
+fn nested_array(depth: usize) -> String {
+    format!("{{\"d\":{}1{}}}", "[".repeat(depth), "]".repeat(depth))
+}
+
+/// The depth rules are enforced on the raw bytes, before `serde_json` builds anything,
+/// so they stay reachable at any depth. Checked after parsing instead, `serde_json`'s
+/// own 128-container limit fires first and reports valid-but-deep JSON as malformed -
+/// the diagnostic getting less accurate exactly as the input gets more hostile.
+#[test]
+fn depth_past_the_serde_limit_still_reports_the_depth_rule() {
+    for depth in [9, 500, 100_000] {
+        let (_, stderr) = run_stdin_rejecting(&format!("{}\n", nested_object(depth)));
+        assert!(
+            stderr.contains("nesting deeper than 8 levels at key `d.a.a.a.a.a.a.a`"),
+            "object depth {depth} did not report the depth rule\nstderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains("invalid JSON"),
+            "object depth {depth} was reported as malformed JSON\nstderr: {stderr}"
+        );
+    }
+}
+
+/// Arrays are stored whole, so the object limit does not apply inside them - but a
+/// ceiling still does, because the array is materialised before it is stored and
+/// materialising it is recursive.
+#[test]
+fn array_nesting_has_its_own_ceiling() {
+    let (stdout, _) = run_stdin_rejecting(&format!("{}\n", nested_array(64)));
+    assert_eq!(blocks(&stdout).len(), 1, "array depth 64 was rejected");
+
+    for depth in [65, 500, 100_000] {
+        let (_, stderr) = run_stdin_rejecting(&format!("{}\n", nested_array(depth)));
+        assert!(
+            stderr.contains("nesting deeper than 64 levels inside the array at `d`"),
+            "array depth {depth} did not report the array ceiling\nstderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains("invalid JSON"),
+            "array depth {depth} was reported as malformed JSON\nstderr: {stderr}"
+        );
+    }
+}
+
+/// An array is never flattened, so what is inside one is never walked and its object
+/// nesting is not counted against the limit of 8.
+#[test]
+fn objects_inside_an_array_do_not_count_against_the_object_limit() {
+    let deep = format!("{{\"d\":[{}1{}]}}", "{\"a\":".repeat(20), "}".repeat(20));
+    let (stdout, _) = run_stdin_rejecting(&format!("{deep}\n"));
+    assert_eq!(
+        blocks(&stdout).len(),
+        1,
+        "objects nested inside an array were counted against the object limit"
+    );
+}
+
+/// One rejected line does not cost the lines around it, whatever the rejection was.
+#[test]
+fn a_depth_rejection_does_not_stop_the_file() {
+    let input = format!(
+        "{{\"first\":1}}\n{}\n{}\n{{\"last\":2}}\n",
+        nested_object(500),
+        nested_array(500)
+    );
+    let (stdout, stderr) = run_stdin_rejecting(&input);
+    assert_eq!(blocks(&stdout).len(), 2, "stdout: {stdout}");
+    assert!(
+        stdout.contains("first") && stdout.contains("last"),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains("line 2:") && stderr.contains("line 3:"),
+        "{stderr}"
+    );
 }
 
 /// `--json` is a machine surface, so it must be stable run to run even though `ParsedLog`
