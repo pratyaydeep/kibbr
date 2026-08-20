@@ -23,15 +23,15 @@ fn run(args: &[&str]) -> String {
 
 /// Feeds stdin from a separate thread. Writing inline deadlocks as soon as the input
 /// outgrows a pipe buffer: the child blocks writing stdout while we block writing stdin.
-fn feed(child: &mut std::process::Child, input: &str) -> std::thread::JoinHandle<()> {
+fn feed(child: &mut std::process::Child, input: &[u8]) -> std::thread::JoinHandle<()> {
     use std::io::Write;
 
     let mut stdin = child.stdin.take().expect("stdin was not piped");
-    let input = input.to_string();
+    let input = input.to_vec();
     std::thread::spawn(move || {
         // A short `--limit` makes the reader exit early; that closed pipe is the
         // expected end of the write, not a failure.
-        let _ = stdin.write_all(input.as_bytes());
+        let _ = stdin.write_all(&input);
     })
 }
 
@@ -42,7 +42,7 @@ fn run_stdin(args: &[&str], input: &str) -> String {
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn triedb");
-    let writer = feed(&mut child, input);
+    let writer = feed(&mut child, input.as_bytes());
     let out = child.wait_with_output().expect("failed to wait on triedb");
     writer.join().expect("stdin writer thread panicked");
     assert!(
@@ -58,7 +58,10 @@ fn run_stdin(args: &[&str], input: &str) -> String {
 /// `run_stdin` cannot stand in: it asserts the run succeeded, and a run that rejected
 /// a line exits non-zero by contract, so it would panic before the test asserted
 /// anything. It also leaves stderr uncaptured, which is where a rejection is reported.
-fn run_stdin_rejecting(input: &str) -> (String, String) {
+///
+/// Takes bytes rather than `&str` so a test can feed input that is not UTF-8, which is
+/// the whole point of some of them. `&str` and `&String` still pass unchanged.
+fn run_stdin_rejecting(input: impl AsRef<[u8]>) -> (String, String) {
     let mut child = triedb()
         .args(["parse", "-"])
         .stdin(Stdio::piped())
@@ -66,7 +69,7 @@ fn run_stdin_rejecting(input: &str) -> (String, String) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn triedb");
-    let writer = feed(&mut child, input);
+    let writer = feed(&mut child, input.as_ref());
     let out = child.wait_with_output().expect("failed to wait on triedb");
     writer.join().expect("stdin writer thread panicked");
     (
@@ -251,7 +254,7 @@ fn nesting_beyond_the_limit_is_rejected() {
     for i in 0..9 {
         line = format!("{{\"k{i}\":{line}}}");
     }
-    let (stdout, stderr) = run_stdin_rejecting(&format!("{line}\n"));
+    let (stdout, stderr) = run_stdin_rejecting(format!("{line}\n"));
     assert!(blocks(&stdout).is_empty(), "deep nesting was accepted");
     assert!(stderr.contains("nesting deeper than 8"), "stderr: {stderr}");
 }
@@ -277,7 +280,7 @@ fn nested_array(depth: usize) -> String {
 #[test]
 fn depth_past_the_serde_limit_still_reports_the_depth_rule() {
     for depth in [9, 500, 100_000] {
-        let (_, stderr) = run_stdin_rejecting(&format!("{}\n", nested_object(depth)));
+        let (_, stderr) = run_stdin_rejecting(format!("{}\n", nested_object(depth)));
         assert!(
             stderr.contains("nesting deeper than 8 levels at key `d.a.a.a.a.a.a.a`"),
             "object depth {depth} did not report the depth rule\nstderr: {stderr}"
@@ -294,11 +297,11 @@ fn depth_past_the_serde_limit_still_reports_the_depth_rule() {
 /// materialising it is recursive.
 #[test]
 fn array_nesting_has_its_own_ceiling() {
-    let (stdout, _) = run_stdin_rejecting(&format!("{}\n", nested_array(64)));
+    let (stdout, _) = run_stdin_rejecting(format!("{}\n", nested_array(64)));
     assert_eq!(blocks(&stdout).len(), 1, "array depth 64 was rejected");
 
     for depth in [65, 500, 100_000] {
-        let (_, stderr) = run_stdin_rejecting(&format!("{}\n", nested_array(depth)));
+        let (_, stderr) = run_stdin_rejecting(format!("{}\n", nested_array(depth)));
         assert!(
             stderr.contains("nesting deeper than 64 levels inside the array at `d`"),
             "array depth {depth} did not report the array ceiling\nstderr: {stderr}"
@@ -315,7 +318,7 @@ fn array_nesting_has_its_own_ceiling() {
 #[test]
 fn objects_inside_an_array_do_not_count_against_the_object_limit() {
     let deep = format!("{{\"d\":[{}1{}]}}", "{\"a\":".repeat(20), "}".repeat(20));
-    let (stdout, _) = run_stdin_rejecting(&format!("{deep}\n"));
+    let (stdout, _) = run_stdin_rejecting(format!("{deep}\n"));
     assert_eq!(
         blocks(&stdout).len(),
         1,
@@ -339,6 +342,155 @@ fn a_depth_rejection_does_not_stop_the_file() {
     );
     assert!(
         stderr.contains("line 2:") && stderr.contains("line 3:"),
+        "{stderr}"
+    );
+}
+
+/// One line of good input, so a rejection test can show the run carried on around it.
+const FIRST: &[u8] = b"{\"first\":1}\n";
+
+/// Bytes that are not UTF-8 are an encoding fault, named as one and located to the byte.
+///
+/// `serde_json` calls these `invalid unicode code point`, which describes the symptom and
+/// sends the operator to look at their JSON. The fault is in whatever wrote the line, and
+/// the byte value is most of the diagnosis: `0xff` here says UTF-16 or latin-1.
+#[test]
+fn invalid_utf8_is_reported_as_an_encoding_fault_with_its_byte() {
+    // The bad bytes sit at different offsets in a value and in a key.
+    for (input, offset) in [
+        ([FIRST, b"{\"a\":\"\xff\xfe\"}\n"].concat(), 6),
+        ([FIRST, b"{\"\xff\xfe\":1}\n"].concat(), 2),
+    ] {
+        let (stdout, stderr) = run_stdin_rejecting(&input);
+        assert!(
+            stderr.contains(&format!(
+                "line 2: invalid UTF-8: byte 0xff at offset {offset}"
+            )),
+            "{stderr}"
+        );
+        // The offset is relative to the line, not the file - line 1 is 12 bytes wide
+        // and must not shift it, because `/ingest` indexes it into the echoed line.
+        assert!(
+            !stderr.contains("offset 1"),
+            "offset looks file-relative: {stderr}"
+        );
+        assert_eq!(blocks(&stdout).len(), 1, "the good line was lost: {stdout}");
+    }
+}
+
+/// A bad byte outside a string is the case `serde_json` cannot see at all: it reports
+/// `expected value`, because a byte that cannot begin a token is all it knows. Asking the
+/// bytes directly is what turns that back into the encoding fault it is.
+#[test]
+fn a_bad_byte_outside_a_string_is_still_an_encoding_fault() {
+    let (_, stderr) = run_stdin_rejecting([FIRST, b"{\"a\":\xff}\n"].concat());
+    assert!(
+        stderr.contains("line 2: invalid UTF-8: byte 0xff at offset 5"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("expected value"), "{stderr}");
+}
+
+/// A line can be malformed *and* fail to decode, independently. Both are true, so both
+/// are reported - dropping either costs the operator a second run to find it.
+///
+/// The syntax error is at column 8 and the bad byte at offset 28. `valid_up_to` is the
+/// boundary of what `serde_json` was entitled to judge: column 8 is inside the region
+/// that decoded cleanly, so its verdict is sound and leads.
+#[test]
+fn a_line_that_is_both_malformed_and_undecodable_reports_both() {
+    let (_, stderr) =
+        run_stdin_rejecting([FIRST, b"{\"a\":1,,\"b\":\"padpadpadpadpad\xff\"}\n"].concat());
+    assert!(
+        stderr.contains(
+            "line 2: invalid JSON at offset 7: key must be a string \
+             (line also contains invalid UTF-8: byte 0xff at offset 28)"
+        ),
+        "{stderr}"
+    );
+}
+
+/// The mirror of the case above: when the bad byte comes first, `serde_json` only ever
+/// tripped over the corruption, so there is no second finding to report and no note.
+#[test]
+fn a_bad_byte_before_a_syntax_error_reports_only_the_encoding_fault() {
+    let (_, stderr) =
+        run_stdin_rejecting([FIRST, b"{\"a\":\"\xff padpadpadpadpad\",,\"b\":1}\n"].concat());
+    assert!(
+        stderr.contains("line 2: invalid UTF-8: byte 0xff at offset 6"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("also contains"), "{stderr}");
+}
+
+/// A write cut mid-character is a truncated line, not an encoding fault.
+///
+/// The done-when is that both cuts report the same thing: one lands inside a two-byte
+/// character and one just after it, but the cause is identical - the line ended early -
+/// and the diagnosis must not turn on where the knife fell.
+#[test]
+fn a_line_cut_mid_character_reports_truncation_not_encoding() {
+    for cut in [&b"{\"a\":\"caf\xc3"[..], &b"{\"a\":\"caf\xc3\xa9"[..]] {
+        let (_, stderr) = run_stdin_rejecting([FIRST, cut].concat());
+        assert!(stderr.contains("line 2: invalid JSON"), "{stderr}");
+        assert!(stderr.contains("EOF while parsing a string"), "{stderr}");
+        assert!(
+            !stderr.contains("UTF-8"),
+            "truncation read as encoding: {stderr}"
+        );
+    }
+}
+
+/// The note is for the case that earns it. An ordinary syntax error on a line that
+/// decodes fine says only what is wrong with it.
+#[test]
+fn an_ordinary_syntax_error_carries_no_encoding_note() {
+    let (_, stderr) = run_stdin_rejecting([FIRST, b"{\"a\":1,}\n"].concat());
+    assert!(
+        stderr.contains("line 2: invalid JSON at offset 7: trailing comma\n"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("UTF-8"), "{stderr}");
+}
+
+/// A rejection is one line, and the only line number on it is the real one.
+///
+/// `serde_json` appends `at line {line} column {column}` to its own messages, and that
+/// line is always 1 - it is handed one line at a time. Printed under a rejection against
+/// line 6, it reads as a contradiction. The position it does know is worth keeping, so
+/// the suffix is cut and the column reported as an offset into the line.
+#[test]
+fn a_syntax_rejection_reports_one_position_and_it_is_ours() {
+    let input = [
+        FIRST,
+        b"{\"lat\":NaN}\n",
+        b"{\"n\":1e400}\n",
+        b"{\"msg\":\"a\x07b\"}\n",
+    ]
+    .concat();
+    let (_, stderr) = run_stdin_rejecting(input);
+
+    assert!(
+        stderr.contains("line 2: invalid JSON at offset 7: expected value\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("line 3: invalid JSON at offset 9: number out of range\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("line 4: invalid JSON at offset 9: control character"),
+        "{stderr}"
+    );
+    // The tell for a suffix that slipped through, whatever the message around it.
+    assert!(!stderr.contains(" at line "), "{stderr}");
+    // One line per rejection, so nothing is left dangling under it.
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|l| l.contains("invalid JSON"))
+            .count(),
+        3,
         "{stderr}"
     );
 }

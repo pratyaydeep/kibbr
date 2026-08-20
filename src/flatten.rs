@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 
+use serde_json::error::Category;
 use serde_json::Value;
 
-use crate::error::{DetectorError, DetectorErrorKind};
+use crate::error::{BadByte, DetectorError, DetectorErrorKind};
 use crate::infer::infer;
 use crate::types::{ColValue, ColumnType, Typed};
 
@@ -289,6 +290,90 @@ pub fn parse_line(raw_line: &[u8], line_no: usize) -> Result<ParsedLog, Detector
     parse_bytes(raw_line).map_err(|kind| DetectorError::new(line_no, kind))
 }
 
+/// Decide what a failed parse was actually about: bad encoding, bad syntax, or both.
+///
+/// Runs only once `from_slice` has already failed, so a good line pays nothing for it -
+/// and a good line has had its UTF-8 validated by `serde_json` on the way through
+/// anyway. Non-UTF-8 bytes always fail `from_slice`, either inside a string or as a
+/// byte that cannot begin a token, so nothing reaches here unnoticed.
+///
+/// `valid_up_to` is the boundary of what `serde_json` was entitled to an opinion about:
+/// everything before it decoded cleanly. A syntax verdict landing inside that region is
+/// sound and wins; one landing at or past it was tripped by the corruption itself and is
+/// describing a symptom.
+fn classify_failure(raw_line: &[u8], source: serde_json::Error) -> DetectorErrorKind {
+    let Err(utf8) = std::str::from_utf8(raw_line) else {
+        return invalid_json(&source, None);
+    };
+    let bad = BadByte {
+        // `valid_up_to` is always in bounds here: the whole line would have decoded
+        // otherwise, and then there would be no error to classify.
+        byte: raw_line[utf8.valid_up_to()],
+        offset: utf8.valid_up_to(),
+    };
+
+    // A line cut off mid-character is a truncated line, not an encoding fault. Both
+    // checks describe the one event - the write ended early - and `error_len() == None`
+    // paired with `Eof` is what says so. Without this, the same cut one byte later
+    // leaves valid UTF-8 and reports something else entirely.
+    if utf8.error_len().is_none() && source.classify() == Category::Eof {
+        return invalid_json(&source, None);
+    }
+
+    match split_position(&source).0 {
+        // A syntax error inside the decoded region is a real and separate fault: report
+        // it, and say the line does not decode either rather than making the operator
+        // find that out on the next run.
+        Some(offset) if offset < bad.offset => invalid_json(&source, Some(bad)),
+        // At or past the boundary, `serde_json` tripped over the corruption itself and
+        // is describing a symptom. No position at all is no claim about where the fault
+        // was, so there is nothing to weigh against the encoding fault either.
+        _ => DetectorErrorKind::InvalidUtf8 { bad },
+    }
+}
+
+fn invalid_json(source: &serde_json::Error, also_bad_bytes: Option<BadByte>) -> DetectorErrorKind {
+    let (offset, message) = split_position(source);
+    DetectorErrorKind::InvalidJson {
+        offset,
+        message,
+        also_bad_bytes,
+    }
+}
+
+/// `serde_json`'s message and its position, separated.
+///
+/// Its `Display` is `{message} at line {line} column {column}` - but only when it has a
+/// position. With none it prints the bare message, and says so by reporting `line() ==
+/// 0`. Branching on the same condition is what makes cutting the suffix safe: it is only
+/// cut where upstream is known to have added it.
+///
+/// The line number it reports is always 1, because the parser is handed one line at a
+/// time, so printing it beside the real line number is worse than not printing it. The
+/// column is 1-based and counted in bytes, which makes `column - 1` the same 0-based
+/// offset into the line that `BadByte` reports.
+fn split_position(e: &serde_json::Error) -> (Option<usize>, String) {
+    let text = e.to_string();
+    if e.line() == 0 {
+        return (None, text);
+    }
+    match text.rsplit_once(" at line ") {
+        Some((message, _)) => (Some(e.column().saturating_sub(1)), message.to_string()),
+        // The format changed under us. Hand back what `serde_json` said, whole and
+        // unedited, rather than a half-cut message or a position printed twice.
+        //
+        // Loud in debug, where someone can act on it: every test that parses a
+        // malformed line runs this path, so a format change fails the suite rather than
+        // quietly degrading every message. Compiled out in release on purpose - a
+        // rejected line must not end the run over a library's formatting, which is the
+        // reason the parse loop reports and continues at all.
+        None => {
+            debug_assert!(false, "serde_json message format changed: {text:?}");
+            (None, text)
+        }
+    }
+}
+
 /// `raw_line` is bytes, not `&str`: bytes that are not UTF-8 are one bad line for
 /// `serde_json` to reject, not a decoding failure that takes the whole stream with it.
 fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
@@ -296,8 +381,8 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
     // value at all, and its refusal is a syntax error. The depth rules only stay
     // reachable if they are checked on the bytes first.
     check_nesting(raw_line)?;
-    let root: Value = serde_json::from_slice(raw_line)
-        .map_err(|source| DetectorErrorKind::InvalidJson { source })?;
+    let root: Value =
+        serde_json::from_slice(raw_line).map_err(|source| classify_failure(raw_line, source))?;
     let pairs = flatten(&root)?;
 
     let mut keys = Vec::with_capacity(pairs.len());

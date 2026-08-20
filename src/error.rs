@@ -22,13 +22,64 @@ pub enum DetectorErrorKind {
     #[error("top-level JSON value is {found}, expected an object")]
     NotAnObject { found: &'static str },
 
-    // The cause is not interpolated here: it is a `#[source]`, and the CLI walks the
-    // chain. Doing both prints it twice.
-    #[error("invalid JSON")]
+    /// The line is not UTF-8, so it is not text and cannot be a JSON document.
+    ///
+    /// Split from `InvalidJson` because the remedy is different: an encoding fault in
+    /// whatever produced the line, not a syntax fault in the document. It carries no
+    /// `#[source]` - `serde_json`'s complaint about these bytes names whatever they
+    /// happened to break (`invalid unicode code point` inside a string, `expected
+    /// value` outside one), which is the symptom and sometimes a misleading one.
+    #[error("invalid UTF-8: {bad}")]
+    InvalidUtf8 { bad: BadByte },
+
+    /// `serde_json`'s complaint, carried as text rather than as a `#[source]`.
+    ///
+    /// Interpolating it and keeping it as a source would print it twice, since the CLI
+    /// walks the chain. Text wins because the position has to be rewritten on the way
+    /// through: `serde_json` reports a line number of its own, and it is always 1.
+    #[error("invalid JSON{}: {message}{}", at_offset(.offset), utf8_note(.also_bad_bytes))]
     InvalidJson {
-        #[source]
-        source: serde_json::Error,
+        /// The byte offset into the line, or `None` when `serde_json` had no position
+        /// to give - then the message stands alone rather than claiming a false 0.
+        offset: Option<usize>,
+        message: String,
+        /// Set when the line holds a syntax error *and* fails to decode further along.
+        /// Both are true and independent, so both are reported: dropping either costs
+        /// the operator a second run to discover it.
+        also_bad_bytes: Option<BadByte>,
     },
+}
+
+/// Where a line stopped being UTF-8: the offset of the first bad byte, and the byte.
+///
+/// The byte value is most of the diagnosis. `0xff`/`0xfe` is UTF-16, `0x80`-`0x9f` is
+/// cp1252, and a lone lead byte is a write cut mid-character. The offset is 0-based and
+/// relative to the line, because it indexes straight into the `raw_line` that `/ingest`
+/// echoes back.
+#[derive(Debug, Clone, Copy)]
+pub struct BadByte {
+    pub offset: usize,
+    pub byte: u8,
+}
+
+impl std::fmt::Display for BadByte {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "byte {:#04x} at offset {}", self.byte, self.offset)
+    }
+}
+
+/// The trailing clause on an `InvalidJson` whose line also failed to decode. Empty in
+/// the ordinary case, so the common message reads as one uninterrupted sentence.
+fn utf8_note(bad: &Option<BadByte>) -> String {
+    bad.map_or(String::new(), |bad| {
+        format!(" (line also contains invalid UTF-8: {bad})")
+    })
+}
+
+/// The position clause, omitted entirely when there is no position rather than printed
+/// as a 0 that would read like the first byte.
+fn at_offset(offset: &Option<usize>) -> String {
+    offset.map_or(String::new(), |offset| format!(" at offset {offset}"))
 }
 
 /// A rejected line: what was wrong, and which physical line it was.
