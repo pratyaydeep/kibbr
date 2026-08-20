@@ -495,6 +495,64 @@ fn a_syntax_rejection_reports_one_position_and_it_is_ours() {
     );
 }
 
+/// A byte order mark is a marker, not content, and it is dropped wherever it appears.
+///
+/// The mark is invisible in an editor, so a line rejected for carrying one looks like a
+/// line rejected for nothing. `run_stdin` asserts the run succeeded, which is the whole
+/// of the done-when: not one line lost, and the exit code says so.
+#[test]
+fn a_byte_order_mark_is_stripped_wherever_it_appears() {
+    // At the head of the file, on a payload line, and on one that ends CRLF - the mark
+    // and the line terminator must not depend on each other.
+    let input = "\u{feff}{\"a\":1}\n{\"b\":2}\n\u{feff}{\"c\":3}\r\n";
+    let parsed = run_stdin(&["parse", "-"], input);
+    assert_eq!(blocks(&parsed).len(), 3, "{parsed}");
+    assert!(parsed.contains("3 lines, 3 templates\n"), "{parsed}");
+}
+
+/// The mark is stripped before the line is parsed, so it neither hides a fault further
+/// along nor shifts the offset reported for one.
+///
+/// Without the strip this reads `offset 0: expected value`, which points at the marker
+/// instead of the trailing comma and sends the operator to the wrong end of the line.
+/// The offset here is the one the same line gets with no mark on it at all.
+#[test]
+fn a_byte_order_mark_does_not_hide_the_rest_of_the_line() {
+    let (_, stderr) = run_stdin_rejecting([FIRST, "\u{feff}{\"a\":1,}\n".as_bytes()].concat());
+    assert!(
+        stderr.contains("line 2: invalid JSON at offset 7: trailing comma\n"),
+        "{stderr}"
+    );
+}
+
+/// A line holding nothing but a mark is a blank line, counted with the blank ones.
+#[test]
+fn a_line_of_only_a_byte_order_mark_counts_as_blank() {
+    let parsed = run_stdin(&["parse", "-"], "{\"a\":1}\n\u{feff}\n{\"b\":2}\n");
+    assert_eq!(blocks(&parsed).len(), 2, "{parsed}");
+    assert!(parsed.contains("1 blank lines skipped"), "{parsed}");
+}
+
+/// Only a leading mark, and only the UTF-8 encoding of one.
+///
+/// U+FEFF inside a string is a character the line is entitled to carry, and a UTF-16
+/// mark is a line written in an encoding this does not read - which is worth saying as
+/// an encoding fault, because `0xff` is most of that diagnosis.
+#[test]
+fn only_a_leading_utf8_mark_is_stripped() {
+    let parsed = run_stdin(&["parse", "-", "--json"], "{\"a\":\"\u{feff}x\"}\n");
+    assert!(
+        parsed.contains("\u{feff}x"),
+        "mark stripped from a value: {parsed}"
+    );
+
+    let (_, stderr) = run_stdin_rejecting([FIRST, b"\xff\xfe{\"a\":1}\n"].concat());
+    assert!(
+        stderr.contains("line 2: invalid UTF-8: byte 0xff at offset 0"),
+        "{stderr}"
+    );
+}
+
 /// `--json` is a machine surface, so it must be stable run to run even though `ParsedLog`
 /// stores its maps as `HashMap`.
 #[test]

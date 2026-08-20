@@ -14,6 +14,9 @@ use crate::types::{ColValue, ColumnType};
 const MIN_KEY_WIDTH: usize = 11;
 const TYPE_WIDTH: usize = 9;
 
+/// U+FEFF, encoded as UTF-8 - the three bytes a Windows writer puts at the front.
+const BOM: &[u8] = b"\xef\xbb\xbf";
+
 /// A bad line is reported against its number and stepped over; only a failure of the
 /// stream itself ends the run. One malformed line 400 out of 500 must not fail the
 /// other 499. Rejections are still counted, and a run that rejected anything exits
@@ -50,10 +53,12 @@ pub fn run<R: BufRead, W: Write>(
         }
         read_lines += 1;
         let line_no = read_lines as usize;
-        let line = strip_eol(&raw);
+        let line = strip_bom(strip_eol(&raw));
 
         // Blank means blank as text. Bytes that do not decode are not a blank line,
-        // they are a bad one, and fall through to be rejected as such.
+        // they are a bad one, and fall through to be rejected as such. Checked after
+        // the mark is stripped, so a line holding nothing but one counts as blank
+        // rather than being rejected for the marker it carried.
         if std::str::from_utf8(line).is_ok_and(|s| s.trim().is_empty()) {
             skipped_blank += 1;
             continue;
@@ -117,6 +122,30 @@ pub fn run<R: BufRead, W: Write>(
 fn strip_eol(raw: &[u8]) -> &[u8] {
     let line = raw.strip_suffix(b"\n").unwrap_or(raw);
     line.strip_suffix(b"\r").unwrap_or(line)
+}
+
+/// Drop a leading byte order mark.
+///
+/// U+FEFF is not whitespace and JSON has no provision for it, so a line starting with
+/// one is rejected at offset 0 as `expected value` - a fault that is invisible in an
+/// editor, and one that hides whatever else is wrong with the line behind it. Nothing
+/// obliges a reader to tolerate the mark, but PowerShell's `Out-File` and several
+/// Windows log shippers write one by default, so the bytes arrive in real input.
+///
+/// Stripped per line rather than once at the head of the file. `/ingest` is handed a
+/// body at a time, where there is no line 1 to special-case, and a line that opens with
+/// a mark is not valid JSON at any position - so this only ever turns a rejection into
+/// a record, and no line that parses today changes meaning.
+///
+/// Before `parse_line`, so the mark is gone from `raw_line` too and every offset a
+/// rejection reports still indexes straight into the line that `/ingest` echoes back.
+///
+/// Only the UTF-8 encoding of it: a UTF-16 mark (`0xff 0xfe`) is left alone to be
+/// reported as the encoding fault it is, where the byte value is most of the diagnosis.
+/// One mark, not a run of them - a second is data, and stripping repeatedly has no
+/// principled place to stop.
+fn strip_bom(line: &[u8]) -> &[u8] {
+    line.strip_prefix(BOM).unwrap_or(line)
 }
 
 /// The parsed row as NDJSON - one `ParsedLog` per line, for anything downstream of a human.
