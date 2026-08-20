@@ -201,6 +201,55 @@ fn json_record(line: &str) -> serde_json::Value {
     serde_json::from_str(line).unwrap_or_else(|e| panic!("record was not JSON: {e}\n{line}"))
 }
 
+/// A datetime that falls off the low end of the range lands at the low end.
+///
+/// `Datetime` is i64 unix nanoseconds, so it spans 1677 to 2262 while RFC 3339 spans
+/// year 0 to 9999. Both ends overflow. Clamping both to `i64::MAX` put every pre-1677
+/// timestamp in 2262: a year-1600 line and a year-9999 line compared equal, and both
+/// sorted after every real one. A time-range query over historical data then returns
+/// the wrong rows rather than none, which is the version of the bug that looks fine.
+///
+/// The type label cannot catch this - every value here is `Datetime` either way - so
+/// the assertion has to be on the instant.
+#[test]
+fn a_datetime_past_either_end_of_the_range_saturates_towards_that_end() {
+    let cases = [
+        // Inside the range: exact values, no clamping.
+        ("1677-09-21T00:12:44Z", -9_223_372_036_000_000_000_i64),
+        ("1970-01-01T00:00:00Z", 0),
+        ("2262-04-11T23:47:16Z", 9_223_372_036_000_000_000),
+        // One second past each end, then the far extremes of RFC 3339.
+        ("1677-09-21T00:12:43Z", i64::MIN),
+        ("2262-04-11T23:47:17Z", i64::MAX),
+        ("0001-01-01T00:00:00Z", i64::MIN),
+        ("9999-12-31T23:59:59Z", i64::MAX),
+    ];
+
+    let input: String = cases
+        .iter()
+        .map(|(v, _)| format!("{{\"v\":\"{v}\"}}\n"))
+        .collect();
+    let stdout = run_stdin(&["parse", "-", "--json"], &input);
+
+    let mut failures = Vec::new();
+    for (line, (raw, want)) in stdout.lines().zip(cases) {
+        let record = json_record(line);
+        assert_eq!(record["types"]["v"], "Datetime", "{raw} was not a Datetime");
+        let got = record["typed_values"]["v"]
+            .as_i64()
+            .unwrap_or_else(|| panic!("{raw} had no i64 instant"));
+        if got != want {
+            failures.push(format!("{raw}\n    want {want}, got {got}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} datetimes saturated the wrong way:\n  {}",
+        failures.len(),
+        failures.join("\n  ")
+    );
+}
+
 /// The `keys` array of a `--json` record.
 fn keys(record: &serde_json::Value) -> Vec<String> {
     record["keys"]

@@ -27,7 +27,14 @@ use crate::types::{ColValue, ColumnType, Typed};
 pub fn infer(raw: &str) -> Typed {
     // 1. RFC 3339.
     if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
-        let ns = dt.timestamp_nanos_opt().unwrap_or(i64::MAX);
+        // i64 nanoseconds run from 1677 to 2262; RFC 3339 runs from year 0 to 9999.
+        // Both ends overflow, and `timestamp_nanos_opt` reports them the same way, so
+        // the direction has to come from the seconds - which are in range for every
+        // datetime chrono can hold. Clamping both ends to `i64::MAX` would file the
+        // whole pre-1677 era in 2262, the far end of the range it fell off.
+        let ns = dt
+            .timestamp_nanos_opt()
+            .unwrap_or(if dt.timestamp() < 0 { i64::MIN } else { i64::MAX });
         return typed(ColumnType::Datetime, ColValue::Datetime(ns));
     }
 
