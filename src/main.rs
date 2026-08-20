@@ -4,6 +4,7 @@ mod error;
 mod flatten;
 mod gen;
 mod infer;
+mod key;
 mod parse;
 mod rng;
 mod types;

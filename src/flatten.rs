@@ -1,12 +1,14 @@
 //! Flattening, fingerprinting, and the parsed row.
 
 use std::collections::HashMap;
+use std::fmt;
 
 use serde_json::error::Category;
 use serde_json::Value;
 
 use crate::error::{BadByte, DetectorError, DetectorErrorKind};
 use crate::infer::infer;
+use crate::key::KeyPath;
 use crate::types::{ColValue, ColumnType, Typed};
 
 /// A guard against pathological or hostile input, not a real-world constraint.
@@ -35,6 +37,27 @@ const PROMOTED_KEYS: &[&str] = &["event"];
 
 /// The longest promoted value; beyond this it is not a dimension, it is a payload.
 const MAX_PROMOTED_LEN: usize = 40;
+
+/// One element of the fingerprint.
+///
+/// The two kinds render alike on purpose - `event=login` reads the same whether the
+/// sender nested it or named a field that - but they are not the same shape, and the
+/// identity has to be able to tell them apart even where the text cannot.
+enum Token {
+    /// A key that stayed a value. Its value varies line to line and is not in here.
+    Key(String),
+    /// A key promoted into the fingerprint, carrying the value that branches the trie.
+    Promoted { key: String, value: String },
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Key(key) => f.write_str(key),
+            Token::Promoted { key, value } => write!(f, "{key}={value}"),
+        }
+    }
+}
 
 /// One line, flattened, fingerprinted and typed.
 #[derive(Debug, Clone)]
@@ -68,10 +91,14 @@ impl ParsedLog {
     }
 }
 
-/// Flatten one JSON object into sorted dotted keys paired with their leaf values.
+/// Flatten one JSON object into sorted key paths paired with their leaf values.
 /// Arrays are never flattened - they are stored as their raw JSON string, because
 /// flattening them would make the fingerprint depend on array length.
-pub fn flatten(root: &Value) -> Result<Vec<(String, Value)>, DetectorErrorKind> {
+///
+/// Yields `KeyPath`s rather than joined strings: the join is where a dotted literal key
+/// and a nested path stop being distinguishable, and the caller still needs the leaf
+/// segment for promotion after it has one. See `KeyPath`.
+pub fn flatten(root: &Value) -> Result<Vec<(KeyPath, Value)>, DetectorErrorKind> {
     let obj = match root {
         Value::Object(o) => o,
         other => {
@@ -81,40 +108,41 @@ pub fn flatten(root: &Value) -> Result<Vec<(String, Value)>, DetectorErrorKind> 
         }
     };
     let mut out = Vec::new();
-    walk(obj, &mut String::new(), 1, &mut out)?;
+    walk(obj, &mut KeyPath::new(), 1, &mut out)?;
     // Sorting here is what makes the fingerprint order-independent: two lines from
     // the same call site agree even if the serializer shuffled field order.
-    out.sort_by(|a, b| a.0.cmp(&b.0));
+    //
+    // On the rendered key rather than on the segments, because rendered is the order
+    // `keys` is emitted in and a consumer re-sorting that array has to land back on
+    // the same one; the two orders are not the same relation. `_cached_` so each key
+    // renders once rather than once per comparison.
+    out.sort_by_cached_key(|(path, _)| path.to_string());
     Ok(out)
 }
 
 fn walk(
     obj: &serde_json::Map<String, Value>,
-    prefix: &mut String,
+    path: &mut KeyPath,
     depth: usize,
-    out: &mut Vec<(String, Value)>,
+    out: &mut Vec<(KeyPath, Value)>,
 ) -> Result<(), DetectorErrorKind> {
     for (key, value) in obj {
-        let restore = prefix.len();
-        if !prefix.is_empty() {
-            prefix.push('.');
-        }
-        prefix.push_str(key);
+        path.push(key);
 
         match value {
             Value::Object(inner) => {
                 if depth + 1 > MAX_DEPTH {
                     return Err(DetectorErrorKind::NestingTooDeep {
-                        key: prefix.clone(),
+                        key: path.to_string(),
                         limit: MAX_DEPTH,
                     });
                 }
-                walk(inner, prefix, depth + 1, out)?;
+                walk(inner, path, depth + 1, out)?;
             }
-            other => out.push((prefix.clone(), other.clone())),
+            other => out.push((path.clone(), other.clone())),
         }
 
-        prefix.truncate(restore);
+        path.pop();
     }
     Ok(())
 }
@@ -238,18 +266,21 @@ fn check_nesting(bytes: &[u8]) -> Result<(), DetectorErrorKind> {
 
 /// The dotted path to the container the scan is about to enter, in the form `walk`
 /// builds - so a rejection reads the same whichever pass caught it.
+///
+/// Built as a `KeyPath` and rendered by it, not joined here. Joining by hand is how the
+/// two passes drift: the scan would report `a.b` for a key that `walk` calls `a\.b`, and
+/// an operator would go looking for a nesting level that does not exist.
 fn key_path(stack: &[Frame], bytes: &[u8]) -> String {
-    let path = stack
+    let path: KeyPath = stack
         .iter()
         .filter_map(|f| f.cur_key.clone())
         .map(|range| key_text(&bytes[range]))
-        .collect::<Vec<_>>()
-        .join(".");
+        .collect();
     if path.is_empty() {
         // No enclosing key: the offending container is the top-level value itself.
         "<top level>".to_string()
     } else {
-        path
+        path.to_string()
     }
 }
 
@@ -391,7 +422,8 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
     let mut promoted = Vec::new();
     let mut tokens = Vec::with_capacity(pairs.len());
 
-    for (key, leaf) in pairs {
+    for (path, leaf) in pairs {
+        let key = path.to_string();
         let raw = raw_text(&leaf);
         // An explicit JSON null carries no evidence about the column's type, so the
         // type ladder is not run on it - otherwise it would come back String and
@@ -405,11 +437,14 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
             infer(&raw)
         };
 
-        if is_promotable(&key, &typed, &raw) {
-            tokens.push(format!("{key}={raw}"));
+        if is_promotable(path.last().unwrap_or_default(), &typed, &raw) {
+            tokens.push(Token::Promoted {
+                key: key.clone(),
+                value: raw.clone(),
+            });
             promoted.push(key.clone());
         } else {
-            tokens.push(key.clone());
+            tokens.push(Token::Key(key.clone()));
             typed_values.insert(key.clone(), typed);
         }
 
@@ -417,9 +452,25 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
         keys.push(key);
     }
 
-    let fingerprint = tokens.join(" | ");
+    // `keys` is the flattened key set, and a set has no duplicate in it. Two
+    // distinct paths cannot render alike, so a duplicate here does not mean the input
+    // was odd - it means the rendering stopped being reversible, and the fingerprint,
+    // the merge index's set arithmetic and the trie's edge labels are all downstream of
+    // that. Loud in debug, where it is a bug in this file; nothing to recover from at
+    // runtime, and a rejected line must not be the way an operator finds out.
+    debug_assert!(
+        keys.windows(2).all(|pair| pair[0] != pair[1]),
+        "flattened keys are not a set: {keys:?}"
+    );
+
+    let template_id = template_id(&tokens);
+    let fingerprint = tokens
+        .iter()
+        .map(Token::to_string)
+        .collect::<Vec<_>>()
+        .join(" | ");
     Ok(ParsedLog {
-        template_id: template_id(&fingerprint),
+        template_id,
         keys,
         values,
         typed_values,
@@ -432,8 +483,10 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
     })
 }
 
-fn is_promotable(key: &str, typed: &Typed, raw: &str) -> bool {
-    let leaf = key.rsplit('.').next().unwrap_or(key);
+/// Takes the leaf segment, not the rendered key. Splitting the rendered key on `.`
+/// would read the literal key `{"a.event":"login"}` as the nested path `a` -> `event`
+/// and promote it into the fingerprint as one - a value the sender never nested.
+fn is_promotable(leaf: &str, typed: &Typed, raw: &str) -> bool {
     PROMOTED_KEYS.contains(&leaf)
         && typed.ty == Some(ColumnType::String)
         && !raw.is_empty()
@@ -444,12 +497,61 @@ fn is_promotable(key: &str, typed: &Typed, raw: &str) -> bool {
         && !raw.chars().any(char::is_whitespace)
 }
 
-/// FNV-1a over the fingerprint. The trie hands out sequential ids from an
+/// FNV-1a over the token list. The trie hands out sequential ids from an
 /// `AtomicU64`, but there is no trie yet; a content hash is deterministic and
 /// order-independent, which is all the parse surface needs.
-fn template_id(fingerprint: &str) -> u64 {
+///
+/// Over the tokens, not over the fingerprint they join into, because `" | "` is not a
+/// separator a key is obliged to stay out of and `join` does not make it one. Hashing
+/// the joined string gives one id to every pair of lines whose tokens happen to
+/// concatenate alike:
+///
+/// ```text
+/// {"a | b":1}         vs  {"a":1,"b":1}       one key or two, both `a | b`
+/// {"event=login":1}   vs  {"event":"login"}   a literal key, or a promoted one
+/// {}                  vs  {"":""}             no key, or one key with no name
+/// ```
+///
+/// Each pair is two different shapes - different key sets, and in the second pair
+/// different types - sharing one template. That merges unrelated rows into one leaf as
+/// soon as the trie and the column store exist, and the column store is then asked to
+/// hold two incompatible schemas in one place.
+///
+/// Three things close it, one per pair. A length prefix, so a separator inside a token
+/// cannot forge a boundary that is counted rather than searched for, and so the empty
+/// token list is not the one-element list holding the empty string. And a kind tag,
+/// because the last pair renders identically either way - the text is the same token,
+/// and only what produced it differs.
+///
+/// `fingerprint` stays the joined text. It is what a human reads, and it is not the
+/// identity; two shapes that read alike are entitled to, so long as they do not merge.
+fn template_id(tokens: &[Token]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in fingerprint.as_bytes() {
+    for token in tokens {
+        match token {
+            Token::Key(key) => {
+                hash = fnv1a(hash, &[0]);
+                hash = feed(hash, key);
+            }
+            Token::Promoted { key, value } => {
+                hash = fnv1a(hash, &[1]);
+                hash = feed(hash, key);
+                hash = feed(hash, value);
+            }
+        }
+    }
+    hash
+}
+
+/// One length-prefixed string. The length goes first, so `["ab"]` and `["a","b"]`
+/// diverge before their bytes rather than never.
+fn feed(hash: u64, text: &str) -> u64 {
+    let hash = fnv1a(hash, &(text.len() as u64).to_le_bytes());
+    fnv1a(hash, text.as_bytes())
+}
+
+fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }

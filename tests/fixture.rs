@@ -196,6 +196,291 @@ fn low_cardinality_key_is_promoted_into_the_fingerprint() {
     assert_eq!(row(&blocks[0], "ts")[1], "Datetime");
 }
 
+/// One `--json` record, as a `Value`.
+fn json_record(line: &str) -> serde_json::Value {
+    serde_json::from_str(line).unwrap_or_else(|e| panic!("record was not JSON: {e}\n{line}"))
+}
+
+/// The `keys` array of a `--json` record.
+fn keys(record: &serde_json::Value) -> Vec<String> {
+    record["keys"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no keys array in {record}"))
+        .iter()
+        .map(|k| k.as_str().expect("key was not a string").to_string())
+        .collect()
+}
+
+/// A dotted literal key and the nested path that spells the same thing are two keys,
+/// and both values survive.
+///
+/// Flattening joins segments with `.`, so `{"a.b":1}` and `{"a":{"b":2}}` both used to
+/// produce the three characters `a.b`. Together on one line that is one key twice: the
+/// `keys` array held a duplicate, the fingerprint repeated a segment, and one of the two
+/// values was dropped with no diagnostic. Which one it was depended on field order,
+/// since last-wins into the map is the only thing that decided it.
+#[test]
+fn a_dotted_literal_key_and_a_nested_path_stay_distinct() {
+    // Both orders: the two keys must not depend on which arrived first.
+    for line in [r#"{"a.b":1,"a":{"b":2}}"#, r#"{"a":{"b":2},"a.b":1}"#] {
+        let record = json_record(run_stdin(&["parse", "-", "--json"], &format!("{line}\n")).trim());
+        assert_eq!(keys(&record), ["a.b", "a\\.b"], "for {line}");
+        // The nested path keeps the spelling it always had, so its template id is
+        // unmoved; only the literal key, which was the ambiguous one, gains an escape.
+        assert_eq!(record["values"]["a.b"], "2", "nested value lost: {record}");
+        assert_eq!(
+            record["values"]["a\\.b"], "1",
+            "literal value lost: {record}"
+        );
+        assert_eq!(record["fingerprint"], "a.b | a\\.b");
+    }
+}
+
+/// The two spellings are different shapes, so they are different templates.
+///
+/// This is the same fault seen from the trie's side: sharing a template id means sharing
+/// a leaf, and one leaf cannot describe both a nested object and a flat dotted field.
+#[test]
+fn a_dotted_literal_key_and_a_nested_path_are_different_templates() {
+    let parsed = run_stdin(
+        &["parse", "-", "--json"],
+        "{\"a.b\":1}\n{\"a\":{\"b\":1}}\n",
+    );
+    let records: Vec<_> = parsed.lines().map(json_record).collect();
+    assert_eq!(keys(&records[0]), ["a\\.b"]);
+    assert_eq!(keys(&records[1]), ["a.b"]);
+    assert_ne!(
+        records[0]["template_id"], records[1]["template_id"],
+        "two shapes shared one template: {parsed}"
+    );
+}
+
+/// Promotion reads the leaf segment, not the text after the last dot.
+///
+/// `{"a.event":"login"}` is a field called `a.event`, not a field `event` nested under
+/// `a`. Splitting the rendered key to find the leaf promoted it into the fingerprint as
+/// though the sender had nested it.
+#[test]
+fn a_dotted_literal_key_is_not_promoted_as_though_it_were_nested() {
+    let parsed = run_stdin(
+        &["parse", "-", "--json"],
+        "{\"a.event\":\"login\"}\n{\"a\":{\"event\":\"login\"}}\n",
+    );
+    let records: Vec<_> = parsed.lines().map(json_record).collect();
+    assert_eq!(records[0]["fingerprint"], "a\\.event");
+    // The nested one is promoted, as it was before, and reads exactly as it did.
+    assert_eq!(records[1]["fingerprint"], "a.event=login");
+}
+
+/// A backslash in a key is data, and must not be able to forge a separator.
+///
+/// Escaping `.` alone leaves `{"a\\":{"b":1}}` and `{"a\\.b":1}` rendering alike, which
+/// is the original collision reintroduced one character over.
+#[test]
+fn a_backslash_in_a_key_cannot_forge_a_separator() {
+    let line = r#"{"a\\":{"b":1},"a\\.b":2}"#;
+    let record = json_record(run_stdin(&["parse", "-", "--json"], &format!("{line}\n")).trim());
+    let keys = keys(&record);
+    assert_eq!(keys.len(), 2, "keys collided: {record}");
+    assert_ne!(keys[0], keys[1]);
+    assert_eq!(record["values"][&keys[0]], "1");
+    assert_eq!(record["values"][&keys[1]], "2");
+}
+
+/// Insert `value` at `segments`, creating intermediate objects. `false` when the path
+/// cannot exist alongside what is already there - one path being a prefix of another.
+fn insert_path(
+    root: &mut serde_json::Map<String, serde_json::Value>,
+    segments: &[&str],
+    value: serde_json::Value,
+) -> bool {
+    let (last, parents) = segments.split_last().expect("no empty paths");
+    let mut node = root;
+    for segment in parents {
+        let next = node
+            .entry(*segment)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        match next.as_object_mut() {
+            Some(obj) => node = obj,
+            None => return false,
+        }
+    }
+    if node.contains_key(*last) {
+        return false;
+    }
+    node.insert((*last).to_string(), value);
+    true
+}
+
+/// The invariant `keys` is required to hold, over every pair of awkward paths that can
+/// share a line: it is a set, and no value goes missing.
+///
+/// Exhaustive rather than sampled. The space that matters here is small and entirely
+/// about where separators and backslashes fall, so enumerating it covers more than
+/// random documents would - and the same pairs run on every future change to the
+/// encoding, which is the part worth keeping.
+#[test]
+fn no_two_key_paths_on_one_line_ever_collide() {
+    let paths: &[&[&str]] = &[
+        &["a"],
+        &["b"],
+        &["a", "b"],
+        &["a", "c"],
+        &["a.b"],
+        &["a.b", "c"],
+        &["a", "b.c"],
+        &["a.b.c"],
+        &["a", "b", "c"],
+        &["a\\"],
+        &["a\\", "b"],
+        &["a\\.b"],
+        &["a\\\\", "b"],
+        &["."],
+        &[".", "."],
+        &[""],
+        &["a", ""],
+        &["", "b"],
+    ];
+
+    // One line per pair, so the whole matrix costs a single run of the binary.
+    let mut lines = Vec::new();
+    let mut expected = Vec::new();
+    for (i, first) in paths.iter().enumerate() {
+        for second in &paths[i + 1..] {
+            let mut doc = serde_json::Map::new();
+            if !insert_path(&mut doc, first, serde_json::json!(1))
+                || !insert_path(&mut doc, second, serde_json::json!(2))
+            {
+                // One path is a prefix of the other; they cannot both exist in one
+                // document, and JSON's own last-wins would decide it rather than us.
+                continue;
+            }
+            lines.push(serde_json::Value::Object(doc).to_string());
+            expected.push((first, second));
+        }
+    }
+    assert!(lines.len() > 100, "only {} pairs were built", lines.len());
+
+    let parsed = run_stdin(
+        &["parse", "-", "--json"],
+        &format!("{}\n", lines.join("\n")),
+    );
+    let records: Vec<_> = parsed.lines().map(json_record).collect();
+    assert_eq!(records.len(), lines.len(), "lines went missing");
+
+    let mut failures = Vec::new();
+    for ((record, line), (first, second)) in records.iter().zip(&lines).zip(&expected) {
+        let keys = keys(record);
+        let unique: std::collections::HashSet<_> = keys.iter().collect();
+        if keys.len() != 2 || unique.len() != 2 {
+            failures.push(format!("{first:?} + {second:?} -> keys {keys:?}  ({line})"));
+            continue;
+        }
+        // Neither value was dropped on the way into the map.
+        let values = record["values"].as_object().expect("no values object");
+        let mut got: Vec<_> = values.values().filter_map(|v| v.as_str()).collect();
+        got.sort_unstable();
+        if got != ["1", "2"] {
+            failures.push(format!(
+                "{first:?} + {second:?} -> values {got:?}  ({line})"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} pairs collided:\n  {}",
+        failures.len(),
+        records.len(),
+        failures.join("\n  ")
+    );
+}
+
+/// A fingerprint is what a human reads. The template id is the identity, and two
+/// different shapes must not share one however alike they read.
+///
+/// `tokens.join(" | ")` was the identity, and `" | "` is not a separator a key is
+/// obliged to stay out of - nor is `=`, nor is "having a name at all". Each pair below
+/// is two genuinely different shapes that the joined text could not tell apart. Sharing
+/// a template id means sharing a leaf once the trie exists, and the column store is then
+/// handed two schemas for one place.
+#[test]
+fn two_shapes_that_read_alike_are_not_one_template() {
+    for (first, second, what) in [
+        // The separator, forged inside a single key: one key, or two.
+        (r#"{"a | b":1}"#, r#"{"a":1,"b":1}"#, "the separator"),
+        // A promoted `key=value` token, forged by a key literally named that. The
+        // literal is an Int64 under a long name; the promoted one is a String.
+        (
+            r#"{"event=login":1}"#,
+            r#"{"event":"login"}"#,
+            "a promoted token",
+        ),
+        // No keys at all, or one key whose name is empty.
+        (r#"{}"#, r#"{"":""}"#, "the empty key"),
+        // And the empty key beside a real one, where the join leaves a leading gap.
+        (r#"{"":1,"a":2}"#, r#"{" | a":3}"#, "a leading empty key"),
+    ] {
+        let parsed = run_stdin(&["parse", "-", "--json"], &format!("{first}\n{second}\n"));
+        let records: Vec<_> = parsed.lines().map(json_record).collect();
+        assert_ne!(
+            records[0]["template_id"], records[1]["template_id"],
+            "{what} was forged: {first} and {second} share a template\n{parsed}"
+        );
+        assert_ne!(
+            keys(&records[0]),
+            keys(&records[1]),
+            "the test pair is wrong - these have the same key set"
+        );
+    }
+}
+
+/// The other half of the same claim: separating those shapes must not have split the
+/// shapes that really are one. A template id still depends on nothing but the key set
+/// and the promoted values.
+#[test]
+fn the_same_shape_still_gets_one_template() {
+    let parsed = run_stdin(
+        &["parse", "-", "--json"],
+        concat!(
+            r#"{"event":"login","user":{"id":"u1"},"n":1}"#,
+            "\n",
+            // Reordered, and every value different: neither moves the shape.
+            r#"{"n":9999,"user":{"id":"u2"},"event":"login"}"#,
+            "\n",
+        ),
+    );
+    let records: Vec<_> = parsed.lines().map(json_record).collect();
+    assert_eq!(
+        records[0]["template_id"], records[1]["template_id"],
+        "{parsed}"
+    );
+
+    // A promoted value is part of the shape, so changing that one does split it.
+    let split = run_stdin(
+        &["parse", "-", "--json"],
+        "{\"event\":\"login\"}\n{\"event\":\"logout\"}\n",
+    );
+    let records: Vec<_> = split.lines().map(json_record).collect();
+    assert_ne!(
+        records[0]["template_id"], records[1]["template_id"],
+        "{split}"
+    );
+}
+
+/// Two empty objects genuinely do flatten to no keys, and stay one template. The empty
+/// key was never the same claim as the empty object, which is why only one of them moved.
+#[test]
+fn an_object_that_flattens_to_no_keys_is_one_template() {
+    let parsed = run_stdin(&["parse", "-", "--json"], "{}\n{\"a\":{\"b\":{}}}\n");
+    let records: Vec<_> = parsed.lines().map(json_record).collect();
+    assert_eq!(keys(&records[0]), Vec::<String>::new());
+    assert_eq!(keys(&records[1]), Vec::<String>::new());
+    assert_eq!(
+        records[0]["template_id"], records[1]["template_id"],
+        "{parsed}"
+    );
+}
+
 /// Same seed, byte-identical output. Different seed, different output.
 #[test]
 fn generation_is_reproducible() {

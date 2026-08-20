@@ -4,8 +4,9 @@
 /testdata/sample.ndjson
 .dev
 
-# Malformed-input repros for the F1/F4 checks - scratch, not fixtures.
+# Malformed-input repros for the F1/F5 checks - scratch, not fixtures.
 /testdata/f1/
 /testdata/f2/
 /testdata/f3/
 /testdata/f4/
+/testdata/f5/
