@@ -1,0 +1,4 @@
+{"event":"start","id":1}
+{"a | b":1}
+{"a":1,"b":1}
+{"event":"end","id":2}
