@@ -148,6 +148,9 @@ pub enum CliError {
 
     #[error(transparent)]
     Gen(#[from] GenError),
+
+    #[error(transparent)]
+    Trie(#[from] crate::trie::TrieError),
 }
 
 /// Print the error and every cause below it, so a `#[source]` chain is not lost.

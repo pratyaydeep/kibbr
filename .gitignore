@@ -4,6 +4,10 @@
 /testdata/sample.ndjson
 .dev
 
+# M1's reordered copies of sample.ndjson - scratch, and `gen-logs` plus `tail -r`
+# rebuilds them.
+/testdata/m1/
+
 # Malformed-input repros for the F1/F5 checks - scratch, not fixtures.
 /testdata/f1/
 /testdata/f2/

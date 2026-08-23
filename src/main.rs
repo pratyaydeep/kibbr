@@ -1,5 +1,6 @@
 //! TrieDB. Two subcommands: generate hostile logs, and parse them.
 
+mod demo;
 mod error;
 mod flatten;
 mod gen;
@@ -7,6 +8,7 @@ mod infer;
 mod key;
 mod parse;
 mod rng;
+mod trie;
 mod types;
 
 use std::fs::File;
@@ -51,6 +53,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Build the trie over a file and print it as an ASCII tree.
+    Demo {
+        /// Path to an NDJSON file, or `-` for stdin.
+        input: String,
+        /// Print every subtree instead of summarising the large ones. The default view
+        /// hides most of the templates behind `… N templates`, which is what an operator
+        /// wants and the opposite of what a test comparing two orderings wants.
+        #[arg(long)]
+        full: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -77,6 +89,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Parse { input, limit, json } => {
             let reader = open(&input)?;
             parse::run(reader, &mut out, limit, json)
+        }
+        Command::Demo { input, full } => {
+            let reader = open(&input)?;
+            demo::run(reader, &mut out, full)
         }
     };
 

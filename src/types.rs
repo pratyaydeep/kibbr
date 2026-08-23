@@ -25,6 +25,60 @@ impl ColumnType {
             ColumnType::Ip => "Ip",
         }
     }
+
+    /// The short form the trie tree prints, where a leaf carries its whole key set and
+    /// the full names would not fit beside it.
+    pub fn short(self) -> &'static str {
+        match self {
+            ColumnType::String => "Str",
+            ColumnType::Int64 => "I64",
+            ColumnType::Float64 => "F64",
+            ColumnType::Datetime => "DT",
+            ColumnType::Bool => "Bool",
+            ColumnType::Uuid => "Uuid",
+            ColumnType::Ip => "Ip",
+        }
+    }
+}
+
+/// The type join. **The ladder types a value; a column has one type**, and this is the
+/// rule that turns the second into the first:
+///
+/// ```text
+/// ⊥ = None                        no evidence; a null claims nothing about the column
+/// None  ⊔ T        = T
+/// T     ⊔ T        = T
+/// Int64 ⊔ Float64  = Float64
+/// _     ⊔ _        = String       ⊤
+/// ```
+///
+/// **Commutative and associative**, which is the entire point - the column type must not
+/// depend on the order lines arrived in, and the trie is checked by feeding one file's
+/// lines in several orders and diffing the tree. A rule that read differently forwards
+/// and backwards would not merely fail that check, it would make it unmeasurable.
+///
+/// **Monotonic - a column never narrows.** Narrowing is what would reintroduce order
+/// dependence, so it stays forbidden even where it looks obviously right. The price is
+/// that one `"N/A"` in a field of ten million clean timestamps turns that column to
+/// String permanently and sends every time-range query on it to a full scan. It is also
+/// how rung 2's known misclassification corrects itself: a real timestamp field is
+/// consistently ten or thirteen digits and stays `Datetime`, while a ten-digit order id
+/// meets its first `AX-99213` and widens back to `String` on its own - no heuristic, no
+/// second pass, no sampling.
+///
+/// `Int64 ⊔ Float64 = Float64` loses precision above 2^53. Accepted: the alternative is
+/// String, which is worse for every query anyone would actually run.
+pub fn join(a: Option<ColumnType>, b: Option<ColumnType>) -> Option<ColumnType> {
+    match (a, b) {
+        // `None` does two jobs and this is the second: the identity element of ⊔. Both
+        // sides `None` lands here too, and a column that has only ever held nulls keeps
+        // type `None` - a different statement from `String`.
+        (None, other) | (other, None) => other,
+        (Some(x), Some(y)) if x == y => Some(x),
+        (Some(ColumnType::Int64), Some(ColumnType::Float64))
+        | (Some(ColumnType::Float64), Some(ColumnType::Int64)) => Some(ColumnType::Float64),
+        _ => Some(ColumnType::String),
+    }
 }
 
 /// The decoded value behind a `ColumnType`.
