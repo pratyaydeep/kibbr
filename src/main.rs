@@ -1,13 +1,20 @@
-//! TrieDB. Two subcommands: generate hostile logs, and parse them.
+//! TrieDB. Generate hostile logs, parse them, build the trie, query it.
 
+mod db;
 mod demo;
+mod engine;
 mod error;
 mod flatten;
+mod fmt;
 mod gen;
 mod infer;
 mod key;
+mod lines;
 mod parse;
+mod query;
+mod reference;
 mod rng;
+mod store;
 mod trie;
 mod types;
 
@@ -63,6 +70,54 @@ enum Command {
         #[arg(long)]
         full: bool,
     },
+    /// Query a file. Flags only - the query language is a later milestone.
+    Query {
+        /// Path to an NDJSON file, or `-` for stdin.
+        input: String,
+
+        /// `KEY=VALUE`, repeatable. `VALUE` may be `*` for "present and not null".
+        #[arg(long = "match", value_name = "KEY=VALUE")]
+        matches: Vec<String>,
+
+        // The four verbs are mutually exclusive. Spelled out rather than put in an
+        // `ArgGroup`, which rejects the pair but reports it as one flag repeated -
+        // clap names a group's first member, so `--count --fetch` came back as
+        // "--count cannot be used multiple times".
+        /// How many rows match. The default when no other verb is given.
+        #[arg(long, conflicts_with_all = ["fetch", "exists", "group_by"])]
+        count: bool,
+        /// The matching rows themselves.
+        #[arg(long, conflicts_with_all = ["exists", "group_by"])]
+        fetch: bool,
+        /// Whether the template exists at all - phase 1 only, no rows read.
+        #[arg(long, conflicts_with_all = ["group_by"])]
+        exists: bool,
+        /// Count per distinct value of these keys.
+        #[arg(long = "group-by", value_name = "KEY[,KEY]")]
+        group_by: Option<String>,
+
+        /// Relative window ending now: a number followed by s, m, h or d.
+        #[arg(long, value_name = "DURATION", conflicts_with = "between")]
+        since: Option<String>,
+        /// Absolute window `[FROM, TO)`, both RFC 3339.
+        #[arg(long, num_args = 2, value_names = ["FROM", "TO"])]
+        between: Option<Vec<String>>,
+
+        #[arg(long, value_enum, default_value = "table")]
+        format: query::Format,
+
+        /// Print the phase 1 plan and execute nothing.
+        #[arg(long)]
+        explain: bool,
+
+        /// Answer with the brute-force reference scanner instead of the engine.
+        #[arg(long)]
+        reference: bool,
+
+        /// Stop after this many matching rows. 0 = unlimited.
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
 }
 
 fn main() -> ExitCode {
@@ -93,6 +148,36 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Demo { input, full } => {
             let reader = open(&input)?;
             demo::run(reader, &mut out, full)
+        }
+        Command::Query {
+            input,
+            matches,
+            count,
+            fetch,
+            exists,
+            group_by,
+            since,
+            between,
+            format,
+            explain,
+            reference,
+            limit,
+        } => {
+            let reader = open(&input)?;
+            let args = query::Args {
+                matches,
+                count,
+                fetch,
+                exists,
+                group_by,
+                since,
+                between,
+                format,
+                explain,
+                reference,
+                limit,
+            };
+            query::run(reader, &mut out, &args)
         }
     };
 

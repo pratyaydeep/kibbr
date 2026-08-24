@@ -18,12 +18,11 @@ use std::time::Instant;
 use chrono::Utc;
 
 use crate::error::CliError;
+use crate::fmt::commas;
 use crate::flatten::parse_line;
+use crate::lines::{strip_bom, strip_eol};
 use crate::trie::{Node, Trie, TrieError, ROOT_LABEL};
 use crate::types::ColumnType;
-
-/// U+FEFF as UTF-8 - the three bytes a Windows writer puts at the front of a line.
-const BOM: &[u8] = b"\xef\xbb\xbf";
 
 const BRANCH_MID: &str = "├── ";
 const BRANCH_LAST: &str = "└── ";
@@ -335,27 +334,4 @@ fn render_columns<W: Write>(columns: &[String], indent: &str, out: &mut W) -> Re
         writeln!(out, "{indent}{line}").map_err(CliError::Write)?;
     }
     Ok(())
-}
-
-/// Thousands separators. Six-figure line counts and four-figure node counts are what this
-/// milestone is checked against, and they are read, not parsed.
-fn commas(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn strip_eol(raw: &[u8]) -> &[u8] {
-    let line = raw.strip_suffix(b"\n").unwrap_or(raw);
-    line.strip_suffix(b"\r").unwrap_or(line)
-}
-
-fn strip_bom(line: &[u8]) -> &[u8] {
-    line.strip_prefix(BOM).unwrap_or(line)
 }

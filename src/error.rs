@@ -126,6 +126,31 @@ pub enum GenError {
     Write(#[source] std::io::Error),
 }
 
+/// A `triedb query` flag that could not be turned into a `Query`.
+///
+/// Flag-level only. There is no query language yet, so there is nothing here about tokens
+/// or byte positions - the parser will report those, and it does not exist.
+#[derive(Debug, Error)]
+pub enum QueryError {
+    #[error("--match `{arg}`: expected KEY=VALUE")]
+    BadMatch { arg: String },
+
+    #[error("--match `{arg}`: the key is empty")]
+    EmptyKey { arg: String },
+
+    #[error("--group-by `{arg}`: a key is empty")]
+    EmptyGroupKey { arg: String },
+
+    #[error("--since `{arg}`: expected a number followed by s, m, h or d")]
+    BadDuration { arg: String },
+
+    #[error("--between `{arg}`: expected an RFC 3339 datetime")]
+    BadDatetime { arg: String },
+
+    #[error("--between: `{from}` is after `{to}`")]
+    BackwardsRange { from: String, to: String },
+}
+
 /// Errors surfaced by the CLI itself.
 ///
 /// A malformed line is not one of these - it is a `DetectorError`, reported against its
@@ -151,6 +176,12 @@ pub enum CliError {
 
     #[error(transparent)]
     Trie(#[from] crate::trie::TrieError),
+
+    #[error(transparent)]
+    Query(#[from] QueryError),
+
+    #[error(transparent)]
+    Store(#[from] crate::store::StoreError),
 }
 
 /// Print the error and every cause below it, so a `#[source]` chain is not lost.
