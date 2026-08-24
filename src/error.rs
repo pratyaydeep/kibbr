@@ -12,10 +12,10 @@ pub enum DetectorErrorKind {
     #[error("nesting deeper than {limit} levels at key `{key}`")]
     NestingTooDeep { key: String, limit: usize },
 
-    /// Arrays are stored whole, so the object depth limit does not apply inside one.
-    /// A ceiling still has to: the array is materialised before it can be stored as
-    /// text, and materialising it is recursive. This is the one that fires there,
-    /// counting containers of either kind from the outermost `[`.
+    /// Arrays are stored whole, so the object depth limit does not apply inside one - but
+    /// a ceiling still has to, since the array is materialised recursively before it can
+    /// be stored as text. This is the one that fires there, counting containers of either
+    /// kind from the outermost `[`.
     #[error("nesting deeper than {limit} levels inside the array at `{key}`")]
     ArrayNestingTooDeep { key: String, limit: usize },
 
@@ -24,19 +24,19 @@ pub enum DetectorErrorKind {
 
     /// The line is not UTF-8, so it is not text and cannot be a JSON document.
     ///
-    /// Split from `InvalidJson` because the remedy is different: an encoding fault in
-    /// whatever produced the line, not a syntax fault in the document. It carries no
-    /// `#[source]` - `serde_json`'s complaint about these bytes names whatever they
-    /// happened to break (`invalid unicode code point` inside a string, `expected
-    /// value` outside one), which is the symptom and sometimes a misleading one.
+    /// Split from `InvalidJson` because the remedy differs: an encoding fault in whatever
+    /// produced the line, not a syntax fault in the document. No `#[source]` -
+    /// `serde_json`'s complaint about these bytes names whatever they happened to break
+    /// (`invalid unicode code point` inside a string, `expected value` outside one),
+    /// which is the symptom and sometimes a misleading one.
     #[error("invalid UTF-8: {bad}")]
     InvalidUtf8 { bad: BadByte },
 
     /// `serde_json`'s complaint, carried as text rather than as a `#[source]`.
     ///
     /// Interpolating it and keeping it as a source would print it twice, since the CLI
-    /// walks the chain. Text wins because the position has to be rewritten on the way
-    /// through: `serde_json` reports a line number of its own, and it is always 1.
+    /// walks the chain. Text wins because the position is rewritten on the way through:
+    /// `serde_json` reports a line number of its own, and it is always 1.
     #[error("invalid JSON{}: {message}{}", at_offset(.offset), utf8_note(.also_bad_bytes))]
     InvalidJson {
         /// The byte offset into the line, or `None` when `serde_json` had no position
@@ -44,7 +44,7 @@ pub enum DetectorErrorKind {
         offset: Option<usize>,
         message: String,
         /// Set when the line holds a syntax error *and* fails to decode further along.
-        /// Both are true and independent, so both are reported: dropping either costs
+        /// Both are true and independent, so both are reported - dropping either costs
         /// the operator a second run to discover it.
         also_bad_bytes: Option<BadByte>,
     },
@@ -52,9 +52,9 @@ pub enum DetectorErrorKind {
 
 /// Where a line stopped being UTF-8: the offset of the first bad byte, and the byte.
 ///
-/// The byte value is most of the diagnosis. `0xff`/`0xfe` is UTF-16, `0x80`-`0x9f` is
-/// cp1252, and a lone lead byte is a write cut mid-character. The offset is 0-based and
-/// relative to the line, because it indexes straight into the `raw_line` that `/ingest`
+/// The byte value is most of the diagnosis: `0xff`/`0xfe` is UTF-16, `0x80`-`0x9f` is
+/// cp1252, a lone lead byte is a write cut mid-character. The offset is 0-based and
+/// relative to the line, so it indexes straight into the `raw_line` that `/ingest`
 /// echoes back.
 #[derive(Debug, Clone, Copy)]
 pub struct BadByte {
@@ -104,9 +104,9 @@ impl std::fmt::Display for DetectorError {
     }
 }
 
-// Hand-written rather than derived: `source` skips past `kind`, straight to whatever
-// `kind` was caused by. Deriving would put `kind` in the chain and `report` would
-// print it twice - once interpolated above, once as a `caused by` line.
+// Hand-written rather than derived: `source` skips past `kind` to whatever caused it.
+// Deriving would put `kind` in the chain and `report` would print it twice - once
+// interpolated above, once as a `caused by` line.
 impl std::error::Error for DetectorError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         std::error::Error::source(&self.kind)
@@ -128,9 +128,9 @@ pub enum GenError {
 
 /// Errors surfaced by the CLI itself.
 ///
-/// A malformed line is not one of these - it is a `DetectorError`, reported against
-/// its line and stepped over. What reaches here ends the run: the input could not be
-/// read, stdout could not be written, or the run finished having rejected something.
+/// A malformed line is not one of these - it is a `DetectorError`, reported against its
+/// line and stepped over. What reaches here ends the run: the input could not be read,
+/// stdout could not be written, or the run finished having rejected something.
 #[derive(Debug, Error)]
 pub enum CliError {
     #[error("reading {path}: {source}")]
@@ -155,8 +155,8 @@ pub enum CliError {
 
 /// Print the error and every cause below it, so a `#[source]` chain is not lost.
 ///
-/// Takes `dyn Error` so the fatal path and the per-line path render identically -
-/// a rejected line should not look different from a failed run.
+/// Takes `dyn Error` so the fatal path and the per-line path render identically: a
+/// rejected line should not look different from a failed run.
 pub fn report(e: &(dyn std::error::Error + 'static)) {
     let mut stderr = io::stderr().lock();
     let _ = writeln!(stderr, "triedb: {e}");

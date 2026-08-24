@@ -4,29 +4,27 @@ use std::fmt;
 
 /// The sequence of member names walked to reach one leaf value.
 ///
-/// Kept as segments rather than as a joined string, because the join is the lossy step.
-/// `{"a.b":1}` and `{"a":{"b":2}}` are different documents that both flatten to the
-/// three characters `a.b`, and once a key *is* that string nothing downstream can tell
-/// the two apart: `keys` gains a duplicate, the fingerprint repeats a segment, one of
-/// the two values is dropped without a word, and the trie grows two edges wearing one
-/// label. The flattened key is the identity for all of that, so it has to be able to
-/// carry the distinction.
+/// Segments, not a joined string, because the join is the lossy step. `{"a.b":1}` and
+/// `{"a":{"b":2}}` are different documents that both flatten to the three characters
+/// `a.b`, and once a key *is* that string nothing downstream can tell them apart: `keys`
+/// gains a duplicate, the fingerprint repeats a segment, one value is dropped without a
+/// word, and the trie grows two edges wearing one label. The flattened key is the
+/// identity for all of that, so it has to carry the distinction.
 ///
-/// `Display` is the rendering, and it escapes: inside a segment a `.` is written `\.`
-/// and a `\` is written `\\`, so an unescaped `.` occurs only at a segment boundary.
-/// That makes the rendering reversible, and a reversible rendering cannot collide - the
-/// table above stops being reachable rather than being detected after the fact.
+/// `Display` escapes: inside a segment `.` is written `\.` and `\` is written `\\`, so an
+/// unescaped `.` occurs only at a segment boundary. That makes the rendering reversible,
+/// and a reversible rendering cannot collide - the cases above stop being reachable
+/// rather than being detected after the fact.
 ///
-/// The cost lands only where the ambiguity is. A segment containing neither character
-/// renders unchanged, so ordinary keys - very nearly all of them - read exactly as they
-/// did before, and their template ids are unmoved.
+/// The cost lands only where the ambiguity is: a segment containing neither character
+/// renders unchanged, so ordinary keys - nearly all of them - read as they did before,
+/// template ids unmoved.
 ///
-/// Reversible over paths of at least one segment, which is the domain it is used over:
+/// Reversible over paths of at least one segment, which is the domain it is used over -
 /// the empty path is the root, `walk` reaches a leaf only after pushing a segment, and
-/// the depth scan gives the root its own text rather than rendering it. The empty path
-/// and the one-segment path `[""]` do both render as the empty string - that pair is the
-/// separate question of what a key with no name means, and it is answered where that is
-/// answered, in `template_id`.
+/// the depth scan gives the root its own text. The empty path and the one-segment path
+/// `[""]` do both render empty; that pair is the separate question of what a nameless key
+/// means, answered in `template_id`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct KeyPath(Vec<String>);
 
@@ -45,7 +43,7 @@ impl KeyPath {
 
     /// The leaf member name, with no separator to split on - which is the point.
     /// Splitting a rendered key on `.` reads `{"a.event":1}` as the nested path
-    /// `a` -> `event`, and promotes it into the fingerprint as one.
+    /// `a` -> `event` and promotes it as one.
     pub fn last(&self) -> Option<&str> {
         self.0.last().map(String::as_str)
     }
@@ -81,15 +79,14 @@ impl FromIterator<String> for KeyPath {
 /// The inverse of `Display`, which is what makes "reversible" a claim the suite checks
 /// rather than one the doc comment asserts.
 ///
-/// Lives beside the rendering deliberately: an encoding and its inverse drift apart the
-/// moment they are two files apart. Gated to tests because the real caller is the query
-/// side's key parser, which does not exist yet - a query naming `a\.b` has to arrive at
-/// the same path the flattener built, and this is the function it will call.
+/// Beside the rendering deliberately: an encoding and its inverse drift apart the moment
+/// they are two files apart. Gated to tests because the real caller is the query side's
+/// key parser, which does not exist yet - a query naming `a\.b` has to arrive at the same
+/// path the flattener built, and this is the function it will call.
 ///
-/// Lenient on escapes it cannot have produced: rendering only ever emits `\.` and `\\`,
-/// so a backslash before anything else is taken as a literal backslash rather than
-/// rejected. Round-tripping is unaffected either way, since those inputs are not in the
-/// image of `Display`.
+/// Lenient on escapes it cannot have produced: rendering only emits `\.` and `\\`, so a
+/// backslash before anything else is taken literally rather than rejected. Round-tripping
+/// is unaffected - those inputs are not in the image of `Display`.
 #[cfg(test)]
 pub fn parse(text: &str) -> KeyPath {
     let mut segments = vec![String::new()];
@@ -219,11 +216,11 @@ mod tests {
 
     /// The one pair the rendering cannot separate, and the reason it does not have to.
     ///
-    /// The root and the one-segment path `[""]` both render empty. The root is not a
-    /// key: `walk` pushes a segment before it reaches any leaf, so nothing it emits is
-    /// empty, and the depth scan gives the root the text `<top level>` rather than
-    /// rendering it. What remains of the pair is the empty key on its own, which
-    /// collides with something else again and is answered in `template_id`.
+    /// The root and the one-segment path `[""]` both render empty. The root is not a key:
+    /// `walk` pushes a segment before reaching any leaf, so nothing it emits is empty,
+    /// and the depth scan gives the root the text `<top level>`. What remains is the empty
+    /// key on its own, which collides with something else again - answered in
+    /// `template_id`.
     #[test]
     fn the_root_path_is_not_a_key() {
         assert!(KeyPath::new().is_empty());

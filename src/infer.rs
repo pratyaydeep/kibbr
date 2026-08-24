@@ -12,9 +12,9 @@
 //! 9.  anything else                               -> String
 //! ```
 //!
-//! Rule 2 sits above rule 6 on purpose. A ten-digit number is a Unix timestamp before
-//! it is an integer, because getting that wrong turns every time-range query into a
-//! full scan. It misclassifies ten-digit order IDs; that is the accepted trade.
+//! Rule 2 sits above rule 6 on purpose: a ten-digit number is a Unix timestamp before it
+//! is an integer, because getting that wrong turns every time-range query into a full
+//! scan. It misclassifies ten-digit order IDs - the accepted trade.
 
 use std::net::IpAddr;
 
@@ -27,11 +27,11 @@ use crate::types::{ColValue, ColumnType, Typed};
 pub fn infer(raw: &str) -> Typed {
     // 1. RFC 3339.
     if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
-        // i64 nanoseconds run from 1677 to 2262; RFC 3339 runs from year 0 to 9999.
-        // Both ends overflow, and `timestamp_nanos_opt` reports them the same way, so
-        // the direction has to come from the seconds - which are in range for every
-        // datetime chrono can hold. Clamping both ends to `i64::MAX` would file the
-        // whole pre-1677 era in 2262, the far end of the range it fell off.
+        // i64 nanoseconds run from 1677 to 2262; RFC 3339 runs from year 0 to 9999. Both
+        // ends overflow, and `timestamp_nanos_opt` reports them alike, so the direction
+        // has to come from the seconds - in range for every datetime chrono can hold.
+        // Clamping both ends to `i64::MAX` would file the pre-1677 era in 2262, the far
+        // end of the range it fell off.
         let ns = dt
             .timestamp_nanos_opt()
             .unwrap_or(if dt.timestamp() < 0 { i64::MIN } else { i64::MAX });
@@ -47,9 +47,9 @@ pub fn infer(raw: &str) -> Typed {
             Err(_) => return typed(ColumnType::String, ColValue::String(raw.to_string())),
         };
         let per_unit = if raw.len() == 10 { 1_000_000_000 } else { 1_000_000 };
-        // 9_999_999_999 seconds in nanoseconds overflows i64 (i64 nanos run out in
-        // 2262). Saturate rather than wrap: the type call stands, the instant is
-        // clamped, and nothing silently becomes a negative timestamp.
+        // 9_999_999_999 seconds in nanoseconds overflows i64 (nanos run out in 2262).
+        // Saturate rather than wrap: the type call stands, the instant is clamped, and
+        // nothing silently becomes a negative timestamp.
         let ns = digits.saturating_mul(per_unit);
         return typed(ColumnType::Datetime, ColValue::Datetime(ns));
     }
@@ -64,8 +64,8 @@ pub fn infer(raw: &str) -> Typed {
         return typed(ColumnType::Ip, ColValue::String(raw.to_string()));
     }
 
-    // 5. Email. Nothing containing `@` could reach a later rung anyway; the rule is
-    //    here so the ladder reads in its documented order.
+    // 5. Email. Nothing containing `@` reaches a later rung anyway; the rule is here so
+    //    the ladder reads in its documented order.
     if is_email(raw) {
         return typed(ColumnType::String, ColValue::String(raw.to_string()));
     }
@@ -101,8 +101,8 @@ fn is_epoch_digits(s: &str) -> bool {
     (s.len() == 10 || s.len() == 13) && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// 8-4-4-4-12 hex, case-insensitive. Version and variant nibbles are not checked:
-/// a value shaped like a UUID is a UUID for storage purposes.
+/// 8-4-4-4-12 hex, case-insensitive. Version and variant nibbles are not checked: a value
+/// shaped like a UUID is a UUID for storage purposes.
 fn is_uuid(s: &str) -> bool {
     if s.len() != 36 {
         return false;

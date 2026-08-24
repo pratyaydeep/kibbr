@@ -1,16 +1,14 @@
 //! `triedb demo` - build the trie over a file and print it as an ASCII tree.
 //!
-//! The tree is the observable surface of the trie. A non-branching run of edges is
-//! printed on one line joined by `→`; `●` marks a leaf, and the column list under it
-//! carries the types the type join settled on. Every key on the path appears again in
-//! that list, because the path *is* the key set - the repetition is the point, not an
-//! artifact.
+//! The tree is the observable surface of the trie. A non-branching run of edges prints on
+//! one line joined by `→`; `●` marks a leaf, and the column list under it carries the
+//! types the join settled on. Every key on the path appears again in that list, because
+//! the path *is* the key set - the repetition is the point, not an artifact.
 //!
-//! Everything on stdout is a function of the input lines as a set. Children are stored
-//! sorted, the columns are sorted by name, and the join is commutative, so feeding the
-//! same lines in a different order produces the same bytes. The one number that cannot
-//! be that - how long the run took - goes to stderr, where it does not sit inside the
-//! artifact whose byte-identity is the milestone's done-when.
+//! Everything on stdout is a function of the input lines as a set: children are stored
+//! sorted, columns are sorted by name, and the join is commutative, so a different input
+//! order produces the same bytes. The one number that cannot be - how long the run took -
+//! goes to stderr, outside the artifact whose byte-identity is the milestone's done-when.
 
 use std::io::{BufRead, Write};
 use std::sync::atomic::Ordering;
@@ -35,9 +33,9 @@ const GUTTER_LAST: &str = "    ";
 const COLUMN_INDENT: &str = "    ";
 
 /// A subtree holding more than this many templates is summarised rather than printed.
-/// Six `event=` subtrees of 144 templates each are the file, not a view of it; the
-/// handful of shapes that do not branch on `event` are what an operator came to see.
-/// `--full` prints all of it.
+/// Six `event=` subtrees of 144 templates each are the file, not a view of it; the handful
+/// of shapes that do not branch on `event` are what an operator came to see. `--full`
+/// prints all of it.
 const COLLAPSE_ABOVE: usize = 8;
 
 /// Blank columns between the widest summarised label in a sibling group and its `…`.
@@ -47,9 +45,9 @@ const ELLIPSIS_PAD: usize = 4;
 /// templates `--seed 42` produces take two lines rather than eight.
 const WRAP: usize = 88;
 
-/// A column that has been seen but has only ever held nulls. Not `Str`: a column whose
-/// type is unknown and a column of strings are not the same fact, which is why
-/// `ColumnType` has no `Null` variant to print here.
+/// A column that has been seen but has only ever held nulls. Not `Str`: an unknown type
+/// and a column of strings are not the same fact, which is why `ColumnType` has no `Null`
+/// variant to print here.
 const UNKNOWN_TYPE: &str = "?";
 
 pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Result<(), CliError> {
@@ -96,9 +94,8 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
             }
         };
 
-        // The wall clock is read once per line rather than once per run, because
-        // `first_seen`, `last_seen` and `widened_at` are the times things happened and
-        // an operator will read them as such.
+        // Once per line, not once per run: `first_seen`, `last_seen` and `widened_at` are
+        // the times things happened, and an operator will read them as such.
         trie.ingest(&parsed, Utc::now())?;
         ingested += 1;
     }
@@ -137,9 +134,8 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
     // stderr is not, so an unflushed tree would be printed second however it was written.
     out.flush().map_err(CliError::Write)?;
 
-    // Not on stdout. The tree and its summary are byte-identical across runs and across
-    // input orderings, which is what the trie is checked on; an elapsed time is the one
-    // number that can never be, so it is reported beside the artifact instead of in it.
+    // stderr, not stdout: an elapsed time is the one number that can never be
+    // byte-identical across runs, so it goes beside the artifact instead of in it.
     eprintln!(
         "triedb demo: {} lines in {} ms",
         commas(ingested),
@@ -155,8 +151,8 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
     Ok(())
 }
 
-/// An owned copy of the trie, taken once so that rendering holds no locks and so that
-/// each node's leaf count is computed on the way up instead of re-walked per line.
+/// An owned copy of the trie, taken once so rendering holds no locks and each node's leaf
+/// count is computed on the way up instead of re-walked per line.
 struct View {
     label: String,
     leaf: Option<LeafView>,
@@ -304,8 +300,8 @@ fn render_children<W: Write>(
 }
 
 /// Collapse a non-branching run of edges onto one line. A run stops at a leaf even when
-/// that leaf has children of its own, because the leaf has a template id and a column
-/// list to print and they belong beside their own label.
+/// that leaf has children of its own: the leaf has a template id and a column list to
+/// print, and they belong beside their own label.
 fn run_of(view: &View) -> (String, &View) {
     let mut labels = vec![view.label.as_str()];
     let mut end = view;
@@ -341,8 +337,8 @@ fn render_columns<W: Write>(columns: &[String], indent: &str, out: &mut W) -> Re
     Ok(())
 }
 
-/// Thousands separators. Six-figure line counts and four-figure node counts are the
-/// numbers this milestone is checked against, and they are read, not parsed.
+/// Thousands separators. Six-figure line counts and four-figure node counts are what this
+/// milestone is checked against, and they are read, not parsed.
 fn commas(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
