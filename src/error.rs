@@ -128,8 +128,9 @@ pub enum GenError {
 
 /// A `triedb query` flag that could not be turned into a `Query`.
 ///
-/// Flag-level only. There is no query language yet, so there is nothing here about tokens
-/// or byte positions - the parser will report those, and it does not exist.
+/// Flag-level only: nothing here carries a byte position, because a flag value is its own
+/// unit and quoting it whole says where it was. TrieQL's failures are
+/// `trieql::ParseError`, which does carry one.
 #[derive(Debug, Error)]
 pub enum QueryError {
     #[error("--match `{arg}`: expected KEY=VALUE")]
@@ -179,6 +180,11 @@ pub enum CliError {
 
     #[error(transparent)]
     Query(#[from] QueryError),
+
+    // Transparent, not wrapped: `ParseError` says where it was and `report` walks the
+    // source chain, so a wrapper would print the same sentence twice.
+    #[error(transparent)]
+    Trieql(#[from] crate::trieql::ParseError),
 
     #[error(transparent)]
     Store(#[from] crate::store::StoreError),

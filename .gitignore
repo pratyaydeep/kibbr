@@ -18,3 +18,7 @@ sample.ndjson
 
 # M2 timing inputs - scratch, `gen-logs --seed 5` rebuilds them.
 /testdata/m2/
+
+# `scripts/dump_store.sh` output - the in-memory trie and leaf stores written down.
+# Scratch, and the script rebuilds it from the seed.
+/testdata/store/

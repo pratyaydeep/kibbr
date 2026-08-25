@@ -42,7 +42,7 @@ pub struct ScanOptions {
 
 #[derive(Debug, Error)]
 pub enum StoreError {
-    /// Unreachable in memory, and here because the disk store at M5 will reach it.
+    /// Unreachable in memory, and here because a disk store will reach it.
     #[error("no store open for leaf {template_id}")]
     NotOpen { template_id: u64 },
 }
@@ -61,7 +61,7 @@ pub struct Scan {
     pub matched: u64,
 }
 
-/// One leaf's rows. Append-only; nothing deletes at M2.
+/// One leaf's rows. Append-only; nothing deletes.
 pub struct LeafStore {
     pub template_id: u64,
     rows: Vec<Row>,

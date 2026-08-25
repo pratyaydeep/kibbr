@@ -71,8 +71,8 @@ const UNKNOWN: &[&[&str]] = &[
 ];
 
 /// Patterns naming a template that does exist and holds no matching row. Both routes are
-/// here because they are settled in different phases: the window in phase 2's scan, the
-/// value by phase 2's predicate, and neither by phase 1.
+/// here because they are settled in different places: the window and the value both in
+/// the scan, neither by the walk.
 const KNOWN_BUT_EMPTY: &[&[&str]] = &[
     // The template's one row sits outside the window.
     &[

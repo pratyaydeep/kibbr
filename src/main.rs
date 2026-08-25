@@ -16,6 +16,7 @@ mod reference;
 mod rng;
 mod store;
 mod trie;
+mod trieql;
 mod types;
 
 use std::fs::File;
@@ -70,10 +71,23 @@ enum Command {
         #[arg(long)]
         full: bool,
     },
-    /// Query a file. Flags only - the query language is a later milestone.
+    /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
+    /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
+    Explain {
+        /// e.g. `COUNT LOG {"event": "login_failed"} SINCE 1h`.
+        query: String,
+    },
+    /// Query a file, with TrieQL or with the flags.
     Query {
         /// Path to an NDJSON file, or `-` for stdin.
         input: String,
+
+        /// A TrieQL query. Give this or the flags below, not both.
+        #[arg(
+            value_name = "TRIEQL",
+            conflicts_with_all = ["matches", "count", "fetch", "exists", "group_by", "since", "between"]
+        )]
+        query: Option<String>,
 
         /// `KEY=VALUE`, repeatable. `VALUE` may be `*` for "present and not null".
         #[arg(long = "match", value_name = "KEY=VALUE")]
@@ -89,7 +103,7 @@ enum Command {
         /// The matching rows themselves.
         #[arg(long, conflicts_with_all = ["exists", "group_by"])]
         fetch: bool,
-        /// Whether the template exists at all - phase 1 only, no rows read.
+        /// Whether the template exists at all - the trie walk only, no rows read.
         #[arg(long, conflicts_with_all = ["group_by"])]
         exists: bool,
         /// Count per distinct value of these keys.
@@ -106,7 +120,7 @@ enum Command {
         #[arg(long, value_enum, default_value = "table")]
         format: query::Format,
 
-        /// Print the phase 1 plan and execute nothing.
+        /// Print the execution plan and execute nothing.
         #[arg(long)]
         explain: bool,
 
@@ -149,8 +163,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let reader = open(&input)?;
             demo::run(reader, &mut out, full)
         }
+        Command::Explain { query } => query::describe(&mut out, &query),
         Command::Query {
             input,
+            query: trieql,
             matches,
             count,
             fetch,
@@ -165,6 +181,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             let reader = open(&input)?;
             let args = query::Args {
+                trieql,
                 matches,
                 count,
                 fetch,

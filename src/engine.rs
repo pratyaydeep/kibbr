@@ -1,6 +1,6 @@
-//! The query engine: two phases, and the result shape every surface above reports.
+//! The query engine: a walk, a scan, and the result shape every surface above reports.
 //!
-//! Phase 1 walks the trie and touches no data. Phase 2 opens only the leaves phase 1
+//! The walk crosses the trie and touches no data. The scan opens only the leaves the walk
 //! chose. The split is enforced by the types: `plan` cannot see `Stores`, so `--explain`
 //! cannot accidentally read a row.
 
@@ -47,12 +47,12 @@ pub struct QueryMeta {
     pub files_opened: usize,
     pub rows_scanned: u64,
     pub rows_returned: u64,
-    /// Phase 1 plus phase 2. Loading the file is not query time - at M2 the CLI has to
-    /// build the trie first because nothing persists it yet.
+    /// Walk plus scan. Loading the file is not query time - the CLI has to build the
+    /// trie first because nothing persists it yet.
     pub duration: Duration,
 }
 
-/// One `--match KEY=VALUE`.
+/// One term: a `--match KEY=VALUE` flag, or one `"key": "value"` pair of a pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Match {
     pub key: String,
@@ -78,8 +78,9 @@ impl TimeRange {
     }
 }
 
-/// A query, already built. Nothing here parses text - the query language is a later
-/// milestone, and the CLI constructs this from flags.
+/// A query, already built. Nothing here parses text: the flags build this directly and
+/// `crate::trieql` builds the same struct from a query string, so the engine has one
+/// input whichever surface asked.
 #[derive(Debug)]
 pub struct Query {
     pub matches: Vec<Match>,
@@ -112,9 +113,9 @@ impl Query {
     }
 }
 
-// ── Phase 1 ────────────────────────────────────────────────────────────────────────
+// ── The walk ───────────────────────────────────────────────────────────────────────
 
-/// What phase 1 decided, and nothing else. No rows, no store handles.
+/// What the walk decided, and nothing else. No rows, no store handles.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub leaves: Vec<PlannedLeaf>,
@@ -126,11 +127,11 @@ pub struct Plan {
 #[derive(Debug)]
 pub struct PlannedLeaf {
     pub template_id: u64,
-    /// Phase 1 collects the storage paths, and nothing opens one while the store is a
-    /// `Vec<Row>`. It is what phase 2 will hand to the file layer once there is one.
+    /// Collected by the walk; nothing opens one while the store is a `Vec<Row>`. It is
+    /// what the scan will hand to the file layer once there is one.
     #[allow(dead_code)]
     pub storage_path: String,
-    /// Terms the path could not settle - phase 2's predicates. Empty means the leaf
+    /// Terms the path could not settle - the scan's predicates. Empty means the leaf
     /// answers the pattern by its shape alone and every row in it matches.
     pub residual: Vec<Match>,
 }
@@ -221,19 +222,19 @@ fn collect(node: &Arc<Node>, path: &mut Vec<String>, out: &mut Vec<(Vec<String>,
 }
 
 /// Test one leaf against the pattern. `None` = this leaf cannot match; `Some(residual)` =
-/// it can, once phase 2 has applied the terms listed.
+/// it can, once the scan has applied the terms listed.
 fn select(path: &[String], columns: &BTreeSet<&str>, query: &Query) -> Option<Vec<Match>> {
     let promoted = promoted_of(path, columns);
     let mut residual = Vec::new();
     for term in &query.matches {
         // The key set is the path, so a template without the key cannot hold a row with
-        // it. This is the whole of phase 1's pruning for non-promoted keys.
+        // it. This is the whole of the walk's pruning for non-promoted keys.
         if !columns.contains(term.key.as_str()) {
             return None;
         }
         match promoted.get(term.key.as_str()) {
             // The value is in the path, so the leaf settles the term now and every row
-            // in it agrees - no predicate, and phase 2 has nothing to check.
+            // in it agrees - no predicate, and the scan has nothing to check.
             Some(&have) => match &term.value {
                 MatchValue::Any => {}
                 MatchValue::Exact(want) if want == have => {}
@@ -264,9 +265,9 @@ fn promoted_of<'a>(path: &'a [String], columns: &BTreeSet<&str>) -> BTreeMap<&'a
     out
 }
 
-// ── Phase 2 ────────────────────────────────────────────────────────────────────────
+// ── The scan ───────────────────────────────────────────────────────────────────────
 
-/// Run both phases. `QueryMode::Exists` stops after phase 1 - the question is about the
+/// Both halves. `QueryMode::Exists` stops after the walk - the question is about the
 /// template, and answering it needs no rows.
 pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResult, StoreError> {
     let plan = plan(trie, query);
@@ -329,7 +330,7 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
     Ok(result)
 }
 
-/// One residual term as a phase 2 predicate.
+/// One residual term as a scan predicate.
 fn predicate(term: &Match) -> Predicate {
     let key = term.key.clone();
     let want = term.value.clone();
@@ -341,7 +342,7 @@ fn predicate(term: &Match) -> Predicate {
 /// The contract, shared verbatim with the reference scanner - a differential test is only
 /// worth running if both sides are answering the same question.
 ///
-/// Two readings of the flag's text, because a `Row` holds `ColValue` and not the raw line.
+/// Two readings of the term's text, because a `Row` holds `ColValue` and not the raw line.
 /// A `Datetime` column kept nanoseconds and threw the text away, so `ts=2024-01-15T10:30:00Z`
 /// can only be matched by putting the flag through the same ladder the value went through.
 /// The string reading comes first so a JSON string `"149.00"` is matched by its own text

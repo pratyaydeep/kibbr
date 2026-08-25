@@ -50,8 +50,8 @@ pub fn row_of(parsed: &ParsedLog) -> Row {
 
 /// Build the trie, and the stores unless `with_rows` is false.
 ///
-/// `--explain` passes `false`: phase 1 needs the schema and nothing else, and skipping
-/// row materialisation is the same separation the two phases have, applied to the load.
+/// `--explain` passes `false`: the walk needs the schema and nothing else, and skipping
+/// row materialisation applies the walk/scan separation to the load.
 pub fn load<R: BufRead>(input: R, with_rows: bool) -> Result<Db, CliError> {
     let trie = Trie::new();
     let mut stores = Stores::new();
@@ -65,7 +65,7 @@ pub fn load<R: BufRead>(input: R, with_rows: bool) -> Result<Db, CliError> {
                 .and_then(|slot| slot.as_ref().map(|meta| meta.template_id));
             // `ingest` just wrote the meta, so `None` is a poisoned lock and nothing
             // else. Dropping the row is the only option left and it is counted nowhere -
-            // single-threaded at M2, so it cannot happen yet.
+            // single-threaded for now, so it cannot happen yet.
             if let Some(id) = id {
                 stores.append(id, row_of(&parsed));
             }

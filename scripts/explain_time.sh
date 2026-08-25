@@ -4,12 +4,12 @@
 #
 # Two numbers per input, and the difference between them is the point:
 #
-#   phase 1   what `--explain` reports. Its cost is the trie's size, and the trie stops
+#   walk      what `--explain` reports. Its cost is the trie's size, and the trie stops
 #             growing once the templates have all been seen. This is the constant.
-#   wall      the whole process, which at M2 still has to build that trie by reading the
-#             file. Nothing persists the trie yet, so this is linear and says so.
+#   wall      the whole process, which still has to build that trie by reading the file.
+#             Nothing persists the trie yet, so this is linear and says so.
 #
-# The comparison that matters is phase 1 against phase 2 of a real query on the same
+# The comparison that matters is the walk against the scan of a real query on the same
 # input: same walk, and then the scan the walk avoided.
 #
 #   REPEATS=5 scripts/explain_time.sh

@@ -1,8 +1,11 @@
-//! `triedb query` - the M2 surface. Flags in, `QueryResult` out.
+//! `triedb query`. Flags or TrieQL in, `QueryResult` out.
 //!
-//! No query language: that is its own milestone, and nothing in this file consumes a
-//! query string. The flags construct a `Query` directly, which is also what makes
-//! `--reference` honest - both paths are built from the same struct.
+//! Two ways in and one `Query` out. The flags construct it directly; a TrieQL string goes
+//! through `trieql` and arrives at the same struct, carrying nothing the flags could not
+//! also say. That is what makes `--reference` and `scripts/parser_equivalence.sh` honest -
+//! every path builds the one struct, so a differential compares answers, not plumbing.
+//!
+//! `--limit` and the output flags are not in the grammar and stay flags on both.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -17,7 +20,9 @@ use crate::engine::{
     self, Match, MatchValue, Plan, Query, QueryMode, QueryResult, TimeRange, GROUP_SEP,
 };
 use crate::error::{CliError, QueryError};
-use crate::fmt::{col_text, commas, millis};
+use crate::fmt::{col_text, commas, millis, rfc3339};
+use crate::trieql;
+use crate::types::ColValue;
 
 /// Blank columns between two cells of a rendered table.
 const GUTTER: usize = 2;
@@ -29,10 +34,18 @@ const EXPLAIN_LEAVES: usize = 12;
 pub enum Format {
     Table,
     Json,
+    /// One JSON object per line and no envelope: `triedb query … | triedb query -` is the
+    /// point, so what comes out has to be what goes in. `jsonl` is the same thing under
+    /// the name the file extension uses.
+    #[value(alias = "jsonl")]
+    Ndjson,
 }
 
 /// The flags, straight off the command line and not yet validated.
 pub struct Args {
+    /// Present or absent, never both: clap keeps it exclusive with the flags below, so
+    /// the two surfaces cannot half-describe one query between them.
+    pub trieql: Option<String>,
     pub matches: Vec<String>,
     pub count: bool,
     pub fetch: bool,
@@ -72,6 +85,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     match args.format {
         Format::Table => table(out, &query, &result),
         Format::Json => json(out, &result),
+        Format::Ndjson => ndjson(out, &query, &result),
     }
 }
 
@@ -89,11 +103,24 @@ fn note(stats: db::LoadStats) {
     }
 }
 
-// ── Flags to a Query ───────────────────────────────────────────────────────────────
+// ── Text and flags to a Query ──────────────────────────────────────────────────────
 
-/// `now` is a parameter, not a call: `--since` is relative to it, and a caller that wants
-/// a reproducible answer needs to be able to fix it.
-fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, QueryError> {
+/// `now` is a parameter, not a call: `--since` and `SINCE` are both relative to it, and a
+/// caller that wants a reproducible answer needs to be able to fix it. Both surfaces take
+/// the same one, which is what lets `scripts/parser_equivalence.sh` compare them at all.
+fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
+    // TrieQL builds the same `Query` the flags do and then stops: `--limit` and the
+    // output flags are not in the grammar.
+    if let Some(text) = &args.trieql {
+        let parsed = trieql::parse(text, now)?;
+        return Ok(Query {
+            matches: parsed.matches,
+            mode: parsed.mode,
+            time: parsed.time,
+            limit: args.limit,
+        });
+    }
+
     let matches = args
         .matches
         .iter()
@@ -112,7 +139,7 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, QueryError> {
 
     let time = match (&args.since, &args.between) {
         (Some(d), _) => TimeRange {
-            since: Some(system_time(now) - parse_duration(d)?),
+            since: ago(system_time(now), parse_duration(d)?),
             until: None,
         },
         (None, Some(pair)) => {
@@ -122,7 +149,8 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, QueryError> {
                 return Err(QueryError::BackwardsRange {
                     from: pair[0].clone(),
                     to: pair[1].clone(),
-                });
+                }
+                .into());
             }
             TimeRange {
                 since: Some(system_time(from)),
@@ -199,8 +227,16 @@ fn parse_datetime(text: &str) -> Result<DateTime<Utc>, QueryError> {
         })
 }
 
+/// `now - d`, or no lower bound at all when the subtraction leaves the representable
+/// range: `SystemTime - Duration` panics on overflow, and `1000000000000d` is a duration
+/// a user is entitled to write on either surface. A window reaching further back than
+/// time can be expressed is an open one, which is what `None` already means.
+pub(crate) fn ago(now: SystemTime, d: Duration) -> Option<SystemTime> {
+    now.checked_sub(d)
+}
+
 /// Pre-1970 lands on the far side of the epoch rather than saturating at it.
-fn system_time(dt: DateTime<Utc>) -> SystemTime {
+pub(crate) fn system_time(dt: DateTime<Utc>) -> SystemTime {
     let secs = dt.timestamp();
     let nanos = dt.timestamp_subsec_nanos();
     if secs >= 0 {
@@ -210,13 +246,48 @@ fn system_time(dt: DateTime<Utc>) -> SystemTime {
     }
 }
 
+/// A window edge as RFC 3339 - the inverse of `system_time`, and fallible where that one
+/// is not.
+///
+/// Separate from `fmt::rfc3339`, which takes the `i64` nanoseconds a stored `Datetime`
+/// always is and so cannot fail. A window edge is not stored and not bounded by that: it
+/// comes off `--between` or out of `now - SINCE`, and reaches years no count of
+/// nanoseconds can address.
+///
+/// `SystemTime` reaches far further than `DateTime<Utc>` does and chrono's `From` panics
+/// rather than saying so - which `SINCE 1000000000000d` is enough to reach. A window edge
+/// with no RFC 3339 spelling is still a window edge the engine can compare against, so it
+/// is named rather than rejected.
+fn edge_text(t: SystemTime) -> String {
+    let stamp = match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_secs()).ok().map(|s| (s, d.subsec_nanos())),
+        // Below the epoch: chrono counts its nanoseconds forward from a whole second, so
+        // a fractional second down here borrows one.
+        Err(back) => {
+            let d = back.duration();
+            i64::try_from(d.as_secs())
+                .ok()
+                .and_then(|s| match d.subsec_nanos() {
+                    0 => Some((-s, 0)),
+                    n => (-s).checked_sub(1).map(|s| (s, 1_000_000_000 - n)),
+                })
+        }
+    };
+    stamp
+        .and_then(|(secs, nanos)| DateTime::from_timestamp(secs, nanos))
+        .map_or_else(
+            || "out of range".to_string(),
+            |dt: DateTime<Utc>| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        )
+}
+
 // ── Output ─────────────────────────────────────────────────────────────────────────
 
-/// The phase 1 plan, and nothing executed.
+/// The plan, and nothing executed.
 fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliError> {
     let tokens: Vec<String> = query.tokens().iter().map(|t| format!("{t:?}")).collect();
     // A wildcard over a wide dimension selects hundreds of leaves, and a plan nobody can
-    // read is not a plan. The count is on the phase 2 line either way.
+    // read is not a plan. The count is on the scan line either way.
     let mut ids: Vec<String> = plan
         .leaves
         .iter()
@@ -281,6 +352,28 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
     .map_err(CliError::Write)
 }
 
+/// `triedb explain '<trieql>'` - what the parser made of the string, and nothing else.
+///
+/// Ideally this would print the execution plan, but a plan needs a trie and this command
+/// takes no file: nothing persists a trie yet, so the only one that exists is the one
+/// `triedb query <file>` builds for the length of a run. `query --explain` is the half
+/// that plans; this one reports the `Query` the text denotes, which is the whole of what
+/// the parser is answerable for. Persisting the trie would let this grow the plan without
+/// the parser changing.
+pub fn describe<W: Write>(out: &mut W, text: &str) -> Result<(), CliError> {
+    let parsed = trieql::parse(text, Utc::now())?;
+    let query = Query {
+        matches: parsed.matches,
+        mode: parsed.mode,
+        time: parsed.time,
+        limit: 0,
+    };
+    writeln!(out, "query:").map_err(CliError::Write)?;
+    writeln!(out, "  mode     {}", mode_text(&query.mode)).map_err(CliError::Write)?;
+    writeln!(out, "  pattern  [{}]", query.tokens().join(", ")).map_err(CliError::Write)?;
+    writeln!(out, "  window   {}", window_text(&query)).map_err(CliError::Write)
+}
+
 fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
     // The distinction, in the one place an operator looks. "unknown template" is not a
     // count of zero, and the two lines do not resemble each other on purpose.
@@ -296,7 +389,7 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
     }
 
     match &query.mode {
-        // `rows scanned: 0` is the mode's whole point: the answer came out of phase 1
+        // `rows scanned: 0` is the mode's whole point: the answer came off the trie walk
         // having opened nothing.
         QueryMode::Exists => writeln!(
             out,
@@ -350,16 +443,7 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
 /// Keys are sorted everywhere - `Row` and `group_counts` are `HashMap`s, and a result
 /// that serialises in a different order each run is not comparable to anything.
 fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
-    let rows: Vec<Value> = canonical(result)
-        .iter()
-        .map(|row| {
-            let mut obj = Map::new();
-            for (key, value) in row.iter().collect::<BTreeMap<_, _>>() {
-                obj.insert(key.clone(), value.to_json());
-            }
-            Value::Object(obj)
-        })
-        .collect();
+    let rows: Vec<Value> = canonical(result).into_iter().map(row_json).collect();
 
     let mut groups = Map::new();
     for (label, n) in sorted_groups(result) {
@@ -384,11 +468,87 @@ fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
     writeln!(out, "{body}").map_err(CliError::Write)
 }
 
+/// One row as one JSON object. Shared with `ndjson`, so a row serialises identically
+/// whether it is a line of its own or an element of `rows`.
+fn row_json(row: &crate::store::Row) -> Value {
+    let mut obj = Map::new();
+    for (key, value) in row.iter().collect::<BTreeMap<_, _>>() {
+        obj.insert(key.clone(), value_json(value));
+    }
+    Value::Object(obj)
+}
+
+/// A row's value as JSON.
+///
+/// `ColValue::to_json` everywhere except a `Datetime`, which is spelled RFC 3339 through
+/// the one renderer in `fmt`. A row leaving here is a log line: it goes to something that
+/// will read `ts` as a time, and it re-ingests through the type ladder as a `Datetime`
+/// rather than as the 19-digit integer raw nanoseconds would be read as.
+///
+/// That leaves `parse --json`'s `typed_values` as the only surface still carrying the
+/// machine instant, which is what it is for - see `fmt::rfc3339`.
+fn value_json(value: &ColValue) -> Value {
+    match value {
+        ColValue::Datetime(ns) => Value::String(rfc3339(*ns)),
+        other => other.to_json(),
+    }
+}
+
+/// One JSON object per line and nothing else on stdout.
+///
+/// The envelope `--format json` prints - `exists`, `count`, `meta` - has no place in a
+/// stream whose every line is a record, so none of it is here. The output feeds straight
+/// back into `triedb query -`, and into anything else that reads NDJSON: a row goes
+/// through `row_json`, so a `Datetime` leaves as RFC 3339 and comes back as one.
+///
+/// The two empty answers stay apart on stderr. "No such template" prints no lines and
+/// says so there; "that template exists and nothing matched" prints no lines and says
+/// nothing. Neither puts an odd-shaped object in the middle of a stream something
+/// downstream is parsing row by row.
+fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
+    if !result.exists {
+        eprintln!(
+            "triedb query: no template matches [{}]",
+            query.tokens().join(", ")
+        );
+        return Ok(());
+    }
+
+    // Every mode prints its own records rather than only `Fetch` printing anything: a
+    // format flag that silently emits nothing for three of the four modes is a trap.
+    match &query.mode {
+        QueryMode::Exists => line(out, &serde_json::json!({ "exists": true }))?,
+        QueryMode::Count => line(out, &serde_json::json!({ "count": result.count }))?,
+        QueryMode::Fetch => {
+            for row in canonical(result) {
+                line(out, &row_json(row))?;
+            }
+        }
+        QueryMode::GroupBy(keys) => {
+            for (label, n) in sorted_groups(result) {
+                let mut obj = Map::new();
+                // The label is the group's values joined by `GROUP_SEP`, in the order the
+                // keys were asked for - the same split `table` does, given field names.
+                for (key, value) in keys.iter().zip(label.split(GROUP_SEP)) {
+                    obj.insert(key.clone(), Value::from(value));
+                }
+                obj.insert("count".to_string(), Value::from(n));
+                line(out, &Value::Object(obj))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn line<W: Write>(out: &mut W, value: &Value) -> Result<(), CliError> {
+    writeln!(out, "{value}").map_err(CliError::Write)
+}
+
 /// Rows in a fixed order.
 ///
 /// The engine returns them leaf by leaf and the oracle in file order; neither is wrong
-/// and there is no ORDER BY at M2 to override. Sorting by the rendered row is what lets
-/// the two be compared at all, and it costs an ordering nothing was promising.
+/// and there is no ORDER BY to override it. Sorting by the rendered row is what lets the
+/// two be compared at all, and it costs an ordering nothing was promising.
 fn canonical(result: &QueryResult) -> Vec<&crate::store::Row> {
     let mut rows: Vec<&crate::store::Row> = result.rows.iter().collect();
     rows.sort_by_cached_key(|row| {
@@ -485,11 +645,7 @@ fn window_text(query: &Query) -> String {
     if query.time.is_open() {
         return "no time filter".to_string();
     }
-    let show = |t: Option<SystemTime>| {
-        t.map_or("-".to_string(), |t| {
-            DateTime::<Utc>::from(t).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        })
-    };
+    let show = |t: Option<SystemTime>| t.map_or("-".to_string(), edge_text);
     format!("ts in [{}, {})", show(query.time.since), show(query.time.until))
 }
 

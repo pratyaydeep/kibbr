@@ -4,10 +4,9 @@
 use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
-use chrono::DateTime;
-
 use crate::error::CliError;
 use crate::flatten::parse_line;
+use crate::fmt::rfc3339;
 use crate::lines::{strip_bom, strip_eol};
 use crate::types::{ColValue, ColumnType};
 
@@ -216,8 +215,3 @@ fn display_value(ty: Option<ColumnType>, value: &ColValue, raw: &str) -> String 
     }
 }
 
-fn rfc3339(nanos: i64) -> String {
-    // AutoSi, not Secs: a value carrying sub-second precision keeps it, so the rendering
-    // never implies the ladder threw precision away.
-    DateTime::from_timestamp_nanos(nanos).to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
-}
