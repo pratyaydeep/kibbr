@@ -4,14 +4,17 @@
 //! chose. The split is enforced by the types: `plan` cannot see `Stores`, so `--explain`
 //! cannot accidentally read a row.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use thiserror::Error;
+
 use crate::fmt::col_text;
 use crate::infer::infer;
-use crate::store::{Predicate, Row, ScanOptions, StoreError, Stores};
+use crate::store::{Predicate, Row, ScanOptions, StoreError, Stores, DEFAULT_TS_COLUMN};
 use crate::trie::{Node, Trie};
 use crate::types::ColValue;
 
@@ -47,6 +50,16 @@ pub struct QueryMeta {
     pub files_opened: usize,
     pub rows_scanned: u64,
     pub rows_returned: u64,
+    /// The limit dropped rows that matched. `count` is the total that matched and
+    /// `rows_returned` is how many survived the cap, so this is `rows_returned < count` -
+    /// carried as its own field because every surface above has to say so, and a reader
+    /// comparing two numbers is a reader who can miss it.
+    pub truncated: bool,
+    /// Hand this back as `AFTER` to get the next page, or `None` because there is no next
+    /// page. Present only when a `LIMIT` both applied and actually stopped short of the
+    /// end - `rows_returned == limit` is not the same fact, and a cursor that yields an
+    /// empty page is a cursor that lied.
+    pub next_cursor: Option<String>,
     /// Walk plus scan. Loading the file is not query time - the CLI has to build the
     /// trie first because nothing persists it yet.
     pub duration: Duration,
@@ -86,11 +99,49 @@ pub struct Query {
     pub matches: Vec<Match>,
     pub mode: QueryMode,
     pub time: TimeRange,
-    /// 0 = unlimited.
-    pub limit: usize,
+    /// `None` = every matching row. Already resolved by `Query::new`, which drops a limit
+    /// the mode cannot use.
+    ///
+    /// Deliberately *not* defaulted to a cap. A cap nobody asked for answers a different
+    /// question than the one asked - "show me the errors" comes back as "here are some of
+    /// the errors". The out-of-memory it would have prevented is answered by paging and by
+    /// `--format ndjson`: ways of asking for less, rather than of being given less.
+    pub limit: Option<usize>,
+    /// Where the last page stopped, from `QueryMeta::next_cursor`. `None` = start at the
+    /// newest row.
+    pub cursor: Option<Cursor>,
 }
 
 impl Query {
+    /// The one constructor, so the flag surface and TrieQL resolve the limit identically.
+    ///
+    /// `limit` caps *rows returned*, not rows counted: `MATCH … LIMIT 10` answers with the
+    /// newest ten and a `count` of every row that matched, as SQL's LIMIT bounds the result
+    /// set and not `COUNT(*)`. `Count` and `GroupBy` return no rows, so a limit has nothing
+    /// to cap there and is normalised away rather than quietly halving a total; `cursor`
+    /// goes with it, since a mode returning no rows has no sequence to page. `--explain`
+    /// prints what survived.
+    ///
+    /// An `Option`, not a 0-means-absent sentinel: `LIMIT 0` asks for no rows and has to
+    /// stay distinguishable from asking for nothing. `ScanOptions.limit` keeps the sentinel
+    /// - it is the storage interface, where "unlimited" is a real setting.
+    pub fn new(
+        matches: Vec<Match>,
+        mode: QueryMode,
+        time: TimeRange,
+        limit: Option<usize>,
+        cursor: Option<Cursor>,
+    ) -> Self {
+        let fetching = mode == QueryMode::Fetch;
+        Self {
+            matches,
+            mode,
+            time,
+            limit: if fetching { limit } else { None },
+            cursor: if fetching { cursor } else { None },
+        }
+    }
+
     /// The pattern as trie tokens, for `--explain`.
     pub fn tokens(&self) -> Vec<String> {
         self.matches
@@ -105,11 +156,26 @@ impl Query {
     pub fn scan_options(&self) -> ScanOptions {
         ScanOptions {
             columns: Vec::new(),
-            limit: self.limit,
+            // The storage layer's spelling of "unlimited", which is not this one's.
+            limit: self.limit.unwrap_or(0),
             since: self.time.since,
             until: self.time.until,
             ts_column: None,
         }
+    }
+
+    /// A cursor of this query, at a rank this query produced. The one way to mint one -
+    /// `Cursor::guard` is the query's, so a cursor cannot be built without a query to
+    /// answer for it.
+    pub fn cursor_at(&self, rank: Rank) -> Cursor {
+        Cursor::new(rank, self)
+    }
+
+    /// The column the result is ordered by, and the one a time filter reads.
+    pub fn ts_column(&self) -> String {
+        self.scan_options()
+            .ts_column
+            .unwrap_or_else(|| DEFAULT_TS_COLUMN.to_string())
     }
 }
 
@@ -127,6 +193,15 @@ pub struct Plan {
 #[derive(Debug)]
 pub struct PlannedLeaf {
     pub template_id: u64,
+    /// The leaf's key set as walk tokens - what `ParsedLog::walk_tokens` produces for any
+    /// line in it.
+    ///
+    /// Carried because it is the leaf's *content-derived* identity, where `template_id` is
+    /// a counter handed out in the order templates were first seen. The result order needs
+    /// a tiebreak for rows a timestamp cannot separate, and a tiebreak the reference
+    /// scanner cannot recompute is one the two sides will disagree about - which they did,
+    /// on every template whose time column is not called `ts`.
+    pub path: Vec<String>,
     /// Collected by the walk; nothing opens one while the store is a `Vec<Row>`. It is
     /// what the scan will hand to the file layer once there is one.
     #[allow(dead_code)]
@@ -173,6 +248,7 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
         if let Some(residual) = select(&path, &columns, query) {
             leaves.push(PlannedLeaf {
                 template_id: meta.template_id,
+                path: path.clone(),
                 storage_path: meta.storage_path.clone(),
                 residual,
             });
@@ -265,10 +341,319 @@ fn promoted_of<'a>(path: &'a [String], columns: &BTreeSet<&str>) -> BTreeMap<&'a
     out
 }
 
+// ── Result order ───────────────────────────────────────────────────────────────────
+
+/// Where a row sits in the answer. Smaller is earlier.
+///
+/// Rows come back **newest first**: "the last 100 errors" is what a limit is nearly always
+/// asked for, and an ascending order would hand back the oldest hundred instead. Leaving
+/// this unspecified was not a neutral position - it made LIMIT meaningless.
+///
+/// `Reverse(ts)` puts the newest first and, because `None` is the least `Option`, puts a
+/// row with no readable timestamp last. A template with no `ts` column at all has nothing
+/// to sort by, so those rows fall back to **insertion order**: `seq` is the order they
+/// were appended to their leaf in. The same pair settles a tie between two rows sharing a
+/// timestamp.
+///
+/// The leaf ordinal ahead of `seq` is the leaf's rank among the planned leaves *by key
+/// set* (`PlannedLeaf::path`), not its `template_id`. Both would order the leaves; only the
+/// key set is something the reference scanner can recompute, and a tiebreak it cannot
+/// reproduce leaves the two disagreeing about row order on every template whose time column
+/// is not named `ts`. The order is total and computed from the data alone, so the
+/// differential compares the answer exactly instead of as an unordered set.
+///
+/// This order is also what will let a disk store stop a partition scan once the limit
+/// fills: partitioned by day and read newest-first, the first `limit` rows it sees are the
+/// answer. Nothing here forecloses that - `Newest` becomes redundant, not wrong.
+pub type Rank = (Reverse<Option<i64>>, u64, u64);
+
+/// Each planned leaf's rank among them by key set. The oracle sorts its own templates the
+/// same way and lands on the same numbers.
+fn leaf_ordinals(plan: &Plan) -> HashMap<u64, u64> {
+    let mut by_path: Vec<&PlannedLeaf> = plan.leaves.iter().collect();
+    by_path.sort_by(|a, b| a.path.cmp(&b.path));
+    by_path
+        .iter()
+        .enumerate()
+        .map(|(n, leaf)| (leaf.template_id, n as u64))
+        .collect()
+}
+
+/// A row's timestamp, or `None` for a row that cannot be placed in time.
+///
+/// The same reading `store::in_window` uses: a column widened to `String` by one bad line
+/// is not a timestamp any more, and it should sort to the end rather than be guessed at.
+fn ts_of(row: &Row, ts: &str) -> Option<i64> {
+    match row.get(ts) {
+        Some(ColValue::Datetime(ns)) => Some(*ns),
+        _ => None,
+    }
+}
+
+// ── Cursors ────────────────────────────────────────────────────────────────────────
+
+/// Where a page stopped: the `Rank` of its last row, plus a guard.
+///
+/// Keyset, not offset. A cursor names a *row*, so nothing ingested elsewhere can shift
+/// it; `OFFSET n` names a position in a sequence that moves, so it re-serves rows when
+/// anything lands at the head between two calls - and pays for the n rows it skips.
+///
+/// Nothing stores one. A cursor is a function of the last row handed out, so there is no
+/// session and no expiry and the server may restart between two pages. That is the line
+/// between `search_after`, which Kibana uses, and `scroll` or a Splunk job, which park a
+/// frozen result set server-side.
+///
+/// The guard is why `query` is in here. `Rank`'s middle component is the leaf's ordinal
+/// *among the leaves this query matched*, so a cursor read against a different pattern
+/// names a different leaf and returns wrong rows without complaining. Four bytes is the
+/// difference between an error and a wrong answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cursor {
+    rank: Rank,
+    query: u32,
+}
+
+/// Bumped when `Rank`'s components change meaning. `seq` is an index into a leaf's
+/// in-memory `Vec<Row>`; on disk a row's identity becomes its partition and offset within
+/// it, and a v1 cursor issued before that migration must be refused rather than
+/// reinterpreted against a layout it never described.
+const CURSOR_VERSION: &str = "v1";
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum CursorError {
+    #[error("not a cursor: expected `{CURSOR_VERSION}.` followed by {HEX_LEN} hex digits")]
+    Malformed,
+    #[error("cursor version `{found}` is not `{CURSOR_VERSION}`")]
+    Version { found: String },
+    #[error("this cursor came from a different query - a cursor is only valid for the pattern and order that produced it")]
+    WrongQuery,
+}
+
+/// `[1 present][8 ts][8 leaf][8 seq][4 guard]`, big-endian, as hex.
+const CURSOR_BYTES: usize = 1 + 8 + 8 + 8 + 4;
+const HEX_LEN: usize = CURSOR_BYTES * 2;
+
+impl Cursor {
+    /// The fingerprint a cursor is checked against: what was matched, and in what order.
+    /// Anything that would renumber the leaves or reorder the rows is in here, and nothing
+    /// that would not.
+    ///
+    /// The time window is deliberately *out*. It renumbers nothing - `select` chooses
+    /// leaves from the pattern alone - and putting it in makes the common case impossible:
+    /// `SINCE 1h` resolves against `now`, so two calls a millisecond apart produce two
+    /// different windows and every cursor from a relative window would be refused by the
+    /// query that issued it.
+    ///
+    /// What that costs, stated rather than hidden: pages are a moving view over live data.
+    /// A row ingested between two pages lands ahead of the cursor and is not shown until
+    /// you start again without one. Widening the window mid-page has the same shape. This
+    /// is how `search_after` and Loki behave; freezing the window into the cursor instead
+    /// would make it a snapshot, with the expiry and server-side state that implies.
+    pub fn guard(query: &Query) -> u32 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut feed = |bytes: &[u8]| {
+            for b in bytes {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        for token in query.tokens() {
+            feed(token.as_bytes());
+            feed(&[0]);
+        }
+        feed(&[1]);
+        feed(query.ts_column().as_bytes());
+        // Folded to 32 bits: this is a guard against a mistake, not against an attacker,
+        // and the cursor is already long.
+        ((h >> 32) ^ h) as u32
+    }
+
+    /// The `Rank` a page stopped at. Read by the scan, and by the oracle, which reaches
+    /// the same answer by sorting rather than by filtering as it goes.
+    pub fn rank(&self) -> Rank {
+        self.rank
+    }
+
+    fn new(rank: Rank, query: &Query) -> Self {
+        Self {
+            rank,
+            query: Self::guard(query),
+        }
+    }
+
+    /// Opaque on purpose. Nobody should be able to write one by hand, because anyone who
+    /// can will depend on the layout that `CURSOR_VERSION` exists to change.
+    pub fn encode(&self) -> String {
+        let (Reverse(ts), leaf, seq) = self.rank;
+        let mut out = String::with_capacity(CURSOR_VERSION.len() + 1 + HEX_LEN);
+        out.push_str(CURSOR_VERSION);
+        out.push('.');
+        let mut hex = |bytes: &[u8]| {
+            for b in bytes {
+                out.push_str(&format!("{b:02x}"));
+            }
+        };
+        // `ts` is an `Option`, and the absent case is a real one - a template with no `ts`
+        // column pages like any other. The flag carries it; the eight bytes beside it are
+        // then zero and mean nothing.
+        match ts {
+            Some(ns) => {
+                hex(&[1]);
+                hex(&ns.to_be_bytes());
+            }
+            None => {
+                hex(&[0]);
+                hex(&0i64.to_be_bytes());
+            }
+        }
+        hex(&leaf.to_be_bytes());
+        hex(&seq.to_be_bytes());
+        hex(&self.query.to_be_bytes());
+        out
+    }
+
+    /// The text back into a cursor. The guard is *not* checked here - the query it belongs
+    /// to is not built yet at parse time - which is what `check` is for.
+    pub fn decode(text: &str) -> Result<Self, CursorError> {
+        let (version, body) = text.split_once('.').ok_or(CursorError::Malformed)?;
+        if version != CURSOR_VERSION {
+            return Err(CursorError::Version {
+                found: version.to_string(),
+            });
+        }
+        if body.len() != HEX_LEN || !body.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(CursorError::Malformed);
+        }
+        let mut bytes = [0u8; CURSOR_BYTES];
+        for (n, slot) in bytes.iter_mut().enumerate() {
+            *slot = u8::from_str_radix(&body[n * 2..n * 2 + 2], 16).map_err(|_| {
+                // Unreachable - every byte was checked above. Not an `unwrap`, because
+                // `decode` is fed by the CLI and "never panics" is the parser's rule too.
+                CursorError::Malformed
+            })?;
+        }
+        let word = |at: usize| {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&bytes[at..at + 8]);
+            buf
+        };
+        let ts = match bytes[0] {
+            0 => None,
+            _ => Some(i64::from_be_bytes(word(1))),
+        };
+        let mut guard = [0u8; 4];
+        guard.copy_from_slice(&bytes[25..29]);
+        Ok(Self {
+            rank: (Reverse(ts), u64::from_be_bytes(word(9)), u64::from_be_bytes(word(17))),
+            query: u32::from_be_bytes(guard),
+        })
+    }
+
+    /// Does this cursor belong to this query? Checked once, before the scan.
+    pub fn check(&self, query: &Query) -> Result<(), CursorError> {
+        if self.query == Self::guard(query) {
+            return Ok(());
+        }
+        Err(CursorError::WrongQuery)
+    }
+}
+
+/// One candidate row, ordered by `Rank` and by nothing else - `Row` is a `HashMap` and has
+/// no ordering of its own.
+struct Ranked {
+    rank: Rank,
+    row: Row,
+}
+
+impl Ord for Ranked {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank.cmp(&other.rank)
+    }
+}
+impl PartialOrd for Ranked {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl PartialEq for Ranked {
+    fn eq(&self, other: &Self) -> bool {
+        self.rank == other.rank
+    }
+}
+impl Eq for Ranked {}
+
+/// The best `keep` rows by `Rank`, held in `keep + 1` rows of memory - or all of them,
+/// in order, when nothing was capped.
+///
+/// The bounded case is a max-heap, worst row on top, so one push and one pop per row keeps
+/// the best `keep` and drops the rest as they arrive. Collecting every matching row into a
+/// `Vec` and sorting afterwards would allocate exactly what the cap was asked to avoid.
+///
+/// One more than asked for, deliberately: `rows_returned == limit` does not mean there is
+/// another page, and a `next_cursor` that yields an empty page is a cursor that lied. The
+/// extra row is held only to answer that question and dropped before the answer leaves.
+struct Newest {
+    /// `None` = keep everything.
+    keep: Option<usize>,
+    heap: BinaryHeap<Ranked>,
+}
+
+impl Newest {
+    fn new(keep: Option<usize>) -> Self {
+        Self {
+            keep,
+            heap: BinaryHeap::new(),
+        }
+    }
+
+    fn offer(&mut self, rank: Rank, row: Row) {
+        self.heap.push(Ranked { rank, row });
+        if let Some(keep) = self.keep {
+            if self.heap.len() > keep + 1 {
+                // The greatest `Rank` is the last row in result order, so this drops the
+                // oldest candidate and never one that belongs in the answer.
+                self.heap.pop();
+            }
+        }
+    }
+
+    /// Newest first, and the `Rank` the next page should resume after.
+    ///
+    /// `into_sorted_vec` is ascending by `Ord`, and `Rank` is smallest-first. The overflow
+    /// row - if the scan produced one - is the proof that a next page exists, and the row
+    /// before it is where this one stopped.
+    fn finish(self) -> (Vec<Row>, Option<Rank>) {
+        let keep = self.keep;
+        let mut ranked = self.heap.into_sorted_vec();
+        let more = keep.is_some_and(|n| ranked.len() > n);
+        if let Some(n) = keep {
+            ranked.truncate(n);
+        }
+        let next = more.then(|| ranked.last().map(|r| r.rank)).flatten();
+        (ranked.into_iter().map(|r| r.row).collect(), next)
+    }
+}
+
 // ── The scan ───────────────────────────────────────────────────────────────────────
 
-/// Both halves. `QueryMode::Exists` stops after the walk - the question is about the
-/// template, and answering it needs no rows.
+/// Both halves.
+///
+/// `QueryMode::Exists` is two questions wearing one name, and which one was asked is
+/// decided by the time clause:
+///
+/// - **No time clause** - "does this template exist at all?". Answered by the walk, and it
+///   reads no data: `files_opened` and `rows_scanned` both stay 0, which is the mode's
+///   whole claim.
+/// - **With a time clause** - "is this firing *now*?". `--exists --since 5m` is a cheap
+///   liveness check, not a contradiction, so it scans - and stops dead on the first row
+///   inside the window. `count` is 0 or 1 and `rows_scanned` is what it actually cost.
+///
+/// Reading `rows_scanned` is how the two are told apart, so both paths report it honestly
+/// rather than one of them reporting a plausible zero.
+///
+/// `exists` keeps its meaning throughout: the template was found. A template that exists
+/// and is not firing is `exists: true, count: 0` - already distinct from `exists: false`,
+/// and distinguished the same way.
 pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResult, StoreError> {
     let plan = plan(trie, query);
     let mut result = QueryResult {
@@ -281,13 +666,16 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
         },
         ..QueryResult::default()
     };
-    if query.mode == QueryMode::Exists {
+    let exists_only = query.mode == QueryMode::Exists;
+    if exists_only && query.time.is_open() {
         return Ok(result);
     }
 
     let started = Instant::now();
     let mut opts = query.scan_options();
-    let mut remaining = query.limit;
+    let ts = query.ts_column();
+    let mut newest = Newest::new(query.limit);
+    let ordinals = leaf_ordinals(&plan);
 
     for leaf in &plan.leaves {
         // A planned leaf with no store is a known template holding no rows: the second
@@ -296,15 +684,36 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
             continue;
         };
         result.meta.files_opened += 1;
-        opts.limit = remaining;
         let preds: Vec<Predicate> = leaf.residual.iter().map(predicate).collect();
 
+        // The store's own limit stops the read once `limit` rows have matched, and a disk
+        // store will lean on it. Not used for `Fetch` here, deliberately: an in-memory
+        // `Vec<Row>` is in insertion order, so stopping early would return the *oldest*
+        // rows under an ordering that promises the newest. `Newest` bounds the memory
+        // instead. Once partitions are read newest-first the early stop becomes correct
+        // and this override goes away.
+        opts.limit = if exists_only { 1 } else { 0 };
+
         let scan = match &query.mode {
-            QueryMode::Count => store.visit(&opts, &preds, &mut |_| {})?,
+            // One row is the whole answer, and `visit` stops on it.
+            QueryMode::Exists | QueryMode::Count => store.visit(&opts, &preds, &mut |_| {})?,
             QueryMode::Fetch => {
-                let mut scan = store.scan(&opts, &preds)?;
-                result.rows.append(&mut scan.rows);
-                scan
+                let ord = ordinals.get(&leaf.template_id).copied().unwrap_or(0);
+                let mut seq = 0u64;
+                let keep = &mut newest;
+                let after = query.cursor.map(|c| c.rank);
+                store.visit(&opts, &preds, &mut |row| {
+                    let rank = (Reverse(ts_of(row, &ts)), ord, seq);
+                    seq += 1;
+                    // Served on an earlier page. `Rank` is a total order, so this is exact
+                    // where a `ts` comparison alone is not: rows sharing one nanosecond
+                    // split across the page boundary rather than being repeated by an
+                    // inclusive bound or dropped by an exclusive one.
+                    if after.is_some_and(|stop| rank <= stop) {
+                        return;
+                    }
+                    keep.offer(rank, row.clone());
+                })?
             }
             QueryMode::GroupBy(keys) => {
                 let counts = &mut result.group_counts;
@@ -312,20 +721,34 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
                     *counts.entry(group_key(row, keys)).or_insert(0) += 1;
                 })?
             }
-            QueryMode::Exists => unreachable!("returned above"),
         };
 
         result.meta.rows_scanned += scan.scanned;
         result.count += scan.matched;
-        if query.limit != 0 {
-            remaining = query.limit.saturating_sub(result.count as usize);
-            if remaining == 0 {
-                break;
-            }
+        if exists_only && result.count > 0 {
+            break;
         }
     }
 
-    result.meta.rows_returned = result.count;
+    if query.mode == QueryMode::Fetch {
+        let (rows, next) = newest.finish();
+        result.rows = rows;
+        result.meta.next_cursor = next.map(|rank| Cursor::new(rank, query).encode());
+    }
+    // Rows in the answer, which for every mode but `Fetch` is none: `count` is what those
+    // modes return and it is its own field. This used to be a second copy of `count`,
+    // which was harmless while nothing could make the two differ - a limit can, and
+    // `truncated` is only readable next to a `rows_returned` that means what it says.
+    result.meta.rows_returned = result.rows.len() as u64;
+    // The limit dropped rows that matched. Only `Fetch` can reach this: the other modes
+    // return no rows, so `Query::new` normalised their limit away.
+    //
+    // Counted against `count`, which is every row matching the pattern and window on every
+    // page - it is not reduced by the cursor. That is the point: page 7 of 483 still says
+    // how many rows there are in total, so a limit is a statement about this response and
+    // never about the answer.
+    result.meta.truncated =
+        query.mode == QueryMode::Fetch && result.meta.rows_returned < result.count;
     result.meta.duration = plan.duration + started.elapsed();
     Ok(result)
 }

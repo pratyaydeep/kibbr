@@ -186,6 +186,13 @@ pub enum CliError {
     #[error(transparent)]
     Trieql(#[from] crate::trieql::ParseError),
 
+    // Transparent for the reason `Trieql` is: `report` walks the source chain, so a
+    // wrapper prints the same sentence twice. No `--after:` prefix either - the flag
+    // surface and `AFTER` both land here, and naming one of them would be wrong half the
+    // time. `CursorError`'s own messages say what is wrong with the cursor.
+    #[error(transparent)]
+    Cursor(#[from] crate::engine::CursorError),
+
     #[error(transparent)]
     Store(#[from] crate::store::StoreError),
 }

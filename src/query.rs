@@ -5,7 +5,10 @@
 //! also say. That is what makes `--reference` and `scripts/parser_equivalence.sh` honest -
 //! every path builds the one struct, so a differential compares answers, not plumbing.
 //!
-//! `--limit` and the output flags are not in the grammar and stay flags on both.
+//! The grammar reaches every part of a `Query`: `LIMIT` and `AFTER` are in it, so `--limit`
+//! and `--after` are exclusive with a TrieQL string the way `--since` already is. Only the
+//! output flags - `--format`, `--explain`, `--reference` - stay flags on both surfaces,
+//! because none of them changes the answer.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -17,7 +20,7 @@ use serde_json::{Map, Value};
 
 use crate::db;
 use crate::engine::{
-    self, Match, MatchValue, Plan, Query, QueryMode, QueryResult, TimeRange, GROUP_SEP,
+    self, Cursor, Match, MatchValue, Plan, Query, QueryMode, QueryResult, TimeRange, GROUP_SEP,
 };
 use crate::error::{CliError, QueryError};
 use crate::fmt::{col_text, commas, millis, rfc3339};
@@ -56,7 +59,9 @@ pub struct Args {
     pub format: Format,
     pub explain: bool,
     pub reference: bool,
-    pub limit: usize,
+    /// `None` = no limit asked for, which is not the same request as `--limit 0`.
+    pub limit: Option<usize>,
+    pub after: Option<String>,
 }
 
 pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(), CliError> {
@@ -109,16 +114,18 @@ fn note(stats: db::LoadStats) {
 /// caller that wants a reproducible answer needs to be able to fix it. Both surfaces take
 /// the same one, which is what lets `scripts/parser_equivalence.sh` compare them at all.
 fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
-    // TrieQL builds the same `Query` the flags do and then stops: `--limit` and the
-    // output flags are not in the grammar.
+    // TrieQL builds the same `Query` the flags do and then stops: the output flags are not
+    // in the grammar and do not change the answer. Both routes end at `Query::new`, which
+    // is the one place the limit's default and its per-mode meaning are decided.
     if let Some(text) = &args.trieql {
         let parsed = trieql::parse(text, now)?;
-        return Ok(Query {
-            matches: parsed.matches,
-            mode: parsed.mode,
-            time: parsed.time,
-            limit: args.limit,
-        });
+        return finish(Query::new(
+            parsed.matches,
+            parsed.mode,
+            parsed.time,
+            parsed.limit,
+            cursor(parsed.after.as_deref())?,
+        ));
     }
 
     let matches = args
@@ -160,12 +167,32 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
         (None, None) => TimeRange::default(),
     };
 
-    Ok(Query {
+    finish(Query::new(
         matches,
         mode,
         time,
-        limit: args.limit,
-    })
+        args.limit,
+        cursor(args.after.as_deref())?,
+    ))
+}
+
+/// The cursor text as a `Cursor`, before there is a `Query` to check it against.
+fn cursor(text: Option<&str>) -> Result<Option<Cursor>, CliError> {
+    text.map(Cursor::decode).transpose().map_err(CliError::from)
+}
+
+/// The last thing `build` does on either surface: does this cursor belong to this query?
+///
+/// After construction, not during: the guard is over the pattern, the window and the order
+/// (`Cursor::guard`), so there is nothing to check against until the whole `Query` exists.
+/// Refusing here is the difference between an error and a silently wrong page - `Rank`'s
+/// leaf ordinal is relative to the leaves *this* pattern matched, so the same cursor read
+/// against a different pattern names a different leaf and answers confidently.
+fn finish(query: Query) -> Result<Query, CliError> {
+    if let Some(c) = query.cursor {
+        c.check(&query)?;
+    }
+    Ok(query)
 }
 
 /// Split on the *first* `=`: a value may contain one, a key may not - `a=b=c` is the key
@@ -284,6 +311,10 @@ fn edge_text(t: SystemTime) -> String {
 // ── Output ─────────────────────────────────────────────────────────────────────────
 
 /// The plan, and nothing executed.
+///
+/// Each line names the step it reports - `walk`, `scan`, `pruned`, `limit` - rather than
+/// numbering them. A number told a reader which half of the source to open, not what the
+/// query is about to do, and an operator reading a plan wants the second.
 fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliError> {
     let tokens: Vec<String> = query.tokens().iter().map(|t| format!("{t:?}")).collect();
     // A wildcard over a wide dimension selects hundreds of leaves, and a plan nobody can
@@ -301,7 +332,7 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
     writeln!(out, "plan:").map_err(CliError::Write)?;
     writeln!(
         out,
-        "  phase 1  walk [{}]  → {}",
+        "  walk     [{}]  → {}",
         tokens.join(", "),
         if ids.is_empty() {
             "no such template".to_string()
@@ -312,7 +343,7 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
     .map_err(CliError::Write)?;
 
     if plan.leaves.is_empty() {
-        writeln!(out, "  phase 2  nothing to scan").map_err(CliError::Write)?;
+        writeln!(out, "  scan     nothing to scan").map_err(CliError::Write)?;
     } else {
         let residual: Vec<String> = plan
             .leaves
@@ -322,7 +353,7 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
             .collect();
         writeln!(
             out,
-            "  phase 2  scan {} {}, {}, {}",
+            "  scan     {} {}, {}, {}",
             plan.leaves.len(),
             plural(plan.leaves.len(), "leaf", "leaves"),
             window_text(query),
@@ -343,9 +374,28 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
         )
         .map_err(CliError::Write)?;
     }
+    // The limit and the order belong on the plan, not only in `triedb explain`: a limit
+    // that is `Query::new`'s default rather than the operator's is the one they most need
+    // to see before the query runs, and the order is what decides which rows it keeps.
+    if query.mode == QueryMode::Fetch {
+        writeln!(
+            out,
+            "  limit    {}, {}",
+            match query.limit {
+                Some(n) => format!("{n} rows"),
+                None => "every matching row".to_string(),
+            },
+            ORDER_TEXT
+        )
+        .map_err(CliError::Write)?;
+        if query.cursor.is_some() {
+            writeln!(out, "  after    resuming from a cursor of this query")
+                .map_err(CliError::Write)?;
+        }
+    }
     writeln!(
         out,
-        "  phase 1 took {} and read no rows; mode {}",
+        "  the walk took {} and read no rows; mode {}",
         millis(plan.duration),
         mode_text(&query.mode)
     )
@@ -362,16 +412,44 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
 /// the parser changing.
 pub fn describe<W: Write>(out: &mut W, text: &str) -> Result<(), CliError> {
     let parsed = trieql::parse(text, Utc::now())?;
-    let query = Query {
-        matches: parsed.matches,
-        mode: parsed.mode,
-        time: parsed.time,
-        limit: 0,
-    };
+    let asked = parsed.limit;
+    let paged = parsed.after.is_some();
+    let query = Query::new(
+        parsed.matches,
+        parsed.mode,
+        parsed.time,
+        parsed.limit,
+        // Not decoded against a `Query` here: `triedb explain` takes no file, so there is
+        // no answer for a cursor to be a page of. `AFTER`'s shape was checked by the
+        // parser; whether it belongs to this query is `query --explain`'s to say.
+        None,
+    );
     writeln!(out, "query:").map_err(CliError::Write)?;
     writeln!(out, "  mode     {}", mode_text(&query.mode)).map_err(CliError::Write)?;
     writeln!(out, "  pattern  [{}]", query.tokens().join(", ")).map_err(CliError::Write)?;
-    writeln!(out, "  window   {}", window_text(&query)).map_err(CliError::Write)
+    writeln!(out, "  window   {}", window_text(&query)).map_err(CliError::Write)?;
+    writeln!(out, "  order    {}", ORDER_TEXT).map_err(CliError::Write)?;
+    writeln!(out, "  limit    {}", limit_text(&query, asked)).map_err(CliError::Write)?;
+    if paged {
+        writeln!(out, "  after    a cursor; resumes where its page stopped")
+            .map_err(CliError::Write)?;
+    }
+    Ok(())
+}
+
+/// The fixed order, printed rather than assumed - it is what makes a limit mean anything,
+/// and it is not in the grammar for a reader to have inferred from the query.
+const ORDER_TEXT: &str = "ts descending (newest first); rows with no ts last, in insertion order";
+
+/// What the limit resolved to, and why - `Query::new` may have supplied it or dropped it,
+/// and neither should happen where only the source can see it.
+fn limit_text(query: &Query, asked: Option<usize>) -> String {
+    match (&query.mode, asked) {
+        (QueryMode::Fetch, None) => "none - every matching row".to_string(),
+        (QueryMode::Fetch, Some(n)) => n.to_string(),
+        (_, None) => "none (this verb returns no rows)".to_string(),
+        (_, Some(n)) => format!("none - LIMIT {n} does not apply, this verb returns no rows"),
+    }
 }
 
 fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
@@ -389,11 +467,22 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
     }
 
     match &query.mode {
-        // `rows scanned: 0` is the mode's whole point: the answer came off the trie walk
-        // having opened nothing.
+        // Two answers, because `--exists` asks two questions (see `engine::execute`).
+        // Without a window, `rows scanned: 0` is the mode's whole point: the answer came
+        // off the trie walk having opened nothing. With one, the extra column is the
+        // question actually asked - "is this firing?" - and `rows scanned` is what
+        // stopping on the first matching row cost.
         QueryMode::Exists => writeln!(
             out,
-            "exists  true   (templates matched: {} → {}, rows scanned: {}, {})",
+            "exists  true{}   (templates matched: {} → {}, rows scanned: {}, {})",
+            if query.time.is_open() {
+                String::new()
+            } else {
+                format!(
+                    "   in window  {}",
+                    if result.count > 0 { "yes" } else { "no" }
+                )
+            },
             result.meta.templates_matched,
             ids_text(result),
             result.meta.rows_scanned,
@@ -410,8 +499,27 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
         QueryMode::Fetch => {
             let rows = canonical(result);
             render_rows(out, &rows)?;
-            writeln!(out, "{} rows   ({})", commas(result.count), summary(result))
+            // `count` is every row that matched and `rows_returned` is how many came back.
+            // A limit that quietly printed the smaller number and called it the answer is
+            // how someone concludes there were 10 errors when there were 40,000.
+            if result.meta.truncated {
+                writeln!(
+                    out,
+                    "{} of {} rows   (newest first; {})",
+                    commas(result.meta.rows_returned),
+                    commas(result.count),
+                    summary(result)
+                )
                 .map_err(CliError::Write)?;
+            } else {
+                writeln!(out, "{} rows   ({})", commas(result.count), summary(result))
+                    .map_err(CliError::Write)?;
+            }
+            // Its own line, and the last one: it is the only thing on this screen meant to
+            // be copied, and a cursor buried in a summary is a cursor selected by hand.
+            if let Some(c) = &result.meta.next_cursor {
+                writeln!(out, "next page:  AFTER \"{c}\"").map_err(CliError::Write)?;
+            }
         }
         QueryMode::GroupBy(keys) => {
             let mut grid: Vec<Vec<String>> = vec![keys
@@ -462,6 +570,8 @@ fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
             "files_opened": meta.files_opened,
             "rows_scanned": meta.rows_scanned,
             "rows_returned": meta.rows_returned,
+            "truncated": meta.truncated,
+            "next_cursor": meta.next_cursor,
             "duration_ms": meta.duration.as_secs_f64() * 1000.0,
         }
     });
@@ -505,6 +615,11 @@ fn value_json(value: &ColValue) -> Value {
 /// says so there; "that template exists and nothing matched" prints no lines and says
 /// nothing. Neither puts an odd-shaped object in the middle of a stream something
 /// downstream is parsing row by row.
+///
+/// `next_cursor` goes to stderr for the same reason - it is not a record. Usually there is
+/// none to print: with no cap, the unlimited fetch this format is for returns everything
+/// and has no next page. A `LIMIT` here still gets its cursor, on the channel
+/// that is not the data.
 fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
     if !result.exists {
         eprintln!(
@@ -517,7 +632,17 @@ fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<
     // Every mode prints its own records rather than only `Fetch` printing anything: a
     // format flag that silently emits nothing for three of the four modes is a trap.
     match &query.mode {
-        QueryMode::Exists => line(out, &serde_json::json!({ "exists": true }))?,
+        // Under a window the mode answers "is this firing?", so the record carries that
+        // and not only the template's existence. Without one there is no such answer to
+        // give - the walk read nothing - and inventing a `matched: false` would read as
+        // "checked, and no", which is the one thing it does not mean.
+        QueryMode::Exists if query.time.is_open() => {
+            line(out, &serde_json::json!({ "exists": true }))?
+        }
+        QueryMode::Exists => line(
+            out,
+            &serde_json::json!({ "exists": true, "matched": result.count > 0 }),
+        )?,
         QueryMode::Count => line(out, &serde_json::json!({ "count": result.count }))?,
         QueryMode::Fetch => {
             for row in canonical(result) {
@@ -537,6 +662,9 @@ fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<
             }
         }
     }
+    if let Some(c) = &result.meta.next_cursor {
+        eprintln!("triedb query: more rows; next page: AFTER \"{c}\"");
+    }
     Ok(())
 }
 
@@ -544,22 +672,15 @@ fn line<W: Write>(out: &mut W, value: &Value) -> Result<(), CliError> {
     writeln!(out, "{value}").map_err(CliError::Write)
 }
 
-/// Rows in a fixed order.
+/// The rows, in the order the answer already has them.
 ///
-/// The engine returns them leaf by leaf and the oracle in file order; neither is wrong
-/// and there is no ORDER BY to override it. Sorting by the rendered row is what lets the
-/// two be compared at all, and it costs an ordering nothing was promising.
+/// This used to sort by the rendered row, because the engine returned rows leaf by leaf,
+/// the oracle in file order, and nothing promised either. `engine::Rank` promises one now,
+/// newest first, so re-sorting here would throw away the ordering the limit depends on and
+/// hand back the alphabetically-first rows instead of the newest. Both sides produce the
+/// same sequence, so the differential still compares them exactly.
 fn canonical(result: &QueryResult) -> Vec<&crate::store::Row> {
-    let mut rows: Vec<&crate::store::Row> = result.rows.iter().collect();
-    rows.sort_by_cached_key(|row| {
-        row.iter()
-            .collect::<BTreeMap<_, _>>()
-            .iter()
-            .map(|(k, v)| format!("{k}\u{1}{}", col_text(v)))
-            .collect::<Vec<_>>()
-            .join("\u{2}")
-    });
-    rows
+    result.rows.iter().collect()
 }
 
 fn sorted_groups(result: &QueryResult) -> BTreeMap<&String, u64> {

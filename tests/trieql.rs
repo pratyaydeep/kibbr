@@ -108,7 +108,6 @@ fn every_production_parses() {
 #[test]
 fn nothing_outside_the_grammar_parses() {
     for q in [
-        r#"COUNT LOG {"a": "b"} LIMIT 5"#,
         r#"COUNT LOG {"a": "b"} ORDER BY ts"#,
         r#"COUNT LOG {"a": "b"} AND {"c": "d"}"#,
         r#"COUNT LOG {"a": "b"} OR {"c": "d"}"#,
@@ -124,6 +123,14 @@ fn nothing_outside_the_grammar_parses() {
         r#"COUNT LOG {"a": "b"} GROUP BY a SINCE 1h"#, // the grammar orders the two clauses
         r#"COUNT LOG {"a": "b",}"#,                    // no trailing comma in the pattern
         r#"COUNT LOG {} SINCE "1h""#,                  // `duration` is spelled out, unquoted
+        r#"COUNT LOG {} LIMIT 5 LIMIT 6"#,
+        r#"COUNT LOG {} LIMIT "5""#, // `number` is spelled out, unquoted
+        r#"COUNT LOG {} LIMIT 5 SINCE 1h"#, // the grammar orders the clauses
+        r#"COUNT LOG {} LIMIT 5 GROUP BY a"#,
+        r#"MATCH LOG {} AFTER v1.00"#,          // a cursor is quoted
+        r#"MATCH LOG {} AFTER "not-a-cursor""#, // and has to be one
+        r#"MATCH LOG {} AFTER "v2.00""#,        // of a version this build issues
+        r#"MATCH LOG {} OFFSET 10"#,            // paging is `AFTER`, not an offset
     ] {
         let out = explain(q);
         assert!(
@@ -182,7 +189,10 @@ fn errors_report_a_position_inside_the_query() {
         r#"COUNT LOG {"a": "\q"}"#,
         r#"COUNT LOG {"a": "\ud800"}"#,
         r#"COUNT LOG {"a": "\u00"}"#,
-        "COUNT LOG {\"a\": \"b\"}\n\nLIMIT 5",
+        "COUNT LOG {\"a\": \"b\"}\n\nORDER BY ts",
+        r#"COUNT LOG {} LIMIT"#,
+        r#"COUNT LOG {} LIMIT -1"#,
+        r#"COUNT LOG {"ü": "ö"} LIMIT 🙂"#,
         "🙂 LOG {}",
         r#"COUNT LOG {"🙂": "🙂"} SINCE 🙂"#,
     ] {

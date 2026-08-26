@@ -137,6 +137,20 @@ impl LeafStore {
 /// one bad line - cannot be placed in time, so it is out. That is the cost of the
 /// lattice's monotonicity, and it should show as an empty result rather than as rows
 /// silently admitted on a timestamp nobody could read.
+///
+/// Which settles the open case: a **template with no `ts` column at all**, under a time
+/// filter, answers `exists: true, count: 0`. The structure was found; no row in it can
+/// satisfy the predicate. Deliberately not the two alternatives:
+///
+/// - **Not an error.** The pattern is well-formed and the template is real, and "found,
+///   and nothing matched" is an answer rather than a failure.
+/// - **Not "ignore the time clause".** Admitting those rows would make a filtered query
+///   return rows outside its own window, with no way for the operator to see it happened.
+///
+/// This reaches further than it looks. Kibana puts a mandatory time filter on every search,
+/// so once it is the client every ts-less template is queried this way on every request:
+/// erroring would break Discover outright, and ignoring the clause would fill a time
+/// histogram with rows that have no place on it.
 fn in_window(value: Option<&ColValue>, since: Option<i64>, until: Option<i64>) -> bool {
     let Some(ColValue::Datetime(ns)) = value else {
         return false;
@@ -146,7 +160,7 @@ fn in_window(value: Option<&ColValue>, since: Option<i64>, until: Option<i64>) -
 
 /// Unix nanoseconds, saturating at both ends. i64 nanos run 1677-2262; a bound outside
 /// that is clamped to the near end, never wrapped past the far one.
-fn nanos_of(t: SystemTime) -> i64 {
+pub fn nanos_of(t: SystemTime) -> i64 {
     match t.duration_since(UNIX_EPOCH) {
         Ok(d) => i64::try_from(d.as_nanos()).unwrap_or(i64::MAX),
         Err(e) => i64::try_from(e.duration().as_nanos()).map_or(i64::MIN, |n| -n),

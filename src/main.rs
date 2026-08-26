@@ -85,7 +85,10 @@ enum Command {
         /// A TrieQL query. Give this or the flags below, not both.
         #[arg(
             value_name = "TRIEQL",
-            conflicts_with_all = ["matches", "count", "fetch", "exists", "group_by", "since", "between"]
+            conflicts_with_all = [
+                "matches", "count", "fetch", "exists", "group_by", "since", "between",
+                "limit", "after"
+            ]
         )]
         query: Option<String>,
 
@@ -128,9 +131,17 @@ enum Command {
         #[arg(long)]
         reference: bool,
 
-        /// Stop after this many matching rows. 0 = unlimited.
-        #[arg(long, default_value_t = 0)]
-        limit: usize,
+        /// Return at most this many rows, newest first. TrieQL spells it `LIMIT n`, and
+        /// the two are exclusive for the reason `--since` and `SINCE` are. Omitted, every
+        /// matching row comes back; `--limit 0` is a request for no rows, and the two are
+        /// not the same thing.
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Resume after a previous answer's `next_cursor`. TrieQL spells it `AFTER "…"`.
+        /// Only valid for the query that produced it.
+        #[arg(long, value_name = "CURSOR")]
+        after: Option<String>,
     },
 }
 
@@ -178,6 +189,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             explain,
             reference,
             limit,
+            after,
         } => {
             let reader = open(&input)?;
             let args = query::Args {
@@ -193,6 +205,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 explain,
                 reference,
                 limit,
+                after,
             };
             query::run(reader, &mut out, &args)
         }

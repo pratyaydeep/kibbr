@@ -1,18 +1,29 @@
 //! TrieQL: a query string in, the `Query` the engine already executes out.
 //!
-//! The grammar below and nothing else. No operators, no boolean combinators, no LIMIT,
-//! no ORDER BY - adding any of them is a decision in its own right, not a convenience to
-//! be smuggled in here.
+//! The grammar below and nothing else: no operators, no boolean combinators, no ORDER BY.
+//! Adding any of them is a decision in its own right, not a convenience to be smuggled in
+//! here.
 //!
 //! ```text
-//! query        = verb "LOG" json_pattern time_clause? group_clause?
+//! query        = verb "LOG" json_pattern time_clause? group_clause? limit_clause? after_clause?
 //! verb         = "MATCH" | "COUNT"
 //! json_pattern = "{" (pair ("," pair)*)? "}"
 //! pair         = string ":" (string | "*")
 //! time_clause  = "SINCE" duration | "BETWEEN" datetime "AND" datetime
 //! group_clause = "GROUP" "BY" key ("," key)*
+//! limit_clause = "LIMIT" number
+//! after_clause = "AFTER" string
 //! duration     = number ("s" | "m" | "h" | "d")
 //! ```
+//!
+//! `limit_clause` and `after_clause` were added deliberately. `ScanOptions` has a `limit`
+//! that nothing in the grammar could reach, and a limit with no way to ask for the next
+//! page is a way of hiding rows rather than of paging them. The two arrived together for
+//! that reason.
+//!
+//! Still no ORDER BY: the order is fixed at newest-first (`engine::Rank`), and a LIMIT with
+//! no defined order would have been the worse half to add first. Still no OFFSET either -
+//! `AFTER` is the keyset form, and the reasoning is on `engine::Cursor`.
 //!
 //! `key` and `datetime` are left unspelled above: both are a bare run of characters, or
 //! the same text quoted. Keywords ignore case; the duration's unit does not, because the
@@ -30,15 +41,22 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-use crate::engine::{Match, MatchValue, QueryMode, TimeRange};
+use crate::engine::{Cursor, Match, MatchValue, QueryMode, TimeRange};
 use crate::query::{ago, system_time};
 
-/// What a query said, before `--limit` and the other surviving flags are folded in.
+/// What a query said, before the output flags - which are not in the grammar - are folded
+/// in.
 #[derive(Debug)]
 pub struct Parsed {
     pub matches: Vec<Match>,
     pub mode: QueryMode,
     pub time: TimeRange,
+    /// `None` = no `LIMIT` clause, which is every matching row. Not 0-for-absent: `LIMIT 0`
+    /// is a thing a user can write, and it has to mean "no rows" rather than "no limit".
+    pub limit: Option<usize>,
+    /// The `AFTER` cursor, still text. Decoded by `query::build`, which is where the
+    /// `Query` it has to be checked against exists.
+    pub after: Option<String>,
 }
 
 /// `now` is a parameter for the same reason it is one in `query::build` - `SINCE` is
@@ -231,6 +249,8 @@ impl<'a> Parser<'a> {
             Some(keys) => QueryMode::GroupBy(keys),
             None => mode,
         };
+        let limit = self.limit_clause()?;
+        let after = self.after_clause()?;
 
         if self.peek() != &Tok::End {
             return Err(self.expected("end of query"));
@@ -239,6 +259,8 @@ impl<'a> Parser<'a> {
             matches,
             mode,
             time,
+            limit,
+            after,
         })
     }
 
@@ -319,6 +341,45 @@ impl<'a> Parser<'a> {
             if !self.eat_if(&Tok::Comma) {
                 return Ok(Some(keys));
             }
+        }
+    }
+
+    /// `"LIMIT" number`. Last in the query, as it is last in the grammar: it applies to
+    /// the whole answer and reads that way written at the end.
+    fn limit_clause(&mut self) -> Result<Option<usize>, ParseError> {
+        if !self.eat_keyword("LIMIT") {
+            return Ok(None);
+        }
+        // `word`, not `bare`, for the reason `SINCE` takes one: the grammar spells the
+        // operand as a number, so `LIMIT "10"` is not one of its shapes.
+        let (text, pos) = self.word("a number")?;
+        text.parse::<usize>()
+            .map(Some)
+            .map_err(|_| ParseError::new(self.src, pos, Kind::BadLimit))
+    }
+
+    /// `"AFTER" string`. Last, because it is the one clause whose operand came out of a
+    /// previous answer rather than out of the writer's head.
+    ///
+    /// The cursor is only shape-checked here - `engine::Cursor::decode` says whether it is
+    /// a cursor at all. Whether it is a cursor for *this* query is `Cursor::check`, and
+    /// that needs the built `Query`, which does not exist yet.
+    fn after_clause(&mut self) -> Result<Option<String>, ParseError> {
+        if !self.eat_keyword("AFTER") {
+            return Ok(None);
+        }
+        // `string`, not `bare`: a cursor is opaque text and quoting it says so. It also
+        // keeps the lexer out of a token that is only accidentally free of delimiters.
+        let (text, pos) = self.string("a quoted cursor")?;
+        match Cursor::decode(&text) {
+            Ok(_) => Ok(Some(text)),
+            Err(e) => Err(ParseError::new(
+                self.src,
+                pos,
+                Kind::BadCursor {
+                    why: e.to_string(),
+                },
+            )),
         }
     }
 
@@ -521,6 +582,10 @@ pub enum Kind {
     BadDuration,
     #[error("expected an RFC 3339 datetime")]
     BadDatetime,
+    #[error("expected a whole number of rows")]
+    BadLimit,
+    #[error("{why}")]
+    BadCursor { why: String },
     #[error("`{from}` is after `{to}`")]
     Backwards { from: String, to: String },
     #[error("the key is empty")]
@@ -628,6 +693,7 @@ impl std::error::Error for ParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Query;
     use crate::rng::Rng;
 
     fn now() -> DateTime<Utc> {
@@ -730,7 +796,8 @@ mod tests {
             "COUNT LOG",
             r#"COUNT LOG {"é": }"#,
             r#"COUNT LOG {"🙂": "x"} SINCE 🙂"#,
-            r#"COUNT LOG {"a": "b"} LIMIT 5"#,
+            r#"COUNT LOG {"a": "b"} LIMIT ten"#,
+            r#"COUNT LOG {"a": "b"} LIMIT -1"#,
         ] {
             let e = parse(src, now()).expect_err("expected a parse error");
             assert!(e.pos <= src.len(), "{src:?} → byte {}", e.pos);
@@ -738,9 +805,80 @@ mod tests {
         }
         // The exact one, so "inside the input" cannot pass by always answering 0. The
         // `é` is two bytes, so a parser counting characters would say 21.
-        let src = r#"COUNT LOG {"é": "b"} LIMIT"#;
+        let src = r#"COUNT LOG {"é": "b"} ORDER BY ts"#;
         let e = parse(src, now()).unwrap_err();
         assert_eq!(e.pos, 22);
-        assert_eq!(&src[e.pos..], "LIMIT");
+        assert_eq!(&src[e.pos..], "ORDER BY ts");
+    }
+
+    /// `limit_clause`. `None` and `Some(0)` are different answers.
+    #[test]
+    fn limit_is_parsed_and_absence_is_not_zero() {
+        let q = |src: &str| parse(src, now()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(q(r#"MATCH LOG {} LIMIT 10"#).limit, Some(10));
+        assert_eq!(q(r#"MATCH LOG {}"#).limit, None);
+        assert_eq!(q(r#"MATCH LOG {} LIMIT 0"#).limit, Some(0));
+        assert_eq!(
+            q(r#"MATCH LOG {"a": *} SINCE 1h GROUP BY b LIMIT 3"#).limit,
+            Some(3)
+        );
+        // Keywords ignore case, as every other one does.
+        assert_eq!(q(r#"match log {} limit 7"#).limit, Some(7));
+
+        for bad in [
+            r#"MATCH LOG {} LIMIT"#,
+            r#"MATCH LOG {} LIMIT -1"#,
+            r#"MATCH LOG {} LIMIT 1.5"#,
+            r#"MATCH LOG {} LIMIT "10""#,
+            r#"MATCH LOG {} LIMIT 99999999999999999999999999"#,
+        ] {
+            parse(bad, now()).expect_err(bad);
+        }
+    }
+
+    /// `after_clause`, and the shape check the parser is answerable for. Whether a
+    /// well-formed cursor belongs to *this* query is `query::build`'s, not the parser's.
+    #[test]
+    fn after_takes_a_cursor_and_nothing_else() {
+        let mint = |ts: Option<i64>| {
+            let q = Query::new(Vec::new(), QueryMode::Fetch, TimeRange::default(), None, None);
+            q.cursor_at((std::cmp::Reverse(ts), 3, 17)).encode()
+        };
+        for ts in [Some(1_700_000_000_000_000_000), None, Some(i64::MIN)] {
+            let text = mint(ts);
+            let q = parse(&format!(r#"MATCH LOG {{}} LIMIT 5 AFTER "{text}""#), now())
+                .unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(q.after.as_deref(), Some(text.as_str()));
+            // Round-trips, which is what makes handing `next_cursor` back safe.
+            assert_eq!(Cursor::decode(&text).expect("a cursor").encode(), text);
+        }
+        assert_eq!(parse("MATCH LOG {}", now()).unwrap().after, None);
+
+        let empty = r#"MATCH LOG {} AFTER """#;
+        for bad in [
+            r#"MATCH LOG {} AFTER"#,
+            empty,
+            r#"MATCH LOG {} AFTER "v1""#,
+            r#"MATCH LOG {} AFTER "v1.zz""#,
+            r#"MATCH LOG {} AFTER "v9.0000""#,
+            // Right length, wrong alphabet - the hex check is not a length check.
+            &format!(r#"MATCH LOG {{}} AFTER "v1.{}""#, "g".repeat(58)),
+        ] {
+            parse(bad, now()).expect_err(bad);
+        }
+    }
+
+    /// `{}` is legal syntax and means every template: the pair list is optional.
+    #[test]
+    fn the_empty_pattern_parses_to_no_terms() {
+        for src in [
+            "MATCH LOG {}",
+            "COUNT LOG {}",
+            "MATCH LOG {} SINCE 1h LIMIT 10",
+            "MATCH LOG {   }",
+        ] {
+            let q = parse(src, now()).unwrap_or_else(|e| panic!("{src}: {e}"));
+            assert!(q.matches.is_empty(), "{src}");
+        }
     }
 }

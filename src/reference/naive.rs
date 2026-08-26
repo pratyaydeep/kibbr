@@ -8,7 +8,8 @@
 //! comparison too was tried and reverted: it made `[since, until)` unfalsifiable, because
 //! a mutation to the one rule moved both answers together.
 
-use std::collections::HashSet;
+use std::cmp::Reverse;
+use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::row_of;
@@ -16,6 +17,9 @@ use crate::engine::{group_key, value_matches, MatchValue, Query, QueryMeta, Quer
 use crate::flatten::ParsedLog;
 use crate::store::{Row, DEFAULT_TS_COLUMN};
 use crate::types::ColValue;
+
+/// `engine::Rank`, spelled again rather than imported - see the note at the top.
+type Rank = (Reverse<Option<i64>>, u64, u64);
 
 pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
     let started = std::time::Instant::now();
@@ -48,13 +52,50 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
         },
         ..QueryResult::default()
     };
-    if query.mode == QueryMode::Exists {
+    // `--exists` with no window is the template question and reads no line, the same
+    // short-circuit `engine::execute` takes. With a window it is the "is this firing?"
+    // question and has to look, so it falls through to the loop below and stops on the
+    // first row that lands inside.
+    let exists_only = query.mode == QueryMode::Exists;
+    if exists_only && query.time.is_open() {
         result.meta.duration = started.elapsed();
         return result;
     }
 
+    // `engine::Rank`'s tiebreak, worked out from scratch. Two parts, both for rows a
+    // timestamp cannot separate:
+    //
+    // - the template's rank among the matching templates *by key set*, which is why the
+    //   engine carries `PlannedLeaf::path` - `template_id` means a counter over there and
+    //   a structural hash here, and neither side can compute the other's;
+    // - insertion order within a template, which is file order seen from this side and
+    //   append order seen from the engine's.
+    let mut paths: Vec<Vec<String>> = lines
+        .iter()
+        .filter(|line| known(line))
+        .map(ParsedLog::walk_tokens)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    let ordinal: HashMap<Vec<String>, u64> = paths
+        .into_iter()
+        .enumerate()
+        .map(|(n, path)| (path, n as u64))
+        .collect();
+
+    let mut seq: HashMap<u64, u64> = HashMap::new();
+    let mut ranked: Vec<(Rank, Row)> = Vec::new();
+
     for line in lines.iter().filter(|line| known(line)) {
         let row = row_of(line);
+        let ord = ordinal
+            .get(&line.walk_tokens())
+            .copied()
+            .expect("every matching line's key set was collected above");
+        let n = seq.entry(line.template_id).or_insert(0);
+        let at = *n;
+        *n += 1;
+
         let hit = in_window(&row, query)
             && query.matches.iter().all(|m| {
                 row.get(&m.key)
@@ -65,21 +106,54 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
         }
         result.count += 1;
         match &query.mode {
-            QueryMode::Fetch => result.rows.push(row),
+            QueryMode::Fetch => {
+                // `count` is incremented above, before this: a row served on an earlier
+                // page is still a row that matched, so the total is the same on every page.
+                let rank = (Reverse(ts_of(&row)), ord, at);
+                if query.cursor.is_none_or(|c| rank > c.rank()) {
+                    ranked.push((rank, row));
+                }
+            }
             QueryMode::GroupBy(keys) => {
                 *result.group_counts.entry(group_key(&row, keys)).or_insert(0) += 1;
             }
-            QueryMode::Count | QueryMode::Exists => {}
-        }
-        if query.limit != 0 && result.count as usize >= query.limit {
-            break;
+            QueryMode::Count => {}
+            QueryMode::Exists => break,
         }
     }
 
-    result.meta.rows_returned = result.count;
+    if query.mode == QueryMode::Fetch {
+        // Sort the whole thing and take the front, then look at what is left to know
+        // whether there is another page. The oracle is allowed to be the hopelessly slow
+        // one - `engine::Newest` is where the bounded version lives, and an oracle that
+        // shared it would stop being an independent answer.
+        ranked.sort_by_key(|(rank, _)| *rank);
+        if let Some(n) = query.limit {
+            if ranked.len() > n {
+                result.meta.next_cursor = ranked
+                    .get(n - 1)
+                    .map(|(rank, _)| query.cursor_at(*rank).encode());
+            }
+            ranked.truncate(n);
+        }
+        result.rows = ranked.into_iter().map(|(_, row)| row).collect();
+    }
+    result.meta.rows_returned = result.rows.len() as u64;
+    result.meta.truncated =
+        query.mode == QueryMode::Fetch && result.meta.rows_returned < result.count;
     result.meta.files_opened = result.meta.templates_matched;
     result.meta.duration = started.elapsed();
     result
+}
+
+/// A row's timestamp, or `None`. Worked out here rather than shared with the engine, for
+/// the reason at the top of this file - a mutation to the one reading must not move both
+/// answers together.
+fn ts_of(row: &Row) -> Option<i64> {
+    match row.get(DEFAULT_TS_COLUMN) {
+        Some(ColValue::Datetime(ns)) => Some(*ns),
+        _ => None,
+    }
 }
 
 /// `ts` inside `[since, until)`, worked out from scratch. A row with no readable

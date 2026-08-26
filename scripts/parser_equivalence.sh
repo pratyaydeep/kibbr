@@ -9,6 +9,14 @@
 # Compared: the whole `--format json` body, meta included, with `duration_ms` removed -
 # two runs of the same engine differ only in how long they took.
 #
+# Also asserted, and not by a differential: the permanent set at the bottom pins the four
+# things the grammar cannot state about itself - that `LIMIT`/`--limit` and `AFTER`/`--after`
+# resolve to the same rows, that `MATCH` with no `LIMIT` returns everything rather than a
+# capped sample, that the rows a limit returns are the *newest* ones, and that paging with
+# `AFTER` tiles the unpaged answer exactly. The "newest" check runs against the reference
+# scanner, sorted descending and truncated, because that is a claim about the data and not
+# about the two surfaces agreeing with each other.
+#
 # Not compared: `--exists`. The grammar has two verbs, MATCH and COUNT, and neither asks
 # `QueryMode::Exists` - the flag is the only way to reach it. That gap is reported below
 # rather than closed here.
@@ -93,7 +101,12 @@ rfc3339() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" 
 #
 # stderr is folded in rather than dropped: if one side fails and the other answers, that
 # has to read as a disagreement. A silenced error would compare equal to nothing at all.
-answer() { "$BIN" query "$INPUT" "$@" --format json 2>&1 | sed 's/"duration_ms":[-+0-9.e]*//'; }
+answer() { raw "$@" | sed 's/"duration_ms":[-+0-9.e]*//'; }
+
+# The same answer with nothing removed, so it is still JSON. `answer` blanks `duration_ms`
+# in place, which leaves a value-less key that a JSON parser is right to reject - fine for
+# the string comparison the differential does, useless to the checks that read a field.
+raw() { "$BIN" query "$INPUT" "$@" --format json 2>&1; }
 
 # ── The grammar's own examples, which have to parse before the rest is worth running ──
 examples=0
@@ -115,6 +128,7 @@ disagreements=0
 known=0
 unknown=0
 nonempty=0
+limited=0
 for i in $(seq 1 "$COMBOS"); do
   FLAGS=(); PAIRS=""
 
@@ -160,7 +174,18 @@ for i in $(seq 1 "$COMBOS"); do
        WINDOW=" SINCE $d" ;;
   esac
 
-  TRIEQL="$VERB LOG {$PAIRS}$WINDOW$GROUP"
+  # `LIMIT` on a third of them. Only `MATCH` returns rows, so a limit is only asked for
+  # where it can change the answer - on the others the grammar accepts it and `Query::new`
+  # drops it, which the permanent set below checks directly.
+  LIMIT=""
+  if [ "$VERB" = "MATCH" ] && [ -z "$GROUP" ] && [ $((RANDOM % 3)) -eq 0 ]; then
+    n=$((1 + RANDOM % 20))
+    FLAGS[${#FLAGS[@]}]="--limit"; FLAGS[${#FLAGS[@]}]="$n"
+    LIMIT=" LIMIT $n"
+    limited=$((limited + 1))
+  fi
+
+  TRIEQL="$VERB LOG {$PAIRS}$WINDOW$GROUP$LIMIT"
 
   f=$(answer "${FLAGS[@]}")
   t=$(answer "$TRIEQL")
@@ -185,7 +210,206 @@ for i in $(seq 1 "$COMBOS"); do
 done
 
 echo
-echo "$COMBOS combinations: $known known template, $unknown unknown template, $nonempty returned rows"
+echo "$COMBOS combinations: $known known template, $unknown unknown template, $nonempty returned rows, $limited with a LIMIT"
 echo "$COMBOS combinations, $disagreements disagreements"
 echo "not covered: --exists (the grammar has no verb for QueryMode::Exists)"
-[ "$disagreements" -eq 0 ] && [ "$examples" -eq 2 ]
+
+# ── The permanent set ────────────────────────────────────────────────────────────────
+#
+# The random combinations above are a differential and prove only that two surfaces agree.
+# These four are the queries whose *answers* are pinned, because each one names a decision
+# the grammar does not: the empty pattern, the absence of a cap, the order a limit
+# truncates, and that paging tiles the answer.
+#
+# Each row is: the TrieQL query, the flag spelling of the same query, and what the answer
+# has to be. `-` for the flag spelling means the query has no flag equivalent.
+echo
+echo "── permanent set ──"
+
+pinned=0
+failures=0
+
+# The named fields of `--format json`, so a check reads as a sentence rather than as a
+# `grep` over a JSON blob.
+field() { python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+d["meta"]["duration_ms"] = 0
+for k in sys.argv[1:]:
+    d = d["meta"] if k == "meta" else d[k]
+print(json.dumps(d))
+' "$@"; }
+
+rows_json() { python3 -c '
+import json, sys
+for r in json.load(sys.stdin)["rows"]:
+    print(json.dumps(r, sort_keys=True))
+'; }
+
+# The `ts` of every returned row, in the order they came back. The ordering guarantee is
+# about which rows and in what order, and `ts` is the whole of what it promises - comparing
+# it rather than the rows themselves is what makes the check robust to two rows sharing a
+# timestamp, which the tiebreak settles but the guarantee does not speak to.
+row_ts() { python3 -c '
+import json, sys
+print("\n".join(str(r.get("ts")) for r in json.load(sys.stdin)["rows"]))
+'; }
+
+check() { # name expected actual
+  if [ "$2" = "$3" ]; then
+    pinned=$((pinned + 1))
+    echo "  ok    $1"
+  else
+    failures=$((failures + 1))
+    echo "  FAIL  $1"
+    echo "        expected  $2"
+    echo "        actual    $3"
+  fi
+}
+
+# The two surfaces on the same query, for the ones that have a flag spelling.
+same() { # name trieql flags...
+  local name=$1 q=$2; shift 2
+  check "$name" "$(answer "$q")" "$(answer "$@")"
+}
+
+# ── MATCH LOG {} SINCE 1h LIMIT 10 ───────────────────────────────────────────────────
+#
+# `SINCE 1h` is empty against a 2024 corpus by design (see the note at the top), so the
+# ordering rows below use `SINCE 100000d` to reach the data. This one pins the pair.
+same "MATCH LOG {} SINCE 1h LIMIT 10  ≡  --fetch --since 1h --limit 10" \
+     'MATCH LOG {} SINCE 1h LIMIT 10' --fetch --since 1h --limit 10
+
+# ── MATCH LOG {} SINCE 1h  (no limit on either side) ─────────────────────────────────
+same "MATCH LOG {} SINCE 1h  ≡  --fetch --since 1h" \
+     'MATCH LOG {} SINCE 1h' --fetch --since 1h
+
+# No default cap. `MATCH` with no `LIMIT` returns every matching row, is not truncated, and
+# offers no next page - there is nothing after "everything".
+uncapped=$(raw 'MATCH LOG {} SINCE 100000d' | field meta)
+dated=$(raw 'COUNT LOG {} SINCE 100000d' | field count)
+check "MATCH with no LIMIT returns every row, untruncated, with no cursor" \
+      "$dated false None" \
+      "$(printf '%s' "$uncapped" | python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["rows_returned"], str(m["truncated"]).lower(), m["next_cursor"])')"
+
+# ── COUNT LOG {}  (all templates, all rows) ──────────────────────────────────────────
+#
+# The empty pattern is every template, and `COUNT` is uncapped: a limit bounds rows
+# returned and `COUNT` returns none, so a cap here would silently answer a different
+# question. `wc -l` is the independent number.
+total=$(wc -l < "$INPUT" | tr -d ' ')
+check "COUNT LOG {} counts every line in the file" \
+      "$total" \
+      "$(raw 'COUNT LOG {}' | field count)"
+check "COUNT LOG {} is not truncated" \
+      "false" \
+      "$(raw 'COUNT LOG {}' | field meta truncated | tr -d '"')"
+same "COUNT LOG {}  ≡  --count" 'COUNT LOG {}' --count
+
+# `MATCH LOG {}` reaches every template too, and the walk is the same one.
+check "MATCH LOG {} and COUNT LOG {} match the same templates" \
+      "$(raw 'COUNT LOG {}' | field meta templates_matched)" \
+      "$(raw 'MATCH LOG {}' | field meta templates_matched)"
+
+# ── MATCH LOG {"event":"login_failed"} SINCE 24h LIMIT 5 ─────────────────────────────
+same 'MATCH LOG {"event":"login_failed"} SINCE 24h LIMIT 5  ≡  the flags' \
+     'MATCH LOG {"event":"login_failed"} SINCE 24h LIMIT 5' \
+     --fetch --match event=login_failed --since 24h --limit 5
+
+# ── The ordering guarantee, against the oracle ───────────────────────────────────────
+#
+# Not a differential between the two surfaces - they share an engine and would agree on a
+# wrong order. The reference scanner reaches the answer by sorting every matching row and
+# taking the front, which is the definition the engine's bounded heap has to reproduce.
+#
+# `--reference` is only reachable through the flags, so the flag spelling is the one run
+# against it; the `same` rows above are what carry that back to TrieQL.
+for spec in "5 --match event=login_failed" "10 " "1 " "3 --match level=ERROR"; do
+  n=${spec%% *}; extra=${spec#* }
+  # shellcheck disable=SC2086
+  engine_ts=$(raw --fetch $extra --since 100000d --limit "$n" | row_ts)
+  # shellcheck disable=SC2086
+  oracle_ts=$(raw --fetch $extra --since 100000d --limit "$n" --reference | row_ts)
+  check "LIMIT $n ${extra:-(no term)} returns the oracle's newest $n, in order" \
+        "$oracle_ts" "$engine_ts"
+
+  # Descending, checked on its own: the oracle could agree with the engine on a shared
+  # mistake about direction, and this cannot.
+  sorted=$(printf '%s\n' "$engine_ts" | sort -r)
+  check "LIMIT $n ${extra:-(no term)} is newest-first" "$sorted" "$engine_ts"
+done
+
+# Rows with no timestamp, which only an unwindowed query can return - a time filter
+# excludes them by definition (`store::in_window`). They sort last, after every row that
+# can be placed in time, and among themselves they keep insertion order. The limit is
+# above the row count on purpose, so the page cannot fill from the timestamped rows alone
+# and leave this checking nothing.
+all_ts=$(raw 'MATCH LOG {} LIMIT 100000' | row_ts)
+check "rows with no ts sort after every row that has one" \
+      "$(printf '%s\n' "$all_ts" | grep -vc '^None$') dated, then $(printf '%s\n' "$all_ts" | grep -c '^None$') undated" \
+      "$(printf '%s\n' "$all_ts" | grep -n '^None$' | head -1 | cut -d: -f1 | awk -v n="$(printf '%s\n' "$all_ts" | grep -c '^None$')" '{print $1 - 1 " dated, then " n " undated"}')"
+check "the dated rows of an unwindowed answer are still newest-first" \
+      "$(printf '%s\n' "$all_ts" | grep -v '^None$' | sort -r)" \
+      "$(printf '%s\n' "$all_ts" | grep -v '^None$')"
+
+# The undated rows against the oracle, in full and in order. The windowed rows above never
+# reach one - a time filter excludes every row it cannot place - so this is the only check
+# that exercises the tiebreak, and the tiebreak is what the two sides have to compute
+# separately and land on together.
+check "an unwindowed answer matches the oracle row for row, in order" \
+      "$(raw --fetch --limit 100000 --reference | rows_json)" \
+      "$(raw --fetch --limit 100000 | rows_json)"
+
+# The newest row is the same row whether or not a limit was asked for - a limit truncates
+# the tail, never the head.
+head_capped=$(raw 'MATCH LOG {} SINCE 100000d LIMIT 1' | row_ts)
+head_full=$(raw 'MATCH LOG {} SINCE 100000d LIMIT 2000' | row_ts | head -1)
+check "LIMIT 1 returns the same row as the head of the unlimited answer" \
+      "$head_full" "$head_capped"
+
+# ── Paging ───────────────────────────────────────────────────────────────────────────
+#
+# The claim `AFTER` exists to make: walking the answer a page at a time produces the same
+# rows, in the same order, as asking for it whole. A gap or a repeat at a page boundary is
+# the failure mode keyset paging is chosen to avoid, so it is checked directly rather than
+# inferred from the two surfaces agreeing.
+#
+# `MATCH LOG {}` with no window is the hard case on purpose: it reaches the templates with
+# no `ts` column at all, whose rows all rank equal on time and whose boundaries are carried
+# entirely by the tiebreak.
+page_all() { # trieql-without-limit  page-size
+  local base=$1 size=$2 cursor="" q out
+  while :; do
+    if [ -n "$cursor" ]; then q="$base LIMIT $size AFTER \"$cursor\""; else q="$base LIMIT $size"; fi
+    out=$(raw "$q") || return 1
+    printf '%s' "$out" | rows_json
+    cursor=$(printf '%s' "$out" | field meta next_cursor | tr -d '"')
+    [ "$cursor" = "null" ] && return 0
+  done
+}
+
+for spec in 'MATCH LOG {}|7' 'MATCH LOG {"event":"login_failed"} SINCE 100000d|5' 'MATCH LOG {} SINCE 100000d|500'; do
+  base=${spec%|*}; size=${spec#*|}
+  check "paging $base at LIMIT $size tiles the whole answer" \
+        "$(raw "$base" | rows_json)" \
+        "$(page_all "$base" "$size")"
+done
+
+# The flag surface pages identically, which is what keeps `--after` and `AFTER` one feature.
+first=$(raw --fetch --match event=login_failed --since 100000d --limit 4)
+cur=$(printf '%s' "$first" | field meta next_cursor | tr -d '"')
+check "--after and AFTER resolve to the same page" \
+      "$(raw --fetch --match event=login_failed --since 100000d --limit 4 --after "$cur" | rows_json)" \
+      "$(raw "MATCH LOG {\"event\":\"login_failed\"} SINCE 100000d LIMIT 4 AFTER \"$cur\"" | rows_json)"
+
+# A cursor names a leaf by its ordinal among the leaves *this* pattern matched, so the same
+# text under a different pattern names a different leaf. Refused rather than answered.
+if raw "MATCH LOG {} LIMIT 4 AFTER \"$cur\"" | grep -q '"exists"'; then
+  failures=$((failures + 1)); echo "  FAIL  a cursor from another query was accepted"
+else
+  pinned=$((pinned + 1)); echo "  ok    a cursor from another query is refused"
+fi
+
+echo
+echo "permanent set: $pinned pinned, $failures failures"
+[ "$disagreements" -eq 0 ] && [ "$examples" -eq 2 ] && [ "$failures" -eq 0 ]

@@ -30,11 +30,11 @@ for size in 1k 1m; do
 done
 
 # Best of N. The minimum, not the mean: a slower run measured the machine, not the walk.
-best_phase1() {
+best_walk() {
   local best=""
   for _ in $(seq 1 "$REPEATS"); do
     us=$("$BIN" query "$1" $PATTERN --explain 2>/dev/null | awk '
-      /phase 1 took/ {
+      /the walk took/ {
         for (i = 1; i <= NF; i++) if ($i == "took") { v = $(i + 1); break }
         # Strip the unit by class, not by length: `µ` is one character to some awks and
         # two bytes to others, and getting that wrong silently drops a digit.
@@ -50,7 +50,7 @@ best_phase1() {
 wall() { { time -p "$@" > /dev/null 2>&1 ; } 2>&1 | awk '/^real/{printf "%.0fms", $2*1000}'; }
 
 printf '%-6s %10s %10s %8s %13s %13s %12s\n' \
-  input lines templates nodes "phase 1 (µs)" "explain wall" "count wall"
+  input lines templates nodes "walk (µs)" "explain wall" "count wall"
 for size in 1k 1m; do
   f="testdata/m2/$size.ndjson"
   n=$(wc -l < "$f" | tr -d ' ')
@@ -64,7 +64,7 @@ for size in 1k 1m; do
         if ($i == "nodes")      n = $(i - 1)
       }
       print t, n }')"
-  p1=$(best_phase1 "$f")
+  p1=$(best_walk "$f")
   ew=$(wall "$BIN" query "$f" $PATTERN --explain)
   cw=$(wall "$BIN" query "$f" $PATTERN --count)
   printf '%-6s %10s %10s %8s %13s %13s %12s\n' "$size" "$n" "$tmpl" "$nodes" "$p1" "$ew" "$cw"
@@ -72,19 +72,19 @@ done
 
 cat <<'NOTE'
 
-Phase 1 tracks the node count, not the line count: a thousandfold more data is a
+The walk tracks the node count, not the line count: a thousandfold more data is a
 couple of times more trie, because a file stops producing new templates long before
 it stops producing lines. That is the constant being claimed, and it is what the walk
 costs on a server that already holds the trie.
 
 `explain wall` is not that number and does not claim to be. Nothing persists the trie
 yet, so the process has to read the file to build one before it can walk it
-- linear, and the same work `count wall` does before its scan. What `--explain` skips
-is phase 2 entirely: no row is materialised and no store is opened.
+- linear, and the same work `count wall` does before its scan. What `--explain` skips is
+the scan entirely: no row is materialised and no store is opened.
 NOTE
 
 echo
-echo "the same query, phases side by side:"
+echo "the same query, walk then scan:"
 for size in 1k 1m; do
   echo "  $size:"
   "$BIN" query "testdata/m2/$size.ndjson" $PATTERN --explain 2>/dev/null | sed 's/^/    /'

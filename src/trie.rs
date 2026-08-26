@@ -301,8 +301,8 @@ impl Trie {
     /// Every leaf in the trie, in path order - children are stored sorted, so this does
     /// not depend on the order lines arrived in.
     ///
-    /// A poisoned lock truncates the subtree it guards rather than failing; the spec's
-    /// signature has nowhere to report it, and a partial list is what the caller gets.
+    /// A poisoned lock truncates the subtree it guards rather than failing; the signature
+    /// has nowhere to report it, and a partial list is what the caller gets.
     pub fn all_leaves(&self) -> Vec<Arc<Node>> {
         let mut leaves = Vec::new();
         let _ = collect_leaves(&self.root, &mut leaves);
