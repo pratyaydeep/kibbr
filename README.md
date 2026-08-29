@@ -226,6 +226,89 @@ triedb parse testdata/fixture.ndjson
 
 Add a line in the same shape and the test suite will check your case too.
 
+## Serve it over HTTP
+
+```
+triedb serve
+```
+
+**Storage is memory and only memory.** Nothing is written to disk - there is no
+write-ahead log and no snapshot of the trie - so everything ingested dies with the
+process. The banner says so on startup, and `/stats` says so as a field:
+
+```
+
+triedb serve
+
+  listening   http://127.0.0.1:7700
+
+  STORAGE IS IN MEMORY. Everything ingested is lost when this process exits.
+  Nothing is written to disk: there is no write-ahead log and no snapshot of
+  the trie. A restart starts an empty database. Do not point anything at this
+  that you would be unhappy to lose.
+
+  endpoints   POST /ingest      NDJSON body, one log line per line
+              POST /query       {"q": "<trieql>"}
+              GET  /templates   every template, its columns and row count
+              GET  /stats       throughput, template count, storage size
+              GET  /health      {"ok":true}
+
+  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first.
+```
+
+The banner is on stderr, so redirecting stdout does not silence the part about
+losing data. `--host` and `--port` move the listener; the default is loopback,
+because `--host 0.0.0.0` publishes an unauthenticated write endpoint and that
+should be something you typed.
+
+**Feed it and ask it something:**
+
+```
+triedb gen-logs --lines 500 --seed 42 > logs.ndjson
+curl -s -X POST --data-binary @logs.ndjson  http://127.0.0.1:7700/ingest
+curl -s -X POST -d '{"q": "COUNT LOG {\"level\": \"error\"}"}' http://127.0.0.1:7700/query
+curl -s http://127.0.0.1:7700/templates
+curl -s http://127.0.0.1:7700/stats
+```
+
+`/query` takes TrieQL, and answers with the JSON `query --format json` prints -
+one shape, built in one place, so the two surfaces cannot drift.
+
+**A bad line costs you that line and nothing else.** Corrupt three lines of the
+five hundred and the other 497 still land:
+
+```
+{"ok":false,"ingested":497,"errors":[
+  {"line":137,"msg":"invalid JSON at offset 29: EOF while parsing a value"},
+  {"line":400,"msg":"top-level JSON value is an array, expected an object"},
+  {"line":461,"msg":"invalid UTF-8: byte 0xe9 at offset 30"}]}
+```
+
+The status is 200, not a 4xx: the body was accepted and most of it was stored, and
+telling a log shipper to retry the batch would duplicate the 497 that landed. Line
+numbers count every physical line, blanks included, so the number indexes into the
+body you sent.
+
+**Ctrl-C finishes what it started.** SIGINT and SIGTERM both cancel one
+`CancellationToken`; the listener stops accepting, requests already running finish,
+and the shutdown walks a fixed order naming the steps this milestone does not have
+yet:
+
+```
+triedb: SIGINT received - shutting down
+triedb: stop accepting - 1 request(s) in flight
+triedb: in-flight requests complete
+triedb: final flush - skipped, storage is memory (M5 puts the stores on disk)
+triedb: WAL checkpoint - skipped, there is no WAL yet (M6)
+triedb: trie.json - skipped, nothing persists the trie yet (M5)
+triedb: close stores - 328 store(s), 60,997 row(s) discarded, they were only in memory
+triedb: close WAL - skipped, there is no WAL yet (M6)
+triedb: exit 0
+```
+
+Naming the skipped steps is the point. Four of the six are the difference between
+this and a database that survives being restarted.
+
 ## Run the tests
 
 ```
@@ -268,8 +351,18 @@ src/infer.rs      the type ladder - one rung per rule, in order
 src/parse.rs      the `parse` output
 src/types.rs      ColumnType, ColValue
 src/error.rs      thiserror enums
+src/trie.rs       the trie - nodes, edges, leaf metadata
+src/store.rs      in-memory leaf stores and the scan interface
+src/db.rs         lines to a trie and its stores - the write path
+src/engine.rs     the walk, the scan, the result
+src/trieql.rs     the query grammar
+src/query.rs      the `query` command, and the result JSON both surfaces answer with
+src/serve.rs      the HTTP surface, the banner, the shutdown sequence
 tests/fixture.rs  outer-surface tests
+tests/serve.rs    the HTTP contract, over a bare TcpStream
 ```
 
 One crate, no workspace. No traits - there is one implementation of everything so
-far, and an interface with a single caller is a guess.
+far, and an interface with a single caller is a guess. That includes the ingest
+path: a future `Ingestor` would sit between the API and the trie, and it is a plain
+function until the WAL and the flush timer give it a second caller to answer to.

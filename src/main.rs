@@ -14,6 +14,7 @@ mod parse;
 mod query;
 mod reference;
 mod rng;
+mod serve;
 mod store;
 mod trie;
 mod trieql;
@@ -70,6 +71,17 @@ enum Command {
         /// wants and the opposite of what a test comparing two orderings wants.
         #[arg(long)]
         full: bool,
+    },
+    /// Serve the native HTTP API. Storage is in memory: everything ingested is
+    /// lost when the process exits, which the startup banner says in as many words.
+    Serve {
+        /// Loopback by default. A container needs `--host 0.0.0.0`, and that is a
+        /// decision to publish an unauthenticated write endpoint - so it is typed, not
+        /// defaulted into.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long, default_value_t = serve::DEFAULT_PORT)]
+        port: u16,
     },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
@@ -174,6 +186,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let reader = open(&input)?;
             demo::run(reader, &mut out, full)
         }
+        // Writes nothing to `out`: the banner and the lifecycle log are stderr (see
+        // `serve::banner`), and everything else this command produces leaves over HTTP.
+        Command::Serve { host, port } => serve::run(&host, port),
         Command::Explain { query } => query::describe(&mut out, &query),
         Command::Query {
             input,

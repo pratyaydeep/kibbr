@@ -22,3 +22,6 @@ sample.ndjson
 # `scripts/dump_store.sh` output - the in-memory trie and leaf stores written down.
 # Scratch, and the script rebuilds it from the seed.
 /testdata/store/
+
+# M3 HTTP bodies - scratch, `gen-logs` plus tests/serve.rs rebuild them.
+/testdata/serve/

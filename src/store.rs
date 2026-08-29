@@ -122,6 +122,27 @@ impl LeafStore {
         Ok(out)
     }
 
+    /// Roughly what this leaf's rows weigh, in bytes.
+    ///
+    /// `/stats` promises storage sizes, and while storage is a `Vec<Row>` there is no
+    /// file to `stat`. Counted rather than estimated from a row average, because the
+    /// number's whole job is to tell an operator how close an in-memory database is to
+    /// the memory it has - and templates differ by an order of magnitude in row width.
+    ///
+    /// Payload only: key text, string values, and the fixed width of a scalar. Allocator
+    /// slack and the `HashMap` table are excluded, so the true resident size is larger.
+    /// It is labelled an estimate on the endpoint for exactly that reason.
+    pub fn approx_bytes(&self) -> u64 {
+        self.rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|(key, value)| (key.len() + value_bytes(value)) as u64)
+                    .sum::<u64>()
+            })
+            .sum()
+    }
+
     /// Every surviving row, projected through `opts.columns`.
     pub fn scan(&self, opts: &ScanOptions, preds: &[Predicate]) -> Result<Scan, StoreError> {
         let mut rows = Vec::new();
@@ -164,6 +185,17 @@ pub fn nanos_of(t: SystemTime) -> i64 {
     match t.duration_since(UNIX_EPOCH) {
         Ok(d) => i64::try_from(d.as_nanos()).unwrap_or(i64::MAX),
         Err(e) => i64::try_from(e.duration().as_nanos()).map_or(i64::MIN, |n| -n),
+    }
+}
+
+/// One value's payload width. A string costs its bytes; everything else is the scalar
+/// the column store will eventually write as a fixed-width cell.
+fn value_bytes(value: &ColValue) -> usize {
+    match value {
+        ColValue::String(s) => s.len(),
+        ColValue::Int64(_) | ColValue::Float64(_) | ColValue::Datetime(_) => 8,
+        ColValue::Bool(_) => 1,
+        ColValue::Null => 0,
     }
 }
 
@@ -219,5 +251,15 @@ impl Stores {
 
     pub fn rows(&self) -> u64 {
         self.rows
+    }
+
+    /// Every open store's `approx_bytes`, summed. `/stats`'s storage size.
+    pub fn approx_bytes(&self) -> u64 {
+        self.stores.values().map(LeafStore::approx_bytes).sum()
+    }
+
+    /// Open stores in template order, for `/templates` and `/stats`.
+    pub fn iter(&self) -> impl Iterator<Item = (&u64, &LeafStore)> {
+        self.stores.iter()
     }
 }

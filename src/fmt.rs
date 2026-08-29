@@ -39,7 +39,17 @@ pub fn col_text(value: &ColValue) -> String {
 /// never implies the ladder threw precision away. `Z`, not `+00:00`, because that is what
 /// the corpus is written in and what this re-ingests as.
 pub fn rfc3339(nanos: i64) -> String {
-    DateTime::from_timestamp_nanos(nanos).to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+    rfc3339_at(DateTime::from_timestamp_nanos(nanos))
+}
+
+/// The same spelling, for an instant that is already a `DateTime`.
+///
+/// `/templates` reports `first_seen` and `last_seen`, which `LeafMeta` holds as
+/// `DateTime<Utc>` rather than as nanoseconds. Routed through one set of options rather
+/// than calling `to_rfc3339` at the call site, so the rule above - one spelling, no
+/// exceptions beyond the documented one - survives a second kind of input.
+pub fn rfc3339_at(t: DateTime<chrono::Utc>) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
 }
 
 /// Thousands separators. Row counts here are read, not parsed.

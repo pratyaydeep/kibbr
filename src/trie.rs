@@ -309,6 +309,23 @@ impl Trie {
         leaves
     }
 
+    /// Every leaf with the edge labels that reach it, root excluded.
+    ///
+    /// `/templates` reports the template, and a template *is* its path: `LeafMeta` holds
+    /// the columns but not which of them were promoted into the fingerprint, so the
+    /// columns alone cannot say whether a leaf is `event=login_failed, ts, user` or some
+    /// other arrangement of the same names. `PlannedLeaf::path` carries the same tokens
+    /// for the same reason.
+    ///
+    /// Depth-first over children already sorted by label, so two runs over one file list
+    /// the templates in the same order.
+    pub fn leaf_paths(&self) -> Vec<(Vec<String>, Arc<Node>)> {
+        let mut out = Vec::new();
+        let mut path = Vec::new();
+        let _ = collect_leaf_paths(&self.root, &mut path, &mut out);
+        out
+    }
+
     /// Put one parsed line into the trie: walk order to a leaf, then fold this line's
     /// types into that leaf's columns.
     ///
@@ -409,6 +426,22 @@ fn collect_leaves(node: &Arc<Node>, out: &mut Vec<Arc<Node>>) -> Result<(), Trie
     }
     for edge in read(&node.children)?.iter() {
         collect_leaves(&edge.child, out)?;
+    }
+    Ok(())
+}
+
+fn collect_leaf_paths(
+    node: &Arc<Node>,
+    path: &mut Vec<String>,
+    out: &mut Vec<(Vec<String>, Arc<Node>)>,
+) -> Result<(), TrieError> {
+    if node.is_leaf.load(Ordering::Acquire) {
+        out.push((path.clone(), Arc::clone(node)));
+    }
+    for edge in read(&node.children)?.iter() {
+        path.push(edge.label.clone());
+        collect_leaf_paths(&edge.child, path, out)?;
+        path.pop();
     }
     Ok(())
 }

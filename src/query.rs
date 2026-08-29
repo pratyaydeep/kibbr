@@ -118,14 +118,7 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
     // in the grammar and do not change the answer. Both routes end at `Query::new`, which
     // is the one place the limit's default and its per-mode meaning are decided.
     if let Some(text) = &args.trieql {
-        let parsed = trieql::parse(text, now)?;
-        return finish(Query::new(
-            parsed.matches,
-            parsed.mode,
-            parsed.time,
-            parsed.limit,
-            cursor(parsed.after.as_deref())?,
-        ));
+        return from_trieql(text, now);
     }
 
     let matches = args
@@ -173,6 +166,24 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
         time,
         args.limit,
         cursor(args.after.as_deref())?,
+    ))
+}
+
+/// A TrieQL string to a `Query`. The only thing `POST /query` accepts, and the same
+/// three lines `--query '<trieql>'` runs.
+///
+/// Public so the HTTP surface reaches the grammar through this and not through
+/// `trieql::parse` directly - `Query::new`'s per-mode limit rules and `finish`'s cursor
+/// guard are part of what a TrieQL string means, and a second caller assembling the
+/// struct itself would be a second dialect.
+pub fn from_trieql(text: &str, now: DateTime<Utc>) -> Result<Query, CliError> {
+    let parsed = trieql::parse(text, now)?;
+    finish(Query::new(
+        parsed.matches,
+        parsed.mode,
+        parsed.time,
+        parsed.limit,
+        cursor(parsed.after.as_deref())?,
     ))
 }
 
@@ -551,6 +562,17 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
 /// Keys are sorted everywhere - `Row` and `group_counts` are `HashMap`s, and a result
 /// that serialises in a different order each run is not comparable to anything.
 fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
+    let body = result_json(result);
+    writeln!(out, "{body}").map_err(CliError::Write)
+}
+
+/// A `QueryResult` as the JSON both `--format json` and `POST /query` answer with.
+///
+/// One function, because `/query` is specified as answering with "query result JSON" and the
+/// two surfaces answering the same question differently is the drift this module's
+/// header is about. `engine::QueryMode`'s own comment makes the same promise from the
+/// other end: the shape is consumed unchanged, so it is built in one place.
+pub fn result_json(result: &QueryResult) -> Value {
     let rows: Vec<Value> = canonical(result).into_iter().map(row_json).collect();
 
     let mut groups = Map::new();
@@ -559,7 +581,7 @@ fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
     }
 
     let meta = &result.meta;
-    let body = serde_json::json!({
+    serde_json::json!({
         "exists": result.exists,
         "count": result.count,
         "rows": rows,
@@ -574,8 +596,7 @@ fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
             "next_cursor": meta.next_cursor,
             "duration_ms": meta.duration.as_secs_f64() * 1000.0,
         }
-    });
-    writeln!(out, "{body}").map_err(CliError::Write)
+    })
 }
 
 /// One row as one JSON object. Shared with `ndjson`, so a row serialises identically

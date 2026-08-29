@@ -152,6 +152,39 @@ pub enum QueryError {
     BackwardsRange { from: String, to: String },
 }
 
+/// What stops `triedb serve` from starting, or from finishing cleanly.
+///
+/// Nothing a *request* gets wrong is in here. A bad query is a 400 with the parse error
+/// in the body and the server carries on; a malformed ingest line is one entry in that
+/// response's `errors` array. These are the faults that leave no server running.
+#[derive(Debug, Error)]
+pub enum ServeError {
+    /// Almost always "address already in use" - a second `triedb serve` on 7700, or
+    /// something else holding it. Names the address, because the remedy is `--port`.
+    #[error("cannot listen on {addr}: {source}")]
+    Bind {
+        addr: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("starting the async runtime: {0}")]
+    Runtime(#[source] std::io::Error),
+
+    #[error("serving: {0}")]
+    Serve(#[source] std::io::Error),
+
+    /// Registering the SIGTERM handler failed, which is checked at startup rather than
+    /// at shutdown: a server that cannot hear SIGTERM will be killed by the SIGKILL that
+    /// follows it, and finding that out during a deploy is finding it out too late.
+    #[error("installing the {signal} handler: {source}")]
+    Signal {
+        signal: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 /// Errors surfaced by the CLI itself.
 ///
 /// A malformed line is not one of these - it is a `DetectorError`, reported against its
@@ -195,6 +228,26 @@ pub enum CliError {
 
     #[error(transparent)]
     Store(#[from] crate::store::StoreError),
+
+    #[error(transparent)]
+    Serve(#[from] ServeError),
+}
+
+/// The error and every cause below it on one line.
+///
+/// `report` prints the same chain on stderr as indented `caused by:` lines. An HTTP
+/// response body has one `error` field and no second line to put them on, and dropping
+/// the chain there would lose the part that says *where* in a TrieQL string the parse
+/// failed - which is the only part the client can act on.
+pub fn chain(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = e.to_string();
+    let mut source = e.source();
+    while let Some(cause) = source {
+        out.push_str(": ");
+        out.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    out
 }
 
 /// Print the error and every cause below it, so a `#[source]` chain is not lost.

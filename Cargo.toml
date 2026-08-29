@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
+tokio-util = "0.7.19"
