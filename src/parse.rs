@@ -4,10 +4,10 @@
 use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
-use crate::error::CliError;
+use crate::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::flatten::parse_line;
 use crate::fmt::rfc3339;
-use crate::lines::{strip_bom, strip_eol};
+use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
 use crate::types::{ColValue, ColumnType};
 
 /// Width of the widest fixed label, so `fingerprint` and the keys line up.
@@ -37,16 +37,43 @@ pub fn run<R: BufRead, W: Write>(
             break;
         }
         raw.clear();
-        // Bytes, not `lines()`: that iterator turns one non-UTF-8 line into an
-        // `io::Error` and kills the stream, which is the same abort by another route.
-        let read = input.read_until(b'\n', &mut raw).map_err(|source| {
-            CliError::Read {
-                path: "<input>".to_string(),
-                source,
-            }
+        let read = read_line(&mut input, &mut raw).map_err(|source| CliError::Read {
+            path: "<input>".to_string(),
+            source,
         })?;
-        if read == 0 {
-            break;
+        match read {
+            Line::Eof => break,
+            // A framing fault, reported and stepped over like a syntax one. `--limit`
+            // cannot stand in for the cap: it counts printed records, and a stream that
+            // never writes a newline prints none, so the run had no output and no end.
+            Line::TooLong => {
+                read_lines += 1;
+                rejected += 1;
+                // Flushed and reported before the skip, never after: the skip may be the
+                // last thing this process does, and a rejection nobody saw is the bug
+                // being fixed.
+                out.flush().map_err(CliError::Write)?;
+                crate::error::report(&DetectorError::new(
+                    read_lines as usize,
+                    DetectorErrorKind::LineTooLong {
+                        limit: MAX_LINE_BYTES,
+                    },
+                ));
+                match skip_to_eol(&mut input).map_err(|source| CliError::Read {
+                    path: "<input>".to_string(),
+                    source,
+                })? {
+                    Resync::Done => continue,
+                    Resync::NotDelimited { scanned } => {
+                        return Err(CliError::NotNewlineDelimited {
+                            line: read_lines,
+                            scanned,
+                            limit: MAX_LINE_BYTES,
+                        })
+                    }
+                }
+            }
+            Line::Read => {}
         }
         read_lines += 1;
         let line_no = read_lines as usize;

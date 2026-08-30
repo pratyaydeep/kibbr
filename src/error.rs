@@ -22,6 +22,20 @@ pub enum DetectorErrorKind {
     #[error("top-level JSON value is {found}, expected an object")]
     NotAnObject { found: &'static str },
 
+    /// The line ran past the byte cap before any newline arrived.
+    ///
+    /// A rejection like the others rather than an `io::Error` that would end the run: the
+    /// reader steps to the next newline and carries on, so an over-long line costs its own
+    /// line and nothing after it. Distinct from every other kind here in that nothing
+    /// looked at the content - the fault is in the framing, not the JSON.
+    ///
+    /// No byte count, deliberately. The length is only knowable once the line ends, and
+    /// this is reported before the reader goes looking for that end - on the input that
+    /// most needs the diagnostic, the end never comes. A message that always prints beats
+    /// a better one that sometimes does not.
+    #[error("line longer than the {limit} byte limit; skipped to the next line")]
+    LineTooLong { limit: usize },
+
     /// The line is not UTF-8, so it is not text and cannot be a JSON document.
     ///
     /// Split from `InvalidJson` because the remedy differs: an encoding fault in whatever
@@ -204,6 +218,24 @@ pub enum CliError {
 
     #[error("{count} of {total} lines rejected")]
     RejectedLines { count: u64, total: u64 },
+
+    /// No newline within `MAX_SKIP_BYTES` of an over-long line, so the input is not
+    /// newline-delimited and there is no next line to carry on to.
+    ///
+    /// Fatal, where `LineTooLong` is not, and the difference is whether anything is left
+    /// to isolate. A long line among short ones is one bad line, and one bad line must
+    /// not cost the others; a hundred megabytes with no `\n` in it is not lines at all -
+    /// most likely a binary file handed to `parse`, or a producer writing no terminators.
+    /// Reading on would consume the whole input to reach an answer that cannot arrive.
+    #[error(
+        "line {line}: no newline in the {scanned} bytes after the {limit} byte line limit \
+         - the input does not look like newline-delimited JSON"
+    )]
+    NotNewlineDelimited {
+        line: u64,
+        scanned: u64,
+        limit: usize,
+    },
 
     #[error(transparent)]
     Gen(#[from] GenError),

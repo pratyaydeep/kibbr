@@ -25,3 +25,6 @@ sample.ndjson
 
 # M3 HTTP bodies - scratch, `gen-logs` plus tests/serve.rs rebuild them.
 /testdata/serve/
+
+# Hostile-input repros for the black-box malformed-input sweep - scratch.
+/testdata/hostile/

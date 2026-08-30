@@ -24,6 +24,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
 use axum::body::Bytes;
+use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
@@ -53,6 +54,19 @@ pub const DEFAULT_PORT: u16 = 7700;
 /// would look like TrieDB rejecting valid logs. Not unlimited, because the body is
 /// buffered whole and this process has nowhere to spill it.
 const MAX_INGEST_BYTES: usize = 64 * 1024 * 1024;
+
+/// The most rejections one `/ingest` response will describe.
+///
+/// The body is bounded and the response was not, which is the wrong way round: a 1.2 MB
+/// body of nothing but bad lines produced a 15 MB response, one `{"line":N,"msg":"..."}`
+/// per line, and the smallest malformed line is a handful of bytes. The server built all
+/// of that in memory to describe input it had already refused.
+///
+/// A thousand is a sample, not a transcript. An operator reading this is identifying a
+/// pattern - one shipper truncating, one field arriving as `NaN` - and the thousandth
+/// example says nothing the tenth did not. `errors_omitted` carries the rest as a count,
+/// so the total is never wrong, only the enumeration is short.
+const MAX_REPORTED_ERRORS: usize = 1000;
 
 // ── State ──────────────────────────────────────────────────────────────────────────
 
@@ -147,6 +161,8 @@ struct LineError {
 struct IngestReport {
     ingested: u64,
     errors: Vec<LineError>,
+    /// Rejections past `MAX_REPORTED_ERRORS`, counted but not described.
+    omitted: u64,
 }
 
 impl IngestReport {
@@ -156,14 +172,23 @@ impl IngestReport {
             .iter()
             .map(|e| json!({ "line": e.line, "msg": e.msg }))
             .collect();
-        json!({
+        let mut report = json!({
             // "every line went in", not "the request was handled". A client that checks
             // one field should be told that 3 of its 500 lines are missing; the count and
             // the array are there for the client that wants to know which.
             "ok": self.errors.is_empty(),
             "ingested": self.ingested,
             "errors": errors,
-        })
+        });
+
+        // Present only when something was actually dropped, so a clean body is still
+        // exactly `{"ok":true,"ingested":N,"errors":[]}` and no existing client sees a
+        // field it has never seen. One that is almost always zero teaches clients to
+        // ignore it, which is the opposite of what it is for.
+        if self.omitted > 0 {
+            report["errors_omitted"] = json!(self.omitted);
+        }
+        report
     }
 }
 
@@ -188,10 +213,14 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
         Cursor::new(body),
         &mut |parsed| db::ingest_line(&server.trie, Some(&mut stores), &parsed, now),
         &mut |e: DetectorError| {
-            errors.push(LineError {
-                line: e.line,
-                msg: e.kind.to_string(),
-            });
+            // Past the cap the rejection is counted and dropped. `stats.rejected` is
+            // still the true total, so nothing is lost but the text.
+            if errors.len() < MAX_REPORTED_ERRORS {
+                errors.push(LineError {
+                    line: e.line,
+                    msg: e.kind.to_string(),
+                });
+            }
         },
     )?;
     drop(stores);
@@ -206,6 +235,7 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
 
     Ok(IngestReport {
         ingested: stats.ingested,
+        omitted: stats.rejected - errors.len() as u64,
         errors,
     })
 }
@@ -223,7 +253,22 @@ async fn health() -> Json<Value> {
     Json(json!({ "ok": true }))
 }
 
-async fn post_ingest(State(server): State<Arc<Server>>, body: Bytes) -> Response {
+/// `body` is a `Result`, not a `Bytes`, for the reason `post_query` decodes its own body:
+/// axum's own rejection is plain text, and a client that parses one error format should
+/// not need a second. A batch over `MAX_INGEST_BYTES` is the one response on this surface
+/// that used to arrive as a bare sentence, which is also the response a log shipper is
+/// most likely to meet in production.
+async fn post_ingest(
+    State(server): State<Arc<Server>>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let body = match body {
+        Ok(body) => body,
+        // `status` rather than a hardcoded 413: the rejection also covers a body that
+        // failed mid-read, and telling a shipper it sent too much when the connection
+        // dropped would send it away to split a batch that was never too big.
+        Err(rejection) => return fail(rejection.status(), &rejection.body_text()),
+    };
     let held = Arc::clone(&server);
     // The parse and the trie walk are CPU work holding a `std` lock, so they do not
     // belong on a runtime thread that also has to answer `/health`.

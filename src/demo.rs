@@ -17,10 +17,10 @@ use std::time::Instant;
 
 use chrono::Utc;
 
-use crate::error::CliError;
+use crate::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::fmt::commas;
 use crate::flatten::parse_line;
-use crate::lines::{strip_bom, strip_eol};
+use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
 use crate::trie::{Node, Trie, TrieError, ROOT_LABEL};
 use crate::types::ColumnType;
 
@@ -61,16 +61,42 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
 
     loop {
         raw.clear();
-        // Bytes, not `lines()`: that iterator turns one non-UTF-8 line into an
-        // `io::Error` and kills the stream, which is the same abort by another route.
-        let read = input
-            .read_until(b'\n', &mut raw)
-            .map_err(|source| CliError::Read {
-                path: "<input>".to_string(),
-                source,
-            })?;
-        if read == 0 {
-            break;
+        let read = read_line(&mut input, &mut raw).map_err(|source| CliError::Read {
+            path: "<input>".to_string(),
+            source,
+        })?;
+        match read {
+            Line::Eof => break,
+            // One over-long line costs its own line and nothing else, the same bargain a
+            // malformed one gets below.
+            Line::TooLong => {
+                read_lines += 1;
+                rejected += 1;
+                // Flushed and reported before the skip, never after: the skip may be the
+                // last thing this process does, and a rejection nobody saw is the bug
+                // being fixed.
+                out.flush().map_err(CliError::Write)?;
+                crate::error::report(&DetectorError::new(
+                    read_lines as usize,
+                    DetectorErrorKind::LineTooLong {
+                        limit: MAX_LINE_BYTES,
+                    },
+                ));
+                match skip_to_eol(&mut input).map_err(|source| CliError::Read {
+                    path: "<input>".to_string(),
+                    source,
+                })? {
+                    Resync::Done => continue,
+                    Resync::NotDelimited { scanned } => {
+                        return Err(CliError::NotNewlineDelimited {
+                            line: read_lines,
+                            scanned,
+                            limit: MAX_LINE_BYTES,
+                        })
+                    }
+                }
+            }
+            Line::Read => {}
         }
         read_lines += 1;
         let line = strip_bom(strip_eol(&raw));
