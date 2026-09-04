@@ -93,11 +93,16 @@ impl LeafStore {
     /// `scanned` counts rows looked at, so a time window that rejects everything still
     /// reports the work it did. Under a limit the loop stops early and `scanned` stops
     /// with it, which is the honest number.
+    ///
+    /// `f` is given the row's **ingest ordinal** beside it - append-only and nothing
+    /// deletes, so the index is the number the row was assigned when it landed, and M5
+    /// reads it back from a column. `engine::Rank` pages on it, so it has to be the row's
+    /// own number and not a count of what one scan admitted.
     pub fn visit(
         &self,
         opts: &ScanOptions,
         preds: &[Predicate],
-        f: &mut dyn FnMut(&Row),
+        f: &mut dyn FnMut(&Row, u64),
     ) -> Result<Scan, StoreError> {
         let ts = opts.ts_column.as_deref().unwrap_or(DEFAULT_TS_COLUMN);
         let since = opts.since.map(nanos_of);
@@ -105,7 +110,7 @@ impl LeafStore {
         let windowed = since.is_some() || until.is_some();
 
         let mut out = Scan::default();
-        for row in &self.rows {
+        for (seq, row) in self.rows.iter().enumerate() {
             out.scanned += 1;
             if windowed && !in_window(row.get(ts), since, until) {
                 continue;
@@ -114,7 +119,7 @@ impl LeafStore {
                 continue;
             }
             out.matched += 1;
-            f(row);
+            f(row, seq as u64);
             if opts.limit != 0 && out.matched as usize >= opts.limit {
                 break;
             }
@@ -146,7 +151,8 @@ impl LeafStore {
     /// Every surviving row, projected through `opts.columns`.
     pub fn scan(&self, opts: &ScanOptions, preds: &[Predicate]) -> Result<Scan, StoreError> {
         let mut rows = Vec::new();
-        let mut scan = self.visit(opts, preds, &mut |row| rows.push(project(row, &opts.columns)))?;
+        let mut scan =
+            self.visit(opts, preds, &mut |row, _| rows.push(project(row, &opts.columns)))?;
         scan.rows = rows;
         Ok(scan)
     }

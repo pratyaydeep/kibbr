@@ -7,7 +7,8 @@
 //! grammar cannot spell and that script therefore does not cover.
 //!
 //! - **LIMIT and paging.** A limit bounds rows returned, not rows counted; a `MATCH` that
-//!   asks for no limit gets every row; and `AFTER` walks the rest without gaps or repeats.
+//!   asks for no limit gets the `max_rows` backstop as a page rather than a truncation; and
+//!   `AFTER` walks the rest without gaps or repeats.
 //! - **Row order.** `ts` descending; rows that cannot be placed in time last.
 //! - **A template with no `ts` column, under a time filter.** `exists: true, count: 0`.
 //! - **`--exists` with a time clause.** A liveness check that reads one row, not a
@@ -42,38 +43,40 @@ const FIXTURE: &str = concat!(
 /// on when it runs.
 const ALL: [&str; 3] = ["--between", "2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z"];
 
+/// Environment variable for the backstop configuration.
+const MAX_ROWS_ENV: &str = "TRIEDB__QUERY__MAX_ROWS";
+
 fn query(args: &[&str]) -> Value {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
-        .arg("query")
-        .arg("-")
-        .args(args)
-        .args(["--format", "json"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn triedb");
-    let mut stdin = child.stdin.take().expect("stdin was not piped");
-    let writer = std::thread::spawn(move || {
-        let _ = stdin.write_all(FIXTURE.as_bytes());
-    });
-    let out = child.wait_with_output().expect("failed to wait on triedb");
-    writer.join().expect("stdin writer thread panicked");
+    let out = raw(args);
     assert!(
         out.status.success(),
         "triedb query {args:?} exited {:?}\nstderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    serde_json::from_slice(&out.stdout).expect("query did not emit JSON")
+    json_of(&out)
 }
 
 /// The whole process, for the cases where failing is the assertion.
 fn raw(args: &[&str]) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    raw_env(args, &[])
+}
+
+/// Test with environment variables: flag > environment > default.
+fn raw_env(args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_triedb"));
+    command
         .arg("query")
         .arg("-")
         .args(args)
-        .args(["--format", "json"])
+        .args(["--format", "json"]);
+    // Cleared and then set, so a variable exported in the shell that ran `cargo test`
+    // cannot decide what these tests measure.
+    command.env_remove(MAX_ROWS_ENV);
+    for (var, value) in env {
+        command.env(var, value);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -86,6 +89,10 @@ fn raw(args: &[&str]) -> std::process::Output {
     let out = child.wait_with_output().expect("failed to wait on triedb");
     writer.join().expect("stdin writer thread panicked");
     out
+}
+
+fn json_of(out: &std::process::Output) -> Value {
+    serde_json::from_slice(&out.stdout).expect("query did not emit JSON")
 }
 
 /// Every row rendered, so rows with no `n` column are still comparable.
@@ -195,17 +202,121 @@ fn limit_zero_is_zero_rows_and_not_the_default() {
     assert_eq!(none["meta"]["truncated"], true);
 }
 
-/// A `MATCH` that asks for no limit gets every matching row and no cursor. There is no
-/// cap: an answer that silently held rows back would be a different answer to the one
-/// asked for, and "show me the errors" is the request that can least afford it.
+/// A `MATCH` that asks for no limit and stays under the backstop gets every matching row
+/// and no cursor: seven rows are well inside the 10,000-row default, so nothing is
+/// withheld. `--max-rows 0` is the same answer with no backstop in reach at all.
+///
+/// The two answers differ only in `limit_source`, which is the field's meaning: it names
+/// who set the page size, not whether the page filled. `truncated` is the one that says
+/// whether it fired, and both readings are needed - a backstop in force that did not bite
+/// is a different fact from no backstop at all.
 #[test]
-fn a_match_with_no_limit_returns_everything() {
-    let all = query(&["MATCH LOG {}"]);
-    assert_eq!(all["meta"]["rows_returned"], 7);
-    assert_eq!(all["count"], 7);
-    assert_eq!(all["meta"]["truncated"], false);
-    // Nothing was withheld, so there is no next page to offer.
-    assert_eq!(all["meta"]["next_cursor"], Value::Null);
+fn a_match_with_no_limit_returns_everything_under_the_backstop() {
+    for (args, source) in [
+        (&["MATCH LOG {}"][..], "backstop"),
+        (&["--max-rows", "0", "MATCH LOG {}"][..], "unlimited"),
+    ] {
+        let all = query(args);
+        assert_eq!(all["meta"]["rows_returned"], 7);
+        assert_eq!(all["count"], 7);
+        assert_eq!(all["meta"]["truncated"], false);
+        assert_eq!(all["meta"]["limit_source"], source);
+        // Nothing was withheld, so there is no next page to offer.
+        assert_eq!(all["meta"]["next_cursor"], Value::Null);
+    }
+}
+
+// ── The max_rows backstop ──────────────────────────────────────────────────────────
+
+/// A `MATCH` naming no `LIMIT` is cut at the backstop, and the answer says so twice:
+/// `truncated` that the page is short of the answer, `limit_source` that the server and not
+/// the query decided it. One field cannot carry both - a caller that asked for three rows
+/// and got three has what it wanted, and this caller has been told to narrow its query.
+#[test]
+fn the_backstop_cuts_an_unlimited_match_and_says_who_cut_it() {
+    let capped = query(&["--max-rows", "3", "MATCH LOG {}"]);
+    assert_eq!(capped["meta"]["rows_returned"], 3);
+    // The total is the answer's, not the page's.
+    assert_eq!(capped["count"], 7);
+    assert_eq!(capped["meta"]["truncated"], true);
+    assert_eq!(capped["meta"]["limit_source"], "backstop");
+    assert!(
+        capped["meta"]["next_cursor"].is_string(),
+        "a page cut by the server has to be continuable"
+    );
+}
+
+/// The distinction the backstop rests on: a page size, not a truncation. Cutting an answer
+/// and handing back no way to continue it would be the silent shrink this exists to avoid.
+#[test]
+fn a_backstopped_answer_pages_to_completion() {
+    let whole = rows_as_text(&query(&["MATCH LOG {} LIMIT 100"]));
+
+    let mut paged = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..20 {
+        // No `LIMIT` on any page: the backstop supplies it every time, which is the shape
+        // a client that never learned to page would produce.
+        let q = match &cursor {
+            Some(c) => format!(r#"MATCH LOG {{}} AFTER "{c}""#),
+            None => "MATCH LOG {}".to_string(),
+        };
+        let page = query(&["--max-rows", "2", &q]);
+        paged.extend(rows_as_text(&page));
+        match page["meta"]["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    assert_eq!(paged, whole);
+}
+
+/// A caller's own `LIMIT` is honoured above the backstop rather than clamped to it. The
+/// backstop is for the query that named nothing; a query that named four rows asked a
+/// question, and answering three of it would be the server editing the request.
+#[test]
+fn a_callers_limit_is_honoured_above_the_backstop() {
+    let over = query(&["--max-rows", "2", r#"MATCH LOG {"event":"hit"} LIMIT 4"#]);
+    assert_eq!(over["meta"]["rows_returned"], 4);
+    assert_eq!(over["meta"]["limit_source"], "caller");
+
+    let under = query(&["--max-rows", "1000", r#"MATCH LOG {"event":"hit"} LIMIT 2"#]);
+    assert_eq!(under["meta"]["rows_returned"], 2);
+    assert_eq!(under["meta"]["limit_source"], "caller");
+}
+
+/// `COUNT` and `GROUP BY` return no rows, so the backstop has nothing to bound there. A cap
+/// that reached them would report seven rows as two - a wrong answer wearing a right shape.
+#[test]
+fn the_backstop_does_not_reach_a_count_or_a_group_by() {
+    let counted = query(&["--max-rows", "2", "COUNT LOG {}"]);
+    assert_eq!(counted["count"], 7);
+    assert_eq!(counted["meta"]["truncated"], false);
+    assert_eq!(counted["meta"]["limit_source"], "unlimited");
+
+    let grouped = query(&["--max-rows", "1", "COUNT LOG {} GROUP BY event"]);
+    assert_eq!(grouped["count"], 7);
+    assert_eq!(grouped["group_counts"]["beat"], 2);
+    assert_eq!(grouped["group_counts"]["hit"], 5);
+}
+
+/// Precedence: flag > environment > default. An unreadable env value is an error,
+/// not a silent fallback - an operator who set a value must get confirmation or error.
+#[test]
+fn the_environment_sets_the_backstop_and_the_flag_beats_it() {
+    let from_env = raw_env(&["MATCH LOG {}"], &[(MAX_ROWS_ENV, "2")]);
+    assert!(from_env.status.success());
+    let from_env = json_of(&from_env);
+    assert_eq!(from_env["meta"]["rows_returned"], 2);
+    assert_eq!(from_env["meta"]["limit_source"], "backstop");
+
+    let flagged = raw_env(&["--max-rows", "4", "MATCH LOG {}"], &[(MAX_ROWS_ENV, "2")]);
+    assert!(flagged.status.success());
+    assert_eq!(json_of(&flagged)["meta"]["rows_returned"], 4);
+
+    let bad = raw_env(&["MATCH LOG {}"], &[(MAX_ROWS_ENV, "lots")]);
+    assert!(!bad.status.success(), "an unreadable backstop was ignored");
+    assert!(String::from_utf8_lossy(&bad.stderr).contains(MAX_ROWS_ENV));
 }
 
 // ── Paging ─────────────────────────────────────────────────────────────────────────
@@ -290,6 +401,37 @@ fn a_cursor_from_another_query_is_refused() {
     // And the query that issued it still takes it.
     let ok = query(&[&format!(r#"MATCH LOG {{"event":"hit"}} LIMIT 2 AFTER "{c}""#)]);
     assert_eq!(ok["meta"]["rows_returned"], 2);
+}
+
+/// A cursor carrying any other version prefix is refused before its rank is read. Nothing
+/// reads a superseded layout and nothing translates one: the components mean different
+/// things across a version, so resolving it would answer confidently from the wrong row.
+#[test]
+fn a_cursor_from_another_version_is_refused() {
+    let page = query(&[r#"MATCH LOG {"event":"hit"} LIMIT 2"#]);
+    let c = page["meta"]["next_cursor"].as_str().expect("a cursor");
+    let body = c.split_once('.').expect("a versioned cursor").1;
+
+    for stale in [format!("v1.{body}"), format!("v99.{body}")] {
+        let out = raw(&[&format!(
+            r#"MATCH LOG {{"event":"hit"}} LIMIT 2 AFTER "{stale}""#
+        )]);
+        assert!(!out.status.success(), "{stale} was accepted");
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(said.contains("version"), "unhelpful refusal: {said}");
+    }
+}
+
+/// A cursor nobody minted. Refused as malformed rather than decoded into some rank that
+/// happens to parse - the bytes are opaque precisely so that no one can write one.
+#[test]
+fn a_forged_cursor_is_refused() {
+    for forged in ["v2.", "v2.zz", "v2.0011", "not-a-cursor", ""] {
+        let out = raw(&[&format!(
+            r#"MATCH LOG {{"event":"hit"}} LIMIT 2 AFTER "{forged}""#
+        )]);
+        assert!(!out.status.success(), "`{forged}` was accepted");
+    }
 }
 
 /// The flag surface pages identically - `--after` is `AFTER`, as `--limit` is `LIMIT`.

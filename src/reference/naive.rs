@@ -13,7 +13,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::row_of;
-use crate::engine::{group_key, value_matches, MatchValue, Query, QueryMeta, QueryMode, QueryResult};
+use crate::engine::{
+    group_key, leaf_key, value_matches, MatchValue, Query, QueryMeta, QueryMode, QueryResult,
+};
 use crate::flatten::ParsedLog;
 use crate::store::{Row, DEFAULT_TS_COLUMN};
 use crate::types::ColValue;
@@ -62,36 +64,20 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
         return result;
     }
 
-    // `engine::Rank`'s tiebreak, worked out from scratch. Two parts, both for rows a
-    // timestamp cannot separate:
+    // `engine::Rank`'s tiebreak. Two parts, both for rows a timestamp cannot separate:
     //
-    // - the template's rank among the matching templates *by key set*, which is why the
-    //   engine carries `PlannedLeaf::path` - `template_id` means a counter over there and
-    //   a structural hash here, and neither side can compute the other's;
-    // - insertion order within a template, which is file order seen from this side and
-    //   append order seen from the engine's.
-    let mut paths: Vec<Vec<String>> = lines
-        .iter()
-        .filter(|line| known(line))
-        .map(ParsedLog::walk_tokens)
-        .collect();
-    paths.sort();
-    paths.dedup();
-    let ordinal: HashMap<Vec<String>, u64> = paths
-        .into_iter()
-        .enumerate()
-        .map(|(n, path)| (path, n as u64))
-        .collect();
-
+    // - the leaf's key, from `engine::leaf_key`. Called rather than reimplemented, unlike
+    //   the window arithmetic: which number a key set hashes to is a contract, and two
+    //   independent hashes agreeing on it would be luck rather than evidence.
+    // - insertion order within a template, which is file order seen from this side and the
+    //   ingest ordinal seen from the engine's. Counted over every line of the template, not
+    //   over the ones that matched - the engine numbers rows when they land.
     let mut seq: HashMap<u64, u64> = HashMap::new();
     let mut ranked: Vec<(Rank, Row)> = Vec::new();
 
     for line in lines.iter().filter(|line| known(line)) {
         let row = row_of(line);
-        let ord = ordinal
-            .get(&line.walk_tokens())
-            .copied()
-            .expect("every matching line's key set was collected above");
+        let key = leaf_key(&line.walk_tokens());
         let n = seq.entry(line.template_id).or_insert(0);
         let at = *n;
         *n += 1;
@@ -109,7 +95,7 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
             QueryMode::Fetch => {
                 // `count` is incremented above, before this: a row served on an earlier
                 // page is still a row that matched, so the total is the same on every page.
-                let rank = (Reverse(ts_of(&row)), ord, at);
+                let rank = (Reverse(ts_of(&row)), key, at);
                 if query.cursor.is_none_or(|c| rank > c.rank()) {
                     ranked.push((rank, row));
                 }
@@ -141,6 +127,7 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
     result.meta.rows_returned = result.rows.len() as u64;
     result.meta.truncated =
         query.mode == QueryMode::Fetch && result.meta.rows_returned < result.count;
+    result.meta.limit_source = query.limit_source;
     result.meta.files_opened = result.meta.templates_matched;
     result.meta.duration = started.elapsed();
     result

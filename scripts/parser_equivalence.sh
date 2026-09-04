@@ -9,13 +9,17 @@
 # Compared: the whole `--format json` body, meta included, with `duration_ms` removed -
 # two runs of the same engine differ only in how long they took.
 #
-# Also asserted, and not by a differential: the permanent set at the bottom pins the four
-# things the grammar cannot state about itself - that `LIMIT`/`--limit` and `AFTER`/`--after`
-# resolve to the same rows, that `MATCH` with no `LIMIT` returns everything rather than a
-# capped sample, that the rows a limit returns are the *newest* ones, and that paging with
-# `AFTER` tiles the unpaged answer exactly. The "newest" check runs against the reference
-# scanner, sorted descending and truncated, because that is a claim about the data and not
-# about the two surfaces agreeing with each other.
+# Also asserted, and not by a differential: the permanent set at the bottom pins the things
+# the grammar cannot state about itself - that `LIMIT`/`--limit` and `AFTER`/`--after`
+# resolve to the same rows, that the rows a limit returns are the *newest* ones, that paging
+# with `AFTER` tiles the unpaged answer exactly, and that a `MATCH` naming no `LIMIT` is cut
+# at `max_rows` as a page rather than a truncation - it pages to the same row set the
+# uncapped query returns. The "newest" check runs against the reference scanner, sorted
+# descending and truncated, because that is a claim about the data and not about the two
+# surfaces agreeing with each other.
+#
+# The random combinations run with no `--max-rows`, so the 10,000-row default is out of
+# reach of a 2,000-line corpus and every answer above the backstop section is uncapped.
 #
 # Not compared: `--exists`. The grammar has two verbs, MATCH and COUNT, and neither asks
 # `QueryMode::Exists` - the flag is the only way to reach it. That gap is reported below
@@ -409,6 +413,94 @@ if raw "MATCH LOG {} LIMIT 4 AFTER \"$cur\"" | grep -q '"exists"'; then
 else
   pinned=$((pinned + 1)); echo "  ok    a cursor from another query is refused"
 fi
+
+# ── The max_rows backstop ────────────────────────────────────────────────────────────
+#
+# A query naming no `LIMIT` is cut at the backstop. The claim under test is that the cut is
+# a *page size*: the answer says who cut it and hands back a cursor, and walking that cursor
+# reproduces the uncapped answer exactly. A backstop that could not do this would be a
+# truncation - the same rows missing, with nothing to say so.
+#
+# 50 against a 2,000-line corpus, so the cap is reached many times over; the default is
+# 10,000 and out of reach here, which is what keeps every check above uncapped.
+CAP=50
+
+# `raw`, under a backstop. Separate rather than a global, so nothing above changes meaning.
+capped() { local cap=$1; shift; "$BIN" query "$INPUT" --max-rows "$cap" "$@" --format json 2>&1; }
+
+# Paging with no `LIMIT` on any request: the backstop supplies the page size every time,
+# which is the shape a client that never learned to page produces.
+page_backstop() { # cap trieql-without-limit
+  local cap=$1 base=$2 cursor="" q out
+  while :; do
+    if [ -n "$cursor" ]; then q="$base AFTER \"$cursor\""; else q="$base"; fi
+    out=$(capped "$cap" "$q") || return 1
+    printf '%s' "$out" | rows_json
+    cursor=$(printf '%s' "$out" | field meta next_cursor | tr -d '"')
+    [ "$cursor" = "null" ] && return 0
+  done
+}
+
+echo
+echo "── the max_rows backstop ──"
+
+cut=$(capped "$CAP" 'MATCH LOG {}' | field meta)
+check "a MATCH with no LIMIT is cut at max_rows, says so, and offers a cursor" \
+      "$CAP true backstop cursor" \
+      "$(printf '%s' "$cut" | python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["rows_returned"], str(m["truncated"]).lower(), m["limit_source"], "cursor" if m["next_cursor"] else "none")')"
+
+check "the backstopped page still reports the whole answer's count" \
+      "$(raw 'COUNT LOG {}' | field count)" \
+      "$(capped "$CAP" 'MATCH LOG {}' | field count)"
+
+check "paging the backstop tiles the same answer as the uncapped query" \
+      "$(raw 'MATCH LOG {}' | rows_json)" \
+      "$(page_backstop "$CAP" 'MATCH LOG {}')"
+
+check "a caller's LIMIT above max_rows is honoured, not clamped to it" \
+      "120 caller" \
+      "$(capped "$CAP" 'MATCH LOG {} LIMIT 120' | field meta | python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["rows_returned"], m["limit_source"])')"
+
+check "COUNT is untouched by a backstop below its total" \
+      "$(raw 'COUNT LOG {}' | field count) false unlimited" \
+      "$(capped "$CAP" 'COUNT LOG {}' | python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["meta"]; print(d["count"], str(m["truncated"]).lower(), m["limit_source"])')"
+
+# ── Cursors that must be refused ─────────────────────────────────────────────────────
+#
+# Every one of these has to be an error. A cursor is the one input that can be *wrong*
+# without looking wrong - resolved against the layout it does not describe, it answers
+# confidently from the wrong row, which is the failure paging exists to prevent.
+echo
+echo "── refused cursors ──"
+
+refused() { # name cursor
+  local name=$1 forged=$2 out status
+  out=$("$BIN" query "$INPUT" \
+        "MATCH LOG {\"event\":\"login_failed\"} SINCE 100000d LIMIT 4 AFTER \"$forged\"" \
+        --format json 2>&1)
+  status=$?
+  if [ $status -eq 0 ] || printf '%s' "$out" | grep -q '"rows"'; then
+    failures=$((failures + 1))
+    echo "  FAIL  $name was accepted"
+    echo "        $out"
+  else
+    pinned=$((pinned + 1))
+    echo "  ok    $name refused: $(printf '%s' "$out" | head -1 | cut -c1-96)"
+  fi
+}
+
+body=${cur#*.}
+# A cursor from a superseded page order. Nothing reads one and nothing translates one.
+refused "a v1 cursor"        "v1.$body"
+refused "an unknown version" "v99.$body"
+refused "no version at all"  "$body"
+refused "a garbled body"     "v2.$(printf '%s' "$body" | tr '0-9a-f' 'zzzzzzzzzzzzzzzz')"
+refused "a short body"       "v2.00ff"
+refused "an empty cursor"    ""
+# One nibble of the guard flipped: well-formed, the right version, the right length, and no
+# longer this query's. The only check here that reaches past `decode` into `Cursor::check`.
+flip_last() { python3 -c 'import sys; c = sys.argv[1]; print(c[:-1] + ("1" if c[-1] == "a" else "a"))' "$1"; }
+refused "a tampered guard"   "$(flip_last "$cur")"
 
 echo
 echo "permanent set: $pinned pinned, $failures failures"

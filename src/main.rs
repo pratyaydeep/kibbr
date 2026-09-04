@@ -1,5 +1,6 @@
 //! TrieDB. Generate hostile logs, parse them, build the trie, query it.
 
+mod config;
 mod db;
 mod demo;
 mod engine;
@@ -82,12 +83,19 @@ enum Command {
         host: String,
         #[arg(long, default_value_t = serve::DEFAULT_PORT)]
         port: u16,
+        /// Rows a query that names no `LIMIT` is cut at.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_ROWS`.
+        #[arg(long, value_name = "ROWS")]
+        max_rows: Option<usize>,
     },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
     Explain {
         /// e.g. `COUNT LOG {"event": "login_failed"} SINCE 1h`.
         query: String,
+        /// As `serve --max-rows`: what an unlimited `MATCH` would be cut at.
+        #[arg(long, value_name = "ROWS")]
+        max_rows: Option<usize>,
     },
     /// Query a file, with TrieQL or with the flags.
     Query {
@@ -154,6 +162,13 @@ enum Command {
         /// Only valid for the query that produced it.
         #[arg(long, value_name = "CURSOR")]
         after: Option<String>,
+
+        /// Rows a query that names no `LIMIT` is cut at.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_ROWS`. Not exclusive with a
+        /// TrieQL string, unlike `--limit`: the grammar cannot state it, and it is a
+        /// property of the server rather than of the query.
+        #[arg(long, value_name = "ROWS")]
+        max_rows: Option<usize>,
     },
 }
 
@@ -188,8 +203,14 @@ fn run(cli: Cli) -> Result<(), CliError> {
         }
         // Writes nothing to `out`: the banner and the lifecycle log are stderr (see
         // `serve::banner`), and everything else this command produces leaves over HTTP.
-        Command::Serve { host, port } => serve::run(&host, port),
-        Command::Explain { query } => query::describe(&mut out, &query),
+        Command::Serve {
+            host,
+            port,
+            max_rows,
+        } => serve::run(&host, port, config::Config::load(max_rows)?.query.max_rows),
+        Command::Explain { query, max_rows } => {
+            query::describe(&mut out, &query, config::Config::load(max_rows)?.query.max_rows)
+        }
         Command::Query {
             input,
             query: trieql,
@@ -205,7 +226,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
             reference,
             limit,
             after,
+            max_rows,
         } => {
+            let config = config::Config::load(max_rows)?;
             let reader = open(&input)?;
             let args = query::Args {
                 trieql,
@@ -221,6 +244,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 reference,
                 limit,
                 after,
+                max_rows: config.query.max_rows,
             };
             query::run(reader, &mut out, &args)
         }

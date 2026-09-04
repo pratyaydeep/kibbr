@@ -253,6 +253,9 @@ triedb serve
               GET  /stats       throughput, template count, storage size
               GET  /health      {"ok":true}
 
+  max rows    10000 - a MATCH with no LIMIT is answered a page at a time,
+              truncated with a next_cursor to continue from
+
   shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first.
 ```
 
@@ -273,6 +276,15 @@ curl -s http://127.0.0.1:7700/stats
 
 `/query` takes TrieQL, and answers with the JSON `query --format json` prints -
 one shape, built in one place, so the two surfaces cannot drift.
+
+**A `MATCH` with no `LIMIT` gets a page, not everything.** Every matching row
+would otherwise be materialised in the server before a byte of the response is
+written, which is a denial-of-service path reachable by accident from a
+terminal. So the answer is cut at `max_rows` - 10,000 by default, `--max-rows`
+or `TRIEDB__QUERY__MAX_ROWS` to change it, `0` to turn it off - and says so:
+`truncated: true`, `limit_source: "backstop"`, and a `next_cursor` to hand back
+as `AFTER` for the rest. A `LIMIT` you asked for is honoured above it rather
+than clamped to it, and `COUNT` and `GROUP BY` return no rows for it to bound.
 
 **A bad line costs you that line and nothing else.** Corrupt three lines of the
 five hundred and the other 497 still land:

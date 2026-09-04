@@ -20,7 +20,8 @@ use serde_json::{Map, Value};
 
 use crate::db;
 use crate::engine::{
-    self, Cursor, Match, MatchValue, Plan, Query, QueryMode, QueryResult, TimeRange, GROUP_SEP,
+    self, Cursor, LimitSource, Match, MatchValue, Plan, Query, QueryMode, QueryResult, TimeRange,
+    GROUP_SEP,
 };
 use crate::error::{CliError, QueryError};
 use crate::fmt::{col_text, commas, millis, rfc3339};
@@ -40,6 +41,9 @@ pub enum Format {
     /// One JSON object per line and no envelope: `triedb query … | triedb query -` is the
     /// point, so what comes out has to be what goes in. `jsonl` is the same thing under
     /// the name the file extension uses.
+    ///
+    /// An encoding, and not a way to ask for more rows than fit in memory: the answer is
+    /// ranked into a `Vec<Row>` before this writes a byte. See `fn ndjson`.
     #[value(alias = "jsonl")]
     Ndjson,
 }
@@ -62,6 +66,8 @@ pub struct Args {
     /// `None` = no limit asked for, which is not the same request as `--limit 0`.
     pub limit: Option<usize>,
     pub after: Option<String>,
+    /// The server's backstop, already resolved by `config`. `0` = none.
+    pub max_rows: usize,
 }
 
 pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(), CliError> {
@@ -118,7 +124,7 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
     // in the grammar and do not change the answer. Both routes end at `Query::new`, which
     // is the one place the limit's default and its per-mode meaning are decided.
     if let Some(text) = &args.trieql {
-        return from_trieql(text, now);
+        return from_trieql(text, now, args.max_rows);
     }
 
     let matches = args
@@ -166,6 +172,7 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
         time,
         args.limit,
         cursor(args.after.as_deref())?,
+        args.max_rows,
     ))
 }
 
@@ -176,7 +183,7 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
 /// `trieql::parse` directly - `Query::new`'s per-mode limit rules and `finish`'s cursor
 /// guard are part of what a TrieQL string means, and a second caller assembling the
 /// struct itself would be a second dialect.
-pub fn from_trieql(text: &str, now: DateTime<Utc>) -> Result<Query, CliError> {
+pub fn from_trieql(text: &str, now: DateTime<Utc>, max_rows: usize) -> Result<Query, CliError> {
     let parsed = trieql::parse(text, now)?;
     finish(Query::new(
         parsed.matches,
@@ -184,6 +191,7 @@ pub fn from_trieql(text: &str, now: DateTime<Utc>) -> Result<Query, CliError> {
         parsed.time,
         parsed.limit,
         cursor(parsed.after.as_deref())?,
+        max_rows,
     ))
 }
 
@@ -392,9 +400,12 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
         writeln!(
             out,
             "  limit    {}, {}",
-            match query.limit {
-                Some(n) => format!("{n} rows"),
-                None => "every matching row".to_string(),
+            match (query.limit, query.limit_source) {
+                // Which of the two capped it is the thing an operator most needs off a
+                // plan: one is theirs to change in the query, the other in the config.
+                (Some(n), LimitSource::Backstop) => format!("{n} rows - the max_rows backstop"),
+                (Some(n), _) => format!("{n} rows"),
+                (None, _) => "every matching row".to_string(),
             },
             ORDER_TEXT
         )
@@ -421,7 +432,7 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
 /// that plans; this one reports the `Query` the text denotes, which is the whole of what
 /// the parser is answerable for. Persisting the trie would let this grow the plan without
 /// the parser changing.
-pub fn describe<W: Write>(out: &mut W, text: &str) -> Result<(), CliError> {
+pub fn describe<W: Write>(out: &mut W, text: &str, max_rows: usize) -> Result<(), CliError> {
     let parsed = trieql::parse(text, Utc::now())?;
     let asked = parsed.limit;
     let paged = parsed.after.is_some();
@@ -434,6 +445,7 @@ pub fn describe<W: Write>(out: &mut W, text: &str) -> Result<(), CliError> {
         // no answer for a cursor to be a page of. `AFTER`'s shape was checked by the
         // parser; whether it belongs to this query is `query --explain`'s to say.
         None,
+        max_rows,
     );
     writeln!(out, "query:").map_err(CliError::Write)?;
     writeln!(out, "  mode     {}", mode_text(&query.mode)).map_err(CliError::Write)?;
@@ -455,11 +467,25 @@ const ORDER_TEXT: &str = "ts descending (newest first); rows with no ts last, in
 /// What the limit resolved to, and why - `Query::new` may have supplied it or dropped it,
 /// and neither should happen where only the source can see it.
 fn limit_text(query: &Query, asked: Option<usize>) -> String {
-    match (&query.mode, asked) {
-        (QueryMode::Fetch, None) => "none - every matching row".to_string(),
-        (QueryMode::Fetch, Some(n)) => n.to_string(),
-        (_, None) => "none (this verb returns no rows)".to_string(),
-        (_, Some(n)) => format!("none - LIMIT {n} does not apply, this verb returns no rows"),
+    match (query.limit, query.limit_source, asked) {
+        (Some(n), LimitSource::Backstop, _) => {
+            format!("{n} - the max_rows backstop; this query names none")
+        }
+        (Some(n), ..) => n.to_string(),
+        (None, _, None) if query.mode == QueryMode::Fetch => {
+            "none - every matching row".to_string()
+        }
+        (None, _, None) => "none (this verb returns no rows)".to_string(),
+        (None, _, Some(n)) => format!("none - LIMIT {n} does not apply, this verb returns no rows"),
+    }
+}
+
+/// What to add to a footer when the server did the cutting. Empty otherwise: a caller that
+/// asked for ten rows and got ten needs telling nothing.
+fn backstop_note(result: &QueryResult) -> &'static str {
+    match result.meta.limit_source {
+        LimitSource::Backstop => "; cut at the max_rows backstop, not by this query",
+        _ => "",
     }
 }
 
@@ -516,9 +542,10 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
             if result.meta.truncated {
                 writeln!(
                     out,
-                    "{} of {} rows   (newest first; {})",
+                    "{} of {} rows   (newest first{}; {})",
                     commas(result.meta.rows_returned),
                     commas(result.count),
+                    backstop_note(result),
                     summary(result)
                 )
                 .map_err(CliError::Write)?;
@@ -593,6 +620,9 @@ pub fn result_json(result: &QueryResult) -> Value {
             "rows_scanned": meta.rows_scanned,
             "rows_returned": meta.rows_returned,
             "truncated": meta.truncated,
+            // Two fields on purpose: `truncated` says the page is short of the answer,
+            // this says who decided that.
+            "limit_source": meta.limit_source.as_str(),
             "next_cursor": meta.next_cursor,
             "duration_ms": meta.duration.as_secs_f64() * 1000.0,
         }
@@ -637,10 +667,15 @@ fn value_json(value: &ColValue) -> Value {
 /// nothing. Neither puts an odd-shaped object in the middle of a stream something
 /// downstream is parsing row by row.
 ///
-/// `next_cursor` goes to stderr for the same reason - it is not a record. Usually there is
-/// none to print: with no cap, the unlimited fetch this format is for returns everything
-/// and has no next page. A `LIMIT` here still gets its cursor, on the channel
-/// that is not the data.
+/// **This does not stream, and it is not a memory mitigation.** Every row is ranked into a
+/// `Vec<Row>` before the first line is written, so the format changes the encoding and not
+/// the memory - measured rather than argued: peak RSS grows with the row count here, where
+/// a streaming writer's would not (`scripts/backstop_rss.sh`). Nor could it stream today:
+/// newest-first off storage that is not already ordered needs the last row read before the
+/// first row out, and M5's descending partition scan is what changes that. Until then the
+/// bound is the backstop and paging, which is why an unlimited fetch here gets a cursor.
+///
+/// `next_cursor` goes to stderr because it is not a record.
 fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
     if !result.exists {
         eprintln!(
@@ -684,7 +719,10 @@ fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<
         }
     }
     if let Some(c) = &result.meta.next_cursor {
-        eprintln!("triedb query: more rows; next page: AFTER \"{c}\"");
+        eprintln!(
+            "triedb query: more rows{}; next page: AFTER \"{c}\"",
+            backstop_note(result)
+        );
     }
     Ok(())
 }

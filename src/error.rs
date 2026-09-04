@@ -241,6 +241,9 @@ pub enum CliError {
     Gen(#[from] GenError),
 
     #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
+
+    #[error(transparent)]
     Trie(#[from] crate::trie::TrieError),
 
     #[error(transparent)]

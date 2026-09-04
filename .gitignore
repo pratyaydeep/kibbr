@@ -28,3 +28,7 @@ sample.ndjson
 
 # Hostile-input repros for the black-box malformed-input sweep - scratch.
 /testdata/hostile/
+
+# The max_rows peak-RSS runs and the binary they were measured against - scratch, and
+# `gen-logs` plus scripts/backstop_rss.sh rebuild them.
+/testdata/backstop/

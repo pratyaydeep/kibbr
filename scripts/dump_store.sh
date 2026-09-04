@@ -159,7 +159,10 @@ echo "wrote $OUT/templates.json and $(ls "$OUT/rows" | wc -l | tr -d ' ') row fi
 # compares every one of them against what the engine returns for the same file, which is
 # the only thing that can catch this script drifting from `db::row_of`.
 if [ "$VERIFY" -eq 1 ]; then
-  "$BIN" query "$INPUT" 'MATCH LOG {}' --format ndjson > "$OUT/.engine.jsonl" || exit 1
+  # `--max-rows 0`: this is the caller that really does want every row, and the default
+  # backstop would hand back a page of 10,000 and a cursor - a dump silently short of the
+  # store it claims to be.
+  "$BIN" query "$INPUT" --max-rows 0 'MATCH LOG {}' --format ndjson > "$OUT/.engine.jsonl" || exit 1
   OUT="$OUT" python3 -c '
 import collections, datetime, json, os
 

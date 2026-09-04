@@ -33,8 +33,15 @@ impl Server {
     /// 7700 is also where a developer's own `triedb serve` is. The banner prints the
     /// bound address precisely so something can read it.
     fn start() -> Self {
+        Self::start_with(&[])
+    }
+
+    /// The same, with extra flags - `--max-rows` is the one this needs, and a backstop the
+    /// corpus can actually reach has to be smaller than the 10,000-row default.
+    fn start_with(extra: &[&str]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
             .args(["serve", "--port", "0"])
+            .args(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -61,6 +68,13 @@ impl Server {
         }
         let port = port.unwrap_or_else(|| panic!("no listening line in banner:\n{banner}"));
 
+        // The backstop changes what an unlimited `MATCH` means on this surface, so the
+        // banner names it beside the endpoints rather than leaving it to be discovered
+        // from a truncated answer.
+        assert!(
+            banner.contains("max rows"),
+            "banner does not name the backstop:\n{banner}"
+        );
         // The banner is the one place a person is told the data is not durable, so its
         // saying so is part of the contract and not decoration.
         assert!(
@@ -378,4 +392,49 @@ fn sigterm_exits_zero() {
         log.contains("SIGTERM"),
         "shutdown log does not name the signal:\n{log}"
     );
+}
+
+// ── The backstop, over HTTP ────────────────────────────────────────────────────────
+
+/// A client that names no `LIMIT` gets a page and a way to continue it, not an answer
+/// quietly short of the truth. This is the surface the backstop exists for: the CLI's
+/// caller is one person at one terminal, and this one's is anything that can open a socket.
+#[test]
+fn an_unlimited_query_is_backstopped_and_pages_to_completion() {
+    let server = Server::start_with(&["--max-rows", "50"]);
+    let (status, _) = server.post("/ingest", &corpus());
+    assert_eq!(status, 200);
+
+    let first = server.query("MATCH LOG {}");
+    assert_eq!(first["meta"]["rows_returned"], 50);
+    assert_eq!(first["meta"]["truncated"], true);
+    assert_eq!(first["meta"]["limit_source"], "backstop");
+    // The total is the answer's, not the page's: 500 lines less the 3 corrupted ones.
+    assert_eq!(first["count"], (LINES - BAD.len()) as u64);
+
+    // Every page unlimited, as the client that never learned to page would send them.
+    let mut paged: Vec<String> = Vec::new();
+    let mut cursor = first["meta"]["next_cursor"].as_str().map(str::to_string);
+    paged.extend(rows_as_text(&first));
+    for _ in 0..20 {
+        let Some(c) = cursor.take() else { break };
+        let page = server.query(&format!(r#"MATCH LOG {{}} AFTER "{c}""#));
+        paged.extend(rows_as_text(&page));
+        cursor = page["meta"]["next_cursor"].as_str().map(str::to_string);
+    }
+    assert_eq!(cursor, None, "paging did not finish");
+
+    // The same rows the answer holds when it is asked for whole, in the same order.
+    let whole = server.query("MATCH LOG {} LIMIT 100000");
+    assert_eq!(whole["meta"]["limit_source"], "caller");
+    assert_eq!(paged, rows_as_text(&whole));
+}
+
+fn rows_as_text(result: &serde_json::Value) -> Vec<String> {
+    result["rows"]
+        .as_array()
+        .expect("rows is an array")
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }

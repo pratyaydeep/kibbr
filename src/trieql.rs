@@ -841,7 +841,7 @@ mod tests {
     #[test]
     fn after_takes_a_cursor_and_nothing_else() {
         let mint = |ts: Option<i64>| {
-            let q = Query::new(Vec::new(), QueryMode::Fetch, TimeRange::default(), None, None);
+            let q = Query::new(Vec::new(), QueryMode::Fetch, TimeRange::default(), None, None, 0);
             q.cursor_at((std::cmp::Reverse(ts), 3, 17)).encode()
         };
         for ts in [Some(1_700_000_000_000_000_000), None, Some(i64::MIN)] {
