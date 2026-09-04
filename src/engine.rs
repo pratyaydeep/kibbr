@@ -12,15 +12,51 @@ use std::time::{Duration, Instant, SystemTime};
 
 use thiserror::Error;
 
-use crate::fmt::col_text;
+use crate::config::Limits;
+use crate::fmt::{col_text, commas, duration_text};
 use crate::infer::infer;
-use crate::store::{Predicate, Row, ScanOptions, StoreError, Stores, DEFAULT_TS_COLUMN};
+use crate::store::{nanos_of, Predicate, Row, ScanOptions, StoreError, Stores, DEFAULT_TS_COLUMN};
 use crate::trie::{Node, Trie};
 use crate::types::ColValue;
 
-/// Joins a multi-key group label. A unit separator, because any printable delimiter is
-/// something a value is entitled to contain.
-pub const GROUP_SEP: char = '\u{1f}';
+/// The column a `time(...)` bucket is reported under, on every surface.
+pub const BUCKET_COLUMN: &str = "bucket";
+
+/// One key of a `GROUP BY`, as the clause named it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupKey {
+    Column(String),
+    /// `time(<width>)` - the bucket width. At most one per clause: the zero-fill below
+    /// has one time axis, and two of them would silently produce nested buckets.
+    Time(Duration),
+}
+
+impl GroupKey {
+    /// How the key is written back - a table header, an NDJSON field, `--explain`.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Column(key) => key,
+            Self::Time(_) => BUCKET_COLUMN,
+        }
+    }
+}
+
+/// The `time(...)` width and the column keys, split out of what the clause named.
+///
+/// The two are read separately everywhere below - one decides the time axis, the others
+/// the label - while `Vec<GroupKey>` keeps the order they were written in, which is the
+/// order every surface prints its columns.
+pub fn split_keys(keys: &[GroupKey]) -> (Option<Duration>, Vec<String>) {
+    let mut width = None;
+    let mut columns = Vec::new();
+    for key in keys {
+        match key {
+            GroupKey::Column(name) => columns.push(name.clone()),
+            GroupKey::Time(w) => width = Some(*w),
+        }
+    }
+    (width, columns)
+}
 
 /// The HTTP `/query` surface and the Elasticsearch translation layer both consume this
 /// shape unchanged, so changing it later means changing both.
@@ -29,7 +65,27 @@ pub enum QueryMode {
     Exists,
     Fetch,
     Count,
-    GroupBy(Vec<String>),
+    GroupBy(Vec<GroupKey>),
+}
+
+/// One group of a `GROUP BY`, and the rows in it.
+///
+/// A struct rather than an entry in a `HashMap<String, u64>`, because a map cannot say
+/// "this bucket exists and is empty" - an absent key is an absent bucket, and a gap in a
+/// chart and a zero in a chart mean different things to whoever is reading it at 3am. A
+/// 6h range at 5m is 72 observations, some of which are zero.
+///
+/// It also retires the separator a map key needed. The label used to be the values joined
+/// by a unit separator, split again three different ways by the three renderers; the
+/// values are a list here and nothing joins them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Group {
+    /// The bucket's start, in Unix nanoseconds, or `None` for rows that cannot be placed
+    /// in time. `None` throughout when the clause named no `time(...)`.
+    pub bucket: Option<i64>,
+    /// The column values, in the order the keys were written.
+    pub values: Vec<String>,
+    pub count: u64,
 }
 
 #[derive(Debug, Default)]
@@ -39,7 +95,10 @@ pub struct QueryResult {
     pub exists: bool,
     pub count: u64,
     pub rows: Vec<Row>,
-    pub group_counts: HashMap<String, u64>,
+    /// Ordered by bucket ascending - the unplaceable `None` first - then by values.
+    /// Every surface prints them in the order they arrive, and `scripts/agree.sh` diffs
+    /// the JSON as text, so the order is part of the answer.
+    pub groups: Vec<Group>,
     pub meta: QueryMeta,
 }
 
@@ -139,6 +198,18 @@ pub struct Query {
     /// Where the last page stopped, from `QueryMeta::next_cursor`. `None` = start at the
     /// newest row.
     pub cursor: Option<Cursor>,
+    /// The instant the query was built against, carried for the same reason `now` is a
+    /// parameter to `query::build` and `trieql::parse` rather than a call inside them: a
+    /// caller that wants a reproducible answer has to be able to fix it.
+    ///
+    /// `GROUP BY time(...)` needs it. A window with no `until` still has a right-hand
+    /// edge to zero-fill out to, and that edge is `now`. It is deliberately *not* folded
+    /// into `Cursor::guard`, for the reason the window itself is not: two calls a
+    /// millisecond apart would then refuse each other's cursors.
+    pub now: SystemTime,
+    /// What this query may not exceed. Carried rather than passed to `execute`, so the
+    /// number the CLI was configured with is the number the engine reads.
+    pub limits: Limits,
 }
 
 impl Query {
@@ -155,7 +226,8 @@ impl Query {
     /// stay distinguishable from asking for nothing. `ScanOptions.limit` keeps the sentinel
     /// - it is the storage interface, where "unlimited" is a real setting.
     ///
-    /// `max_rows` is the server's limit on an unlimited `Fetch`, in rows; `0` means none.
+    /// `limits.max_rows` is the server's cap on an unlimited `Fetch`, in rows; `0` means
+    /// none. The bucket caps beside it are read by `check_buckets`, not here.
     /// The caller's own limit stands above it and is not clamped; `COUNT`/`GROUP BY`
     /// return no rows for it to bound.
     pub fn new(
@@ -164,10 +236,11 @@ impl Query {
         time: TimeRange,
         limit: Option<usize>,
         cursor: Option<Cursor>,
-        max_rows: usize,
+        now: SystemTime,
+        limits: Limits,
     ) -> Self {
         let fetching = mode == QueryMode::Fetch;
-        let (limit, limit_source) = match (fetching, limit, max_rows) {
+        let (limit, limit_source) = match (fetching, limit, limits.max_rows) {
             (false, ..) => (None, LimitSource::Unlimited),
             (true, Some(n), _) => (Some(n), LimitSource::Caller),
             (true, None, 0) => (None, LimitSource::Unlimited),
@@ -180,6 +253,16 @@ impl Query {
             limit,
             limit_source,
             cursor: if fetching { cursor } else { None },
+            now,
+            limits,
+        }
+    }
+
+    /// The `time(...)` width this query groups by, or `None` for every other mode.
+    pub fn bucket_width(&self) -> Option<Duration> {
+        match &self.mode {
+            QueryMode::GroupBy(keys) => split_keys(keys).0,
+            _ => None,
         }
     }
 
@@ -220,6 +303,332 @@ impl Query {
     }
 }
 
+// ── Time buckets ───────────────────────────────────────────────────────────────────
+//
+// Boundaries sit on a fixed grid: multiples of the width counted from the **Unix epoch**,
+// so 5-minute buckets always begin at :00, :05, :10 … :55 of every hour. The grid is a
+// property of the clock and not of the query - which is the whole of `bucket_of` below,
+// and the reason two overlapping queries agree on where the bars go.
+//
+// **A range emits every bucket it touches, including the two it only partly covers.** A
+// row anywhere in the range has to land in some emitted bucket or it disappears from the
+// chart while still being counted in `count`. So the bucket count is `range / width` only
+// when both edges are already on the grid, and one more when they are not:
+//
+//     aligned - [10:00:00, 16:00:00) at 5m
+//
+//     grid    10:00   10:05   10:10    ...    15:50   15:55   16:00
+//             ├───────┼───────┼─────────────────┼───────┼───────┤
+//     range   ●───────────────────────────────────────────────○
+//             ^since                                      ^until
+//                                                → 72 buckets = 6h / 5m
+//
+//     unaligned - [10:03:17, 16:03:17), the same six hours
+//
+//     grid    10:00   10:05   10:10    ...    15:55   16:00   16:05
+//             ├───────┼───────┼─────────────────┼───────┼───────┤
+//     range       ●───────────────────────────────────────○
+//                 ^since                              ^until
+//                                                → 73 buckets
+//
+// A row at 10:03:20 is in range and its bucket starts at 10:00, before the range does; a
+// row at 16:02:00 is in range and its bucket starts at 16:00, after it. Both buckets are
+// real observations and both are emitted, so the ends straddle rather than land and the
+// count goes up by one. `SINCE 6h` is unaligned nearly always - `now` is whatever instant
+// it is - so this is the ordinary case rather than the exception. It is also where
+// `SINCE 30d GROUP BY time(1s)` gets its 2,592,001 rather than 2,592,000.
+//
+// `ceil(range / width)` is therefore the exact count only for a range whose edges are
+// already multiples of the width, which is what the property test in this file generates.
+//
+// `bucket_of` is the left edge of this and `bucket_after` the right; `window_span` puts
+// the two together, and `zero_fill` fills in what the scan did not reach.
+
+/// What a bucketed `GROUP BY` was refused for.
+///
+/// A refusal and not a truncation. A chart cut off partway through still looks like a
+/// chart, and nothing on it says which half is missing; an error says so in one sentence.
+/// Both numbers are named because only the pair is actionable - "too many" without the
+/// permitted count leaves the writer guessing how much narrower to go.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BucketError {
+    TooManyBuckets {
+        width: String,
+        requested: u64,
+        permitted: usize,
+    },
+    TooManyGroups {
+        width: String,
+        buckets: u64,
+        series: usize,
+        requested: u64,
+        permitted: usize,
+    },
+}
+
+// Hand-written rather than derived, because every number in these sentences is rendered
+// with thousands separators - `2,592,000 buckets` is the figure that makes the refusal
+// land, and `2592000` is one an operator has to count digits on.
+impl std::fmt::Display for BucketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooManyBuckets {
+                width,
+                requested,
+                permitted,
+            } => write!(
+                f,
+                "`GROUP BY time({width})` over this range needs {} buckets; the limit is \
+                 {} - widen the bucket or narrow the range",
+                commas(*requested),
+                commas(*permitted as u64)
+            ),
+            Self::TooManyGroups {
+                width,
+                buckets,
+                series,
+                requested,
+                permitted,
+            } => write!(
+                f,
+                "`GROUP BY time({width})` over this range needs {} buckets across {} \
+                 distinct groups, which is {} rows; the limit is {} - drop a group key, \
+                 widen the bucket, or narrow the range",
+                commas(*buckets),
+                commas(*series as u64),
+                commas(*requested),
+                commas(*permitted as u64)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BucketError {}
+
+/// A bucket width in nanoseconds.
+///
+/// Saturating: `time(1000000000d)` is a width no `i64` of nanoseconds can hold, and one
+/// bucket covering every representable instant is the honest answer to it rather than a
+/// panic. `0` is unreachable - the parser rejects a zero width, which has no boundaries
+/// to floor against.
+fn width_nanos(width: Duration) -> i64 {
+    i64::try_from(width.as_nanos()).unwrap_or(i64::MAX).max(1)
+}
+
+/// A timestamp's bucket start, in Unix nanoseconds.
+///
+/// The grid, and the section header above says why it is the epoch's and not the query's:
+/// a chart that shifts its bars when you nudge the time range is a bug people do not
+/// report clearly, and flooring against the query start is how it happens.
+///
+/// `div_euclid` floors toward negative infinity, so a pre-1970 timestamp lands in the
+/// bucket that contains it rather than in the one after it.
+///
+/// The multiply saturates, because flooring `i64::MIN` to a width that does not divide it
+/// lands *below* `i64::MIN` - there is no representable boundary there. That bottom bucket
+/// is therefore short and off the grid, alone among all of them. It is the year 1677 and
+/// reachable only by a timestamp column holding `i64::MIN` itself; containment still
+/// holds, which is what the ordering and the sum depend on.
+pub fn bucket_of(ns: i64, width: i64) -> i64 {
+    ns.div_euclid(width).saturating_mul(width)
+}
+
+/// The first bucket start at or after `ns` - the exclusive end of a span covering
+/// `[.., ns)`.
+fn bucket_after(ns: i64, width: i64) -> i64 {
+    bucket_of(ns.saturating_sub(1), width).saturating_add(width)
+}
+
+/// The half-open span of bucket starts a query's own window implies, `[lo, hi)`.
+///
+/// `None` where the window has no edge to read from: with no `SINCE` and no `BETWEEN`
+/// there is no range to enumerate, and the span comes from the rows instead.
+///
+/// The right edge is `until`, or `now` where the window is open-ended - `SINCE 6h` means
+/// the last six hours, and the sixth of them is a bucket like any other. `now` is not a
+/// filter: a row whose clock ran ahead still counts and still gets a bucket, which is
+/// what `span_with` is for.
+fn window_span(query: &Query) -> Option<(i64, i64)> {
+    let width = width_nanos(query.bucket_width()?);
+    let since = query.time.since?;
+    let lo = bucket_of(nanos_of(since), width);
+    let end = nanos_of(query.time.until.unwrap_or(query.now));
+    Some((lo, bucket_after(end, width).max(lo)))
+}
+
+/// The window's span widened to hold every bucket that actually received a row.
+///
+/// The widening is what keeps `sum(groups) == count` true. A row ahead of `now` by a
+/// skewed clock, or any row at all when the window has no lower bound, would otherwise
+/// fall in a bucket nothing emitted - counted in `count` and invisible in the chart.
+fn span_with(base: Option<(i64, i64)>, seen: Option<(i64, i64)>, width: i64) -> Option<(i64, i64)> {
+    match (base, seen) {
+        (Some((lo, hi)), Some((min, max))) => {
+            Some((lo.min(min), hi.max(max.saturating_add(width))))
+        }
+        (Some(span), None) => Some(span),
+        (None, Some((min, max))) => Some((min, max.saturating_add(width))),
+        (None, None) => None,
+    }
+}
+
+/// How many buckets a span holds.
+///
+/// Rounded up. Both edges come out of `bucket_of`, so the span is a whole number of widths
+/// and the rounding never fires - except against the saturated bottom bucket, where losing
+/// the remainder would drop the rows in it out of the sum.
+fn span_len(span: (i64, i64), width: i64) -> u64 {
+    let (lo, hi) = span;
+    u64::try_from(hi.saturating_sub(lo))
+        .unwrap_or(0)
+        .div_ceil(width.unsigned_abs().max(1))
+}
+
+/// The bucket count against `max_buckets`, before anything is read.
+///
+/// Called from `query::finish` on both surfaces, so `SINCE 30d GROUP BY time(1s)` is
+/// refused without reading thirty days of rows, and called again inside `execute` for the
+/// span a query with no lower bound derives from its rows.
+pub fn check_buckets(query: &Query) -> Result<(), BucketError> {
+    let Some(width) = query.bucket_width() else {
+        return Ok(());
+    };
+    let Some(span) = window_span(query) else {
+        return Ok(());
+    };
+    check_span(span, width, query.limits.max_buckets)
+}
+
+/// How many buckets this query's own window implies, for `--explain`. `None` where the
+/// query is not bucketed, or where its window has no edge and the span comes from the
+/// rows instead - which `--explain` cannot know, having read none.
+pub fn planned_buckets(query: &Query) -> Option<u64> {
+    let width = query.bucket_width()?;
+    Some(span_len(window_span(query)?, width_nanos(width)))
+}
+
+fn check_span(span: (i64, i64), width: Duration, permitted: usize) -> Result<(), BucketError> {
+    let requested = span_len(span, width_nanos(width));
+    if permitted > 0 && requested > permitted as u64 {
+        return Err(BucketError::TooManyBuckets {
+            width: duration_text(width),
+            requested,
+            permitted,
+        });
+    }
+    Ok(())
+}
+
+/// What one bucketed group is keyed by while the scan is running: its bucket, and the
+/// values of the other keys.
+type Tally = HashMap<(Option<i64>, Vec<String>), u64>;
+
+/// The tally as the answer: every observed label combination given a count in every
+/// bucket of the span, zero where nothing landed.
+///
+/// **Zeros, not gaps.** A bucket with no rows is a real observation - the thing was
+/// quiet - and it is not the same statement as a bucket nobody asked about. The cross
+/// product is over the label combinations that were *observed*, because a column's domain
+/// is not something the engine can know: three levels seen means three series, each with
+/// a point in all 72 buckets.
+///
+/// Rows that cannot be placed in time keep their count under `bucket: None`, so the
+/// groups always sum to `count`. They are never zero-filled - there is one of them or
+/// there is not.
+fn zero_fill(
+    tally: Tally,
+    width: Option<Duration>,
+    span: Option<(i64, i64)>,
+    columns: usize,
+    limits: Limits,
+) -> Result<Vec<Group>, BucketError> {
+    let Some(width) = width else {
+        // No time axis: the groups are what was seen, and nothing is filled in. This is
+        // the pre-existing `GROUP BY level`, whose row count is the column's domain and
+        // not a product of anything.
+        let mut groups: Vec<Group> = tally
+            .into_iter()
+            .map(|((bucket, values), count)| Group {
+                bucket,
+                values,
+                count,
+            })
+            .collect();
+        groups.sort_by(|a, b| (&a.bucket, &a.values).cmp(&(&b.bucket, &b.values)));
+        return Ok(groups);
+    };
+    let w = width_nanos(width);
+
+    // The rows that could not be placed. Held aside because they are not on the time
+    // axis and must not be multiplied across it.
+    let mut groups: Vec<Group> = tally
+        .iter()
+        .filter(|((bucket, _), _)| bucket.is_none())
+        .map(|((_, values), count)| Group {
+            bucket: None,
+            values: values.clone(),
+            count: *count,
+        })
+        .collect();
+    groups.sort_by(|a, b| a.values.cmp(&b.values));
+
+    let placed: Vec<(i64, &Vec<String>, u64)> = tally
+        .iter()
+        .filter_map(|((bucket, values), count)| bucket.map(|b| (b, values, *count)))
+        .collect();
+    let seen = placed
+        .iter()
+        .fold(None, |acc: Option<(i64, i64)>, (b, ..)| match acc {
+            Some((min, max)) => Some((min.min(*b), max.max(*b))),
+            None => Some((*b, *b)),
+        });
+
+    let Some(span) = span_with(span, seen, w) else {
+        // No window edge and no placed row: nothing names a time axis, so there are no
+        // buckets to emit. Not an error - see `execute`.
+        return Ok(groups);
+    };
+    check_span(span, width, limits.max_buckets)?;
+
+    // One series per observed label combination. With no other key there is exactly one,
+    // and it is the bare time series - which is what makes `GROUP BY time(5m)` alone
+    // produce 72 rows rather than none.
+    let mut series: BTreeSet<&Vec<String>> = placed.iter().map(|(_, values, _)| *values).collect();
+    let empty = Vec::new();
+    if columns == 0 {
+        series.insert(&empty);
+    }
+
+    let buckets = span_len(span, w);
+    let requested = buckets.saturating_mul(series.len() as u64);
+    if limits.max_groups > 0 && requested > limits.max_groups as u64 {
+        return Err(BucketError::TooManyGroups {
+            width: duration_text(width),
+            buckets,
+            series: series.len(),
+            requested,
+            permitted: limits.max_groups,
+        });
+    }
+
+    let counts: HashMap<(i64, &Vec<String>), u64> = placed
+        .iter()
+        .map(|(bucket, values, count)| ((*bucket, *values), *count))
+        .collect();
+    groups.reserve(requested as usize);
+    for n in 0..buckets {
+        let start = span.0.saturating_add((n as i64).saturating_mul(w));
+        for values in &series {
+            groups.push(Group {
+                bucket: Some(start),
+                values: (*values).clone(),
+                count: counts.get(&(start, *values)).copied().unwrap_or(0),
+            });
+        }
+    }
+    Ok(groups)
+}
+
 // ── The walk ───────────────────────────────────────────────────────────────────────
 
 /// What the walk decided, and nothing else. No rows, no store handles.
@@ -250,6 +659,11 @@ pub struct PlannedLeaf {
     /// Terms the path could not settle - the scan's predicates. Empty means the leaf
     /// answers the pattern by its shape alone and every row in it matches.
     pub residual: Vec<Match>,
+    /// Whether this template carries the column a time filter reads.
+    ///
+    /// Settled by the walk, off the key set it is already holding, so `GROUP BY time(...)`
+    /// over a template with no time column answers without opening anything.
+    pub has_ts: bool,
 }
 
 /// Walk the trie, collect the leaves that could hold a matching row. Reads no data.
@@ -278,6 +692,7 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
     }
 
     let mut leaves = Vec::new();
+    let ts = query.ts_column();
     for (path, node) in found {
         let Ok(slot) = node.leaf_meta.read() else {
             continue;
@@ -292,6 +707,7 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
                 path: path.clone(),
                 storage_path: meta.storage_path.clone(),
                 residual,
+                has_ts: columns.contains(ts.as_str()),
             });
         }
     }
@@ -607,7 +1023,11 @@ impl Cursor {
         let mut guard = [0u8; 4];
         guard.copy_from_slice(&bytes[25..29]);
         Ok(Self {
-            rank: (Reverse(ts), u64::from_be_bytes(word(9)), u64::from_be_bytes(word(17))),
+            rank: (
+                Reverse(ts),
+                u64::from_be_bytes(word(9)),
+                u64::from_be_bytes(word(17)),
+            ),
             query: u32::from_be_bytes(guard),
         })
     }
@@ -717,7 +1137,18 @@ impl Newest {
 /// `exists` keeps its meaning throughout: the template was found. A template that exists
 /// and is not firing is `exists: true, count: 0` - already distinct from `exists: false`,
 /// and distinguished the same way.
-pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResult, StoreError> {
+/// Errors an execution can end on. A `StoreError` is the storage layer failing; a
+/// `BucketError` is the query asking for more chart than anyone can read, which is the
+/// client's to fix and not the server's.
+#[derive(Debug, Error)]
+pub enum ExecError {
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error(transparent)]
+    Buckets(#[from] BucketError),
+}
+
+pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResult, ExecError> {
     let plan = plan(trie, query);
     let mut result = QueryResult {
         exists: !plan.leaves.is_empty(),
@@ -738,6 +1169,20 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
     let mut opts = query.scan_options();
     let ts = query.ts_column();
     let mut newest = Newest::new(query.limit);
+    // Split once rather than per leaf: the width decides the time axis and the columns
+    // decide the label, and neither changes between leaves.
+    let (width, columns) = match &query.mode {
+        QueryMode::GroupBy(keys) => split_keys(keys),
+        _ => (None, Vec::new()),
+    };
+    let bucket_ns = width.map(width_nanos);
+    // A time axis needs a template that has a time column. Where none of the matched
+    // templates does, there is no axis to fill in and the answer carries no buckets -
+    // `exists: true` and nothing else, which is the second of the two empty answers -
+    // "found, and nothing matched", as against "no such template" - rather than an error.
+    // Filling 72 zeros here would claim we looked along an axis that is not there.
+    let timed = plan.leaves.iter().any(|leaf| leaf.has_ts);
+    let mut tally = Tally::new();
 
     for leaf in &plan.leaves {
         // A planned leaf with no store is a known template holding no rows: the second
@@ -778,10 +1223,16 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
                     keep.offer(rank, row.clone());
                 })?
             }
-            QueryMode::GroupBy(keys) => {
-                let counts = &mut result.group_counts;
+            QueryMode::GroupBy(_) => {
+                let (tally, columns) = (&mut tally, &columns);
                 store.visit(&opts, &preds, &mut |row, _| {
-                    *counts.entry(group_key(row, keys)).or_insert(0) += 1;
+                    // `None` twice over: no `time(...)` was asked for, or one was and this
+                    // row has no timestamp to place it by. The renderers tell the two
+                    // apart from the width, which they already hold.
+                    let bucket = bucket_ns.and_then(|w| ts_of(row, &ts).map(|ns| bucket_of(ns, w)));
+                    *tally
+                        .entry((bucket, group_values(row, columns)))
+                        .or_insert(0) += 1;
                 })?
             }
         };
@@ -797,6 +1248,15 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
         let (rows, next) = newest.finish();
         result.rows = rows;
         result.meta.next_cursor = next.map(|rank| Cursor::new(rank, query).encode());
+    }
+    if matches!(query.mode, QueryMode::GroupBy(_)) {
+        result.groups = zero_fill(
+            tally,
+            width.filter(|_| timed),
+            window_span(query),
+            columns.len(),
+            query.limits,
+        )?;
     }
     // Rows in the answer, which for every mode but `Fetch` is none: `count` is what those
     // modes return and it is its own field. This used to be a second copy of `count`,
@@ -843,11 +1303,385 @@ pub fn value_matches(want: &MatchValue, stored: &ColValue) -> bool {
     }
 }
 
-/// A row's group label. Missing and null share one bucket: neither is a value, and
-/// splitting them would put two labels on one absent column.
-pub fn group_key(row: &Row, keys: &[String]) -> String {
+/// A row's group label, one value per column key, in the order the keys were written.
+///
+/// Missing and null share one label: neither is a value, and splitting them would put two
+/// labels on one absent column. Shared verbatim with the oracle, as `value_matches` is -
+/// which label a row gets is a contract both sides must land on, not a mechanism worth
+/// reimplementing. The bucket is *not* here, for the opposite reason: see the note at the
+/// top of `reference::naive`.
+pub fn group_values(row: &Row, keys: &[String]) -> Vec<String> {
     keys.iter()
-        .map(|key| row.get(key).map_or_else(|| col_text(&ColValue::Null), col_text))
-        .collect::<Vec<_>>()
-        .join(&GROUP_SEP.to_string())
+        .map(|key| {
+            row.get(key)
+                .map_or_else(|| col_text(&ColValue::Null), col_text)
+        })
+        .collect()
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────────
+
+/// The bucket arithmetic, which the CLI surface can only reach one query at a time.
+///
+/// The properties below hold for *any* range and width, so they are checked over hundreds
+/// of them rather than over a corpus somebody thought of - a boundary-alignment bug does
+/// not produce an error, it produces a plausible chart with the bars in the wrong places,
+/// and no hand-written case is likely to be the one that notices.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Limits;
+    use crate::db;
+    use crate::rng::Rng;
+    use crate::store::nanos_of;
+    use std::time::UNIX_EPOCH;
+
+    /// 2024-01-15T00:00:00Z, and the corpus runs a day forward from it.
+    const EPOCH: i64 = 1_705_276_800;
+    const DAY: i64 = 86_400;
+    /// The hour deliberately left with no rows in it, as an offset from `EPOCH`.
+    const GAP_HOUR: i64 = 5;
+
+    /// Seconds as the Unix nanoseconds a `Group::bucket` is in.
+    fn ns(secs: i64) -> i64 {
+        secs * 1_000_000_000
+    }
+
+    fn at(secs: i64) -> SystemTime {
+        if secs >= 0 {
+            UNIX_EPOCH + Duration::from_secs(secs as u64)
+        } else {
+            UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs())
+        }
+    }
+
+    /// A day of lines: a timestamp every few seconds, one hour of it empty, and a handful
+    /// of rows on a template with no `ts` column at all.
+    fn corpus() -> String {
+        let mut rng = Rng::new(11);
+        let mut out = String::new();
+        let mut secs = 0;
+        while secs < DAY {
+            if !(GAP_HOUR * 3_600..(GAP_HOUR + 1) * 3_600).contains(&secs) {
+                let level = ["ERROR", "WARN", "INFO"][rng.below(3) as usize];
+                let ts = chrono::DateTime::from_timestamp(EPOCH + secs, 0)
+                    .expect("a representable instant")
+                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                out.push_str(&format!(
+                    "{{\"ts\":\"{ts}\",\"level\":\"{level}\",\"event\":\"tick\"}}\n"
+                ));
+            }
+            secs += 1 + rng.below(40) as i64;
+        }
+        // A second template, sharing `level` and holding no timestamp: under a window it
+        // contributes nothing, and with none it is the `bucket: null` group.
+        for n in 0..7 {
+            out.push_str(&format!(
+                "{{\"level\":\"ERROR\",\"event\":\"untimed\",\"n\":{n}}}\n"
+            ));
+        }
+        out
+    }
+
+    fn db() -> db::Db {
+        db::load(corpus().as_bytes(), true).expect("the corpus loads")
+    }
+
+    fn query(mode: QueryMode, since: Option<i64>, until: Option<i64>) -> Query {
+        Query::new(
+            Vec::new(),
+            mode,
+            TimeRange {
+                since: since.map(at),
+                until: until.map(at),
+            },
+            None,
+            None,
+            at(EPOCH + DAY),
+            Limits {
+                max_rows: 0,
+                max_buckets: 0,
+                max_groups: 0,
+            },
+        )
+    }
+
+    fn bucketed(width: u64) -> QueryMode {
+        QueryMode::GroupBy(vec![GroupKey::Time(Duration::from_secs(width))])
+    }
+
+    /// The property, over randomised ranges and widths.
+    ///
+    /// Both endpoints are snapped to a multiple of the width, which is what makes
+    /// `ceil(range / width)` the exact bucket count rather than an approximation of it -
+    /// an unaligned range straddles a boundary at each end and touches one bucket more.
+    #[test]
+    fn buckets_sum_to_the_count_and_tile_the_range() {
+        let db = db();
+        let mut rng = Rng::new(7);
+        // Widths that divide a day and widths that do not, so alignment is exercised
+        // against boundaries that fall inside the range as well as on its edges.
+        const WIDTHS: [u64; 8] = [1, 30, 60, 300, 900, 3_600, 7_200, 4_500];
+
+        for _ in 0..400 {
+            let width = WIDTHS[rng.below(WIDTHS.len() as u64) as usize];
+            let w = width as i64;
+            // Aligned to the width from the epoch, which is where the boundaries are.
+            let lo = (EPOCH + rng.below(DAY as u64) as i64).div_euclid(w) * w;
+            let hi = lo + w * (1 + rng.below(400) as i64);
+
+            let grouped = execute(
+                &db.trie,
+                &db.stores,
+                &query(bucketed(width), Some(lo), Some(hi)),
+            )
+            .expect("the bucketed query answers");
+            let plain = execute(
+                &db.trie,
+                &db.stores,
+                &query(QueryMode::Count, Some(lo), Some(hi)),
+            )
+            .expect("the unbucketed query answers");
+
+            let case = format!("[{lo}, {hi}) at {width}s");
+            let summed: u64 = grouped.groups.iter().map(|g| g.count).sum();
+            assert_eq!(
+                summed, plain.count,
+                "{case}: buckets do not sum to the count"
+            );
+            assert_eq!(
+                summed, grouped.count,
+                "{case}: the answer disagrees with its own groups"
+            );
+
+            // `ceil(range / width)`, exact because both edges are on a boundary.
+            let expected = ((hi - lo) as u64).div_ceil(width);
+            assert_eq!(
+                grouped.groups.len() as u64,
+                expected,
+                "{case}: wrong number of buckets"
+            );
+
+            // Contiguous multiples of the width, starting at the range's own edge. This
+            // is the assertion an alignment bug fails: a floor against the query start
+            // instead of the epoch still tiles the range, but not at the same places a
+            // neighbouring query tiles it.
+            for (n, group) in grouped.groups.iter().enumerate() {
+                let start = lo + w * n as i64;
+                assert_eq!(
+                    group.bucket,
+                    Some(ns(start)),
+                    "{case}: bucket {n} is misplaced"
+                );
+                assert_eq!(start.rem_euclid(w), 0, "{case}: bucket {n} is off the grid");
+            }
+        }
+    }
+
+    /// The reason the boundaries are floored against the epoch and not against the query:
+    /// two queries over overlapping ranges have to agree about where the bars go.
+    #[test]
+    fn overlapping_ranges_put_their_boundaries_in_the_same_places() {
+        let db = db();
+        let width: i64 = 300;
+        let starts = |since: i64, until: i64| -> Vec<(i64, u64)> {
+            execute(
+                &db.trie,
+                &db.stores,
+                &query(bucketed(width as u64), Some(since), Some(until)),
+            )
+            .expect("the query answers")
+            .groups
+            .into_iter()
+            .filter_map(|g| g.bucket.map(|b| (b, g.count)))
+            .collect()
+        };
+
+        // Same data, three ranges nudged off each other by amounts smaller than a bucket.
+        let wide = starts(EPOCH, EPOCH + 4 * 3_600);
+        let mut compared = 0;
+        for offset in [1, 7, 137, 299] {
+            let nudged = starts(EPOCH + offset, EPOCH + 4 * 3_600 - offset);
+            assert!(!nudged.is_empty());
+            for (start, count) in &nudged {
+                let same = wide.iter().find(|(at, _)| at == start).unwrap_or_else(|| {
+                    panic!("offset {offset}: bucket {start} is not on the grid")
+                });
+                // Only the two partial buckets at the edges may hold fewer rows; the ones
+                // between them are the same observation whichever range asked.
+                if *start > ns(EPOCH + offset)
+                    && *start + ns(width) < ns(EPOCH + 4 * 3_600 - offset)
+                {
+                    assert_eq!(*count, same.1, "offset {offset}: bucket {start} disagrees");
+                    compared += 1;
+                }
+            }
+        }
+        // The comparison above is inside an `if`, so it has to be shown to have run.
+        assert!(compared > 100, "only {compared} buckets were compared");
+    }
+
+    /// An hour with no rows in it is 12 zeros at 5m, not twelve missing keys.
+    #[test]
+    fn an_empty_hour_is_zeros() {
+        let db = db();
+        let result = execute(
+            &db.trie,
+            &db.stores,
+            &query(bucketed(300), Some(EPOCH), Some(EPOCH + DAY)),
+        )
+        .expect("the query answers");
+
+        let gap = ns(EPOCH + GAP_HOUR * 3_600);
+        let inside: Vec<&Group> = result
+            .groups
+            .iter()
+            .filter(|g| {
+                g.bucket
+                    .is_some_and(|b| (gap..gap + ns(3_600)).contains(&b))
+            })
+            .collect();
+        assert_eq!(inside.len(), 12, "the empty hour is 12 buckets at 5m");
+        assert!(
+            inside.iter().all(|g| g.count == 0),
+            "the empty hour is not all zeros: {inside:?}"
+        );
+        // And the hours either side are not, so the corpus is actually exercising this.
+        assert!(result.groups.iter().any(|g| g.count > 0));
+    }
+
+    /// Every series gets a point in every bucket, because a chart with three lines has
+    /// three lines in every bucket - a quiet one is a zero on its line, not a gap in it.
+    #[test]
+    fn a_second_key_is_zero_filled_across_every_bucket() {
+        let db = db();
+        let mode = QueryMode::GroupBy(vec![
+            GroupKey::Time(Duration::from_secs(300)),
+            GroupKey::Column("level".to_string()),
+        ]);
+        let result = execute(
+            &db.trie,
+            &db.stores,
+            &query(mode, Some(EPOCH), Some(EPOCH + 3_600)),
+        )
+        .expect("the query answers");
+
+        let series: BTreeSet<&Vec<String>> = result.groups.iter().map(|g| &g.values).collect();
+        assert_eq!(series.len(), 3, "ERROR, WARN and INFO");
+        assert_eq!(result.groups.len(), 12 * 3);
+        // Exactly one row per (bucket, series) pair, and the total still holds.
+        let pairs: BTreeSet<(Option<i64>, &Vec<String>)> = result
+            .groups
+            .iter()
+            .map(|g| (g.bucket, &g.values))
+            .collect();
+        assert_eq!(pairs.len(), result.groups.len());
+        assert_eq!(
+            result.groups.iter().map(|g| g.count).sum::<u64>(),
+            result.count
+        );
+    }
+
+    /// The two empty answers, one level down: a template with no time column is found and
+    /// has no time axis. Zero buckets, not an error - and not 72 zeros, which would claim
+    /// we looked along an axis that is not there.
+    #[test]
+    fn a_template_with_no_ts_column_has_no_buckets() {
+        let db = db();
+        let mut q = query(bucketed(300), Some(EPOCH), Some(EPOCH + DAY));
+        q.matches = vec![Match {
+            key: "n".to_string(),
+            value: MatchValue::Any,
+        }];
+        let result = execute(&db.trie, &db.stores, &q).expect("the query answers");
+        assert!(result.exists, "the template is real");
+        assert!(result.groups.is_empty(), "{:?}", result.groups);
+    }
+
+    /// With no window there is nothing to filter the untimed rows out, so they are in
+    /// `count` - and they get a bucket of their own rather than vanishing from the chart.
+    #[test]
+    fn rows_with_no_readable_timestamp_keep_their_count() {
+        let db = db();
+        let result = execute(&db.trie, &db.stores, &query(bucketed(3_600), None, None))
+            .expect("the query answers");
+
+        let untimed: u64 = result
+            .groups
+            .iter()
+            .filter(|g| g.bucket.is_none())
+            .map(|g| g.count)
+            .sum();
+        assert_eq!(untimed, 7, "the seven rows with no ts column");
+        assert_eq!(
+            result.groups.iter().map(|g| g.count).sum::<u64>(),
+            result.count,
+            "the groups still sum to the count"
+        );
+    }
+
+    /// The refusal, and both numbers in it.
+    #[test]
+    fn too_many_buckets_is_refused_rather_than_truncated() {
+        let mut q = query(bucketed(1), Some(EPOCH), Some(EPOCH + 30 * DAY));
+        q.limits.max_buckets = 10_000;
+        let err = check_buckets(&q).expect_err("2.6M buckets is over the cap");
+        assert_eq!(
+            err,
+            BucketError::TooManyBuckets {
+                width: "1s".to_string(),
+                requested: 2_592_000,
+                permitted: 10_000,
+            }
+        );
+        let text = err.to_string();
+        assert!(text.contains("2,592,000"), "{text}");
+        assert!(text.contains("10,000"), "{text}");
+
+        // And the one under it is not refused.
+        q.limits.max_buckets = 3_000_000;
+        check_buckets(&q).expect("under the cap");
+    }
+
+    /// Flooring against the epoch, at the edges an `i64` of nanoseconds reaches.
+    #[test]
+    fn bucket_starts_are_multiples_of_the_width_at_both_ends_of_time() {
+        for width in [1, 1_000, 1_000_000_000, 300 * 1_000_000_000] {
+            for at in [
+                0,
+                1,
+                -1,
+                i64::MAX,
+                i64::MIN,
+                1_705_276_800_000_000_000,
+                -1_705_276_800_000_000_000,
+            ] {
+                let start = bucket_of(at, width);
+                // Every bucket is on the grid but the bottom one, whose true boundary is
+                // below `i64::MIN` and has no spelling - see `bucket_of`.
+                if start != i64::MIN {
+                    assert_eq!(start.rem_euclid(width), 0, "{at} at {width}");
+                }
+                // The bucket contains its instant: it is at or below `at`, and the next
+                // boundary is above it. Both ends of the range are the exceptions, where
+                // the arithmetic saturates rather than leaving the representable range.
+                assert!(start <= at || start == i64::MIN, "{at} at {width}");
+                let end = start.saturating_add(width);
+                assert!(
+                    end > at || end == i64::MAX || start == i64::MIN,
+                    "{at} at {width}"
+                );
+            }
+        }
+    }
+
+    /// `nanos_of` is the engine's reading of a window edge; the buckets are floored off
+    /// the same instants, so the two cannot drift.
+    #[test]
+    fn a_window_edge_lands_in_the_bucket_that_holds_it() {
+        let width = ns(300);
+        let edge = nanos_of(at(EPOCH + 137));
+        assert_eq!(bucket_of(edge, width), nanos_of(at(EPOCH)));
+        assert_eq!(nanos_of(at(EPOCH)), ns(EPOCH));
+    }
 }

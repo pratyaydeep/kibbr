@@ -83,7 +83,12 @@ const KNOWN_BUT_EMPTY: &[&[&str]] = &[
         "2024-01-15T10:32:00Z",
     ],
     // `user_id` is a real column on that template; no row holds this value.
-    &["--match", "event=login_success", "--match", "user_id=nobody"],
+    &[
+        "--match",
+        "event=login_success",
+        "--match",
+        "user_id=nobody",
+    ],
 ];
 
 /// Every verb, because the distinction is a property of the result shape rather than of
@@ -114,7 +119,8 @@ fn an_unknown_template_reports_exists_false() {
             let args = with(pattern, verb);
             let result = json(&borrow(&args));
             assert_eq!(
-                result["exists"], Value::Bool(false),
+                result["exists"],
+                Value::Bool(false),
                 "{args:?} should be an unknown template"
             );
             assert_eq!(result["count"], Value::from(0), "{args:?}");
@@ -134,7 +140,8 @@ fn a_known_template_with_no_matching_row_reports_exists_true() {
             let args = with(pattern, verb);
             let result = json(&borrow(&args));
             assert_eq!(
-                result["exists"], Value::Bool(true),
+                result["exists"],
+                Value::Bool(true),
                 "{args:?} names a template that exists"
             );
             assert_eq!(result["count"], Value::from(0), "{args:?}");
@@ -161,7 +168,10 @@ fn the_two_answers_differ_only_in_exists() {
 
     assert_eq!(unknown["count"], empty["count"]);
     assert_eq!(unknown["rows"], empty["rows"]);
-    assert_eq!(unknown["group_counts"], empty["group_counts"]);
+    assert_eq!(unknown["groups"], empty["groups"]);
+    // Present and empty on both, rather than absent on both - which the comparison above
+    // would pass just as happily.
+    assert_eq!(unknown["groups"], Value::Array(Vec::new()));
     assert_ne!(
         unknown["exists"], empty["exists"],
         "a caller reading count alone cannot tell an unknown field from an empty result"
@@ -176,10 +186,7 @@ fn the_table_names_an_unknown_template() {
         for verb in VERBS {
             let args = with(pattern, verb);
             let out = query(&borrow(&args));
-            assert!(
-                out.contains("unknown template"),
-                "{args:?} printed:\n{out}"
-            );
+            assert!(out.contains("unknown template"), "{args:?} printed:\n{out}");
         }
     }
     for pattern in KNOWN_BUT_EMPTY {
@@ -209,8 +216,7 @@ fn the_oracle_agrees_about_which_answer_it_is() {
             );
             assert_eq!(engine["count"], reference["count"], "{args:?}");
             assert_eq!(
-                engine["meta"]["templates_matched"],
-                reference["meta"]["templates_matched"],
+                engine["meta"]["templates_matched"], reference["meta"]["templates_matched"],
                 "{args:?}"
             );
         }

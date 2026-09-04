@@ -65,6 +65,22 @@ pub fn commas(n: u64) -> String {
     out
 }
 
+/// A bucket width as the grammar spells it: the largest unit that divides it evenly.
+///
+/// The inverse of the `duration` both surfaces parse, and here rather than at the call
+/// site for the reason `rfc3339` is: `time(5m)` has to read back as `5m` in the error
+/// that refuses it and in the `--explain` line above it, or the two disagree about the
+/// query the operator wrote.
+pub fn duration_text(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    for (unit, size) in [('d', 86_400), ('h', 3_600), ('m', 60)] {
+        if secs >= size && secs.is_multiple_of(size) {
+            return format!("{}{unit}", secs / size);
+        }
+    }
+    format!("{secs}s")
+}
+
 /// Elapsed time, in whichever unit has digits in it.
 ///
 /// The walk runs in microseconds and the scan in milliseconds, and that gap is what

@@ -32,3 +32,7 @@ sample.ndjson
 # The max_rows peak-RSS runs and the binary they were measured against - scratch, and
 # `gen-logs` plus scripts/backstop_rss.sh rebuild them.
 /testdata/backstop/
+
+# The GROUP BY time(...) fixture with a deliberately empty hour - scratch, and the
+# generator in this session rebuilds it.
+/testdata/buckets/

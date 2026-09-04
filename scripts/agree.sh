@@ -6,7 +6,7 @@
 # anywhere. The flag combinations are drawn from values that are actually in the file,
 # which is what makes most of them hit something rather than all missing.
 #
-# Compared: exists, count, rows, group_counts, and templates_matched. Not compared:
+# Compared: exists, count, rows, groups, and templates_matched. Not compared:
 # duration, files_opened and rows_scanned - the oracle opens nothing and reads every
 # line, so those differ by design.
 #
@@ -130,6 +130,13 @@ for i in $(seq 1 "$COMBOS"); do
     2) ARGS[${#ARGS[@]}]="--exists" ;;
     3) g="${KEYS[$((RANDOM % ${#KEYS[@]}))]}"
        if [ $((RANDOM % 3)) -eq 0 ]; then g="$g,${KEYS[$((RANDOM % ${#KEYS[@]}))]}"; fi
+       # One draw in three buckets by time instead. Where the boundaries fall is the whole
+       # of what the two sides could disagree about here - both floor against the epoch,
+       # and each does its own arithmetic to get there - so the widths span three orders
+       # of magnitude and the zero-filled buckets are compared along with the rest.
+       if [ $((RANDOM % 3)) -eq 0 ]; then
+         w=("5m" "1h" "6h" "1d"); g="time(${w[$((RANDOM % 4))]}),$g"
+       fi
        ARGS[${#ARGS[@]}]="--group-by"; ARGS[${#ARGS[@]}]="$g" ;;
   esac
 

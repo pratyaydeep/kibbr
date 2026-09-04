@@ -10,7 +10,8 @@
 //! json_pattern = "{" (pair ("," pair)*)? "}"
 //! pair         = string ":" (string | "*")
 //! time_clause  = "SINCE" duration | "BETWEEN" datetime "AND" datetime
-//! group_clause = "GROUP" "BY" key ("," key)*
+//! group_clause = "GROUP" "BY" group_key ("," group_key)*
+//! group_key    = key | "time" "(" duration ")"
 //! limit_clause = "LIMIT" number
 //! after_clause = "AFTER" string
 //! duration     = number ("s" | "m" | "h" | "d")
@@ -24,6 +25,11 @@
 //! Still no ORDER BY: the order is fixed at newest-first (`engine::Rank`), and a LIMIT with
 //! no defined order would have been the worse half to add first. Still no OFFSET either -
 //! `AFTER` is the keyset form, and the reasoning is on `engine::Cursor`.
+//!
+//! `time(...)` buckets the answer by the timestamp instead of by a column, and is the one
+//! group key that is computed rather than read. It takes the same `duration` `SINCE` does,
+//! parsed by the same function: `SINCE 5m` and `time(5m)` reading differently would be the
+//! drift `scripts/parser_equivalence.sh` exists to prevent.
 //!
 //! `key` and `datetime` are left unspelled above: both are a bare run of characters, or
 //! the same text quoted. Keywords ignore case; the duration's unit does not, because the
@@ -41,7 +47,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-use crate::engine::{Cursor, Match, MatchValue, QueryMode, TimeRange};
+use crate::engine::{Cursor, GroupKey, Match, MatchValue, QueryMode, TimeRange};
 use crate::query::{ago, system_time};
 
 /// What a query said, before the output flags - which are not in the grammar - are folded
@@ -76,6 +82,9 @@ pub fn parse(src: &str, now: DateTime<Utc>) -> Result<Parsed, ParseError> {
 enum Tok {
     Open,
     Close,
+    /// `(` and `)`, which only `time(...)` uses.
+    LParen,
+    RParen,
     Colon,
     Comma,
     Star,
@@ -95,7 +104,11 @@ struct Token {
 /// Characters that end a bare word. `:` is absent on purpose: an RFC 3339 datetime is one
 /// word and holds two of them, and no production needs a colon to end a word - the key
 /// before the colon in a pair is a quoted string, which ends at its own closing quote.
-const DELIMS: [char; 5] = ['{', '}', ',', '"', '*'];
+///
+/// The parentheses joined it with `time(...)`. Nothing else in the grammar spells one - a
+/// datetime cannot hold one and a duration cannot - and a group key that does can still be
+/// written quoted, which is the escape the `key` production already had.
+const DELIMS: [char; 7] = ['{', '}', '(', ')', ',', '"', '*'];
 
 fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
     let mut out = Vec::new();
@@ -108,6 +121,8 @@ fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
             }
             '{' => Tok::Open,
             '}' => Tok::Close,
+            '(' => Tok::LParen,
+            ')' => Tok::RParen,
             ',' => Tok::Comma,
             '*' => Tok::Star,
             ':' => Tok::Colon,
@@ -326,22 +341,57 @@ impl<'a> Parser<'a> {
         Ok(TimeRange::default())
     }
 
-    fn group_clause(&mut self) -> Result<Option<Vec<String>>, ParseError> {
+    fn group_clause(&mut self) -> Result<Option<Vec<GroupKey>>, ParseError> {
         if !self.eat_keyword("GROUP") {
             return Ok(None);
         }
         self.keyword("BY")?;
-        let mut keys = Vec::new();
+        let mut keys: Vec<GroupKey> = Vec::new();
         loop {
-            let (key, pos) = self.bare("a group key")?;
-            if key.is_empty() {
-                return Err(ParseError::new(self.src, pos, Kind::EmptyKey));
+            let at = self.pos();
+            let key = self.group_key()?;
+            // Two time axes is well-formed under the grammar and means nothing: the
+            // buckets of the second would nest inside the first, and the zero-fill has one
+            // axis to fill. Refused here rather than answered with something plausible.
+            if matches!(key, GroupKey::Time(_))
+                && keys.iter().any(|k| matches!(k, GroupKey::Time(_)))
+            {
+                return Err(ParseError::new(self.src, at, Kind::TwoTimeBuckets));
             }
             keys.push(key);
             if !self.eat_if(&Tok::Comma) {
                 return Ok(Some(keys));
             }
         }
+    }
+
+    /// `key | "time" "(" duration ")"`.
+    ///
+    /// The bucket is a bare `time` *followed by a parenthesis*, and nothing else. A quoted
+    /// `"time"` is the column of that name, and so is a bare one with no `(` after it -
+    /// the grammar lists two alternatives, so they stay two things, exactly as `*` and
+    /// `"*"` do in `pair`.
+    fn group_key(&mut self) -> Result<GroupKey, ParseError> {
+        let is_bucket = matches!(self.peek(), Tok::Word(w) if w.eq_ignore_ascii_case("time"))
+            && self.peek_at(1) == &Tok::LParen;
+        if is_bucket {
+            self.bump();
+            self.bump();
+            let (word, pos) = self.word("a duration")?;
+            let width = duration(self.src, &word, pos)?;
+            self.eat(&Tok::RParen, "`)`")?;
+            // A zero width has no boundaries to floor against and no bucket count to
+            // check: every row would land in the same bucket, or in none.
+            if width.is_zero() {
+                return Err(ParseError::new(self.src, pos, Kind::ZeroBucket));
+            }
+            return Ok(GroupKey::Time(width));
+        }
+        let (key, pos) = self.bare("a group key or `time(<duration>)`")?;
+        if key.is_empty() {
+            return Err(ParseError::new(self.src, pos, Kind::EmptyKey));
+        }
+        Ok(GroupKey::Column(key))
     }
 
     /// `"LIMIT" number`. Last in the query, as it is last in the grammar: it applies to
@@ -376,9 +426,7 @@ impl<'a> Parser<'a> {
             Err(e) => Err(ParseError::new(
                 self.src,
                 pos,
-                Kind::BadCursor {
-                    why: e.to_string(),
-                },
+                Kind::BadCursor { why: e.to_string() },
             )),
         }
     }
@@ -395,6 +443,12 @@ impl<'a> Parser<'a> {
     fn peek(&self) -> &Tok {
         // `lex` always ends the vector with `End`, so this cannot run off it.
         self.toks.get(self.at).map_or(&Tok::End, |t| &t.tok)
+    }
+
+    /// One token further on. `group_key` is the only production that needs to look past
+    /// the token in hand: `time` is a column name until a `(` follows it.
+    fn peek_at(&self, ahead: usize) -> &Tok {
+        self.toks.get(self.at + ahead).map_or(&Tok::End, |t| &t.tok)
     }
 
     fn pos(&self) -> usize {
@@ -523,6 +577,8 @@ fn describe(tok: &Tok) -> String {
     match tok {
         Tok::Open => "`{`".to_string(),
         Tok::Close => "`}`".to_string(),
+        Tok::LParen => "`(`".to_string(),
+        Tok::RParen => "`)`".to_string(),
         Tok::Colon => "`:`".to_string(),
         Tok::Comma => "`,`".to_string(),
         Tok::Star => "`*`".to_string(),
@@ -559,7 +615,9 @@ fn clip(s: &str) -> String {
 fn visible(c: char) -> Option<String> {
     match c {
         '\n' | '\r' | '\t' => Some(" ".to_string()),
-        c if c.is_control() || matches!(c, '\u{a0}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}' | '\u{feff}') => {
+        c if c.is_control()
+            || matches!(c, '\u{a0}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}' | '\u{feff}') =>
+        {
             Some(format!("\\u{{{:04x}}}", c as u32))
         }
         _ => None,
@@ -590,6 +648,10 @@ pub enum Kind {
     Backwards { from: String, to: String },
     #[error("the key is empty")]
     EmptyKey,
+    #[error("`time(0s)` has no width to bucket by")]
+    ZeroBucket,
+    #[error("`GROUP BY` names two time buckets; it can have one")]
+    TwoTimeBuckets,
 }
 
 /// A parse failure and where in the query it was.
@@ -716,8 +778,14 @@ mod tests {
     #[test]
     fn megabyte_inputs_return() {
         survives(&"{".repeat(1_000_000));
-        survives(&format!(r#"COUNT LOG {{"a": "{}"}}"#, "x".repeat(1_000_000)));
-        survives(&format!("COUNT LOG {{{}}}", r#""a": "b", "#.repeat(100_000)));
+        survives(&format!(
+            r#"COUNT LOG {{"a": "{}"}}"#,
+            "x".repeat(1_000_000)
+        ));
+        survives(&format!(
+            "COUNT LOG {{{}}}",
+            r#""a": "b", "#.repeat(100_000)
+        ));
         survives(&format!("COUNT LOG {{}} SINCE {}h", "9".repeat(1_000_000)));
         survives(&"é".repeat(500_000));
         survives(&r#"\u"#.repeat(500_000));
@@ -728,9 +796,35 @@ mod tests {
     /// this is looking for is a panic, so every input is its own assertion.
     #[test]
     fn a_hundred_thousand_random_queries_return() {
-        const ALPHABET: [&str; 22] = [
-            "COUNT", "MATCH", "LOG", "SINCE", "BETWEEN", "AND", "GROUP", "BY", "{", "}", ":",
-            ",", "*", "\"", "\\", "1h", "é", "🙂", "2024-01-01T00:00:00Z", " ", "\u{0}", "\\u",
+        const ALPHABET: [&str; 26] = [
+            "COUNT",
+            "MATCH",
+            "LOG",
+            "SINCE",
+            "BETWEEN",
+            "AND",
+            "GROUP",
+            "BY",
+            "{",
+            "}",
+            ":",
+            ",",
+            "*",
+            "\"",
+            "\\",
+            "1h",
+            "é",
+            "🙂",
+            "2024-01-01T00:00:00Z",
+            " ",
+            "\u{0}",
+            "\\u",
+            // `time`, its parentheses, and a width of zero - the group key that is parsed
+            // rather than read, and the one operand the grammar rejects outright.
+            "time",
+            "(",
+            ")",
+            "0s",
         ];
         let mut rng = Rng::new(9);
         for _ in 0..100_000 {
@@ -757,7 +851,10 @@ mod tests {
             now(),
         )
         .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(b.mode, QueryMode::GroupBy(vec!["level".to_string()]));
+        assert_eq!(
+            b.mode,
+            QueryMode::GroupBy(vec![GroupKey::Column("level".to_string())])
+        );
     }
 
     /// The two alternatives of `pair`'s value, which the flag surface cannot tell apart:
@@ -841,7 +938,15 @@ mod tests {
     #[test]
     fn after_takes_a_cursor_and_nothing_else() {
         let mint = |ts: Option<i64>| {
-            let q = Query::new(Vec::new(), QueryMode::Fetch, TimeRange::default(), None, None, 0);
+            let q = Query::new(
+                Vec::new(),
+                QueryMode::Fetch,
+                TimeRange::default(),
+                None,
+                None,
+                std::time::SystemTime::UNIX_EPOCH,
+                crate::config::Limits::default(),
+            );
             q.cursor_at((std::cmp::Reverse(ts), 3, 17)).encode()
         };
         for ts in [Some(1_700_000_000_000_000_000), None, Some(i64::MIN)] {
@@ -863,6 +968,70 @@ mod tests {
             r#"MATCH LOG {} AFTER "v9.0000""#,
             // Right length, wrong alphabet - the hex check is not a length check.
             &format!(r#"MATCH LOG {{}} AFTER "v1.{}""#, "g".repeat(58)),
+        ] {
+            parse(bad, now()).expect_err(bad);
+        }
+    }
+
+    /// `group_key`'s two alternatives. `time` is a column name until a `(` follows it,
+    /// which is the same rule `pair` applies to `*` and `"*"`.
+    #[test]
+    fn a_time_bucket_is_a_parenthesis_away_from_a_column_named_time() {
+        let q = |src: &str| parse(src, now()).unwrap_or_else(|e| panic!("{src}: {e}"));
+        let keys = |src: &str| match q(src).mode {
+            QueryMode::GroupBy(keys) => keys,
+            other => panic!("{src}: expected a group by, got {other:?}"),
+        };
+
+        assert_eq!(
+            keys("COUNT LOG {} SINCE 6h GROUP BY time(5m)"),
+            vec![GroupKey::Time(Duration::from_secs(300))]
+        );
+        // Every unit the grammar spells, and the keyword's case ignored as every other
+        // keyword's is. The width's unit is not a keyword and keeps its own case.
+        assert_eq!(
+            keys("count log {} since 6h group by TIME(2d)"),
+            vec![GroupKey::Time(Duration::from_secs(172_800))]
+        );
+        // A bare `time` with nothing after it, and a quoted one with a parenthesis after
+        // it: both name the column. The second is the escape a writer needs for a column
+        // that really is called `time`.
+        assert_eq!(
+            keys("COUNT LOG {} GROUP BY time"),
+            vec![GroupKey::Column("time".to_string())]
+        );
+        assert_eq!(
+            keys(r#"COUNT LOG {} GROUP BY "time""#),
+            vec![GroupKey::Column("time".to_string())]
+        );
+        // Mixed, in the order written - which is the order every surface prints.
+        assert_eq!(
+            keys("COUNT LOG {} SINCE 6h GROUP BY time(5m), level"),
+            vec![
+                GroupKey::Time(Duration::from_secs(300)),
+                GroupKey::Column("level".to_string()),
+            ]
+        );
+        assert_eq!(
+            keys("COUNT LOG {} SINCE 6h GROUP BY level, time(1h)"),
+            vec![
+                GroupKey::Column("level".to_string()),
+                GroupKey::Time(Duration::from_secs(3_600)),
+            ]
+        );
+
+        for bad in [
+            "COUNT LOG {} GROUP BY time(",
+            "COUNT LOG {} GROUP BY time()",
+            "COUNT LOG {} GROUP BY time(5m",
+            "COUNT LOG {} GROUP BY time(5)",
+            "COUNT LOG {} GROUP BY time(\"5m\")",
+            "COUNT LOG {} GROUP BY time(-5m)",
+            // A zero width has no boundaries to floor against.
+            "COUNT LOG {} GROUP BY time(0s)",
+            // One time axis. Two is well-formed above and means nothing below.
+            "COUNT LOG {} GROUP BY time(5m), time(1h)",
+            "COUNT LOG {} GROUP BY time(5m), level, time(5m)",
         ] {
             parse(bad, now()).expect_err(bad);
         }

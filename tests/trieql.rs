@@ -8,6 +8,8 @@
 
 use std::process::{Command, Output, Stdio};
 
+use serde_json::Value;
+
 const FIXTURE: &str = include_str!("../testdata/sample_logs.ndjson");
 
 fn triedb() -> Command {
@@ -223,9 +225,9 @@ fn errors_report_a_position_inside_the_query() {
 fn no_input_panics() {
     let mut hostile: Vec<String> = vec![
         String::new(),
-        "\u{feff}COUNT LOG {}".to_string(),          // BOM
-        "COUNT\u{a0}LOG {}".to_string(),             // non-breaking space
-        "COUNT LOG {\"a\": \"b\"}\r\n".to_string(),  // CRLF
+        "\u{feff}COUNT LOG {}".to_string(),         // BOM
+        "COUNT\u{a0}LOG {}".to_string(),            // non-breaking space
+        "COUNT LOG {\"a\": \"b\"}\r\n".to_string(), // CRLF
         "\"".to_string(),
         "\\".to_string(),
         r#"COUNT LOG {"a": "\"#.to_string(),
@@ -247,10 +249,17 @@ fn no_input_panics() {
     // reach the stack - which is the claim, and it is worth an assertion rather than a
     // reading of the grammar.
     hostile.push("{".repeat(100_000));
-    hostile.push(format!("COUNT LOG {}{}", "{".repeat(50_000), "}".repeat(50_000)));
+    hostile.push(format!(
+        "COUNT LOG {}{}",
+        "{".repeat(50_000),
+        "}".repeat(50_000)
+    ));
     hostile.push(format!(r#"COUNT LOG {{"a": "{}"}}"#, "x".repeat(100_000)));
     hostile.push(format!("COUNT LOG {{{}}}", r#""a": "b", "#.repeat(5_000)));
-    hostile.push(format!("COUNT LOG {{}} GROUP BY {}", vec!["k"; 20_000].join(",")));
+    hostile.push(format!(
+        "COUNT LOG {{}} GROUP BY {}",
+        vec!["k"; 20_000].join(",")
+    ));
     hostile.push(format!("COUNT LOG {{}} SINCE {}h", "9".repeat(50_000)));
     hostile.push("é".repeat(100_000));
 
@@ -280,7 +289,7 @@ fn no_input_panics() {
 /// by eye.
 ///
 /// Every value here is one the fixture actually holds. A pattern that matches no template
-/// answers `exists: false, count: 0, rows: [], group_counts: {}` whatever the mode asked
+/// answers `exists: false, count: 0, rows: [], groups: []` whatever the mode asked
 /// for, so a pair built on a value that is not there agrees with itself and checks
 /// nothing - which is what `answers_rows` is asserting against.
 #[test]
@@ -301,7 +310,13 @@ fn trieql_answers_what_the_flags_answer() {
         ),
         (
             r#"COUNT LOG {"service": "auth", "level": "INFO"}"#,
-            &["--match", "service=auth", "--match", "level=INFO", "--count"],
+            &[
+                "--match",
+                "service=auth",
+                "--match",
+                "level=INFO",
+                "--count",
+            ],
         ),
         (
             r#"MATCH LOG {} GROUP BY event, level"#,
@@ -309,7 +324,12 @@ fn trieql_answers_what_the_flags_answer() {
         ),
         (
             r#"COUNT LOG {} BETWEEN 2024-01-15T10:31:00Z AND 2024-06-01T00:00:00Z"#,
-            &["--between", "2024-01-15T10:31:00Z", "2024-06-01T00:00:00Z", "--count"],
+            &[
+                "--between",
+                "2024-01-15T10:31:00Z",
+                "2024-06-01T00:00:00Z",
+                "--count",
+            ],
         ),
         // The other answer, on purpose: "no such template" has to translate too.
         (
@@ -351,9 +371,24 @@ fn group_by_settles_the_mode_under_either_verb() {
         "json",
     ]);
     // Two groups, so the answer distinguishes `GroupBy` from every other mode: `Fetch`
-    // would return rows and an empty `group_counts`, `Count` a bare count.
-    assert!(flags.contains(r#""ERROR":1"#), "{flags}");
-    assert!(flags.contains(r#""INFO":1"#), "{flags}");
+    // would return rows and an empty `groups`, `Count` a bare count.
+    let groups = serde_json::from_str::<Value>(&flags).expect("json")["groups"].clone();
+    let counts: Vec<(String, u64)> = groups
+        .as_array()
+        .expect("groups is an array")
+        .iter()
+        .map(|g| {
+            (
+                g["keys"]["level"].as_str().expect("a level").to_string(),
+                g["count"].as_u64().expect("a count"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        counts,
+        vec![("ERROR".to_string(), 1), ("INFO".to_string(), 1)],
+        "{flags}"
+    );
 
     for verb in ["MATCH", "COUNT"] {
         let q = format!(r#"{verb} LOG {{"service": "auth"}} GROUP BY level"#);
@@ -424,7 +459,11 @@ fn the_two_surfaces_do_not_mix() {
 fn explain_reports_the_parse_and_reads_nothing() {
     let out = explain(r#"MATCH LOG {"event": "login_ok"} SINCE 1h GROUP BY level"#);
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(text.contains("group by level"), "{text}");
     assert!(text.contains("event=login_ok"), "{text}");
     assert!(text.contains("ts in ["), "{text}");

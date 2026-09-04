@@ -18,13 +18,14 @@ use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use serde_json::{Map, Value};
 
+use crate::config::Limits;
 use crate::db;
 use crate::engine::{
-    self, Cursor, LimitSource, Match, MatchValue, Plan, Query, QueryMode, QueryResult, TimeRange,
-    GROUP_SEP,
+    self, Cursor, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
+    QueryResult, TimeRange, BUCKET_COLUMN,
 };
 use crate::error::{CliError, QueryError};
-use crate::fmt::{col_text, commas, millis, rfc3339};
+use crate::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
 use crate::trieql;
 use crate::types::ColValue;
 
@@ -66,8 +67,8 @@ pub struct Args {
     /// `None` = no limit asked for, which is not the same request as `--limit 0`.
     pub limit: Option<usize>,
     pub after: Option<String>,
-    /// The server's backstop, already resolved by `config`. `0` = none.
-    pub max_rows: usize,
+    /// The caps, already resolved by `config`.
+    pub limits: Limits,
 }
 
 pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(), CliError> {
@@ -86,7 +87,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     let result = if args.reference {
         let (lines, stats) = db::load_lines(input)?;
         note(stats);
-        crate::reference::naive::run(&lines, &query)
+        crate::reference::naive::run(&lines, &query)?
     } else {
         let db = db::load(input, true)?;
         note(db.stats);
@@ -95,7 +96,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
 
     match args.format {
         Format::Table => table(out, &query, &result),
-        Format::Json => json(out, &result),
+        Format::Json => json(out, &query, &result),
         Format::Ndjson => ndjson(out, &query, &result),
     }
 }
@@ -124,7 +125,7 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
     // in the grammar and do not change the answer. Both routes end at `Query::new`, which
     // is the one place the limit's default and its per-mode meaning are decided.
     if let Some(text) = &args.trieql {
-        return from_trieql(text, now, args.max_rows);
+        return from_trieql(text, now, args.limits);
     }
 
     let matches = args
@@ -172,7 +173,8 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
         time,
         args.limit,
         cursor(args.after.as_deref())?,
-        args.max_rows,
+        system_time(now),
+        args.limits,
     ))
 }
 
@@ -183,7 +185,7 @@ fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
 /// `trieql::parse` directly - `Query::new`'s per-mode limit rules and `finish`'s cursor
 /// guard are part of what a TrieQL string means, and a second caller assembling the
 /// struct itself would be a second dialect.
-pub fn from_trieql(text: &str, now: DateTime<Utc>, max_rows: usize) -> Result<Query, CliError> {
+pub fn from_trieql(text: &str, now: DateTime<Utc>, limits: Limits) -> Result<Query, CliError> {
     let parsed = trieql::parse(text, now)?;
     finish(Query::new(
         parsed.matches,
@@ -191,7 +193,8 @@ pub fn from_trieql(text: &str, now: DateTime<Utc>, max_rows: usize) -> Result<Qu
         parsed.time,
         parsed.limit,
         cursor(parsed.after.as_deref())?,
-        max_rows,
+        system_time(now),
+        limits,
     ))
 }
 
@@ -210,6 +213,20 @@ fn cursor(text: Option<&str>) -> Result<Option<Cursor>, CliError> {
 fn finish(query: Query) -> Result<Query, CliError> {
     if let Some(c) = query.cursor {
         c.check(&query)?;
+    }
+    // The bucket count, against a window that is now resolved. Here rather than in the
+    // engine so `SINCE 30d GROUP BY time(1s)` is refused before thirty days of rows are
+    // read - the engine checks again for the span a query with no lower bound derives
+    // from its rows, which is the only one that cannot be known this early.
+    engine::check_buckets(&query).map_err(engine::ExecError::from)?;
+    if let QueryMode::GroupBy(keys) = &query.mode {
+        // `bucket` is the column a `time(...)` reports under, so a key of that name
+        // beside one would put two columns of the same name in the table and collide in
+        // the NDJSON object. Refused rather than silently letting one win.
+        let (width, columns) = engine::split_keys(keys);
+        if width.is_some() && columns.iter().any(|c| c == BUCKET_COLUMN) {
+            return Err(QueryError::BucketKeyClash.into());
+        }
     }
     Ok(query)
 }
@@ -235,34 +252,77 @@ fn parse_match(arg: &str) -> Result<Match, QueryError> {
     })
 }
 
-fn group_keys(spec: &str) -> Result<Vec<String>, QueryError> {
-    let keys: Vec<String> = spec.split(',').map(|k| k.trim().to_string()).collect();
-    if keys.iter().any(String::is_empty) {
-        return Err(QueryError::EmptyGroupKey {
-            arg: spec.to_string(),
-        });
+/// `--group-by KEY[,KEY]`, where a key may be `time(<duration>)`.
+///
+/// The flag surface reaches the bucket too. The two surfaces build one `Query`
+/// (see the module header), and a clause TrieQL can say and the flags cannot is a clause
+/// `scripts/parser_equivalence.sh` stops covering the moment it is added.
+fn group_keys(spec: &str) -> Result<Vec<GroupKey>, QueryError> {
+    let bad = || QueryError::EmptyGroupKey {
+        arg: spec.to_string(),
+    };
+    let mut keys: Vec<GroupKey> = Vec::new();
+    for text in spec.split(',').map(str::trim) {
+        if text.is_empty() {
+            return Err(bad());
+        }
+        let key = match bucket_spec(text) {
+            Some(width) => {
+                let width = duration_of(width).filter(|w| !w.is_zero()).ok_or_else(|| {
+                    QueryError::BadBucket {
+                        arg: text.to_string(),
+                    }
+                })?;
+                if keys.iter().any(|k| matches!(k, GroupKey::Time(_))) {
+                    return Err(QueryError::TwoTimeBuckets {
+                        arg: spec.to_string(),
+                    });
+                }
+                GroupKey::Time(width)
+            }
+            None => GroupKey::Column(text.to_string()),
+        };
+        keys.push(key);
     }
     Ok(keys)
 }
 
+/// The duration inside `time(...)`, or `None` for a key that is not one. Case-insensitive
+/// on the name, as every keyword is; the duration inside keeps its own rules.
+fn bucket_spec(text: &str) -> Option<&str> {
+    let rest = text.strip_suffix(')')?;
+    let (name, width) = rest.split_once('(')?;
+    name.trim().eq_ignore_ascii_case("time").then_some(width)
+}
+
 /// A duration: a number and one of s, m, h, d.
 fn parse_duration(text: &str) -> Result<Duration, QueryError> {
-    let bad = || QueryError::BadDuration {
+    duration_of(text).ok_or_else(|| QueryError::BadDuration {
         arg: text.to_string(),
-    };
-    // By character, not by `len() - 1`: `len` is bytes and `split_at` panics on an index
-    // inside a multibyte character. This is a flag value straight off the command line,
-    // and no input may make this panic.
-    let (at, unit) = text.char_indices().next_back().ok_or_else(bad)?;
-    let n: u64 = text[..at].parse().map_err(|_| bad())?;
+    })
+}
+
+/// The grammar's `duration`, and the only reading of one in the crate.
+///
+/// `--since 1h`, `SINCE 1h`, `--group-by 'time(1h)'` and `GROUP BY time(1h)` all land
+/// here. It used to be written twice, once per surface, which is exactly the drift
+/// `scripts/parser_equivalence.sh` exists to catch - each surface still wraps the `None`
+/// in its own error, because a flag names itself and a query string names a byte offset.
+///
+/// By character, not by `len() - 1`: `len` is bytes and slicing at an index inside a
+/// multibyte character panics. This reads a flag value straight off the command line, and
+/// no input may make it panic.
+pub(crate) fn duration_of(text: &str) -> Option<Duration> {
+    let (at, unit) = text.char_indices().next_back()?;
+    let n: u64 = text[..at].parse().ok()?;
     let secs = match unit {
         's' => 1,
         'm' => 60,
         'h' => 3_600,
         'd' => 86_400,
-        _ => return Err(bad()),
+        _ => return None,
     };
-    Ok(Duration::from_secs(n.saturating_mul(secs)))
+    Some(Duration::from_secs(n.saturating_mul(secs)))
 }
 
 fn parse_datetime(text: &str) -> Result<DateTime<Utc>, QueryError> {
@@ -306,7 +366,9 @@ pub(crate) fn system_time(dt: DateTime<Utc>) -> SystemTime {
 /// is named rather than rejected.
 fn edge_text(t: SystemTime) -> String {
     let stamp = match t.duration_since(UNIX_EPOCH) {
-        Ok(d) => i64::try_from(d.as_secs()).ok().map(|s| (s, d.subsec_nanos())),
+        Ok(d) => i64::try_from(d.as_secs())
+            .ok()
+            .map(|s| (s, d.subsec_nanos())),
         // Below the epoch: chrono counts its nanoseconds forward from a whole second, so
         // a fractional second down here borrows one.
         Err(back) => {
@@ -396,6 +458,9 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
     // The limit and the order belong on the plan, not only in `triedb explain`: a limit
     // that is `Query::new`'s default rather than the operator's is the one they most need
     // to see before the query runs, and the order is what decides which rows it keeps.
+    if let Some(width) = query.bucket_width() {
+        writeln!(out, "  buckets  {}", bucket_text(query, width)).map_err(CliError::Write)?;
+    }
     if query.mode == QueryMode::Fetch {
         writeln!(
             out,
@@ -432,8 +497,9 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
 /// that plans; this one reports the `Query` the text denotes, which is the whole of what
 /// the parser is answerable for. Persisting the trie would let this grow the plan without
 /// the parser changing.
-pub fn describe<W: Write>(out: &mut W, text: &str, max_rows: usize) -> Result<(), CliError> {
-    let parsed = trieql::parse(text, Utc::now())?;
+pub fn describe<W: Write>(out: &mut W, text: &str, limits: Limits) -> Result<(), CliError> {
+    let now = Utc::now();
+    let parsed = trieql::parse(text, now)?;
     let asked = parsed.limit;
     let paged = parsed.after.is_some();
     let query = Query::new(
@@ -445,13 +511,21 @@ pub fn describe<W: Write>(out: &mut W, text: &str, max_rows: usize) -> Result<()
         // no answer for a cursor to be a page of. `AFTER`'s shape was checked by the
         // parser; whether it belongs to this query is `query --explain`'s to say.
         None,
-        max_rows,
+        system_time(now),
+        limits,
     );
+    // The same refusal `query` makes, at the same point: `triedb explain` is where an
+    // operator checks a query before running it, and a plan for a query that will be
+    // refused is not the answer they came for.
+    engine::check_buckets(&query).map_err(engine::ExecError::from)?;
     writeln!(out, "query:").map_err(CliError::Write)?;
     writeln!(out, "  mode     {}", mode_text(&query.mode)).map_err(CliError::Write)?;
     writeln!(out, "  pattern  [{}]", query.tokens().join(", ")).map_err(CliError::Write)?;
     writeln!(out, "  window   {}", window_text(&query)).map_err(CliError::Write)?;
     writeln!(out, "  order    {}", ORDER_TEXT).map_err(CliError::Write)?;
+    if let Some(width) = query.bucket_width() {
+        writeln!(out, "  buckets  {}", bucket_text(&query, width)).map_err(CliError::Write)?;
+    }
     writeln!(out, "  limit    {}", limit_text(&query, asked)).map_err(CliError::Write)?;
     if paged {
         writeln!(out, "  after    a cursor; resumes where its page stopped")
@@ -463,6 +537,28 @@ pub fn describe<W: Write>(out: &mut W, text: &str, max_rows: usize) -> Result<()
 /// The fixed order, printed rather than assumed - it is what makes a limit mean anything,
 /// and it is not in the grammar for a reader to have inferred from the query.
 const ORDER_TEXT: &str = "ts descending (newest first); rows with no ts last, in insertion order";
+
+/// The time axis, on the plan and before it runs.
+///
+/// Where the boundaries fall is the thing an operator cannot see from the query text, and
+/// the thing that makes two overlapping charts comparable - so the plan says it rather
+/// than leaving it to be inferred from the answer. A query with no window has no count to
+/// give here: the span comes from the rows, and `--explain` has read none.
+fn bucket_text(query: &Query, width: std::time::Duration) -> String {
+    let w = duration_text(width);
+    let count = match engine::planned_buckets(query) {
+        Some(n) => format!("{} buckets of {w}", commas(n)),
+        // No window edge to count from: the span comes from the rows, and this has read
+        // none. Naming the width is still worth a line - it is what the answer will be
+        // shaped by.
+        None => format!("{w} buckets over whatever range the rows cover"),
+    };
+    let permitted = match query.limits.max_buckets {
+        0 => "no limit".to_string(),
+        n => format!("max {}", commas(n as u64)),
+    };
+    format!("{count}, aligned to {w} boundaries in UTC from the epoch, never from this query's start ({permitted})")
+}
 
 /// What the limit resolved to, and why - `Query::new` may have supplied it or dropped it,
 /// and neither should happen where only the source can see it.
@@ -562,19 +658,15 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
         QueryMode::GroupBy(keys) => {
             let mut grid: Vec<Vec<String>> = vec![keys
                 .iter()
-                .cloned()
+                .map(|key| key.name().to_string())
                 .chain(std::iter::once("count".to_string()))
                 .collect()];
-            for (label, n) in sorted_groups(result) {
-                let mut row: Vec<String> = label.split(GROUP_SEP).map(str::to_string).collect();
-                row.push(commas(n));
-                grid.push(row);
-            }
+            grid.extend(result.groups.iter().map(|group| group_cells(keys, group)));
             grid_write(out, &grid)?;
             writeln!(
                 out,
                 "{} groups, {} rows   ({})",
-                commas(result.group_counts.len() as u64),
+                commas(result.groups.len() as u64),
                 commas(result.count),
                 summary(result)
             )
@@ -586,10 +678,11 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
 
 /// One compact line, so a differential script can diff two runs without a JSON parser.
 ///
-/// Keys are sorted everywhere - `Row` and `group_counts` are `HashMap`s, and a result
-/// that serialises in a different order each run is not comparable to anything.
-fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
-    let body = result_json(result);
+/// Keys are sorted everywhere - `Row` is a `HashMap` and `groups` arrives already
+/// ordered, because a result that serialises differently each run is not comparable to
+/// anything.
+fn json<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
+    let body = result_json(query, result);
     writeln!(out, "{body}").map_err(CliError::Write)
 }
 
@@ -599,20 +692,21 @@ fn json<W: Write>(out: &mut W, result: &QueryResult) -> Result<(), CliError> {
 /// two surfaces answering the same question differently is the drift this module's
 /// header is about. `engine::QueryMode`'s own comment makes the same promise from the
 /// other end: the shape is consumed unchanged, so it is built in one place.
-pub fn result_json(result: &QueryResult) -> Value {
+pub fn result_json(query: &Query, result: &QueryResult) -> Value {
     let rows: Vec<Value> = canonical(result).into_iter().map(row_json).collect();
-
-    let mut groups = Map::new();
-    for (label, n) in sorted_groups(result) {
-        groups.insert(label.replace(GROUP_SEP, " | "), Value::from(n));
-    }
+    let keys = group_keys_of(query);
+    let groups: Vec<Value> = result
+        .groups
+        .iter()
+        .map(|group| group_json(keys, group))
+        .collect();
 
     let meta = &result.meta;
     serde_json::json!({
         "exists": result.exists,
         "count": result.count,
         "rows": rows,
-        "group_counts": Value::Object(groups),
+        "groups": Value::Array(groups),
         "meta": {
             "templates_matched": meta.templates_matched,
             "template_ids": meta.template_ids,
@@ -706,14 +800,14 @@ fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<
             }
         }
         QueryMode::GroupBy(keys) => {
-            for (label, n) in sorted_groups(result) {
+            for group in &result.groups {
+                // One flat record per group, its fields named by the keys in the order
+                // they were asked for - the same cells `table` prints, given field names.
                 let mut obj = Map::new();
-                // The label is the group's values joined by `GROUP_SEP`, in the order the
-                // keys were asked for - the same split `table` does, given field names.
-                for (key, value) in keys.iter().zip(label.split(GROUP_SEP)) {
-                    obj.insert(key.clone(), Value::from(value));
+                for (key, cell) in keys.iter().zip(group_cells(keys, group)) {
+                    obj.insert(key.name().to_string(), bucket_json(key, group, cell));
                 }
-                obj.insert("count".to_string(), Value::from(n));
+                obj.insert("count".to_string(), Value::from(group.count));
                 line(out, &Value::Object(obj))?;
             }
         }
@@ -742,8 +836,72 @@ fn canonical(result: &QueryResult) -> Vec<&crate::store::Row> {
     result.rows.iter().collect()
 }
 
-fn sorted_groups(result: &QueryResult) -> BTreeMap<&String, u64> {
-    result.group_counts.iter().map(|(k, v)| (k, *v)).collect()
+/// The keys a query grouped by, or none for every other mode.
+///
+/// `result_json` takes the query for this alone: a `Group` carries its values and not the
+/// names they go under, because the names are the same for every group in the answer.
+fn group_keys_of(query: &Query) -> &[GroupKey] {
+    match &query.mode {
+        QueryMode::GroupBy(keys) => keys,
+        _ => &[],
+    }
+}
+
+/// One group as its cells, in the order the keys were written, with the count last.
+///
+/// The bucket is pulled from `Group::bucket` and every other cell from `values` in turn,
+/// so `GROUP BY level, time(5m)` prints its columns in that order rather than in one this
+/// function chose. An unplaceable row's bucket reads `(null)` - the same spelling a
+/// missing column value gets, and for the same reason: absence is not a value.
+fn group_cells(keys: &[GroupKey], group: &Group) -> Vec<String> {
+    let mut values = group.values.iter();
+    let mut cells: Vec<String> = keys
+        .iter()
+        .map(|key| match key {
+            GroupKey::Time(_) => group.bucket.map_or_else(|| NULL_TEXT.to_string(), rfc3339),
+            GroupKey::Column(_) => values.next().cloned().unwrap_or_default(),
+        })
+        .collect();
+    cells.push(commas(group.count));
+    cells
+}
+
+/// One group as JSON: the bucket beside the labels rather than among them, because it is
+/// the one key that was computed rather than read off a row.
+///
+/// `bucket` is absent when the clause named no `time(...)` and `null` when it named one
+/// and this row could not be placed in time. Two different facts, and a client drawing a
+/// chart has to tell them apart.
+fn group_json(keys: &[GroupKey], group: &Group) -> Value {
+    let mut obj = Map::new();
+    if keys.iter().any(|key| matches!(key, GroupKey::Time(_))) {
+        obj.insert(
+            BUCKET_COLUMN.to_string(),
+            group
+                .bucket
+                .map_or(Value::Null, |ns| Value::from(rfc3339(ns))),
+        );
+    }
+    let mut values = group.values.iter();
+    let mut labels = Map::new();
+    for key in keys {
+        if let GroupKey::Column(name) = key {
+            let value = values.next().cloned().unwrap_or_default();
+            labels.insert(name.clone(), Value::from(value));
+        }
+    }
+    obj.insert("keys".to_string(), Value::Object(labels));
+    obj.insert("count".to_string(), Value::from(group.count));
+    Value::Object(obj)
+}
+
+/// An NDJSON cell. Every field is its rendered text except an unplaceable bucket, which
+/// is `null` - a record in a stream is parsed, and `"(null)"` would come back a string.
+fn bucket_json(key: &GroupKey, group: &Group, cell: String) -> Value {
+    match key {
+        GroupKey::Time(_) if group.bucket.is_none() => Value::Null,
+        _ => Value::from(cell),
+    }
 }
 
 fn render_rows<W: Write>(out: &mut W, rows: &[&crate::store::Row]) -> Result<(), CliError> {
@@ -826,7 +984,11 @@ fn window_text(query: &Query) -> String {
         return "no time filter".to_string();
     }
     let show = |t: Option<SystemTime>| t.map_or("-".to_string(), edge_text);
-    format!("ts in [{}, {})", show(query.time.since), show(query.time.until))
+    format!(
+        "ts in [{}, {})",
+        show(query.time.since),
+        show(query.time.until)
+    )
 }
 
 fn mode_text(mode: &QueryMode) -> String {
@@ -834,7 +996,16 @@ fn mode_text(mode: &QueryMode) -> String {
         QueryMode::Exists => "exists".to_string(),
         QueryMode::Count => "count".to_string(),
         QueryMode::Fetch => "fetch".to_string(),
-        QueryMode::GroupBy(keys) => format!("group by {}", keys.join(", ")),
+        QueryMode::GroupBy(keys) => format!(
+            "group by {}",
+            keys.iter()
+                .map(|key| match key {
+                    GroupKey::Column(name) => name.clone(),
+                    GroupKey::Time(w) => format!("time({})", duration_text(*w)),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 

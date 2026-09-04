@@ -36,6 +36,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::config::Limits;
 use crate::db;
 use crate::engine;
 use crate::error::{self, CliError, DetectorError, ServeError};
@@ -92,13 +93,14 @@ pub struct Server {
     queries: AtomicU64,
     /// Requests currently in a handler. Read at shutdown, to say what is being waited on.
     in_flight: AtomicU64,
-    /// The backstop, held on the server and not negotiated per request: all clients get the
-    /// same limit, because a client that could override it could sidestep the protection.
-    max_rows: usize,
+    /// The caps, held on the server and not negotiated per request: all clients get the
+    /// same limits, because a client that could override one could sidestep the
+    /// protection it is there for.
+    limits: Limits,
 }
 
 impl Server {
-    fn new(now: DateTime<Utc>, max_rows: usize) -> Self {
+    fn new(now: DateTime<Utc>, limits: Limits) -> Self {
         Self {
             trie: Trie::new(),
             stores: RwLock::new(Stores::new()),
@@ -109,7 +111,7 @@ impl Server {
             lines_rejected: AtomicU64::new(0),
             queries: AtomicU64::new(0),
             in_flight: AtomicU64::new(0),
-            max_rows,
+            limits,
         }
     }
 
@@ -310,7 +312,7 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
 
     // Parsed before the blocking task, so a bad query costs no thread: it is a string
     // and a grammar, and the answer is a 400 either way.
-    let query = match query::from_trieql(&request.q, Utc::now(), server.max_rows) {
+    let query = match query::from_trieql(&request.q, Utc::now(), server.limits) {
         Ok(query) => query,
         Err(e) => return fail(StatusCode::BAD_REQUEST, &error::chain(&e)),
     };
@@ -320,12 +322,18 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
         let stores = held.read_stores();
         let result = engine::execute(&held.trie, &stores, &query)?;
         held.queries.fetch_add(1, Ordering::Relaxed);
-        Ok::<Value, crate::store::StoreError>(query::result_json(&result))
+        Ok::<Value, engine::ExecError>(query::result_json(&query, &result))
     })
     .await;
 
     match done {
         Ok(Ok(body)) => (StatusCode::OK, Json(body)).into_response(),
+        // A bucket count over the cap is the client's to fix - a narrower range or a wider
+        // bucket - so it is a 400 beside the parse errors above, not a 500. A storage
+        // failure is the server's and stays one.
+        Ok(Err(e @ engine::ExecError::Buckets(_))) => {
+            fail(StatusCode::BAD_REQUEST, &error::chain(&e))
+        }
         Ok(Err(e)) => fail(StatusCode::INTERNAL_SERVER_ERROR, &error::chain(&e)),
         Err(join) => fail(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -478,16 +486,16 @@ fn router(server: Arc<Server>) -> Router {
 /// The runtime is built here rather than by putting `#[tokio::main]` on `main`, because
 /// every other subcommand is synchronous and none of them should pay for a thread pool
 /// to parse a file.
-pub fn run(host: &str, port: u16, max_rows: usize) -> Result<(), CliError> {
+pub fn run(host: &str, port: u16, limits: Limits) -> Result<(), CliError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(ServeError::Runtime)?;
-    runtime.block_on(serve(host, port, max_rows))?;
+    runtime.block_on(serve(host, port, limits))?;
     Ok(())
 }
 
-async fn serve(host: &str, port: u16, max_rows: usize) -> Result<(), ServeError> {
+async fn serve(host: &str, port: u16, limits: Limits) -> Result<(), ServeError> {
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -499,13 +507,13 @@ async fn serve(host: &str, port: u16, max_rows: usize) -> Result<(), ServeError>
         .local_addr()
         .map_err(|source| ServeError::Bind { addr, source })?;
 
-    let server = Arc::new(Server::new(Utc::now(), max_rows));
+    let server = Arc::new(Server::new(Utc::now(), limits));
     let token = CancellationToken::new();
     // Installed before the banner: a server that cannot hear SIGTERM will be killed by
     // the SIGKILL that follows it, and a deploy is a bad place to discover that.
     let signals = signals(token.clone())?;
 
-    banner(bound, max_rows);
+    banner(bound, limits);
     tokio::spawn(signals);
 
     let shutdown = {
@@ -604,7 +612,7 @@ fn shutdown_sequence(server: &Server) {
 /// about losing data. A warning a redirect can silence is a warning that will be silenced
 /// by the first person who pipes the process into a log file, and this is something to
 /// say rather than hide.
-fn banner(addr: SocketAddr, max_rows: usize) {
+fn banner(addr: SocketAddr, limits: Limits) {
     let lines = [
         String::new(),
         "triedb serve".to_string(),
@@ -622,12 +630,20 @@ fn banner(addr: SocketAddr, max_rows: usize) {
         "              GET  /stats       throughput, template count, storage size".to_string(),
         "              GET  /health      {\"ok\":true}".to_string(),
         String::new(),
-        match max_rows {
+        match limits.max_rows {
             0 => "  max rows    none - a MATCH with no LIMIT materialises every matching row"
                 .to_string(),
             n => format!(
                 "  max rows    {n} - a MATCH with no LIMIT is answered a page at a time,\n\
                  \x20             truncated with a next_cursor to continue from"
+            ),
+        },
+        match (limits.max_buckets, limits.max_groups) {
+            (0, 0) => "  max buckets none - a GROUP BY time(...) emits whatever the range holds"
+                .to_string(),
+            (buckets, groups) => format!(
+                "  max buckets {buckets} buckets, {groups} groups - a wider GROUP BY time(...)\n\
+                 \x20             is refused rather than drawn with its tail missing"
             ),
         },
         String::new(),

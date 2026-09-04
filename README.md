@@ -286,6 +286,45 @@ or `TRIEDB__QUERY__MAX_ROWS` to change it, `0` to turn it off - and says so:
 as `AFTER` for the rest. A `LIMIT` you asked for is honoured above it rather
 than clamped to it, and `COUNT` and `GROUP BY` return no rows for it to bound.
 
+**`GROUP BY time(5m)` emits empty buckets as zeros.** Six hours at five minutes
+is 72 observations, and a bucket nothing landed in is one of them - the thing was
+quiet, which is not the same statement as a bucket nobody asked about. So the
+result is a list rather than a map of the buckets that happened to have rows:
+
+```
+$ triedb query logs.ndjson \
+    'COUNT LOG {"level":"ERROR"} BETWEEN 2024-01-15T09:00:00Z AND 2024-01-15T12:00:00Z GROUP BY time(5m)'
+bucket                count
+2024-01-15T09:55:00Z  3
+2024-01-15T10:00:00Z  0
+2024-01-15T10:05:00Z  0
+…
+36 groups, 64 rows   (templates matched: 1, rows scanned: 132, 175µs)
+```
+
+Boundaries are multiples of the width counted **from the Unix epoch**, never from
+where the query starts, so two overlapping ranges put their bars in the same
+places - a chart that shifts when you nudge the range is a bug nobody reports
+clearly. A second key is zero-filled too: three levels means three series, each
+with a point in all 72 buckets.
+
+A consequence worth knowing before you count bars: the range emits every bucket it
+*touches*, so an edge that does not land on the grid straddles one. `SINCE 6h` at
+`time(5m)` gives 72 buckets if `now` happens to be on a five-minute boundary and 73
+otherwise - the first and last are partial, and both are real observations. Six
+hours from 10:03:17 covers 10:00 through 16:00, which is 73 five-minute slots. The
+comment above `bucket_of` in `src/engine.rs` draws it.
+
+A bucketed query returns aggregates rather than rows, so `max_rows` does not reach
+it. `max_buckets` (10,000) and `max_groups` (100,000) do, and going over is a
+refusal naming both counts rather than a chart with its tail quietly missing:
+
+```
+$ triedb explain 'COUNT LOG {} SINCE 30d GROUP BY time(1s)'
+triedb: `GROUP BY time(1s)` over this range needs 2,592,001 buckets; the limit is
+10,000 - widen the bucket or narrow the range
+```
+
 **A bad line costs you that line and nothing else.** Corrupt three lines of the
 five hundred and the other 497 still land:
 

@@ -159,6 +159,12 @@ for i in $(seq 1 "$COMBOS"); do
     1) FLAGS[${#FLAGS[@]}]="--fetch"; VERB="MATCH"; GROUP="" ;;
     2) g="${KEYS[$((RANDOM % ${#KEYS[@]}))]}"
        if [ $((RANDOM % 3)) -eq 0 ]; then g="$g,${KEYS[$((RANDOM % ${#KEYS[@]}))]}"; fi
+       # `time(...)` is in the grammar and on the flag, so it is in the comparison. A
+       # clause one surface can say and the other cannot is the drift this script exists
+       # to catch, and it would go uncaught the moment the clause is added to only one.
+       if [ $((RANDOM % 3)) -eq 0 ]; then
+         w=("5m" "1h" "6h" "1d"); g="time(${w[$((RANDOM % 4))]}),$g"
+       fi
        FLAGS[${#FLAGS[@]}]="--group-by"; FLAGS[${#FLAGS[@]}]="$g"
        # Either verb reaches `GroupBy`, as `--group-by` does over `--fetch`. Alternating
        # is what checks that.

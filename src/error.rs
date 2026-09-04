@@ -156,6 +156,18 @@ pub enum QueryError {
     #[error("--group-by `{arg}`: a key is empty")]
     EmptyGroupKey { arg: String },
 
+    #[error("--group-by `{arg}`: expected `time(<duration>)` with a non-zero number followed by s, m, h or d")]
+    BadBucket { arg: String },
+
+    #[error("--group-by `{arg}`: names two time buckets; it can have one")]
+    TwoTimeBuckets { arg: String },
+
+    /// `bucket` is the column a `time(...)` reports under on every surface, so a group key
+    /// of that name beside one would head two table columns the same and collide in the
+    /// NDJSON object. Refused rather than letting one of them quietly win.
+    #[error("`bucket` is the column a `time(...)` group reports under; group by it under another name, or drop the time bucket")]
+    BucketKeyClash,
+
     #[error("--since `{arg}`: expected a number followed by s, m, h or d")]
     BadDuration { arg: String },
 
@@ -263,6 +275,11 @@ pub enum CliError {
 
     #[error(transparent)]
     Store(#[from] crate::store::StoreError),
+
+    // Transparent for the reason `Trieql` is - `BucketError`'s own sentence names the
+    // requested and permitted counts, and a wrapper would print a vaguer one above it.
+    #[error(transparent)]
+    Exec(#[from] crate::engine::ExecError),
 
     #[error(transparent)]
     Serve(#[from] ServeError),

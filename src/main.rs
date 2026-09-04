@@ -87,6 +87,15 @@ enum Command {
         /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_ROWS`.
         #[arg(long, value_name = "ROWS")]
         max_rows: Option<usize>,
+        /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_BUCKETS`.
+        #[arg(long, value_name = "BUCKETS")]
+        max_buckets: Option<usize>,
+        /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
+        /// count times the distinct values of the other keys.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
+        #[arg(long, value_name = "GROUPS")]
+        max_groups: Option<usize>,
     },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
@@ -96,6 +105,15 @@ enum Command {
         /// As `serve --max-rows`: what an unlimited `MATCH` would be cut at.
         #[arg(long, value_name = "ROWS")]
         max_rows: Option<usize>,
+        /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_BUCKETS`.
+        #[arg(long, value_name = "BUCKETS")]
+        max_buckets: Option<usize>,
+        /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
+        /// count times the distinct values of the other keys.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
+        #[arg(long, value_name = "GROUPS")]
+        max_groups: Option<usize>,
     },
     /// Query a file, with TrieQL or with the flags.
     Query {
@@ -129,7 +147,8 @@ enum Command {
         /// Whether the template exists at all - the trie walk only, no rows read.
         #[arg(long, conflicts_with_all = ["group_by"])]
         exists: bool,
-        /// Count per distinct value of these keys.
+        /// Count per distinct value of these keys. A key may be `time(<duration>)`, which
+        /// buckets by the timestamp instead - TrieQL spells it `GROUP BY time(5m)`.
         #[arg(long = "group-by", value_name = "KEY[,KEY]")]
         group_by: Option<String>,
 
@@ -169,6 +188,15 @@ enum Command {
         /// property of the server rather than of the query.
         #[arg(long, value_name = "ROWS")]
         max_rows: Option<usize>,
+        /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_BUCKETS`.
+        #[arg(long, value_name = "BUCKETS")]
+        max_buckets: Option<usize>,
+        /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
+        /// count times the distinct values of the other keys.
+        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
+        #[arg(long, value_name = "GROUPS")]
+        max_groups: Option<usize>,
     },
 }
 
@@ -207,10 +235,23 @@ fn run(cli: Cli) -> Result<(), CliError> {
             host,
             port,
             max_rows,
-        } => serve::run(&host, port, config::Config::load(max_rows)?.query.max_rows),
-        Command::Explain { query, max_rows } => {
-            query::describe(&mut out, &query, config::Config::load(max_rows)?.query.max_rows)
-        }
+            max_buckets,
+            max_groups,
+        } => serve::run(
+            &host,
+            port,
+            config::Config::load(max_rows, max_buckets, max_groups)?.query,
+        ),
+        Command::Explain {
+            query,
+            max_rows,
+            max_buckets,
+            max_groups,
+        } => query::describe(
+            &mut out,
+            &query,
+            config::Config::load(max_rows, max_buckets, max_groups)?.query,
+        ),
         Command::Query {
             input,
             query: trieql,
@@ -227,8 +268,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
             limit,
             after,
             max_rows,
+            max_buckets,
+            max_groups,
         } => {
-            let config = config::Config::load(max_rows)?;
+            let config = config::Config::load(max_rows, max_buckets, max_groups)?;
             let reader = open(&input)?;
             let args = query::Args {
                 trieql,
@@ -244,7 +287,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 reference,
                 limit,
                 after,
-                max_rows: config.query.max_rows,
+                limits: config.query,
             };
             query::run(reader, &mut out, &args)
         }

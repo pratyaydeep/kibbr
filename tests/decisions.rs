@@ -129,7 +129,10 @@ fn rows_come_back_newest_first() {
 /// rows were ingested 1,2,3,4,5, so an insertion-order limit would answer `[1, 2]`.
 #[test]
 fn a_limit_takes_the_newest_rows_not_the_first() {
-    assert_eq!(ns(&query(&[r#"MATCH LOG {"event":"hit"} LIMIT 2"#])), [4, 5]);
+    assert_eq!(
+        ns(&query(&[r#"MATCH LOG {"event":"hit"} LIMIT 2"#])),
+        [4, 5]
+    );
     assert_eq!(ns(&query(&[r#"MATCH LOG {"event":"hit"} LIMIT 1"#])), [4]);
     // The flag surface resolves to the same rows.
     assert_eq!(
@@ -177,6 +180,20 @@ fn a_limit_bounds_the_rows_and_not_the_count() {
 }
 
 /// `COUNT` returns no rows, so a limit has nothing to bound there and does not silently
+/// The count in the group whose keys are exactly `want`, or a panic naming what was there.
+///
+/// `groups` is a list because a bucket that exists and is empty has to be expressible, so
+/// a group is found by its keys rather than looked up by one.
+fn group(result: &Value, want: &[(&str, &str)]) -> u64 {
+    let groups = result["groups"].as_array().expect("groups is an array");
+    groups
+        .iter()
+        .find(|group| want.iter().all(|(key, value)| group["keys"][key] == *value))
+        .unwrap_or_else(|| panic!("no group for {want:?} in {groups:?}"))["count"]
+        .as_u64()
+        .expect("a count")
+}
+
 /// halve an answer whose whole point is to be a total.
 #[test]
 fn a_limit_does_not_change_a_count() {
@@ -189,7 +206,7 @@ fn a_limit_does_not_change_a_count() {
     // And the same through GROUP BY, which also returns no rows.
     let grouped = query(&[r#"COUNT LOG {"event":"hit"} GROUP BY event LIMIT 1"#]);
     assert_eq!(grouped["count"], 5);
-    assert_eq!(grouped["group_counts"]["hit"], 5);
+    assert_eq!(group(&grouped, &[("event", "hit")]), 5);
 }
 
 /// `LIMIT 0` is a limit of zero rows, not an absent limit. `Parsed::limit` is an `Option`
@@ -296,8 +313,8 @@ fn the_backstop_does_not_reach_a_count_or_a_group_by() {
 
     let grouped = query(&["--max-rows", "1", "COUNT LOG {} GROUP BY event"]);
     assert_eq!(grouped["count"], 7);
-    assert_eq!(grouped["group_counts"]["beat"], 2);
-    assert_eq!(grouped["group_counts"]["hit"], 5);
+    assert_eq!(group(&grouped, &[("event", "beat")]), 2);
+    assert_eq!(group(&grouped, &[("event", "hit")]), 5);
 }
 
 /// Precedence: flag > environment > default. An unreadable env value is an error,
@@ -399,7 +416,9 @@ fn a_cursor_from_another_query_is_refused() {
     assert!(!out.status.success(), "a foreign cursor was accepted");
 
     // And the query that issued it still takes it.
-    let ok = query(&[&format!(r#"MATCH LOG {{"event":"hit"}} LIMIT 2 AFTER "{c}""#)]);
+    let ok = query(&[&format!(
+        r#"MATCH LOG {{"event":"hit"}} LIMIT 2 AFTER "{c}""#
+    )]);
     assert_eq!(ok["meta"]["rows_returned"], 2);
 }
 
@@ -439,7 +458,15 @@ fn a_forged_cursor_is_refused() {
 fn the_flag_surface_pages_the_same_way() {
     let page = query(&["--fetch", "--match", "event=hit", "--limit", "2"]);
     let c = page["meta"]["next_cursor"].as_str().expect("a cursor");
-    let next = query(&["--fetch", "--match", "event=hit", "--limit", "2", "--after", c]);
+    let next = query(&[
+        "--fetch",
+        "--match",
+        "event=hit",
+        "--limit",
+        "2",
+        "--after",
+        c,
+    ]);
     assert_eq!(ns(&next), [2, 3]);
 }
 

@@ -9,12 +9,14 @@
 //! a mutation to the one rule moved both answers together.
 
 use std::cmp::Reverse;
-use std::collections::{HashMap, HashSet};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::db::row_of;
 use crate::engine::{
-    group_key, leaf_key, value_matches, MatchValue, Query, QueryMeta, QueryMode, QueryResult,
+    group_values, leaf_key, split_keys, value_matches, ExecError, Group, MatchValue, Query,
+    QueryMeta, QueryMode, QueryResult,
 };
 use crate::flatten::ParsedLog;
 use crate::store::{Row, DEFAULT_TS_COLUMN};
@@ -23,7 +25,7 @@ use crate::types::ColValue;
 /// `engine::Rank`, spelled again rather than imported - see the note at the top.
 type Rank = (Reverse<Option<i64>>, u64, u64);
 
-pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
+pub fn run(lines: &[ParsedLog], query: &Query) -> Result<QueryResult, ExecError> {
     let started = std::time::Instant::now();
 
     // Brute force: a template exists when some line has the pattern's keys and
@@ -61,7 +63,7 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
     let exists_only = query.mode == QueryMode::Exists;
     if exists_only && query.time.is_open() {
         result.meta.duration = started.elapsed();
-        return result;
+        return Ok(result);
     }
 
     // `engine::Rank`'s tiebreak. Two parts, both for rows a timestamp cannot separate:
@@ -74,6 +76,19 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
     //   over the ones that matched - the engine numbers rows when they land.
     let mut seq: HashMap<u64, u64> = HashMap::new();
     let mut ranked: Vec<(Rank, Row)> = Vec::new();
+    // The group keys, split the way the engine splits them - which is contract, not
+    // mechanism: both sides have to agree on what the clause named. Everything the bucket
+    // arithmetic below does with the width is this file's own.
+    let (width, columns) = match &query.mode {
+        QueryMode::GroupBy(keys) => split_keys(keys),
+        _ => (None, Vec::new()),
+    };
+    let timed = width.is_some()
+        && lines
+            .iter()
+            .filter(|line| known(line))
+            .any(|line| line.keys.iter().any(|k| k == DEFAULT_TS_COLUMN));
+    let mut tally: BTreeMap<(Option<i64>, Vec<String>), u64> = BTreeMap::new();
 
     for line in lines.iter().filter(|line| known(line)) {
         let row = row_of(line);
@@ -100,8 +115,13 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
                     ranked.push((rank, row));
                 }
             }
-            QueryMode::GroupBy(keys) => {
-                *result.group_counts.entry(group_key(&row, keys)).or_insert(0) += 1;
+            QueryMode::GroupBy(_) => {
+                let bucket = width
+                    .filter(|_| timed)
+                    .and_then(|w| ts_of(&row).map(|ns| floor_to(ns, w)));
+                *tally
+                    .entry((bucket, group_values(&row, &columns)))
+                    .or_insert(0) += 1;
             }
             QueryMode::Count => {}
             QueryMode::Exists => break,
@@ -124,13 +144,106 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> QueryResult {
         }
         result.rows = ranked.into_iter().map(|(_, row)| row).collect();
     }
+    if matches!(query.mode, QueryMode::GroupBy(_)) {
+        result.groups = fill(tally, width.filter(|_| timed), query, columns.len());
+    }
     result.meta.rows_returned = result.rows.len() as u64;
     result.meta.truncated =
         query.mode == QueryMode::Fetch && result.meta.rows_returned < result.count;
     result.meta.limit_source = query.limit_source;
     result.meta.files_opened = result.meta.templates_matched;
     result.meta.duration = started.elapsed();
-    result
+    Ok(result)
+}
+
+/// A timestamp's bucket start, worked out from scratch.
+///
+/// Written again rather than calling `engine::bucket_of`, for the reason `in_window` is:
+/// where a boundary falls is exactly what `scripts/agree.sh` is checking, and a mutation
+/// to one flooring rule must not move both answers together. Where the engine floors with
+/// `div_euclid`, this counts whole widths from the epoch and steps back one for an instant
+/// before it - the same rule, reached a different way.
+fn floor_to(ns: i64, width: Duration) -> i64 {
+    let w = i64::try_from(width.as_nanos()).unwrap_or(i64::MAX).max(1);
+    let whole = ns / w;
+    let start = if ns < 0 && ns % w != 0 {
+        whole - 1
+    } else {
+        whole
+    };
+    start.saturating_mul(w)
+}
+
+/// The tally as groups, zero-filled across the span. The engine's `zero_fill` reaches the
+/// same answer from a `HashMap` and a cap check; this one sorts and counts.
+fn fill(
+    tally: BTreeMap<(Option<i64>, Vec<String>), u64>,
+    width: Option<Duration>,
+    query: &Query,
+    columns: usize,
+) -> Vec<Group> {
+    let Some(width) = width else {
+        return tally
+            .into_iter()
+            .map(|((bucket, values), count)| Group {
+                bucket,
+                values,
+                count,
+            })
+            .collect();
+    };
+    let w = i64::try_from(width.as_nanos()).unwrap_or(i64::MAX).max(1);
+
+    let mut groups: Vec<Group> = tally
+        .iter()
+        .filter(|((bucket, _), _)| bucket.is_none())
+        .map(|((_, values), count)| Group {
+            bucket: None,
+            values: values.clone(),
+            count: *count,
+        })
+        .collect();
+
+    // The span: the window's own edges where it has them, widened to hold every bucket a
+    // row actually landed in.
+    let mut edges: Option<(i64, i64)> = query.time.since.map(|since| {
+        let lo = floor_to(nanos(since), width);
+        let end = nanos(query.time.until.unwrap_or(query.now));
+        let hi = floor_to(end.saturating_sub(1), width).saturating_add(w);
+        (lo, hi.max(lo))
+    });
+    for (bucket, _) in tally.keys() {
+        let Some(at) = bucket else { continue };
+        edges = Some(match edges {
+            Some((lo, hi)) => (lo.min(*at), hi.max(at.saturating_add(w))),
+            None => (*at, at.saturating_add(w)),
+        });
+    }
+    let Some((lo, hi)) = edges else {
+        return groups;
+    };
+
+    let mut series: BTreeSet<Vec<String>> = tally
+        .iter()
+        .filter(|((bucket, _), _)| bucket.is_some())
+        .map(|((_, values), _)| values.clone())
+        .collect();
+    if columns == 0 {
+        series.insert(Vec::new());
+    }
+
+    let mut at = lo;
+    while at < hi {
+        for values in &series {
+            groups.push(Group {
+                bucket: Some(at),
+                values: values.clone(),
+                count: tally.get(&(Some(at), values.clone())).copied().unwrap_or(0),
+            });
+        }
+        at = at.saturating_add(w);
+    }
+    groups
 }
 
 /// A row's timestamp, or `None`. Worked out here rather than shared with the engine, for
