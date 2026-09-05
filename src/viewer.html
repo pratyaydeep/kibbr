@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>triedb</title>
+<!--
+  The log viewer. One file, served at `/` from `include_str!` in serve.rs, so there is
+  nothing to deploy beside the binary. No framework, no build step, no CDN: a debugging
+  tool that cannot be opened because a script host is unreachable is not a debugging tool.
+
+  Its job is not display. It is the first real client of TrieQL and of the paging cursor,
+  and everything below is written to use those surfaces the way any other client would
+  have to. Where that was awkward the comment says so.
+
+  What it deliberately does not have: saved queries, dashboards, auto-refresh, auth,
+  panels, a theme toggle, and any persistence at all. Reload and it is new.
+-->
+<style>
+  :root {
+    --bg:      #14161a;
+    --panel:   #1b1e24;
+    --line:    #2a2f38;
+    --ink:     #d6dae1;
+    --dim:     #7f8894;
+    --faint:   #565e6b;
+    --accent:  #6fb3d2;
+    --bar:     #4b7f9c;
+    --barhi:   #8fd0ef;
+    --warn:    #d9a05b;
+    --bad:     #d97b6c;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.5 var(--mono);
+    display: flex; height: 100vh; overflow: hidden;
+  }
+
+  /* ── sidebar ───────────────────────────────────────────────────────────── */
+  #sidebar {
+    width: 340px; flex: 0 0 340px; border-right: 1px solid var(--line);
+    background: var(--panel); overflow-y: auto; padding: 10px 12px 40px;
+  }
+  body.collapsed #sidebar { display: none; }
+  #sidebar h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--dim); margin: 4px 0 10px; font-weight: 600; }
+  .tpl { border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px;
+    margin-bottom: 6px; cursor: pointer; background: #171a20; }
+  .tpl:hover { border-color: var(--accent); }
+  .tpl .path { color: var(--ink); word-break: break-all; }
+  .tpl .path .promoted { color: var(--accent); }
+  .tpl .sub { color: var(--faint); font-size: 11px; margin-top: 3px; }
+
+  /* ── main column ───────────────────────────────────────────────────────── */
+  main { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px 60px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  header .brand { color: var(--accent); font-weight: 600; letter-spacing: .04em; }
+  header .note { color: var(--faint); font-size: 11px; }
+
+  button {
+    font: inherit; font-size: 12px; color: var(--ink); background: #232830;
+    border: 1px solid var(--line); border-radius: 3px; padding: 3px 9px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #2d3a44; border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .4; cursor: default; }
+
+  /* Run is the one control on the page that does something, so it is the one that reads
+     as a button rather than as a chip. The quick picks beside it are a shortcut for
+     filling two text boxes; this is the thing that goes and asks the database. */
+  #run {
+    background: var(--accent); border-color: var(--accent); color: #10171c;
+    font-weight: 600; padding: 4px 16px; letter-spacing: .02em;
+  }
+  #run:hover { background: var(--barhi); border-color: var(--barhi); }
+  #run .kbd { opacity: .6; font-weight: 400; margin-left: 6px; }
+
+  textarea, input {
+    font: inherit; color: var(--ink); background: #101216;
+    border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px;
+  }
+  textarea { width: 100%; resize: vertical; min-height: 58px; }
+  textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+  input.bad { border-color: var(--bad); }
+
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  .row label { color: var(--dim); font-size: 12px; }
+  .sep { color: var(--faint); }
+
+  .effective { background: #101216; border: 1px solid var(--line); border-radius: 3px;
+    padding: 6px 8px; margin: 8px 0; white-space: pre-wrap; word-break: break-all; }
+  .effective .lbl { color: var(--faint); }
+  .effective .chart-q { color: var(--faint); }
+
+  /* ── chart ─────────────────────────────────────────────────────────────── */
+  #chart { border: 1px solid var(--line); border-radius: 3px; background: #101216;
+    padding: 6px 8px 2px; }
+  #chart svg { display: block; }
+  #chart rect.bar { fill: var(--bar); cursor: pointer; }
+  #chart rect.bar:hover { fill: var(--barhi); }
+  #chart .axis { fill: var(--faint); font-size: 10px; }
+  #chart .baseline { stroke: var(--line); }
+  .chartnote { color: var(--faint); font-size: 11px; padding: 2px 0 4px; }
+  .chartnote b { color: var(--warn); font-weight: normal; }
+
+  /* ── results ───────────────────────────────────────────────────────────── */
+  /* The log pane scrolls in its own box rather than with the page: the windowed renderer
+     needs a scrollport whose height it can read. Every line is `pre` and stays one line,
+     which is what keeps the rows a uniform height - the assumption the window is cut on -
+     and what makes a long line scroll sideways instead of reflowing the ones below it. */
+  #pane { overflow: auto; border: 1px solid var(--line); border-radius: 3px;
+    margin-top: 10px; max-height: 60vh; font-size: 12px; }
+  #rows { min-width: max-content; }
+  .line { white-space: pre; padding: 3px 10px; border-bottom: 1px solid #22262e; }
+  .line:hover { background: #191d24; }
+  .sp { padding: 0; border: 0; }
+  /* JSON, coloured the way the terminal renderer colours it: punctuation recedes, keys
+     read as labels, and the value carries the weight. */
+  .k { color: var(--dim); }
+  .s { color: var(--ink); }
+  .n { color: #c8b48f; }
+  .b { color: #a99ad0; }
+  .z { color: var(--faint); }
+  .p { color: var(--faint); }
+  /* A key the query named, and the value it named for it. This is the whole reason to read
+     a log line rather than a table: the term that was asked for is findable at a glance. */
+  .hit { color: var(--barhi); background: rgba(111, 179, 210, .16); border-radius: 2px; }
+  .hit.k { color: var(--accent); }
+
+  /* The groups a COUNT answers with stay a table: an aggregate is a table, `max_buckets`
+     bounds how many rows it can be, and none of the windowing below applies to it. */
+  #pane table { border-collapse: collapse; min-width: 100%; }
+  #pane th, #pane td { text-align: left; padding: 3px 10px; white-space: nowrap;
+    border-bottom: 1px solid #22262e; }
+  #pane th { position: sticky; top: 0; z-index: 1; background: #1b1e24; color: var(--dim);
+    font-weight: 600; border-bottom: 1px solid var(--line); }
+  #pane td.num { text-align: right; }
+  #pane td.null { color: var(--faint); }
+  td.null { color: var(--faint); }
+  td.absent { color: #3c434e; }
+  td.num { text-align: right; }
+
+  .state { padding: 14px 4px; color: var(--dim); }
+  .state .big { color: var(--ink); }
+  .state .hint { color: var(--faint); font-size: 12px; margin-top: 4px; }
+  pre.err { margin: 0; padding: 10px 12px; background: #221619; border: 1px solid #3d2429;
+    border-radius: 3px; color: var(--bad); white-space: pre; overflow-x: auto; }
+  .banner { margin-top: 8px; padding: 6px 10px; border-radius: 3px;
+    border: 1px solid #4a3a22; background: #221d14; color: var(--warn); }
+  .meta { margin-top: 8px; color: var(--faint); font-size: 11px; }
+  .meta b { color: var(--dim); font-weight: normal; }
+  #more { margin-top: 10px; }
+</style>
+</head>
+<body class="collapsed">
+
+<aside id="sidebar">
+  <h2>templates</h2>
+  <div id="tpls" class="state">loading…</div>
+</aside>
+
+<main>
+  <header>
+    <button id="toggle" title="templates">☰</button>
+    <span class="brand">triedb</span>
+    <span class="note">in-memory · all times UTC</span>
+  </header>
+
+  <textarea id="q" spellcheck="false" autocomplete="off"
+    placeholder='MATCH LOG {"event": "login_failed"}     — Ctrl+Enter to run'></textarea>
+
+  <div class="row">
+    <label>range</label>
+    <span id="picks"></span>
+    <span class="sep">·</span>
+    <input id="from" size="21" spellcheck="false" autocomplete="off"
+      placeholder="(no window)" title="clear both boxes to query without a time window">
+    <span class="sep">→</span>
+    <input id="to" size="21" spellcheck="false" autocomplete="off"
+      placeholder="(no window)" title="clear both boxes to query without a time window">
+    <button id="run" title="run the query (Ctrl+Enter)">Run<span class="kbd">⌃⏎</span></button>
+  </div>
+
+  <div class="effective"><span class="lbl">sent </span><span id="eff"></span>
+<span class="lbl">chart </span><span id="effchart" class="chart-q"></span></div>
+
+  <div id="chart"></div>
+  <div id="chartnote" class="chartnote"></div>
+
+  <div id="results"></div>
+  <div id="meta" class="meta"></div>
+</main>
+
+<script>
+"use strict";
+
+// ── the two endpoints ────────────────────────────────────────────────────────────────
+//
+// `/query` answers `query::result_json` and nothing else, so every shape read below -
+// `exists`, `count`, `rows`, `groups`, `meta` - is that function's and is not
+// reconstructed here. A failure is `{"ok":false,"error":"…"}` with the status carrying
+// the blame: 400 is the query's fault and 500 is the server's.
+
+class QueryFailed extends Error {
+  constructor(text, status) { super(text); this.text = text; this.status = status; }
+}
+
+async function ask(q) {
+  const res = await fetch("/query", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ q }),
+  });
+  let body;
+  try { body = await res.json(); }
+  catch (e) { throw new QueryFailed("the server did not answer with JSON", res.status); }
+  // The parse error's own text carries the excerpt and the caret under the offending
+  // character - `trieql::ParseError`'s Display, the same renderer the CLI prints. It is
+  // shown verbatim rather than re-derived from a byte offset, so the terminal and the
+  // browser accuse the same character.
+  if (!res.ok) throw new QueryFailed(body.error || ("HTTP " + res.status), res.status);
+  return body;
+}
+
+async function templatesOf() {
+  const res = await fetch("/templates");
+  if (!res.ok) throw new Error("GET /templates: HTTP " + res.status);
+  return (await res.json()).templates || [];
+}
+
+// ── reading a query without parsing it ───────────────────────────────────────────────
+//
+// The viewer has to splice clauses into a query someone else typed, which needs to know
+// where the pattern ends and where each clause starts - not what any of them mean. This
+// walks the string tracking double-quoted strings, which is all that is needed, because
+// the grammar fixes clause order: pattern → time → group → limit → after.
+//
+// It is not a second parser and must not become one. Anything it gets wrong is sent to
+// the server as written and refused there, with the caret, which is the correct outcome:
+// there is exactly one parser and it is in Rust.
+//
+// Known limit, stated rather than hidden: a *bare* group key spelled like a keyword
+// (`GROUP BY limit`) reads as the start of a LIMIT clause. Quoting it - which the grammar
+// already allows - puts it out of reach, because a quoted run is skipped whole.
+
+const KEYWORDS = ["SINCE", "BETWEEN", "GROUP", "LIMIT", "AFTER"];
+
+function scan(src) {
+  const keywords = [];
+  let depth = 0, patternEnd = -1, i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '"') {                      // a quoted run, skipped whole
+      i++;
+      while (i < src.length && src[i] !== '"') { i += src[i] === "\\" ? 2 : 1; }
+      i++;
+      continue;
+    }
+    if (c === "{") { depth++; i++; continue; }
+    if (c === "}") {
+      depth--; i++;
+      if (depth <= 0 && patternEnd < 0) patternEnd = i;
+      continue;
+    }
+    if (depth === 0 && patternEnd >= 0 && /[A-Za-z]/.test(c)) {
+      let j = i;
+      while (j < src.length && /[A-Za-z]/.test(src[j])) j++;
+      const word = src.slice(i, j).toUpperCase();
+      if (KEYWORDS.includes(word)) keywords.push({ word, at: i });
+      i = j;
+      continue;
+    }
+    i++;
+  }
+  return { patternEnd, keywords };
+}
+
+/** The half-open span of the clause starting at `keywords[n]`. */
+function clauseSpan(src, keywords, n) {
+  return [keywords[n].at, n + 1 < keywords.length ? keywords[n + 1].at : src.length];
+}
+
+/** Drop whatever time clause the query has and splice in this one. */
+function withTime(src, clause) {
+  const { patternEnd, keywords } = scan(src);
+  // No pattern found: hand it over untouched and let the parser say why. Appending a
+  // BETWEEN to something already broken would move the caret off the real mistake.
+  if (patternEnd < 0) return src;
+  const n = keywords.findIndex((k) => k.word === "SINCE" || k.word === "BETWEEN");
+  let head = src.slice(0, patternEnd), tail = src.slice(patternEnd);
+  if (n >= 0) {
+    const [at, end] = clauseSpan(src, keywords, n);
+    head = src.slice(0, at);
+    tail = src.slice(end);
+  }
+  return (head.trimEnd() + " " + clause + " " + tail.trim()).trim();
+}
+
+/** The next page of the same query. `AFTER` is last in the grammar, so it goes last. */
+function withAfter(src, cursor) {
+  const { keywords } = scan(src);
+  const n = keywords.findIndex((k) => k.word === "AFTER");
+  let base = src;
+  if (n >= 0) {
+    const [at, end] = clauseSpan(src, keywords, n);
+    base = (src.slice(0, at) + src.slice(end)).trim();
+  }
+  return base.trimEnd() + ' AFTER "' + cursor + '"';
+}
+
+/**
+ * The chart query: the same pattern over the same window, counted into buckets.
+ *
+ * Built by cutting the effective query at its first GROUP/LIMIT/AFTER and forcing the
+ * verb to COUNT, so the bars answer the question in the box and not a second one. The
+ * user's own GROUP BY is dropped because the chart has one axis; their LIMIT is dropped
+ * because `max_rows` does not reach an aggregate anyway.
+ */
+function chartQuery(effective, width) {
+  const { patternEnd, keywords } = scan(effective);
+  if (patternEnd < 0) return null;
+  const stop = keywords.find((k) => ["GROUP", "LIMIT", "AFTER"].includes(k.word));
+  const head = (stop ? effective.slice(0, stop.at) : effective).trim();
+  return head.replace(/^\s*\S+/, "COUNT") + " GROUP BY time(" + width + ")";
+}
+
+// ── time ─────────────────────────────────────────────────────────────────────────────
+//
+// Everything on this page is UTC and spelled RFC 3339, because that is what `BETWEEN`
+// takes. The inputs hold the text that will be sent - there is no local-time box quietly
+// converted on the way out, and so nothing to get wrong an hour either side of a DST cut.
+
+const rfc = (ms) => new Date(ms).toISOString().replace(/\.000Z$/, "Z");
+const msOf = (text) => Date.parse(text.trim());
+// The same instant for a human to read off an axis: RFC 3339 without the `T` and the `Z`
+// that make it machine-readable. Only ever for display - what is sent is `rfc`.
+const stamp = (ms) => rfc(ms).replace("T", " ").replace(/Z$/, "");
+
+const QUICK = [["10m", 600], ["1h", 3600], ["6h", 21600], ["24h", 86400], ["7d", 604800]];
+
+// Widths the grammar can spell, so `time(<w>)` reads back the way `fmt::duration_text`
+// writes it.
+const WIDTHS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800,
+                3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800, 2592000];
+
+function widthText(secs) {
+  if (secs % 86400 === 0) return secs / 86400 + "d";
+  if (secs % 3600 === 0) return secs / 3600 + "h";
+  if (secs % 60 === 0) return secs / 60 + "m";
+  return secs + "s";
+}
+
+/**
+ * A bucket width for this range, landing near 60 bars.
+ *
+ * Chosen off a ladder of round widths rather than by dividing the range by 60, because
+ * `time(83s)` is a legal width that no one can read off an axis. Scored on the log of the
+ * ratio so that half as many bars and twice as many are equally wrong.
+ */
+function autoWidth(rangeSecs) {
+  let best = WIDTHS[0], score = Infinity;
+  for (const w of WIDTHS) {
+    const s = Math.abs(Math.log(Math.max(rangeSecs, 1) / w / 60));
+    if (s < score) { score = s; best = w; }
+  }
+  return best;
+}
+
+// ── the page's whole state ───────────────────────────────────────────────────────────
+//
+// A few variables and no store. Nothing here survives a reload, which is the point: this
+// is a window onto the server, not a place to keep anything.
+
+let page = null;           // { query, cursor } - what "Load more" continues
+let lastChart = null;      // { groups, widthSecs } - kept only to redraw on resize
+let spanSecs = null;       // the data's own ts span, measured once at load
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const commas = (n) => Number(n).toLocaleString("en-US");
+
+// ── the volume chart ─────────────────────────────────────────────────────────────────
+//
+// Inline SVG, one rect per group, and no library. It draws exactly what `groups` holds:
+// the zero-fill, the bucket boundaries and their alignment to the epoch grid are the
+// engine's (`engine::bucket_of`, `zero_fill`), and re-deriving any of them here would be
+// a second implementation to disagree with the first. An empty bucket is a bar of zero
+// height sitting in the row - a gap in the axis would mean something else entirely.
+
+function drawChart(groups, widthSecs) {
+  lastChart = { groups, widthSecs };
+  const host = $("chart");
+  const note = $("chartnote");
+  // `bucket: null` is not a bar. It is the count of rows that matched and could not be
+  // placed in time - no `ts`, or a `ts` the lattice widened to String - and putting them
+  // anywhere on the axis would invent a position they do not have.
+  const placed = groups.filter((g) => g.bucket !== null && g.bucket !== undefined);
+  const unplaced = groups.filter((g) => g.bucket === null || g.bucket === undefined)
+                         .reduce((n, g) => n + g.count, 0);
+
+  note.innerHTML = unplaced
+    ? "<b>" + commas(unplaced) + "</b> matching row(s) have no readable <code>ts</code> " +
+      "and cannot be placed in time — counted, not drawn"
+    : "";
+
+  if (!placed.length) { host.innerHTML = ""; return; }
+
+  const W = Math.max(host.clientWidth - 16, 240), H = 120, PAD = 16;
+  const n = placed.length;
+  const gap = n > 200 ? 0 : 1;
+  const bw = Math.max((W - gap * (n - 1)) / n, 0.5);
+  const top = Math.max(...placed.map((g) => g.count), 1);
+  const widthMs = widthSecs * 1000;
+
+  // A bar is a span, not an instant. Naming it by its start alone reads as "the rows at
+  // 12:00" when it means "the rows from 12:00 up to 18:00", and the two differ by the
+  // whole width of the bucket - which is the number the chart is entirely made of. The
+  // end repeats the date only when the span crosses midnight.
+  const span = (startMs) => {
+    const endMs = startMs + widthMs;
+    return stamp(startMs) + " → " +
+      (stamp(startMs).slice(0, 10) === stamp(endMs).slice(0, 10)
+        ? stamp(endMs).slice(11)
+        : stamp(endMs));
+  };
+
+  let bars = "";
+  placed.forEach((g, i) => {
+    const startMs = Date.parse(g.bucket);
+    const h = g.count === 0 ? 0 : Math.max((g.count / top) * (H - PAD), 1);
+    const x = i * (bw + gap);
+    bars +=
+      '<rect class="bar" x="' + x.toFixed(2) + '" y="' + (H - h).toFixed(2) +
+      '" width="' + bw.toFixed(2) + '" height="' + h.toFixed(2) +
+      '" data-start="' + startMs + '" data-end="' + (startMs + widthMs) + '">' +
+      "<title>" + esc(span(startMs)) + "\n" + commas(g.count) +
+      " rows  ·  click to zoom to this " + widthText(widthSecs) + "</title></rect>";
+  });
+
+  const tick = (ms, x, anchor) =>
+    '<text class="axis" x="' + x.toFixed(1) + '" y="' + (H + 13) +
+    '" text-anchor="' + anchor + '">' + esc(stamp(ms)) + "</text>";
+
+  // The right-hand tick is the last bucket's *end*, not its start: the axis runs to where
+  // the drawing runs to, and labelling it with the start understates the chart by one
+  // bucket. A middle tick only when there is room for one that will not collide.
+  const firstMs = Date.parse(placed[0].bucket);
+  const lastEndMs = Date.parse(placed[n - 1].bucket) + widthMs;
+  const midAt = Math.floor(n / 2);
+  const axis = tick(firstMs, 0, "start") +
+    (n > 1 ? tick(lastEndMs, W, "end") : "") +
+    (n > 4 && W > 520 ? tick(Date.parse(placed[midAt].bucket),
+                             midAt * (bw + gap), "middle") : "");
+
+  host.innerHTML =
+    '<svg width="' + W + '" height="' + (H + 18) + '" viewBox="0 0 ' + W + " " + (H + 18) + '">' +
+    '<text class="axis" x="0" y="9">peak ' + commas(top) + " rows per " +
+    widthText(widthSecs) + " · " + commas(n) + " buckets</text>" +
+    bars +
+    '<line class="baseline" x1="0" y1="' + H + '" x2="' + W + '" y2="' + H + '"/>' +
+    axis +
+    "</svg>";
+
+  // Clicking a bar narrows the range to that bucket, `[start, start + width)`, which is
+  // exactly the half-open span the bucket covers.
+  host.querySelectorAll("rect.bar").forEach((r) => {
+    r.addEventListener("click", () => {
+      $("from").value = rfc(Number(r.dataset.start));
+      $("to").value = rfc(Number(r.dataset.end));
+      markPick(null);
+      run();
+    });
+  });
+}
+
+// ── the results, as the lines they were ingested as ──────────────────────────────────
+
+/**
+ * The keys and values the pattern names, so the line can point at them.
+ *
+ * The grammar makes this small: `json_pattern = "{" (pair ("," pair)*)? "}"` and
+ * `pair = string ":" (string | "*")`, flat, no nesting and no operators. So the pattern
+ * body is an alternating run of quoted strings - key, value, key, value - with a bare `*`
+ * standing in wherever the value was a wildcard.
+ *
+ * A reader for highlighting and not a second parser: the server is still the only thing
+ * that decides what a query means. Anything this misreads costs a highlight, never a row.
+ */
+function patternTerms(src) {
+  const keys = new Set(), pairs = new Map();
+  const { patternEnd } = scan(src);
+  const open = src.indexOf("{");
+  if (patternEnd < 0 || open < 0) return { keys, pairs };
+
+  const body = src.slice(open + 1, patternEnd);
+  const token = /"((?:[^"\\]|\\.)*)"|(\*)/g;
+  const text = (raw) => { try { return JSON.parse('"' + raw + '"'); } catch (e) { return raw; } };
+  let m, key = null;
+  while ((m = token.exec(body))) {
+    if (key === null) {
+      if (m[2] !== undefined) break;   // a `*` where a key belongs is not this grammar
+      key = text(m[1]);
+      keys.add(key);
+    } else {
+      // `*` matches any value, so the key is the whole of what was asked for.
+      pairs.set(key, m[2] !== undefined ? null : text(m[1]));
+      key = null;
+    }
+  }
+  return { keys, pairs };
+}
+
+/**
+ * One row, as the JSON line it was ingested as.
+ *
+ * A row is shown as itself rather than as a slice of a 56-column union. `MATCH LOG {}`
+ * matches 870 templates whose columns barely overlap, so the table it used to build was
+ * mostly the "this template has no such column" dash - a screen of punctuation saying
+ * nothing. A line carries only the keys the row actually has, which is both shorter to
+ * read and shorter to build.
+ *
+ * The keys are the row's own, in the engine's order, with `ts` hoisted: it is the one
+ * field an operator scans by eye and the one the time filter reads
+ * (`store::DEFAULT_TS_COLUMN`). Nesting is not rebuilt - `db::row_of` flattens
+ * `err.cause.code` on the way in, and a line that re-nested it would be showing a shape
+ * the database does not hold and cannot be queried by.
+ */
+function logLine(row, hl) {
+  const keys = Object.keys(row);
+  const at = keys.indexOf("ts");
+  if (at > 0) { keys.splice(at, 1); keys.unshift("ts"); }
+
+  const parts = keys.map((k) => {
+    const v = row[k];
+    const named = hl.keys.has(k);
+    const wanted = hl.pairs.get(k);
+    // The value is marked only when the query asked for that value and the row carries it,
+    // so a highlight always means "this is why the row is here".
+    const hitValue = named && wanted !== null && wanted !== undefined && String(v) === wanted;
+
+    const cls = v === null ? "z"
+      : typeof v === "number" ? "n"
+      : typeof v === "boolean" ? "b"
+      : "s";
+    const text = v === null ? "null"
+      : typeof v === "object" ? JSON.stringify(v)
+      : typeof v === "string" ? JSON.stringify(v)
+      : String(v);
+
+    return '<span class="k' + (named ? " hit" : "") + '">' + esc(JSON.stringify(k)) +
+      '</span><span class="p">: </span>' +
+      '<span class="' + cls + (hitValue ? " hit" : "") + '">' + esc(text) + "</span>";
+  });
+
+  return '<span class="p">{</span>' + parts.join('<span class="p">, </span>') +
+    '<span class="p">}</span>';
+}
+
+// ── the log pane, one screenful at a time ────────────────────────────────────────────
+//
+// A page is whatever the server returned, and with no `LIMIT` in the query that is
+// `max_rows` - ten thousand rows, and another ten thousand on every "Load more".
+//
+// This was a table once, and building it was quadratic. Appending rows in chunks made the
+// browser lay the whole table out again on every chunk, so each chunk cost more than the
+// one before it - measured on a page of ten thousand: main-thread blocks of 451ms, then
+// 767, 1052, 1377, 1581, 1770, about ten seconds of a frozen tab. Chunking paced the jank
+// without removing any of it, because the work was the layout and not the string.
+//
+// So only the lines on screen are in the DOM. Two spacers stand in for the rest and hold
+// the scrollbar honest, and scrolling re-cuts the window - fifty-odd lines built each
+// time, no matter how large the page is. Every fetched row is still held in `view.rows`
+// and reachable by scrolling; nothing is dropped and nothing is trimmed.
+//
+// What this costs: the browser's own Ctrl+F only searches the lines currently rendered.
+// A page of ten thousand rows was never really searchable that way - it was ten seconds
+// of hang before it could be searched at all - and the database is the thing to ask
+// instead: put the term in the pattern and let the engine find it, which is also what
+// puts the highlight on it.
+
+const OVERSCAN = 12;       // rows kept beyond each edge, so a nudge of the wheel is silent
+
+let view = null;           // { rows, hl, rowH } - the windowed pane's whole state
+
+/** The scroll box the lines live in. Emptied and rebuilt by every fresh query. */
+function logShell() {
+  view = null;
+  $("results").innerHTML = '<div id="pane"><div id="rows"></div></div><div id="more"></div>';
+  $("pane").addEventListener("scroll", paintWindow, { passive: true });
+}
+
+/** The same box, for the table a `COUNT` answers with. */
+function groupShell() {
+  view = null;
+  $("results").innerHTML = '<div id="pane"><table id="grid"></table></div><div id="more"></div>';
+}
+
+/**
+ * Cut the window the scroll position is looking at, and build only that.
+ *
+ * Every line is one line high, so the row under the top edge is just `scrollTop / rowH`.
+ * That uniformity is the whole reason `.line` is `white-space: pre` - a wrapped line would
+ * make row height depend on content and the arithmetic here would have to become a
+ * measured offset table.
+ *
+ * Driven straight off the scroll event and never off `requestAnimationFrame`: a hidden tab
+ * gets no frames, and the chunked renderer this replaced would stall mid-table until the
+ * tab came forward again - a partial table with nothing to say it was partial.
+ */
+function paintWindow() {
+  if (!view || !$("rows")) return;
+  const wrap = $("pane"), body = $("rows"), total = view.rows.length;
+  const rowH = view.rowH || 21;
+  const fits = Math.ceil(wrap.clientHeight / rowH);
+  const first = Math.max(0, Math.min(Math.floor(wrap.scrollTop / rowH) - OVERSCAN,
+                                     Math.max(0, total - fits - OVERSCAN)));
+  const count = Math.min(total - first, fits + OVERSCAN * 2);
+
+  body.innerHTML =
+    '<div class="sp" style="height:' + first * rowH + 'px"></div>' +
+    view.rows.slice(first, first + count)
+      .map((r) => '<div class="line">' + logLine(r, view.hl) + "</div>").join("") +
+    '<div class="sp" style="height:' +
+      Math.max(0, total - first - count) * rowH + 'px"></div>';
+
+  // The row height is a measurement, not a guess: it follows the stylesheet's padding and
+  // line height. Taken from the first line that exists, once, and the window re-cut if the
+  // provisional 21px was wrong.
+  if (!view.rowH && count) {
+    const measured = body.children[1].getBoundingClientRect().height;
+    if (measured) { view.rowH = measured; if (measured !== rowH) paintWindow(); }
+  }
+}
+
+/**
+ * Rows onto the page. Called again by "Load more", which continues the same pane: the
+ * new rows join `view.rows` and only the window is rebuilt, so a second page costs what
+ * the first one did.
+ */
+function appendRows(rows, hl) {
+  if (!view) view = { rows: [], hl, rowH: 0 };
+  for (const r of rows) view.rows.push(r);
+  paintWindow();
+}
+
+/**
+ * A `COUNT` or `GROUP BY` answers in groups, not rows. Typing one is not a blank screen.
+ *
+ * Written straight into the table and not windowed: `max_buckets` already bounds how many
+ * groups can come back, so there is never a screenful-of-a-hundred-thousand to cut down.
+ */
+function renderGroups(groups) {
+  const keys = Object.keys(groups[0].keys || {});
+  const cols = ("bucket" in groups[0] ? ["bucket"] : []).concat(keys, ["count"]);
+  groupShell();
+  $("grid").innerHTML =
+    "<thead><tr>" + cols.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead>" +
+    "<tbody>" + groups
+      .map((g) => {
+        const cells = [];
+        if ("bucket" in g) {
+          cells.push(g.bucket === null
+            ? '<td class="null">(null)</td>'
+            : "<td>" + esc(g.bucket) + "</td>");
+        }
+        for (const k of keys) cells.push("<td>" + esc(g.keys[k]) + "</td>");
+        cells.push('<td class="num">' + commas(g.count) + "</td>");
+        return "<tr>" + cells.join("") + "</tr>";
+      })
+      .join("") + "</tbody>";
+}
+
+// ── what the answer says about itself ────────────────────────────────────────────────
+
+/**
+ * The two empty answers, which are not the same answer.
+ *
+ * `exists: false` is a pattern that walked to no template at all: a field name that is
+ * not in the database, or a value nothing was ever logged with. Nothing about the time
+ * range will change it. `exists: true, count: 0` is a real template with nothing in this
+ * window, and the range is exactly what to change. Collapsing them into "no results"
+ * sends an operator to the wrong half of the problem, so they are worded to send them to
+ * different places.
+ */
+function emptyState(result) {
+  if (!result.exists) {
+    return '<div class="state"><div class="big">No template matches this pattern — ' +
+      "check the field names.</div><div class=\"hint\">Nothing was read: the walk ended " +
+      "before any leaf. The template list on the left is every shape the database has.</div></div>";
+  }
+  return '<div class="state"><div class="big">No logs in this window.</div>' +
+    '<div class="hint">' + commas(result.meta.templates_matched) +
+    " template(s) matched and none of their rows fall in this range. " +
+    "A row is in range only if its <code>ts</code> reads as a timestamp.</div></div>";
+}
+
+/**
+ * `truncated` and `limit_source`, which only mean anything read together.
+ *
+ * A caller that asked for ten rows and got ten has what it wanted. A caller that asked
+ * for everything and met `max_rows` has been told to write a narrower query, and only the
+ * pair of fields can tell those apart - which is why the server carries two.
+ */
+function banner(result) {
+  const m = result.meta;
+  if (!m.truncated) return "";
+  const shown = commas(m.rows_returned), all = commas(result.count);
+  if (m.limit_source === "backstop") {
+    return '<div class="banner">showing the newest ' + shown + " of " + all +
+      " — this query named no LIMIT, so the server's max_rows backstop answered a page " +
+      "of it. Narrow the range or add a filter.</div>";
+  }
+  return '<div class="banner">showing the newest ' + shown + " of " + all +
+    " — your own LIMIT.</div>";
+}
+
+function renderMeta(result, ms) {
+  const m = result.meta;
+  $("meta").innerHTML = [
+    "<b>" + commas(m.templates_matched) + "</b> template(s) matched",
+    "<b>" + commas(m.files_opened) + "</b> opened",
+    "<b>" + commas(m.rows_scanned) + "</b> rows scanned",
+    "<b>" + commas(m.rows_returned) + "</b> of <b>" + commas(result.count) + "</b> returned",
+    "truncated <b>" + m.truncated + "</b>",
+    "limit <b>" + m.limit_source + "</b>",
+    "<b>" + m.duration_ms.toFixed(2) + "ms</b> in the engine, <b>" + ms + "ms</b> round trip",
+  ].join(" · ");
+}
+
+function showError(e) {
+  $("results").innerHTML =
+    '<pre class="err">' + esc(e.text || e.message) + "</pre>";
+  $("meta").innerHTML = "";
+}
+
+// ── running a query ──────────────────────────────────────────────────────────────────
+
+/**
+ * The one submit path.
+ *
+ * The range control drives the query: whatever is in the box has its time clause replaced
+ * by the window the controls hold, and the result is shown above the chart before it is
+ * sent. Nothing is added beyond that - in particular **no LIMIT is injected**. A query
+ * that names none meets the server's `max_rows` backstop, which is a page size and says
+ * so in `meta`, and inventing a smaller limit here would hide that the backstop exists
+ * from the one client most likely to trip it.
+ *
+ * The window is resolved to an absolute `BETWEEN` once, here, and the exact string sent is
+ * kept for paging. `Cursor::guard` covers the pattern and the order but deliberately not
+ * the window, so a relative `SINCE` re-resolved per page would silently shift the window
+ * under the cursor between pages. An absolute window cannot.
+ *
+ * Both range boxes empty is a query with no window rather than a refusal. Clearing them is
+ * how someone asks "over everything", and the engine answers that - `window_span` returns
+ * `None` and the span comes from the rows - so a viewer that blocked it would be inventing
+ * a requirement the query language does not have. A time clause typed by hand is then left
+ * exactly as typed, because with no window to splice there is nothing to replace it with.
+ */
+async function run() {
+  const fromText = $("from").value.trim(), toText = $("to").value.trim();
+  const windowless = !fromText && !toText;
+  const from = msOf(fromText), to = msOf(toText);
+  const ok = (el, good) => { $(el).classList.toggle("bad", !good); return good; };
+  if (windowless) {
+    ok("from", true);
+    ok("to", true);
+  } else if (!(ok("from", !Number.isNaN(from)) & ok("to", !Number.isNaN(to)))) {
+    $("results").innerHTML =
+      '<pre class="err">the range needs two RFC 3339 instants, e.g. 2024-01-15T10:30:00Z' +
+      "\nor clear both boxes to query without a window</pre>";
+    return;
+  } else if (from > to) {
+    $("results").innerHTML = '<pre class="err">the range starts after it ends</pre>';
+    return;
+  }
+
+  const typed = $("q").value.trim() || "MATCH LOG {}";
+  const effective = windowless
+    ? typed
+    : withTime(typed, "BETWEEN " + rfc(from) + " AND " + rfc(to));
+  // With no window the bars have to span the data itself, which is what the load probe
+  // measured. Falling back to a day keeps the bucket count sane before it has answered.
+  const widthSecs = windowless
+    ? autoWidth(spanSecs || 86400 * 60)
+    : autoWidth((to - from) / 1000);
+  const chartQ = chartQuery(effective, widthText(widthSecs));
+
+  $("effchart").textContent = chartQ || "—";
+  page = null;
+
+  // Two requests, deliberately independent. A chart refused for too many buckets, or a
+  // pattern with no time column to bucket by, must not take the rows down with it.
+  drawChartFor(chartQ, widthSecs);
+  await fetchRows(effective, false);
+}
+
+async function drawChartFor(q, widthSecs) {
+  if (!q) return;
+  try {
+    const result = await ask(q);
+    drawChart(result.groups || [], widthSecs);
+  } catch (e) {
+    $("chart").innerHTML = "";
+    $("chartnote").innerHTML = "<b>chart: " + esc((e.text || e.message).split("\n")[0]) + "</b>";
+  }
+}
+
+async function fetchRows(q, append) {
+  // The query shown is the query sent, on the second page as much as on the first: the
+  // `AFTER` clause is the interesting half of what paging does, and a viewer that hid it
+  // would be hiding the one behaviour this page exists to exercise.
+  $("eff").textContent = q;
+  const started = performance.now();
+  let result;
+  try { result = await ask(q); }
+  catch (e) { showError(e); return; }
+  const ms = Math.round(performance.now() - started);
+
+  renderMeta(result, ms);
+
+  const rows = result.rows || [];
+  const groups = result.groups || [];
+
+  if (!append && !rows.length && groups.length) { renderGroups(groups); return; }
+  if (!append && !rows.length) { $("results").innerHTML = emptyState(result); return; }
+
+  // The terms come off the query being sent, so a "Load more" page highlights what the
+  // first page did - `withAfter` appends a clause and leaves the pattern alone.
+  const hl = append ? view.hl : patternTerms(q);
+  if (!append) { logShell(); page = { query: q, cursor: null }; }
+  appendRows(rows, hl);
+
+  page.cursor = result.meta.next_cursor || null;
+  const more = $("more");
+  more.innerHTML = banner(result);
+  // `next_cursor` is present only when a limit both applied and stopped short of the end,
+  // so its absence is "there is no next page" rather than a guess. That is what makes a
+  // button here honest: it is never offered on a page that would come back empty.
+  if (page.cursor) {
+    const btn = document.createElement("button");
+    btn.textContent = "Load more";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "loading…";
+      await fetchRows(withAfter(page.query, page.cursor), true);
+    });
+    more.appendChild(btn);
+  }
+}
+
+// ── templates ────────────────────────────────────────────────────────────────────────
+
+async function loadTemplates() {
+  let list;
+  try { list = await templatesOf(); }
+  catch (e) { $("tpls").textContent = e.message; return []; }
+
+  $("tpls").className = "";
+  $("tpls").innerHTML = list.length
+    ? list.map((t, i) =>
+        '<div class="tpl" data-n="' + i + '"><div class="path">' +
+        t.path.map((tok) => tok.includes("=")
+          ? '<span class="promoted">' + esc(tok) + "</span>"
+          : esc(tok)).join('<span class="sep"> · </span>') +
+        '</div><div class="sub">#' + t.template_id + " · " + commas(t.rows) +
+        " rows · " + t.columns.length + " columns</div></div>").join("")
+    : '<div class="state">none yet — nothing has been ingested</div>';
+
+  // Clicking a template writes a query that walks to it. The promoted tokens are the ones
+  // the pattern can name: they sit at the top of the trie (`ParsedLog::walk_tokens`), so a
+  // pattern over them is a prefix of the path and takes edges rather than searching.
+  $("tpls").querySelectorAll(".tpl").forEach((el) => {
+    el.addEventListener("click", () => {
+      $("q").value = skeleton(list[Number(el.dataset.n)]);
+      $("q").focus();
+      run();
+    });
+  });
+  return list;
+}
+
+function skeleton(t) {
+  const pairs = t.path
+    .filter((tok) => tok.includes("="))
+    .map((tok) => {
+      const at = tok.indexOf("=");
+      return JSON.stringify(tok.slice(0, at)) + ": " + JSON.stringify(tok.slice(at + 1));
+    });
+  // A template with nothing promoted cannot be named by its path, so the skeleton asks
+  // for one of its columns to be present instead - `"*"`, which is the pattern's own
+  // "present and not null".
+  if (!pairs.length) {
+    const col = t.columns.find((c) => c.name !== "ts") || t.columns[0];
+    if (col) pairs.push(JSON.stringify(col.name) + ': "*"');
+  }
+  return "MATCH LOG {" + pairs.join(", ") + "}";
+}
+
+// ── the controls ─────────────────────────────────────────────────────────────────────
+
+function markPick(name) {
+  $("picks").querySelectorAll("button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.name === name));
+}
+
+function pick(name, secs) {
+  const now = Date.now();
+  $("from").value = rfc(now - secs * 1000);
+  $("to").value = rfc(now);
+  markPick(name);
+}
+
+$("picks").innerHTML = QUICK
+  .map(([name]) => '<button data-name="' + name + '">' + name + "</button>")
+  .join(" ");
+$("picks").querySelectorAll("button").forEach((b) => {
+  const [name, secs] = QUICK.find(([n]) => n === b.dataset.name);
+  b.addEventListener("click", () => { pick(name, secs); run(); });
+});
+
+// Typing in the range boxes leaves the quick picks unlit: they are a shortcut for filling
+// these two fields, and the fields are what is sent.
+$("from").addEventListener("input", () => markPick(null));
+$("to").addEventListener("input", () => markPick(null));
+
+$("run").addEventListener("click", run);
+$("q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); }
+});
+$("toggle").addEventListener("click", () => document.body.classList.toggle("collapsed"));
+
+// The bars are laid out in pixels, so a resized window needs them again. No request: the
+// groups are the ones already fetched.
+let resizing;
+addEventListener("resize", () => {
+  clearTimeout(resizing);
+  resizing = setTimeout(() => {
+    if (lastChart) drawChart(lastChart.groups, lastChart.widthSecs);
+    // A taller box shows more rows than the last cut of the window held.
+    paintWindow();
+  }, 120);
+});
+
+// ── opening the page ─────────────────────────────────────────────────────────────────
+
+const OPENING_WINDOW_SECS = 600;
+
+/**
+ * Where the data actually is, asked of the engine rather than guessed.
+ *
+ * A `GROUP BY time(1d)` with **no time clause** has no window to enumerate, so
+ * `engine::window_span` returns `None` and the span is derived from the rows themselves -
+ * which makes the first and last non-empty bucket the real extent of the `ts` column. At
+ * a day a bucket that stays under `max_buckets` for any span up to twenty-seven years.
+ *
+ * `/templates` cannot answer this: its `first_seen`/`last_seen` are *ingest* times, so on
+ * a fresh load of historical logs they all read "a minute ago" and would open the viewer
+ * on a window holding nothing.
+ *
+ * The page then opens on the *newest ten minutes* of that span rather than the span
+ * itself. A month-wide opening window means the first thing the viewer ever does is meet
+ * `max_rows` and paint ten thousand rows, which is slow and is not what anyone came to
+ * read; the newest few minutes is the shape of the question an operator actually opens a
+ * log tool with. The whole span is a single click away - clear both boxes, or drag the
+ * range out - and the chart still shows what is out there beyond the window.
+ *
+ * Finding the newest ten minutes takes two narrower probes after the first. The day probe
+ * resolves only to a day, and the day bucket's end can sit a whole day past the last real
+ * row, so a ten-minute window measured from it would land on nothing; the same is true one
+ * level down. Each probe therefore narrows to the last bucket that actually held rows and
+ * asks again inside it, so the window ends just past the newest row rather than just past
+ * the calendar. `newest` is only ever bracketed, never read off a row: ordering a million
+ * rows to look at one of them costs more than three counts do.
+ *
+ * Every count still scans the whole trie, so this is three requests of roughly equal cost -
+ * and all three together cost less than painting a month of rows once.
+ *
+ * This runs once, at load. After it, the range control is the only thing that moves the
+ * window - a viewer that quietly relocated the range it was told to show would be worse
+ * than an empty chart, because an empty chart is a fact about the window.
+ */
+async function seedRange() {
+  // The last bucket holding rows, and the width that found it - the pair a narrower probe
+  // needs to know where to look next.
+  const lastLive = async (fromMs, toMs, width) => {
+    const q = "COUNT LOG {}" +
+      (fromMs === null ? "" : " BETWEEN " + rfc(fromMs) + " AND " + rfc(toMs)) +
+      " GROUP BY time(" + widthText(width) + ")";
+    const placed = ((await ask(q)).groups || [])
+      .filter((g) => g.bucket && g.count > 0)
+      .map((g) => Date.parse(g.bucket));
+    return placed.length ? { first: Math.min(...placed), last: Math.max(...placed) } : null;
+  };
+
+  try {
+    const days = await lastLive(null, null, 86400);
+    if (!days) return false;
+    spanSecs = (days.last + 86400 * 1000 - days.first) / 1000;
+
+    // 1d → 10m inside the newest day (144 buckets) → 10s inside the newest ten minutes
+    // (60 buckets). Both are far under `max_buckets`, and the last leaves the newest row
+    // pinned to a ten-second bracket, which is close enough to end a window on.
+    const mins = await lastLive(days.last, days.last + 86400 * 1000, 600);
+    const secs = mins && await lastLive(mins.last, mins.last + 600 * 1000, 10);
+    const end = secs ? secs.last + 10 * 1000
+              : mins ? mins.last + 600 * 1000
+                     : days.last + 86400 * 1000;
+
+    $("from").value = rfc(end - OPENING_WINDOW_SECS * 1000);
+    $("to").value = rfc(end);
+    markPick(null);
+    return true;
+  } catch (e) { /* an empty or unreachable database falls through to the last ten minutes */ }
+  return false;
+}
+
+(async function boot() {
+  pick("10m", OPENING_WINDOW_SECS);
+  await loadTemplates();
+  await seedRange();
+  await run();
+  $("q").focus();
+})();
+</script>
+</body>
+</html>

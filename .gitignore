@@ -36,3 +36,7 @@ sample.ndjson
 # The GROUP BY time(...) fixture with a deliberately empty hour - scratch, and the
 # generator in this session rebuilds it.
 /testdata/buckets/
+
+# The 1M-line corpus the M3.6 viewer was driven against - scratch, `gen-logs --seed 42`
+# rebuilds it.
+/testdata/viewer/

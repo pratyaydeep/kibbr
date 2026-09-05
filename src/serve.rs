@@ -28,7 +28,7 @@ use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
@@ -68,6 +68,14 @@ const MAX_INGEST_BYTES: usize = 64 * 1024 * 1024;
 /// example says nothing the tenth did not. `errors_omitted` carries the rest as a count,
 /// so the total is never wrong, only the enumeration is short.
 const MAX_REPORTED_ERRORS: usize = 1000;
+
+/// The log viewer, compiled in.
+///
+/// `include_str!` and not a file read at startup: the binary is the deployment unit, and a
+/// server that answers `/` only when it happens to be started from the right directory is
+/// a server that works on the developer's machine. It also makes the page unable to drift
+/// from the endpoints it calls - they are in this file.
+const VIEWER: &str = include_str!("viewer.html");
 
 // ── State ──────────────────────────────────────────────────────────────────────────
 
@@ -342,6 +350,19 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
     }
 }
 
+/// The log viewer. One HTML file, inline CSS and JS, no other request needed.
+///
+/// `no-store`, because the page is rebuilt with the binary. A cached viewer against a
+/// newer server is a debugging tool lying about what the database answered, which costs
+/// more than the few kilobytes it saves.
+async fn get_viewer() -> Response {
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Html(VIEWER),
+    )
+        .into_response()
+}
+
 /// Every template: its path, its columns, its row count, and when it was first and last
 /// seen.
 ///
@@ -464,6 +485,7 @@ async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) 
 
 fn router(server: Arc<Server>) -> Router {
     Router::new()
+        .route("/", get(get_viewer))
         .route("/health", get(health))
         .route("/stats", get(get_stats))
         .route("/templates", get(get_templates))
@@ -624,7 +646,8 @@ fn banner(addr: SocketAddr, limits: Limits) {
         "  the trie. A restart starts an empty database. Do not point anything at this".to_string(),
         "  that you would be unhappy to lose.".to_string(),
         String::new(),
-        "  endpoints   POST /ingest      NDJSON body, one log line per line".to_string(),
+        "  endpoints   GET  /            the log viewer, in a browser".to_string(),
+        "              POST /ingest      NDJSON body, one log line per line".to_string(),
         "              POST /query       {\"q\": \"<trieql>\"}".to_string(),
         "              GET  /templates   every template, its columns and row count".to_string(),
         "              GET  /stats       throughput, template count, storage size".to_string(),

@@ -141,6 +141,16 @@ impl Drop for Server {
 
 /// One request, one connection, read to EOF. Returns the status code and the body.
 fn request(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String) {
+    let (status, _, body) = request_raw(port, method, path, body);
+    (status, body)
+}
+
+/// The same, with the response headers kept.
+///
+/// Only the viewer needs them: `/` is the one endpoint whose content type is part of what
+/// it promises, because a browser that is handed `application/json` renders the page as
+/// text rather than as a page.
+fn request_raw(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String, String) {
     let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
     let head = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
@@ -160,11 +170,11 @@ fn request(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String) {
         .nth(1)
         .and_then(|code| code.parse().ok())
         .unwrap_or_else(|| panic!("no status line in response:\n{text}"));
-    let body = match text.find("\r\n\r\n") {
-        Some(at) => text[at + 4..].to_string(),
+    let (headers, body) = match text.find("\r\n\r\n") {
+        Some(at) => (text[..at].to_lowercase(), text[at + 4..].to_string()),
         None => panic!("no header/body split in response:\n{text}"),
     };
-    (status, body)
+    (status, headers, body)
 }
 
 fn json(text: &str) -> serde_json::Value {
@@ -212,6 +222,14 @@ fn corpus() -> Vec<u8> {
 #[test]
 fn every_endpoint_answers() {
     let server = Server::start();
+
+    let (status, headers, body) = request_raw(server.port, "GET", "/", b"");
+    assert_eq!(status, 200);
+    assert!(
+        headers.contains("content-type: text/html"),
+        "GET / is not served as HTML:\n{headers}"
+    );
+    assert!(body.contains("<title>"), "GET / answered no page:\n{body}");
 
     let (status, body) = server.get("/health");
     assert_eq!(status, 200);
@@ -437,4 +455,36 @@ fn rows_as_text(result: &serde_json::Value) -> Vec<String> {
         .iter()
         .map(ToString::to_string)
         .collect()
+}
+
+/// The viewer is one file, and this is the claim.
+///
+/// "Nothing to deploy alongside" is the whole reason it is `include_str!`'d, and it stops
+/// being true the moment a stylesheet, a script or a font is fetched from somewhere else -
+/// at which point the tool works on the machine it was written on and fails on the network
+/// it was needed on. Asserted here rather than trusted, because adding a `<script src>` is
+/// a one-line change that nothing else would notice.
+#[test]
+fn the_viewer_fetches_nothing_else() {
+    let server = Server::start();
+    let (status, _, body) = request_raw(server.port, "GET", "/", b"");
+    assert_eq!(status, 200);
+
+    let page = body.to_lowercase();
+    for forbidden in [
+        "src=\"http",
+        "src='http",
+        "src=\"//",
+        "href=\"http",
+        "@import",
+        "<link",
+    ] {
+        assert!(
+            !page.contains(forbidden),
+            "the viewer reaches outside itself: found `{forbidden}`"
+        );
+    }
+    // The two it *is* allowed to fetch, and the only two: its own server's endpoints.
+    assert!(page.contains("fetch(\"/query\""));
+    assert!(page.contains("fetch(\"/templates\""));
 }

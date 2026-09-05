@@ -247,7 +247,8 @@ triedb serve
   the trie. A restart starts an empty database. Do not point anything at this
   that you would be unhappy to lose.
 
-  endpoints   POST /ingest      NDJSON body, one log line per line
+  endpoints   GET  /            the log viewer, in a browser
+              POST /ingest      NDJSON body, one log line per line
               POST /query       {"q": "<trieql>"}
               GET  /templates   every template, its columns and row count
               GET  /stats       throughput, template count, storage size
@@ -360,6 +361,41 @@ triedb: exit 0
 Naming the skipped steps is the point. Four of the six are the difference between
 this and a database that survives being restarted.
 
+## Look at it in a browser
+
+`GET /` is a log viewer. Open <http://127.0.0.1:7700/> after starting the server.
+
+It is one file - `src/viewer.html`, inline CSS and vanilla JS, compiled into the
+binary with `include_str!`. There is nothing to deploy beside the binary, no build
+step, and no request to anywhere but this server; `tests/serve.rs` asserts the last
+of those rather than trusting it. It is served `no-store`, because a viewer cached
+against a newer server is a debugging tool lying about what the database answered.
+
+It exists to be the first real client of TrieQL and of the cursor, and it is
+deliberately small: no saved queries, no dashboards, no auto-refresh, no auth, no
+persistence of any kind.
+
+- **Rows are the JSON lines they were ingested as**, not a table. `MATCH LOG {}`
+  spans 870 templates whose columns barely overlap, and the table that used to
+  union them was 56 columns of mostly "this template has no such column".
+- **The keys the query named are highlighted**, and their values too when the
+  query asked for a value and the row carries it - so a highlight always means
+  "this is why the row is here".
+- **Only the lines on screen are in the DOM.** A page is up to `max_rows`; spacers
+  stand in for the rest and scrolling re-cuts the window, so a 10,000-row answer
+  paints in about 30ms instead of blocking the tab for ten seconds. The cost is
+  that the browser's own Ctrl+F searches the rendered lines only - the database is
+  the thing to ask instead.
+- **The chart is the same query, counted.** `GROUP BY time(...)` at a width chosen
+  to land near 60 bars; clicking a bar narrows the range to that bucket and re-runs.
+  Empty buckets are bars of zero, because the engine zero-fills them.
+- **The viewer never injects a `LIMIT`.** A query naming none meets `max_rows` and
+  the banner says so, which is the point: this is the client most likely to trip
+  the backstop, and hiding it here would hide it everywhere.
+- **The range control is authoritative.** It opens on the newest ten minutes of
+  whatever is stored, found by asking the engine rather than guessing. Clearing
+  both boxes runs the query with no time clause at all.
+
 ## Run the tests
 
 ```
@@ -409,6 +445,7 @@ src/engine.rs     the walk, the scan, the result
 src/trieql.rs     the query grammar
 src/query.rs      the `query` command, and the result JSON both surfaces answer with
 src/serve.rs      the HTTP surface, the banner, the shutdown sequence
+src/viewer.html   the log viewer served at `/` - one file, compiled into the binary
 tests/fixture.rs  outer-surface tests
 tests/serve.rs    the HTTP contract, over a bare TcpStream
 ```
