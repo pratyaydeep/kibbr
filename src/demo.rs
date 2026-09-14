@@ -18,8 +18,8 @@ use std::time::Instant;
 use chrono::Utc;
 
 use crate::error::{CliError, DetectorError, DetectorErrorKind};
-use crate::fmt::commas;
 use crate::flatten::parse_line;
+use crate::fmt::commas;
 use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
 use crate::trie::{Node, Trie, TrieError, ROOT_LABEL};
 use crate::types::ColumnType;

@@ -48,8 +48,8 @@ fn objects(stdout: &str) -> Vec<Value> {
     stdout
         .lines()
         .map(|line| {
-            let value: Value = serde_json::from_str(line)
-                .unwrap_or_else(|e| panic!("not JSON: {line:?}\n{e}"));
+            let value: Value =
+                serde_json::from_str(line).unwrap_or_else(|e| panic!("not JSON: {line:?}\n{e}"));
             assert!(value.is_object(), "not an object: {line}");
             value
         })
@@ -156,7 +156,9 @@ fn unknown_and_empty_stay_different_answers() {
 fn renders_datetimes_as_rfc3339() {
     let (rows, _) = query(&[r#"MATCH LOG {"service": "auth"}"#, "--format", "ndjson"]);
     for row in objects(&rows) {
-        let ts = row["ts"].as_str().unwrap_or_else(|| panic!("ts not a string: {row}"));
+        let ts = row["ts"]
+            .as_str()
+            .unwrap_or_else(|| panic!("ts not a string: {row}"));
         assert!(ts.starts_with("2024-01-15T10:3"), "{ts}");
         assert!(ts.ends_with('Z'), "{ts}");
     }
@@ -168,7 +170,13 @@ fn renders_datetimes_as_rfc3339() {
 
     // Nanoseconds in, nanoseconds out.
     let mut child = triedb()
-        .args(["query", "-", r#"MATCH LOG {"event": "x"}"#, "--format", "ndjson"])
+        .args([
+            "query",
+            "-",
+            r#"MATCH LOG {"event": "x"}"#,
+            "--format",
+            "ndjson",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -205,7 +213,13 @@ fn the_output_is_ingestable() {
     let (stdout, _) = query(&[r#"MATCH LOG {"service": "auth"}"#, "--format", "ndjson"]);
 
     let mut child = triedb()
-        .args(["query", "-", r#"COUNT LOG {"service": "auth"}"#, "--format", "ndjson"])
+        .args([
+            "query",
+            "-",
+            r#"COUNT LOG {"service": "auth"}"#,
+            "--format",
+            "ndjson",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

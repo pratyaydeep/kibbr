@@ -32,9 +32,11 @@ pub fn infer(raw: &str) -> Typed {
         // has to come from the seconds - in range for every datetime chrono can hold.
         // Clamping both ends to `i64::MAX` would file the pre-1677 era in 2262, the far
         // end of the range it fell off.
-        let ns = dt
-            .timestamp_nanos_opt()
-            .unwrap_or(if dt.timestamp() < 0 { i64::MIN } else { i64::MAX });
+        let ns = dt.timestamp_nanos_opt().unwrap_or(if dt.timestamp() < 0 {
+            i64::MIN
+        } else {
+            i64::MAX
+        });
         return typed(ColumnType::Datetime, ColValue::Datetime(ns));
     }
 
@@ -46,7 +48,11 @@ pub fn infer(raw: &str) -> Typed {
             // Unreachable: 13 ASCII digits is at most 9_999_999_999_999 < i64::MAX.
             Err(_) => return typed(ColumnType::String, ColValue::String(raw.to_string())),
         };
-        let per_unit = if raw.len() == 10 { 1_000_000_000 } else { 1_000_000 };
+        let per_unit = if raw.len() == 10 {
+            1_000_000_000
+        } else {
+            1_000_000
+        };
         // 9_999_999_999 seconds in nanoseconds overflows i64 (nanos run out in 2262).
         // Saturate rather than wrap: the type call stands, the instant is clamped, and
         // nothing silently becomes a negative timestamp.
@@ -94,7 +100,10 @@ pub fn infer(raw: &str) -> Typed {
 }
 
 fn typed(ty: ColumnType, value: ColValue) -> Typed {
-    Typed { ty: Some(ty), value }
+    Typed {
+        ty: Some(ty),
+        value,
+    }
 }
 
 fn is_epoch_digits(s: &str) -> bool {

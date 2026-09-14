@@ -141,8 +141,6 @@ pub fn run<R: BufRead, W: Write>(
     Ok(())
 }
 
-
-
 /// The parsed row as NDJSON - one `ParsedLog` per line, for anything downstream of a human.
 ///
 /// `ParsedLog` stores its maps as `HashMap`, whose iteration order is not stable between
@@ -241,4 +239,3 @@ fn display_value(ty: Option<ColumnType>, value: &ColValue, raw: &str) -> String 
         _ => raw.to_string(),
     }
 }
-
