@@ -170,7 +170,7 @@
   </header>
 
   <textarea id="q" spellcheck="false" autocomplete="off"
-    placeholder='MATCH LOG {"event": "login_failed"}     — Ctrl+Enter to run'></textarea>
+    placeholder='MATCH LOG {"event": "login_failed"}     - Ctrl+Enter to run'></textarea>
 
   <div class="row">
     <label>range</label>
@@ -404,7 +404,7 @@ function drawChart(groups, widthSecs) {
 
   note.innerHTML = unplaced
     ? "<b>" + commas(unplaced) + "</b> matching row(s) have no readable <code>ts</code> " +
-      "and cannot be placed in time — counted, not drawn"
+      "and cannot be placed in time - counted, not drawn"
     : "";
 
   if (!placed.length) { host.innerHTML = ""; return; }
@@ -688,7 +688,7 @@ function renderGroups(groups) {
  */
 function emptyState(result) {
   if (!result.exists) {
-    return '<div class="state"><div class="big">No template matches this pattern — ' +
+    return '<div class="state"><div class="big">No template matches this pattern - ' +
       "check the field names.</div><div class=\"hint\">Nothing was read: the walk ended " +
       "before any leaf. The template list on the left is every shape the database has.</div></div>";
   }
@@ -711,11 +711,11 @@ function banner(result) {
   const shown = commas(m.rows_returned), all = commas(result.count);
   if (m.limit_source === "backstop") {
     return '<div class="banner">showing the newest ' + shown + " of " + all +
-      " — this query named no LIMIT, so the server's max_rows backstop answered a page " +
+      " - this query named no LIMIT, so the server's max_rows backstop answered a page " +
       "of it. Narrow the range or add a filter.</div>";
   }
   return '<div class="banner">showing the newest ' + shown + " of " + all +
-    " — your own LIMIT.</div>";
+    " - your own LIMIT.</div>";
 }
 
 function renderMeta(result, ms) {
@@ -789,7 +789,7 @@ async function run() {
     : autoWidth((to - from) / 1000);
   const chartQ = chartQuery(effective, widthText(widthSecs));
 
-  $("effchart").textContent = chartQ || "—";
+  $("effchart").textContent = chartQ || "-";
   page = null;
 
   // Two requests, deliberately independent. A chart refused for too many buckets, or a
@@ -868,7 +868,7 @@ async function loadTemplates() {
           : esc(tok)).join('<span class="sep"> · </span>') +
         '</div><div class="sub">#' + t.template_id + " · " + commas(t.rows) +
         " rows · " + t.columns.length + " columns</div></div>").join("")
-    : '<div class="state">none yet — nothing has been ingested</div>';
+    : '<div class="state">none yet - nothing has been ingested</div>';
 
   // Clicking a template writes a query that walks to it. The promoted tokens are the ones
   // the pattern can name: they sit at the top of the trie (`ParsedLog::walk_tokens`), so a

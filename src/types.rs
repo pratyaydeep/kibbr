@@ -102,7 +102,9 @@ impl ColValue {
             ColValue::Int64(i) => Value::from(*i),
             // Rule 7 only produces finite floats, so this cannot fall through in
             // practice; `Null` is the honest answer if it ever does.
-            ColValue::Float64(f) => serde_json::Number::from_f64(*f).map_or(Value::Null, Value::Number),
+            ColValue::Float64(f) => {
+                serde_json::Number::from_f64(*f).map_or(Value::Null, Value::Number)
+            }
             ColValue::Datetime(ns) => Value::from(*ns),
             ColValue::Bool(b) => Value::Bool(*b),
             ColValue::Null => Value::Null,

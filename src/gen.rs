@@ -285,9 +285,9 @@ fn value_for(gen: Gen, rng: &mut Rng) -> Value {
         Gen::EpochSecsAsString => {
             Value::String((BASE_EPOCH_SECS + rng.between(0, 60 * 60 * 24 * 30)).to_string())
         }
-        Gen::EpochMillis => {
-            Value::from((BASE_EPOCH_SECS + rng.between(0, 60 * 60 * 24 * 30)) * 1000 + rng.between(0, 999))
-        }
+        Gen::EpochMillis => Value::from(
+            (BASE_EPOCH_SECS + rng.between(0, 60 * 60 * 24 * 30)) * 1000 + rng.between(0, 999),
+        ),
         // Ten digits, so rule 2 claims it as a timestamp. It is an order ID.
         Gen::OrderId10 => Value::from(rng.between(1_000_000_000, 9_999_999_999)),
         Gen::BigInt => Value::from(rng.between(10_000_000_000, 999_999_999_999)),

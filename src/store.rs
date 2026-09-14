@@ -151,8 +151,9 @@ impl LeafStore {
     /// Every surviving row, projected through `opts.columns`.
     pub fn scan(&self, opts: &ScanOptions, preds: &[Predicate]) -> Result<Scan, StoreError> {
         let mut rows = Vec::new();
-        let mut scan =
-            self.visit(opts, preds, &mut |row, _| rows.push(project(row, &opts.columns)))?;
+        let mut scan = self.visit(opts, preds, &mut |row, _| {
+            rows.push(project(row, &opts.columns))
+        })?;
         scan.rows = rows;
         Ok(scan)
     }

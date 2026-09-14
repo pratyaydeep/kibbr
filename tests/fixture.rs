@@ -8,10 +8,7 @@ fn triedb() -> Command {
 }
 
 fn run(args: &[&str]) -> String {
-    let out = triedb()
-        .args(args)
-        .output()
-        .expect("failed to run triedb");
+    let out = triedb().args(args).output().expect("failed to run triedb");
     assert!(
         out.status.success(),
         "triedb {args:?} exited {:?}\nstderr: {}",
@@ -108,10 +105,7 @@ fn row<'a>(block: &[&'a str], key: &str) -> Vec<&'a str> {
 #[test]
 fn every_fixture_value_gets_its_labelled_type() {
     let fixture = include_str!("../testdata/fixture.ndjson");
-    let expected: Vec<&str> = fixture
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
+    let expected: Vec<&str> = fixture.lines().filter(|l| !l.trim().is_empty()).collect();
 
     let stdout = run(&["parse", "testdata/fixture.ndjson"]);
     let blocks = blocks(&stdout);
@@ -146,7 +140,8 @@ fn every_fixture_value_gets_its_labelled_type() {
 /// The worked example, byte for byte.
 #[test]
 fn flattening_matches_the_worked_example() {
-    let line = r#"{"error":{"code":401,"reason":"unauth"},"tags":["auth","login"],"user":{"id":"u42"}}"#;
+    let line =
+        r#"{"error":{"code":401,"reason":"unauth"},"tags":["auth","login"],"user":{"id":"u42"}}"#;
     let stdout = run_stdin(&["parse", "-"], &format!("{line}\n"));
     let blocks = blocks(&stdout);
     assert_eq!(blocks.len(), 1);
@@ -160,7 +155,10 @@ fn flattening_matches_the_worked_example() {
     assert_eq!(row(block, "error.code")[1], "Int64");
     assert_eq!(row(block, "error.reason")[1], "String");
     // Arrays are never flattened: the raw JSON text is the value.
-    assert_eq!(row(block, "tags"), ["tags", "String", r#"["auth","login"]"#]);
+    assert_eq!(
+        row(block, "tags"),
+        ["tags", "String", r#"["auth","login"]"#]
+    );
     assert_eq!(row(block, "user.id")[1], "String");
 }
 
