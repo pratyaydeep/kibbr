@@ -96,6 +96,23 @@ enum Command {
         /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
+
+        // The three below are properties of the server rather than of a query, so they
+        // are here and not on `query`/`explain`: a file has no wire, no encoding and no
+        // second caller competing for the machine.
+        /// The largest `/ingest` body accepted, measured on the wire *before* any
+        /// decompression. Overrides `TRIEDB__API__MAX_BODY_BYTES`.
+        #[arg(long, value_name = "BYTES")]
+        max_body_bytes: Option<usize>,
+        /// The largest a gzipped `/ingest` body may become once decompressed. Cannot
+        /// exceed the 64 MiB line limit. Overrides `TRIEDB__API__MAX_DECOMPRESSED_BYTES`.
+        #[arg(long, value_name = "BYTES")]
+        max_decompressed_bytes: Option<usize>,
+        /// How many `/ingest` bodies may be parsed at once. Beyond it, a body waits
+        /// briefly and is then answered `503` with a `Retry-After` rather than left to
+        /// time out. Overrides `TRIEDB__API__INGEST_CONCURRENCY`.
+        #[arg(long, value_name = "N")]
+        ingest_concurrency: Option<usize>,
     },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
@@ -237,10 +254,14 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_rows,
             max_buckets,
             max_groups,
+            max_body_bytes,
+            max_decompressed_bytes,
+            ingest_concurrency,
         } => serve::run(
             &host,
             port,
-            config::Config::load(max_rows, max_buckets, max_groups)?.query,
+            config::Limits::load(max_rows, max_buckets, max_groups)?,
+            config::ApiLimits::load(max_body_bytes, max_decompressed_bytes, ingest_concurrency)?,
         ),
         Command::Explain {
             query,
@@ -250,7 +271,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => query::describe(
             &mut out,
             &query,
-            config::Config::load(max_rows, max_buckets, max_groups)?.query,
+            config::Limits::load(max_rows, max_buckets, max_groups)?,
         ),
         Command::Query {
             input,
@@ -271,7 +292,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_buckets,
             max_groups,
         } => {
-            let config = config::Config::load(max_rows, max_buckets, max_groups)?;
+            let limits = config::Limits::load(max_rows, max_buckets, max_groups)?;
             let reader = open(&input)?;
             let args = query::Args {
                 trieql,
@@ -287,7 +308,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 reference,
                 limit,
                 after,
-                limits: config.query,
+                limits,
             };
             query::run(reader, &mut out, &args)
         }

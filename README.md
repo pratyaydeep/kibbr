@@ -278,6 +278,52 @@ curl -s http://127.0.0.1:7700/stats
 `/query` takes TrieQL, and answers with the JSON `query --format json` prints -
 one shape, built in one place, so the two surfaces cannot drift.
 
+**`/ingest` takes gzip.** Log text compresses about tenfold and a shipper will
+squash a batch if the server can take one, so `Content-Encoding: gzip` (or
+`x-gzip`, or `identity`, or nothing) is accepted and anything else is a `415`
+that names what is:
+
+```
+gzip -c logs.ndjson | curl -s -X POST --data-binary @- \
+  -H 'Content-Encoding: gzip' http://127.0.0.1:7700/ingest
+```
+
+A body that says gzip and is not is a `400` naming gzip, not a crash - `/ingest`
+is reachable by anything that can open a socket, and a decoder that unwinds on
+malformed input turns one bad shipper config into an outage for everybody else.
+
+**Two size limits, because one cannot see a bomb.** The first is on what
+arrives: 10 MiB, `--max-body-bytes` or `TRIEDB__API__MAX_BODY_BYTES`. That is
+the only place a compressed body *can* be measured, and it is not enough on its
+own - a carefully built 1 MiB body inflates to gigabytes, passes the first check
+by three orders of magnitude, and kills the process while being decompressed. So
+the size is checked a second time as it inflates, at `--max-decompressed-bytes`
+(64 MiB, the line limit, which it may not exceed), and the reader stops *at* the
+cap rather than after it. Either one is a `413`.
+
+**Past capacity, `/ingest` says 503 - it does not go quiet.** `--ingest-concurrency`
+bodies are parsed at once, one per core by default. A body that waits longer than
+100ms for a slot is answered `503` with a `Retry-After: 1` rather than left to
+run long, and `/stats` counts it as `ingest.requests_shed`.
+
+The status is the point. A shipper that gets no answer keeps the batch, times
+out, and opens *another* connection - so a server that is merely slow gathers
+connections until it is unreachable, and every shipper in the fleet is doing it
+at once. An immediate refusal is the kinder answer precisely because a shipper
+knows what to do with one: Vector's adaptive concurrency reads a 503 as "send
+fewer" and a timeout as "try harder". That is also why there is no server-side
+request timeout here - it would manufacture the failure it is meant to prevent.
+
+**`/ingest` is single tenant, deliberately.** It takes no stream or tenant
+identifier, in the path or in a header, and everything ingested lands in the one
+trie this process holds. Said out loud because the omission gets expensive with
+time: once a fleet of shippers is configured against this URL, *adding* an
+identifier is a breaking change to every one of their configs. It is also not a
+header away - the trie path is built from each line's own keys, so separating
+tenants means either splicing a token into the fingerprint (which changes every
+template id) or one trie per tenant, with a tenant selector on `/query`,
+`/templates`, `/stats` and the viewer. Revisit at M9, with the deployment work.
+
 **A `MATCH` with no `LIMIT` gets a page, not everything.** Every matching row
 would otherwise be materialised in the server before a byte of the response is
 written, which is a denial-of-service path reachable by accident from a

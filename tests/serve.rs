@@ -14,6 +14,9 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, ChildStderr, Command, Stdio};
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
+
 /// Lines in the ingest body, and the three that are broken.
 const LINES: usize = 500;
 const BAD: [usize; 3] = [137, 400, 461];
@@ -151,15 +154,36 @@ fn request(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String) {
 /// it promises, because a browser that is handed `application/json` renders the page as
 /// text rather than as a page.
 fn request_raw(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String, String) {
+    request_with(port, method, path, body, &[])
+}
+
+/// The same again with extra request headers - `Content-Encoding` is the one that needs
+/// them, and it is a header rather than anything a body can carry.
+fn request_with(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    extra: &[(&str, &str)],
+) -> (u16, String, String) {
     let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
+    let extra: String = extra
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect();
     let head = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+         Content-Type: application/json\r\n{extra}\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     socket.write_all(head.as_bytes()).expect("failed to write");
-    socket.write_all(body).expect("failed to write body");
-    socket.flush().expect("failed to flush");
+    // Write errors are not failures here. A server that refuses a body before reading it -
+    // 413 on the wire cap, 503 on a shed - answers and closes while this is still
+    // writing, and the write end breaks. Whether the *answer* survives that is the thing
+    // being tested, so the read below is what decides it.
+    let _ = socket.write_all(body);
+    let _ = socket.flush();
 
     let mut raw = Vec::new();
     socket.read_to_end(&mut raw).expect("failed to read");
@@ -215,6 +239,76 @@ fn corpus() -> Vec<u8> {
     let mut body = lines.join(&b'\n');
     body.push(b'\n');
     body
+}
+
+/// A request whose answer may arrive *before* the body has finished being sent.
+///
+/// `request_with` cannot do this, for a reason worth writing down: `Connection: close`
+/// makes the server close the socket as soon as it has answered, and closing one with
+/// unread bytes still in its receive buffer is a TCP reset - which discards the response
+/// already sitting in the client's buffer. The client sees a connection error where the
+/// server sent a perfectly good 503.
+///
+/// So this speaks `keep-alive`, as real clients do, and reads by `Content-Length` rather
+/// than to EOF. It also tolerates the write failing: a refused body is never read, so the
+/// write end breaks mid-send. That is the shape of a refusal, not a failure of one.
+fn request_early(port: u16, path: &str, body: &[u8]) -> (u16, String, String) {
+    let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
+    // Before the write, not after: macOS refuses the option on a socket whose write end
+    // has broken, and that breaking is the normal course of this call.
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .expect("failed to set a read timeout");
+
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\
+         Connection: keep-alive\r\n\r\n",
+        body.len()
+    );
+    socket.write_all(head.as_bytes()).expect("failed to write");
+    let _ = socket.write_all(body);
+    let _ = socket.flush();
+
+    // Read to the end of the headers, then exactly the body the length promises. Reading
+    // to EOF would hang: a keep-alive connection has no EOF until the server gives up on
+    // it, which is long after the answer arrived.
+    let mut raw = Vec::new();
+    let mut byte = [0u8; 1];
+    let split = loop {
+        if socket.read(&mut byte).unwrap_or(0) == 0 {
+            panic!("connection ended before the headers did:\n{:?}", raw);
+        }
+        raw.push(byte[0]);
+        if raw.ends_with(b"\r\n\r\n") {
+            break raw.len();
+        }
+    };
+    let headers = String::from_utf8_lossy(&raw[..split]).to_lowercase();
+    let length: usize = headers
+        .split("content-length:")
+        .nth(1)
+        .and_then(|tail| tail.split("\r\n").next())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no Content-Length in the answer:\n{headers}"));
+
+    let mut rest = vec![0u8; length];
+    socket
+        .read_exact(&mut rest)
+        .expect("failed to read the body");
+    let status = headers
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or_else(|| panic!("no status line in response:\n{headers}"));
+    (status, headers, String::from_utf8_lossy(&rest).into_owned())
+}
+
+/// `bytes`, gzipped, as a shipper with `compression = "gzip"` would send them.
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).expect("failed to gzip");
+    encoder.finish().expect("failed to finish gzip")
 }
 
 // ── The endpoints ──────────────────────────────────────────────────────────────────
@@ -487,4 +581,280 @@ fn the_viewer_fetches_nothing_else() {
     // The two it *is* allowed to fetch, and the only two: its own server's endpoints.
     assert!(page.contains("fetch(\"/query\""));
     assert!(page.contains("fetch(\"/templates\""));
+}
+
+// ── Compressed bodies ──────────────────────────────────────────────────────────────
+
+/// gzip in, the same answer out - line numbers included.
+///
+/// The line numbers are the point, not the count: a decoder that dropped a member or
+/// mangled a boundary would still report a plausible `ingested`. Only the three known-bad
+/// *positions* pin that the reader saw the body that was sent.
+#[test]
+fn a_gzipped_body_ingests_identically() {
+    let corpus = corpus();
+    let compressed = gzip(&corpus);
+    assert!(
+        compressed.len() * 4 < corpus.len(),
+        "the corpus did not compress, so this test is not testing what it says"
+    );
+
+    let plain = Server::start();
+    let (plain_status, plain_body) = plain.post("/ingest", &corpus);
+
+    let zipped = Server::start();
+    let (status, _, body) = request_with(
+        zipped.port,
+        "POST",
+        "/ingest",
+        &compressed,
+        &[("Content-Encoding", "gzip")],
+    );
+
+    assert_eq!(status, plain_status);
+    assert_eq!(
+        json(&body),
+        json(&plain_body),
+        "a gzipped body answered differently from the same body uncompressed"
+    );
+    assert_eq!(zipped.query(r#"COUNT LOG {}"#)["count"], 497);
+}
+
+/// `x-gzip` is the same encoding under the name older clients use for it.
+#[test]
+fn x_gzip_is_gzip() {
+    let server = Server::start();
+    let (status, _, body) = request_with(
+        server.port,
+        "POST",
+        "/ingest",
+        &gzip(&corpus()),
+        &[("Content-Encoding", "x-gzip")],
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json(&body)["ingested"], 497);
+}
+
+/// A body that says gzip and is not is a 400 - and the server is still there afterwards.
+///
+/// The second half is the half worth having. `/ingest` is reachable by anything that can
+/// open a socket, and a decoder that unwinds on malformed input turns one bad shipper
+/// config into everyone's outage. So each body is followed by a `/health`.
+#[test]
+fn a_corrupt_gzip_body_is_a_400_and_not_a_panic() {
+    let server = Server::start();
+    let good = gzip(&corpus());
+
+    let bodies: [(&str, Vec<u8>); 4] = [
+        ("not gzip at all", b"{\"event\":\"login\"}\n".to_vec()),
+        ("right magic, wrong rest", {
+            let mut bytes = vec![0x1f, 0x8b, 0x08, 0x00];
+            bytes.extend_from_slice(b"and then nonsense");
+            bytes
+        }),
+        // What a shipper killed mid-send produces - the one of these four that is an
+        // operational event rather than a hostile one.
+        ("truncated", good[..good.len() / 2].to_vec()),
+        // Valid gzip whose trailer was tampered with - decodes, then fails the CRC.
+        ("bad crc", {
+            let mut bytes = good.clone();
+            let last = bytes.len() - 5;
+            bytes[last] ^= 0xff;
+            bytes
+        }),
+    ];
+
+    for (why, body) in bodies {
+        let (status, _, text) = request_with(
+            server.port,
+            "POST",
+            "/ingest",
+            &body,
+            &[("Content-Encoding", "gzip")],
+        );
+        assert_eq!(status, 400, "`{why}` answered {status}: {text}");
+        let report = json(&text);
+        assert_eq!(report["ok"], false);
+        assert!(
+            report["error"].as_str().is_some_and(|e| e.contains("gzip")),
+            "`{why}` does not name gzip, so a shipper cannot tell what to fix: {report}"
+        );
+
+        let (status, health) = server.get("/health");
+        assert_eq!(status, 200, "the server did not survive `{why}`: {health}");
+    }
+
+    // Nothing from any of the four was stored - they failed before a line was read.
+    assert_eq!(json(&server.get("/stats").1)["storage"]["rows"], 0);
+}
+
+/// An encoding this server cannot decode is a 415, and the message says what it can.
+#[test]
+fn an_unknown_content_encoding_is_415() {
+    let server = Server::start();
+    for encoding in ["br", "deflate", "zstd", "gzip, gzip"] {
+        let (status, _, body) = request_with(
+            server.port,
+            "POST",
+            "/ingest",
+            &corpus(),
+            &[("Content-Encoding", encoding)],
+        );
+        assert_eq!(status, 415, "`{encoding}` answered {status}: {body}");
+        let error = json(&body)["error"].to_string();
+        assert!(
+            error.contains("gzip"),
+            "the refusal does not say what is accepted: {error}"
+        );
+    }
+
+    // `identity` is not an unknown encoding, it is the explicit spelling of "none".
+    let (status, _, body) = request_with(
+        server.port,
+        "POST",
+        "/ingest",
+        &corpus(),
+        &[("Content-Encoding", "identity")],
+    );
+    assert_eq!(status, 200, "identity was refused: {body}");
+}
+
+// ── The two caps ───────────────────────────────────────────────────────────────────
+
+/// The wire cap, measured on what arrived.
+#[test]
+fn a_body_over_the_wire_cap_is_413() {
+    let server = Server::start_with(&["--max-body-bytes", "4096"]);
+
+    // `request_early`, because this is the other answer that arrives before the body has
+    // finished being sent - see its note on why `Connection: close` loses it.
+    let (status, _, body) = request_early(server.port, "/ingest", &corpus());
+    assert_eq!(status, 413, "an oversized body answered {status}: {body}");
+    let report = json(&body);
+    assert_eq!(report["ok"], false);
+    // The cap itself, not just that one was hit: a shipper has to split its batch, and
+    // cannot pick a new size from a refusal that names no number.
+    assert!(
+        report["error"].as_str().is_some_and(|e| e.contains("4096")),
+        "the refusal does not say what the limit is: {report}"
+    );
+
+    // Under the cap still works, so the test is about the cap and not about the endpoint.
+    let (status, _) = server.post("/ingest", b"{\"event\":\"login\"}\n");
+    assert_eq!(status, 200);
+}
+
+/// The decompressed cap, measured while inflating - the check the wire cap cannot make.
+///
+/// ~8 KiB on the wire, 8 MiB inflated. It passes the wire cap by three orders of
+/// magnitude, which is the shape of the attack: the first check cannot see it, and without
+/// the second the process allocates until it dies.
+#[test]
+fn a_gzip_bomb_is_refused_while_inflating() {
+    let server = Server::start_with(&["--max-decompressed-bytes", "1048576"]);
+
+    let line = b"{\"event\":\"bomb\",\"pad\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n";
+    let mut huge = Vec::with_capacity(8 * 1024 * 1024);
+    while huge.len() < 8 * 1024 * 1024 {
+        huge.extend_from_slice(line);
+    }
+    let bomb = gzip(&huge);
+    assert!(
+        bomb.len() < 64 * 1024,
+        "the bomb is {} bytes on the wire, which is not a bomb",
+        bomb.len()
+    );
+
+    let (status, _, body) = request_with(
+        server.port,
+        "POST",
+        "/ingest",
+        &bomb,
+        &[("Content-Encoding", "gzip")],
+    );
+    assert_eq!(status, 413, "the bomb answered {status}: {body}");
+
+    // Refused *while* inflating: nothing reached a store. A 413 alone would also be
+    // printed by a server that ingested every line and then complained.
+    let stats = json(&server.get("/stats").1);
+    assert_eq!(stats["storage"]["rows"], 0);
+    assert_eq!(stats["ingest"]["lines_read"], 0);
+
+    // A body that inflates to under the cap is untouched by any of this.
+    let (status, _, body) = request_with(
+        server.port,
+        "POST",
+        "/ingest",
+        &gzip(&corpus()),
+        &[("Content-Encoding", "gzip")],
+    );
+    assert_eq!(status, 200, "a legitimate gzipped body was refused: {body}");
+}
+
+// ── Backpressure ───────────────────────────────────────────────────────────────────
+
+/// Past capacity, `/ingest` answers 503 with a `Retry-After` - it does not go quiet.
+///
+/// The status is what makes a shipper back off. What this replaces is not a different
+/// status but *no answer*: the body is accepted, the request runs long, the shipper times
+/// out, keeps the batch and opens another connection - so load on an already-slow server
+/// goes up. That failure has no assertion that catches it after the fact, which is why
+/// this pins the answer rather than a latency.
+#[test]
+fn past_capacity_ingest_sheds_with_retry_after() {
+    // One permit, and bodies big enough that holding it is measurable.
+    let server = Server::start_with(&["--ingest-concurrency", "1", "--max-body-bytes", "67108864"]);
+    let port = server.port;
+
+    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+        .args(["gen-logs", "--lines", "60000", "--seed", "11"])
+        .output()
+        .expect("failed to run gen-logs");
+    let body = std::sync::Arc::new(out.stdout);
+
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let body = std::sync::Arc::clone(&body);
+            std::thread::spawn(move || request_early(port, "/ingest", &body))
+        })
+        .collect();
+    let answers: Vec<(u16, String, String)> =
+        threads.into_iter().map(|t| t.join().unwrap()).collect();
+
+    let shed: Vec<_> = answers
+        .iter()
+        .filter(|(status, ..)| *status == 503)
+        .collect();
+    assert!(
+        !shed.is_empty(),
+        "no body was shed with one permit and eight concurrent senders: {:?}",
+        answers.iter().map(|(s, ..)| *s).collect::<Vec<_>>()
+    );
+
+    for (_, headers, text) in &shed {
+        assert!(
+            headers.contains("retry-after:"),
+            "a 503 carries no Retry-After, so the shipper has to guess:\n{headers}"
+        );
+        let report = json(text);
+        assert_eq!(report["ok"], false);
+        assert!(
+            report["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "the 503 body is not the shape every other failure here has: {report}"
+        );
+    }
+
+    // Everything not shed succeeded: the permit is a queue, not a coin toss.
+    for (status, _, text) in &answers {
+        assert!(
+            *status == 200 || *status == 503,
+            "unexpected {status}: {text}"
+        );
+    }
+
+    // A shed body is in none of the line counters - it was never read - so without this
+    // it leaves no trace at all.
+    let stats = json(&server.get("/stats").1);
+    assert_eq!(stats["ingest"]["requests_shed"], shed.len() as u64);
+    assert_eq!(stats["ingest"]["ingest_concurrency"], 1);
 }

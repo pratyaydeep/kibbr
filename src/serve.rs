@@ -17,26 +17,29 @@
 //! guess at what the second one will need. The WAL, the detector cache and the
 //! flush timer are the arrows that will make it a type, and none of them exists yet.
 
-use std::io::Cursor;
+use std::borrow::Cow;
+use std::io::{Cursor, Read};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, Request, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
+use flate2::read::MultiGzDecoder;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::Limits;
+use crate::config::{ApiLimits, Limits};
 use crate::db;
 use crate::engine;
 use crate::error::{self, CliError, DetectorError, ServeError};
@@ -48,13 +51,23 @@ use crate::trie::Trie;
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
 
-/// The largest body `/ingest` will read, ~64 MiB.
+/// How long an `/ingest` body waits for a permit before it is shed.
 ///
-/// axum defaults to 2 MiB, which is a sensible default for a form and the wrong one for a
-/// log shipper: Vector's default batch is larger than that, and a 413 on a routine batch
-/// would look like TrieDB rejecting valid logs. Not unlimited, because the body is
-/// buffered whole and this process has nowhere to spill it.
-const MAX_INGEST_BYTES: usize = 64 * 1024 * 1024;
+/// What separates a burst from an overload. Two shippers arriving together on a
+/// four-permit server should queue for the millisecond it takes; twenty arriving together
+/// every second is not a burst, and waiting will not fix it.
+///
+/// A constant, not a flag: what an operator tunes is the permit count, which is the
+/// statement about the machine. A longer wait only moves the refusal closer to the
+/// shipper's own timeout, which is the outcome the shed exists to avoid.
+const INGEST_QUEUE_WAIT: Duration = Duration::from_millis(100);
+
+/// The `Retry-After` on a shed body, in seconds.
+///
+/// Not an estimate of when the server will be free - nothing here knows that - but a floor
+/// under the retry, so a shipper that would come straight back waits out the request
+/// already running.
+const RETRY_AFTER_SECONDS: u32 = 1;
 
 /// The most rejections one `/ingest` response will describe.
 ///
@@ -101,14 +114,26 @@ pub struct Server {
     queries: AtomicU64,
     /// Requests currently in a handler. Read at shutdown, to say what is being waited on.
     in_flight: AtomicU64,
+    /// Bodies refused for want of a permit. In no other counter - `lines_read` never saw
+    /// them - and the only number that says the shed is firing rather than merely present.
+    requests_shed: AtomicU64,
     /// The caps, held on the server and not negotiated per request: all clients get the
     /// same limits, because a client that could override one could sidestep the
     /// protection it is there for.
     limits: Limits,
+    api: ApiLimits,
+    /// How many bodies may be in the parse-and-walk at once.
+    ///
+    /// The whole of the backpressure answer. Without it every body takes a blocking-pool
+    /// slot, the pool queues 512 deep, and a shipper waiting on a request that will not
+    /// finish in time gives up and opens another - which is how a slow server becomes an
+    /// unreachable one. No permit within `INGEST_QUEUE_WAIT` is a 503, which Vector's
+    /// adaptive concurrency reads as "send fewer" rather than "the server is gone".
+    ingest_permits: Arc<Semaphore>,
 }
 
 impl Server {
-    fn new(now: DateTime<Utc>, limits: Limits) -> Self {
+    fn new(now: DateTime<Utc>, limits: Limits, api: ApiLimits) -> Self {
         Self {
             trie: Trie::new(),
             stores: RwLock::new(Stores::new()),
@@ -119,7 +144,10 @@ impl Server {
             lines_rejected: AtomicU64::new(0),
             queries: AtomicU64::new(0),
             in_flight: AtomicU64::new(0),
+            requests_shed: AtomicU64::new(0),
             limits,
+            api,
+            ingest_permits: Arc::new(Semaphore::new(api.ingest_concurrency)),
         }
     }
 
@@ -161,6 +189,99 @@ impl Drop for InFlight {
 }
 
 // ── The ingest path ────────────────────────────────────────────────────────────────
+
+/// Why a body could not be turned into NDJSON, before any line of it was read.
+///
+/// Distinct from `DetectorError`, which is one bad line among good ones that still land.
+/// These three are the whole body. Answering a corrupt gzip with 500 per-line rejections
+/// would describe the symptom - unreadable bytes - rather than the fault, which is that
+/// nothing in the body was ever going to parse.
+enum BodyError {
+    /// A `Content-Encoding` this server cannot decode.
+    Unsupported(String),
+    /// `gzip`, but not gzip: wrong magic, a truncated stream, a failed CRC.
+    Corrupt(String),
+    /// Valid gzip that inflates past the cap. Carries the compressed size because the
+    /// *ratio* identifies a bomb: 10 MB from 1 MB is a log batch, 10 GB from 1 MB is not.
+    TooLarge { cap: usize, compressed: usize },
+}
+
+impl BodyError {
+    /// The status, and the reason it is that status and not another.
+    fn status(&self) -> StatusCode {
+        match self {
+            // 415 not 400: the bytes may be well formed. What is unacceptable is the
+            // encoding they are in, which is what 415 names.
+            Self::Unsupported(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            // Said gzip, sent something else. Re-sending the same bytes fails the same
+            // way, so a 4xx - which tells a shipper not to retry it forever.
+            Self::Corrupt(_) => StatusCode::BAD_REQUEST,
+            // What the wire cap answers with, because it is the same statement: too big.
+            // That it was small until inflated belongs in the message, not the code.
+            Self::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        }
+    }
+
+    fn message(&self) -> String {
+        match self {
+            Self::Unsupported(encoding) => format!(
+                "unsupported Content-Encoding `{encoding}`; this endpoint accepts gzip or \
+                 an unencoded body"
+            ),
+            Self::Corrupt(why) => {
+                format!("Content-Encoding is gzip but the body could not be decoded: {why}")
+            }
+            Self::TooLarge { cap, compressed } => format!(
+                "gzip body of {compressed} bytes expands past the {cap} byte decompressed \
+                 limit; it was refused while inflating, not after"
+            ),
+        }
+    }
+}
+
+/// The body as NDJSON, decompressing first when the client said it was gzipped.
+///
+/// **Borrowed when there is nothing to do.** An unencoded body is the common case, and
+/// copying 10 MiB to hand it to the same reader buys nothing.
+///
+/// **The cap is enforced while inflating, not after.** `Read::take` is load bearing:
+/// without it the check that a body was too big happens after the allocation that killed
+/// the process. With it the reader stops at `cap + 1` bytes however the body was built -
+/// the extra byte being what separates "filled the cap" from "would have gone further".
+///
+/// `MultiGzDecoder`, not `GzDecoder`: concatenated members are a valid stream and a
+/// shipper that batches by appending produces them. `GzDecoder` stops silently after the
+/// first, dropping the rest of a batch and reporting success.
+fn decode<'a>(
+    body: &'a [u8],
+    encoding: Option<&str>,
+    cap: usize,
+) -> Result<Cow<'a, [u8]>, BodyError> {
+    let encoding = encoding.unwrap_or("").trim();
+    if encoding.is_empty() || encoding.eq_ignore_ascii_case("identity") {
+        return Ok(Cow::Borrowed(body));
+    }
+    if !encoding.eq_ignore_ascii_case("gzip") && !encoding.eq_ignore_ascii_case("x-gzip") {
+        return Err(BodyError::Unsupported(encoding.to_string()));
+    }
+
+    let mut out = Vec::new();
+    MultiGzDecoder::new(Cursor::new(body))
+        .take(cap as u64 + 1)
+        .read_to_end(&mut out)
+        // Every decoder failure arrives here as an `io::Error` - and arrives, rather than
+        // unwinding. A body is attacker-supplied input on a path a shipper hits thousands
+        // of times an hour, and a panic in it takes the server, not the body.
+        .map_err(|e| BodyError::Corrupt(e.to_string()))?;
+
+    if out.len() > cap {
+        return Err(BodyError::TooLarge {
+            cap,
+            compressed: body.len(),
+        });
+    }
+    Ok(Cow::Owned(out))
+}
 
 /// One malformed line: `{"line":400,"msg":"..."}`.
 ///
@@ -204,6 +325,16 @@ impl IngestReport {
         }
         report
     }
+}
+
+/// The two ways a body fails whole: the client's fault and the server's, which is the
+/// difference between a 4xx and a 5xx.
+enum IngestFailure {
+    /// The body could not be decoded: wrong encoding, corrupt gzip, or a bomb.
+    Body(BodyError),
+    /// A lock poisoned mid-body. Fails every line after it too, so the body is abandoned
+    /// rather than answered with 500 copies of one message.
+    Fatal(CliError),
 }
 
 /// An NDJSON body into the database, one line at a time.
@@ -267,38 +398,131 @@ async fn health() -> Json<Value> {
     Json(json!({ "ok": true }))
 }
 
+/// NDJSON in, `{"ok":true,"ingested":N,"errors":[]}` out. Optionally gzipped.
+///
+/// **Single tenant, deliberately.** No stream or tenant identifier, in the path or in a
+/// header, and every line lands in the one trie this process holds. Recorded here because
+/// the omission gets expensive with time: once a fleet is configured against this URL,
+/// *adding* an identifier breaks every one of their configs.
+///
+/// It is also not a header away. The trie path is built from the line's own keys
+/// (`ParsedLog::walk_tokens`) and a header is not part of the line, so separating tenants
+/// means either a forced-first `__stream` token in the fingerprint - changing every
+/// `template_id` - or one `Trie` and `Stores` per tenant, with a tenant selector on
+/// `/query`, `/templates`, `/stats` and the viewer. Both are M9-sized, and a header
+/// accepted but ignored would be worse than neither: it reads as isolation that is not
+/// there. Revisit at M9, with the deployment work.
+///
 /// `body` is a `Result`, not a `Bytes`, for the reason `post_query` decodes its own body:
-/// axum's own rejection is plain text, and a client that parses one error format should
-/// not need a second. A batch over `MAX_INGEST_BYTES` is the one response on this surface
-/// that used to arrive as a bare sentence, which is also the response a log shipper is
-/// most likely to meet in production.
+/// axum's rejection is plain text, and a client that parses one error format should not
+/// need a second.
 async fn post_ingest(
     State(server): State<Arc<Server>>,
+    headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Response {
     let body = match body {
         Ok(body) => body,
-        // `status` rather than a hardcoded 413: the rejection also covers a body that
-        // failed mid-read, and telling a shipper it sent too much when the connection
-        // dropped would send it away to split a batch that was never too big.
+        // Two unrelated things behind one rejection, and only one of them is the client's
+        // to fix. Over the cap is the answer a shipper meets most often, and axum's
+        // wording for it ("length limit exceeded") names neither the limit nor the size to
+        // split to. A read that died halfway keeps axum's text: it has no number to
+        // report, and "you sent too much" would send a shipper off to fix a batch that was
+        // never too big.
+        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return fail(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &format!(
+                    "body is larger than the {} byte limit, measured before any \
+                     decompression; send a smaller batch",
+                    server.api.max_body_bytes
+                ),
+            )
+        }
         Err(rejection) => return fail(rejection.status(), &rejection.body_text()),
     };
+    // Non-UTF-8 header bytes are not a header this server understands. `None` reaches
+    // `decode` as "no encoding", so the body is rejected line by line rather than the
+    // request being refused on a guess about what the sender meant.
+    let encoding = headers
+        .get(header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
     let held = Arc::clone(&server);
-    // The parse and the trie walk are CPU work holding a `std` lock, so they do not
-    // belong on a runtime thread that also has to answer `/health`.
-    let done = tokio::task::spawn_blocking(move || ingest(&held, &body, Utc::now())).await;
+    // The parse and the trie walk are CPU work holding a `std` lock, so they do not belong
+    // on a runtime thread that also answers `/health`. Inflating joins them rather than
+    // running above: a gzip bomb is seconds of CPU, and spending it on a runtime thread
+    // would stall every other endpoint while the server was being attacked.
+    let done = tokio::task::spawn_blocking(move || {
+        let decoded = decode(&body, encoding.as_deref(), held.api.max_decompressed_bytes)
+            .map_err(IngestFailure::Body)?;
+        ingest(&held, &decoded, Utc::now()).map_err(IngestFailure::Fatal)
+    })
+    .await;
+
     match done {
         // 200 even with errors in it. The body was accepted and part of it was stored;
         // a 4xx would tell a shipper to retry the whole batch and duplicate the 497
         // lines that landed, and there is nothing the client could have sent differently
         // for the other 3 beyond not sending them.
         Ok(Ok(report)) => (StatusCode::OK, Json(report.to_json())).into_response(),
-        Ok(Err(e)) => fail(StatusCode::INTERNAL_SERVER_ERROR, &error::chain(&e)),
+        Ok(Err(IngestFailure::Body(e))) => fail(e.status(), &e.message()),
+        Ok(Err(IngestFailure::Fatal(e))) => {
+            fail(StatusCode::INTERNAL_SERVER_ERROR, &error::chain(&e))
+        }
         Err(join) => fail(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("ingest task failed: {join}"),
         ),
     }
+}
+
+/// Admission control for `/ingest`: a permit, or a 503 that says when to come back.
+///
+/// **A layer, not a check inside the handler.** A layer wraps the handler, so it runs
+/// before the extractors - before a byte of the body is pulled off the socket. Shedding in
+/// the handler would buffer `max_body_bytes` first and *then* refuse, spending the memory
+/// the shed exists to protect.
+///
+/// 503 and not 429: 429 claims a per-client quota and there is none here. This server is
+/// saturated, which is what 503 says and what `Retry-After` dates. Either makes Vector back
+/// off; only one is true.
+///
+/// What this must never do is take the body and go quiet. A shipper with no answer keeps
+/// the batch, times out, and opens another connection - so a merely slow server gathers
+/// connections until it is unreachable. The immediate refusal is the kinder answer
+/// precisely because a client knows what to do with it.
+async fn admit(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {
+    let permits = Arc::clone(&server.ingest_permits);
+    // `acquire_owned`, so the permit outlives this scope and covers the blocking task,
+    // which is the part that is actually scarce.
+    let waited = tokio::time::timeout(INGEST_QUEUE_WAIT, permits.acquire_owned()).await;
+    let _permit = match waited {
+        Ok(Ok(permit)) => permit,
+        // The semaphore is never closed, so this is the timeout and nothing else.
+        _ => {
+            server.requests_shed.fetch_add(1, Ordering::Relaxed);
+            return busy(server.api.ingest_concurrency);
+        }
+    };
+    next.run(request).await
+}
+
+/// The shed response: 503, a `Retry-After`, and the same error shape as everything else.
+fn busy(permits: usize) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(json!({
+            "ok": false,
+            "error": format!(
+                "ingest is at capacity ({permits} concurrent bodies); retry in \
+                 {RETRY_AFTER_SECONDS}s"
+            ),
+        })),
+    )
+        .into_response()
 }
 
 /// `{"q":"<trieql>"}` in, `query::result_json` out - the same JSON `--format json` prints.
@@ -454,6 +678,11 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // falling rate rather than a stale spike, which is the honest reading of a
             // counter divided by a clock.
             "lines_per_second": rate(ingested, uptime),
+            // Nonzero means the server was telling shippers to slow down, which is the
+            // design working. Only visible here: a shed body was never read, so it is in
+            // none of the line counters above.
+            "requests_shed": server.requests_shed.load(Ordering::Relaxed),
+            "ingest_concurrency": server.api.ingest_concurrency,
         },
         "queries": {
             "served": queries,
@@ -490,9 +719,17 @@ fn router(server: Arc<Server>) -> Router {
         .route("/stats", get(get_stats))
         .route("/templates", get(get_templates))
         .route("/query", post(post_query))
+        // Order matters. `.layer()` wraps what is already there, so the *last* added is
+        // outermost: `admit` runs first, and a shed body never reaches the extractor that
+        // would have buffered it.
         .route(
             "/ingest",
-            post(post_ingest).layer(DefaultBodyLimit::max(MAX_INGEST_BYTES)),
+            post(post_ingest)
+                .layer(DefaultBodyLimit::max(server.api.max_body_bytes))
+                .layer(axum::middleware::from_fn_with_state(
+                    Arc::clone(&server),
+                    admit,
+                )),
         )
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&server),
@@ -508,16 +745,16 @@ fn router(server: Arc<Server>) -> Router {
 /// The runtime is built here rather than by putting `#[tokio::main]` on `main`, because
 /// every other subcommand is synchronous and none of them should pay for a thread pool
 /// to parse a file.
-pub fn run(host: &str, port: u16, limits: Limits) -> Result<(), CliError> {
+pub fn run(host: &str, port: u16, limits: Limits, api: ApiLimits) -> Result<(), CliError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(ServeError::Runtime)?;
-    runtime.block_on(serve(host, port, limits))?;
+    runtime.block_on(serve(host, port, limits, api))?;
     Ok(())
 }
 
-async fn serve(host: &str, port: u16, limits: Limits) -> Result<(), ServeError> {
+async fn serve(host: &str, port: u16, limits: Limits, api: ApiLimits) -> Result<(), ServeError> {
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -529,13 +766,13 @@ async fn serve(host: &str, port: u16, limits: Limits) -> Result<(), ServeError> 
         .local_addr()
         .map_err(|source| ServeError::Bind { addr, source })?;
 
-    let server = Arc::new(Server::new(Utc::now(), limits));
+    let server = Arc::new(Server::new(Utc::now(), limits, api));
     let token = CancellationToken::new();
     // Installed before the banner: a server that cannot hear SIGTERM will be killed by
     // the SIGKILL that follows it, and a deploy is a bad place to discover that.
     let signals = signals(token.clone())?;
 
-    banner(bound, limits);
+    banner(bound, limits, api);
     tokio::spawn(signals);
 
     let shutdown = {
@@ -634,7 +871,7 @@ fn shutdown_sequence(server: &Server) {
 /// about losing data. A warning a redirect can silence is a warning that will be silenced
 /// by the first person who pipes the process into a log file, and this is something to
 /// say rather than hide.
-fn banner(addr: SocketAddr, limits: Limits) {
+fn banner(addr: SocketAddr, limits: Limits, api: ApiLimits) {
     let lines = [
         String::new(),
         "triedb serve".to_string(),
@@ -647,7 +884,7 @@ fn banner(addr: SocketAddr, limits: Limits) {
         "  that you would be unhappy to lose.".to_string(),
         String::new(),
         "  endpoints   GET  /            the log viewer, in a browser".to_string(),
-        "              POST /ingest      NDJSON body, one log line per line".to_string(),
+        "              POST /ingest      NDJSON body, one log line per line; gzip ok".to_string(),
         "              POST /query       {\"q\": \"<trieql>\"}".to_string(),
         "              GET  /templates   every template, its columns and row count".to_string(),
         "              GET  /stats       throughput, template count, storage size".to_string(),
@@ -669,6 +906,21 @@ fn banner(addr: SocketAddr, limits: Limits) {
                  \x20             is refused rather than drawn with its tail missing"
             ),
         },
+        format!(
+            "  ingest      {} byte body, {} byte decompressed, {} at once\n\
+             \x20             a body that waits longer than {}ms for a slot is answered\n\
+             \x20             503 with a Retry-After rather than left to time out",
+            commas(api.max_body_bytes as u64),
+            commas(api.max_decompressed_bytes as u64),
+            api.ingest_concurrency,
+            INGEST_QUEUE_WAIT.as_millis(),
+        ),
+        // On every start: the cost of learning it later is a fleet of shipper configs that
+        // all have to change at once. `post_ingest` has the long form.
+        "  tenancy     single tenant - /ingest takes no stream or tenant identifier,\n\
+         \x20             and adding one later changes every shipper config in the\n\
+         \x20             fleet. Deliberate; revisit at M9."
+            .to_string(),
         String::new(),
         "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first.".to_string(),
         String::new(),

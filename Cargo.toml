@@ -7,8 +7,16 @@ edition = "2021"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive"] }
+# Default features, so the inflater is `miniz_oxide` - pure Rust, no C toolchain in the
+# build and nothing new to audit for memory safety on a path that decodes hostile input.
+flate2 = "1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 tokio-util = "0.7.19"
+
+[dev-dependencies]
+# The `/ingest` tests build the gzip bodies they post, including the bomb. Shelling out to
+# `gzip(1)` would make the corpus depend on whichever one is on the machine.
+flate2 = "1.1"
