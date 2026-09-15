@@ -40,3 +40,7 @@ sample.ndjson
 # The 1M-line corpus the M3.6 viewer was driven against - scratch, `gen-logs --seed 42`
 # rebuilds it.
 /testdata/viewer/
+
+# Vector itself, the configs scripts/vector_check.sh writes and the corpus it ships -
+# scratch. The script re-downloads and rebuilds all of it.
+/testdata/vector/
