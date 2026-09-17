@@ -18,11 +18,13 @@ mod rng;
 mod serve;
 mod store;
 mod trie;
+mod triefile;
 mod trieql;
 mod types;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -73,8 +75,9 @@ enum Command {
         #[arg(long)]
         full: bool,
     },
-    /// Serve the native HTTP API. Storage is in memory: everything ingested is
-    /// lost when the process exits, which the startup banner says in as many words.
+    /// Serve the native HTTP API. Rows are written to `--data-dir` and survive a restart;
+    /// `--storage memory` opts out, and everything ingested is then lost when the process
+    /// exits - which the startup banner says in as many words either way.
     Serve {
         /// Loopback by default. A container needs `--host 0.0.0.0`, and that is a
         /// decision to publish an unauthenticated write endpoint - so it is typed, not
@@ -113,6 +116,23 @@ enum Command {
         /// time out. Overrides `TRIEDB__API__INGEST_CONCURRENCY`.
         #[arg(long, value_name = "N")]
         ingest_concurrency: Option<usize>,
+        /// Where rows go. `disk` writes day-partitioned column files and snapshots the
+        /// trie on a clean shutdown; `memory` writes nothing, and is what the
+        /// memory-versus-disk differential runs against.
+        #[arg(long, value_name = "KIND", default_value = "disk")]
+        storage: StorageKind,
+        /// The data directory. Created if absent. Overrides `TRIEDB__STORAGE__BASE_PATH`.
+        #[arg(long, value_name = "PATH")]
+        data_dir: Option<PathBuf>,
+        /// The trie snapshot. Defaults to `trie.json` inside the data directory.
+        /// Overrides `TRIEDB__STORAGE__TRIE_FILE`.
+        #[arg(long, value_name = "PATH")]
+        trie_file: Option<PathBuf>,
+        /// How often the row buffer is written out, in milliseconds. This is when a row
+        /// reaches the disk, not when it becomes queryable - it is queryable at once.
+        /// Overrides `TRIEDB__INGESTOR__FLUSH_INTERVAL_MS`.
+        #[arg(long, value_name = "MS")]
+        flush_interval_ms: Option<usize>,
     },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
@@ -217,6 +237,15 @@ enum Command {
     },
 }
 
+/// Spelled out as a flag rather than inferred from whether `--data-dir` was given, so
+/// that `--storage memory --data-dir /x` reads as an instruction and not as a
+/// contradiction settled by whichever the code looked at first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum StorageKind {
+    Disk,
+    Memory,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -257,11 +286,21 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_body_bytes,
             max_decompressed_bytes,
             ingest_concurrency,
+            storage,
+            data_dir,
+            trie_file,
+            flush_interval_ms,
         } => serve::run(
             &host,
             port,
             config::Limits::load(max_rows, max_buckets, max_groups)?,
             config::ApiLimits::load(max_body_bytes, max_decompressed_bytes, ingest_concurrency)?,
+            config::Storage::load(
+                storage == StorageKind::Disk,
+                data_dir,
+                trie_file,
+                flush_interval_ms,
+            )?,
         ),
         Command::Explain {
             query,

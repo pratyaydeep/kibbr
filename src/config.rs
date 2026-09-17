@@ -4,8 +4,19 @@
 //! One struct, because the CLI and the server disagreeing about a backstop would make the
 //! same query mean two things.
 //!
-//! Two groups: `Limits` is what a *query* may not exceed and both surfaces carry it;
-//! `ApiLimits` is what a *request* may not exceed, and only the server has requests.
+//! Three groups: `Limits` is what a *query* may not exceed and both surfaces carry it;
+//! `ApiLimits` is what a *request* may not exceed, and only the server has requests;
+//! `Storage` is where rows go, which only the server has too - the CLI rebuilds its
+//! database from an input file per invocation and has nothing to keep.
+//!
+//! The flush interval is spelled in **milliseconds as a whole number**, where the
+//! configuration file it will eventually be read from spells it `"500ms"`. Deliberate
+//! while that file does not exist: the one duration reader in the crate is TrieQL's, whose
+//! units are `s/m/h/d`, and teaching it `ms` would add `SINCE 500ms` to the grammar as a
+//! side effect of naming a flush interval. The `ms` spelling arrives with the file.
+
+use std::path::PathBuf;
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -70,6 +81,24 @@ const MAX_GROUPS_ENV: &str = "TRIEDB__QUERY__MAX_GROUPS";
 const MAX_BODY_BYTES_ENV: &str = "TRIEDB__API__MAX_BODY_BYTES";
 const MAX_DECOMPRESSED_BYTES_ENV: &str = "TRIEDB__API__MAX_DECOMPRESSED_BYTES";
 const INGEST_CONCURRENCY_ENV: &str = "TRIEDB__API__INGEST_CONCURRENCY";
+const BASE_PATH_ENV: &str = "TRIEDB__STORAGE__BASE_PATH";
+const TRIE_FILE_ENV: &str = "TRIEDB__STORAGE__TRIE_FILE";
+const FLUSH_INTERVAL_ENV: &str = "TRIEDB__INGESTOR__FLUSH_INTERVAL_MS";
+
+/// How often the buffer is written out.
+///
+/// This is a **visibility** interval, not a durability one: a row is in every answer the
+/// moment it is appended, and the flush is what puts it somewhere a restart can find it.
+/// With no write-ahead log yet, it is also exactly what a `kill -9` costs.
+pub const DEFAULT_FLUSH_INTERVAL_MS: usize = 500;
+
+/// Where `serve` keeps day partitions when nothing says otherwise.
+///
+/// Relative, and beside the process rather than under `/var/lib`: a default that needs
+/// root to create is a default that fails on the first run on a laptop.
+pub const DEFAULT_DATA_DIR: &str = "triedb-data";
+/// The trie snapshot, inside the data directory so one path moves both.
+pub const TRIE_FILE_NAME: &str = "trie.json";
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -89,6 +118,109 @@ pub enum ConfigError {
          cannot hold a line longer than that, so the extra capacity is unreachable"
     )]
     DecompressedAboveLineCap { asked: usize, limit: usize },
+
+    /// Every other limit here reads 0 as "off". This one cannot: a zero interval is not
+    /// "never flush", it is a task that wakes with no delay and burns a core.
+    #[error("flush interval must be at least 1ms; 0 would spin the flush task")]
+    NoFlushInterval,
+
+    #[error("storage directory `{path}`: {source}")]
+    BadDataDir {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// Where rows and the trie snapshot live, and how often the buffer reaches them.
+///
+/// `Clone` and not `Copy`, which breaks the pattern the other two config structs set: a
+/// `PathBuf` is an allocation. Worth the break - the alternative is a fixed-size path type
+/// or an interned string, and neither is a thing this needs.
+#[derive(Debug, Clone)]
+pub struct Storage {
+    /// `None` = memory, and everything ingested is lost at exit.
+    pub base_path: Option<PathBuf>,
+    /// `None` exactly when `base_path` is.
+    pub trie_file: Option<PathBuf>,
+    pub flush_interval: Duration,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        Self {
+            base_path: None,
+            trie_file: None,
+            flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
+        }
+    }
+}
+
+impl Storage {
+    /// The same three rules as the other two, over the storage settings.
+    ///
+    /// `durable` is the `--storage` choice rather than a path being present, so that
+    /// `--storage memory --data-dir /x` is a clear instruction and not a contradiction
+    /// resolved by whichever flag the code happened to read first.
+    pub fn load(
+        durable: bool,
+        data_dir: Option<PathBuf>,
+        trie_file: Option<PathBuf>,
+        flush_ms: Option<usize>,
+    ) -> Result<Self, ConfigError> {
+        let flush_ms = resolve(flush_ms, FLUSH_INTERVAL_ENV, DEFAULT_FLUSH_INTERVAL_MS)?;
+        if flush_ms == 0 {
+            return Err(ConfigError::NoFlushInterval);
+        }
+        let flush_interval = Duration::from_millis(flush_ms as u64);
+
+        if !durable {
+            return Ok(Self {
+                base_path: None,
+                trie_file: None,
+                flush_interval,
+            });
+        }
+
+        let base = resolve_path(data_dir, BASE_PATH_ENV)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
+        // Created and canonicalised now, before a line is accepted: an unwritable data
+        // directory should stop the process at startup, where an operator is watching,
+        // rather than at the first flush tick half a minute later. Absolute afterwards, so
+        // nothing that changes the working directory can move the database.
+        std::fs::create_dir_all(&base).map_err(|source| ConfigError::BadDataDir {
+            path: base.display().to_string(),
+            source,
+        })?;
+        let base = std::fs::canonicalize(&base).unwrap_or(base);
+
+        let trie_file =
+            resolve_path(trie_file, TRIE_FILE_ENV).unwrap_or_else(|| base.join(TRIE_FILE_NAME));
+
+        Ok(Self {
+            base_path: Some(base),
+            trie_file: Some(trie_file),
+            flush_interval,
+        })
+    }
+
+    pub fn is_durable(&self) -> bool {
+        self.base_path.is_some()
+    }
+
+    /// What a freshly-stamped `LeafMeta` records as its storage path. Documentation
+    /// rather than authority - see `trie::DEFAULT_DATA_DIR`.
+    pub fn data_dir(&self) -> String {
+        self.base_path.as_ref().map_or_else(
+            || crate::trie::DEFAULT_DATA_DIR.to_string(),
+            |path| path.display().to_string(),
+        )
+    }
+}
+
+/// Flag > environment > absent. The same rule as `resolve`, over a path.
+fn resolve_path(flag: Option<PathBuf>, var: &'static str) -> Option<PathBuf> {
+    flag.or_else(|| std::env::var_os(var).map(PathBuf::from))
 }
 
 /// What a *request* may not exceed. Server-only: a file has no wire, no encoding and no

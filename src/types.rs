@@ -112,14 +112,91 @@ impl ColValue {
     }
 }
 
+/// Which rung of the ladder read a `Datetime`, so a later widening can be undone.
+///
+/// A `Datetime` column stores nanoseconds and throws the text away. Promoting one to
+/// `String` therefore has to *reconstruct* the text, and rendering a ten-digit order id
+/// that rung 2 mistook for a timestamp as `2112-08-16T...` is not the string that was
+/// ingested. Recording the rung makes the promotion invert the rung instead.
+///
+/// Leading zeros are lost in every case - `0012345678` parses to the same nanoseconds as
+/// `12345678` and no tag brings it back. That loss happens at parse time, which is why
+/// this has to travel from the ladder rather than be worked out at write time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DtForm {
+    /// Rows in this partition came from more than one rung. Promotion falls back to
+    /// canonical RFC 3339.
+    Mixed,
+    Rfc3339,
+    EpochSecs,
+    EpochMillis,
+}
+
+impl DtForm {
+    /// The `.col` header byte, in the order the storage format lists them.
+    pub fn byte(self) -> u8 {
+        match self {
+            DtForm::Mixed => 0,
+            DtForm::Rfc3339 => 1,
+            DtForm::EpochSecs => 2,
+            DtForm::EpochMillis => 3,
+        }
+    }
+
+    pub fn from_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(DtForm::Mixed),
+            1 => Some(DtForm::Rfc3339),
+            2 => Some(DtForm::EpochSecs),
+            3 => Some(DtForm::EpochMillis),
+            _ => None,
+        }
+    }
+
+    /// The form of a whole partition, folded one row at a time.
+    ///
+    /// Set only where every row came from the same rung: two rungs in one partition is
+    /// `Mixed`, and `Mixed` absorbs everything after it. `None` is the identity, as it is
+    /// in the type lattice - a column with no datetimes yet claims nothing.
+    pub fn merge(a: Option<DtForm>, b: Option<DtForm>) -> Option<DtForm> {
+        match (a, b) {
+            (None, other) | (other, None) => other,
+            (Some(x), Some(y)) if x == y => Some(x),
+            _ => Some(DtForm::Mixed),
+        }
+    }
+
+    /// The text a promotion to `String` should write, inverting the rung.
+    ///
+    /// The RFC 3339 case is *canonical*, not original: the offset the sender wrote and any
+    /// sub-second digits beyond what chrono renders are already gone. Accepted - the
+    /// alternative is keeping the raw text beside every timestamp, which is the column
+    /// store this one exists instead of.
+    pub fn render(self, ns: i64) -> String {
+        match self {
+            DtForm::EpochSecs => (ns / 1_000_000_000).to_string(),
+            DtForm::EpochMillis => (ns / 1_000_000).to_string(),
+            DtForm::Rfc3339 | DtForm::Mixed => chrono::DateTime::from_timestamp_nanos(ns)
+                .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+        }
+    }
+}
+
 /// One value on one line: the type the type ladder chose, plus the decoded value.
 ///
 /// `ty` is `None` only for an explicit JSON `null`. A null carries no evidence about
 /// the column's type, so the ladder is not run on it and nothing is claimed.
+///
+/// `dt_form` is `Some` exactly when `ty` is `Some(Datetime)`. It rides here rather than
+/// inside `ColValue::Datetime` because `engine::value_matches` compares a stored
+/// `ColValue` against `infer(text).value`: folding the rung into the variant would stop
+/// `ts=1705314600` matching a row that was ingested as RFC 3339, which is a silent change
+/// to what a query means.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Typed {
     pub ty: Option<ColumnType>,
     pub value: ColValue,
+    pub dt_form: Option<DtForm>,
 }
 
 impl Typed {

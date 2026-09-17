@@ -20,7 +20,7 @@ use std::net::IpAddr;
 
 use chrono::DateTime;
 
-use crate::types::{ColValue, ColumnType, Typed};
+use crate::types::{ColValue, ColumnType, DtForm, Typed};
 
 /// Run the ladder against a raw value. Every rung is written out separately and in
 /// order; do not collapse them, the order is the thing being specified.
@@ -37,7 +37,7 @@ pub fn infer(raw: &str) -> Typed {
         } else {
             i64::MAX
         });
-        return typed(ColumnType::Datetime, ColValue::Datetime(ns));
+        return dated(ColValue::Datetime(ns), DtForm::Rfc3339);
     }
 
     // 2. Exactly 10 or 13 ASCII digits -> seconds / milliseconds since the epoch.
@@ -48,16 +48,16 @@ pub fn infer(raw: &str) -> Typed {
             // Unreachable: 13 ASCII digits is at most 9_999_999_999_999 < i64::MAX.
             Err(_) => return typed(ColumnType::String, ColValue::String(raw.to_string())),
         };
-        let per_unit = if raw.len() == 10 {
-            1_000_000_000
+        let (per_unit, form) = if raw.len() == 10 {
+            (1_000_000_000, DtForm::EpochSecs)
         } else {
-            1_000_000
+            (1_000_000, DtForm::EpochMillis)
         };
         // 9_999_999_999 seconds in nanoseconds overflows i64 (nanos run out in 2262).
         // Saturate rather than wrap: the type call stands, the instant is clamped, and
         // nothing silently becomes a negative timestamp.
         let ns = digits.saturating_mul(per_unit);
-        return typed(ColumnType::Datetime, ColValue::Datetime(ns));
+        return dated(ColValue::Datetime(ns), form);
     }
 
     // 3. UUID.
@@ -103,6 +103,18 @@ fn typed(ty: ColumnType, value: ColValue) -> Typed {
     Typed {
         ty: Some(ty),
         value,
+        dt_form: None,
+    }
+}
+
+/// A `Datetime`, tagged with the rung that read it. Only rungs 1 and 2 produce one, and
+/// the tag is what lets a later promotion to `String` write back the shape that arrived
+/// rather than a canonical timestamp - see `DtForm`.
+fn dated(value: ColValue, form: DtForm) -> Typed {
+    Typed {
+        ty: Some(ColumnType::Datetime),
+        value,
+        dt_form: Some(form),
     }
 }
 

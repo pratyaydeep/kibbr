@@ -764,10 +764,10 @@ fn value_json(value: &ColValue) -> Value {
 /// **This does not stream, and it is not a memory mitigation.** Every row is ranked into a
 /// `Vec<Row>` before the first line is written, so the format changes the encoding and not
 /// the memory - measured rather than argued: peak RSS grows with the row count here, where
-/// a streaming writer's would not (`scripts/backstop_rss.sh`). Nor could it stream today:
-/// newest-first off storage that is not already ordered needs the last row read before the
-/// first row out, and M5's descending partition scan is what changes that. Until then the
-/// bound is the backstop and paging, which is why an unlimited fetch here gets a cursor.
+/// a streaming writer's would not (`scripts/backstop_rss.sh`). Nor could it: newest-first
+/// over a file needs the last row read before the first row out. The server's day
+/// partitions are ordered and can be walked descending; a flat file cannot. So the bound
+/// here is the backstop and paging, which is why an unlimited fetch gets a cursor.
 ///
 /// `next_cursor` goes to stderr because it is not a record.
 fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {

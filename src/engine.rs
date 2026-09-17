@@ -1,7 +1,7 @@
 //! The query engine: a walk, a scan, and the result shape every surface above reports.
 //!
 //! The walk crosses the trie and touches no data. The scan opens only the leaves the walk
-//! chose. The split is enforced by the types: `plan` cannot see `Stores`, so `--explain`
+//! chose. The split is enforced by the types: `plan` cannot see a store, so `--explain`
 //! cannot accidentally read a row.
 
 use std::cmp::Reverse;
@@ -15,7 +15,10 @@ use thiserror::Error;
 use crate::config::Limits;
 use crate::fmt::{col_text, commas, duration_text};
 use crate::infer::infer;
-use crate::store::{nanos_of, Predicate, Row, ScanOptions, StoreError, Stores, DEFAULT_TS_COLUMN};
+use crate::store::{
+    nanos_of, ts_of, Predicate, Row, Rows, ScanOptions, StoreError, StoreManager, Visitor,
+    DEFAULT_TS_COLUMN,
+};
 use crate::trie::{Node, Trie};
 use crate::types::ColValue;
 
@@ -808,19 +811,28 @@ fn promoted_of<'a>(path: &'a [String], columns: &BTreeSet<&str>) -> BTreeMap<&'a
 ///
 /// `Reverse(ts)` puts the newest first and, because `None` is the least `Option`, puts a
 /// row with no readable timestamp last. A template with no `ts` column at all has nothing
-/// to sort by, so those rows fall back to **insertion order**: `seq` is the order they
-/// were appended to their leaf in. The same pair settles a tie between two rows sharing a
-/// timestamp.
+/// to sort by, so those rows fall back to **arrival order**: `seq` is where the row sits
+/// among the rows it was stored beside. The same pair settles a tie between two rows
+/// sharing a timestamp.
 ///
 /// Both tiebreak components are facts about the *row*, not about the query that found it -
 /// which is what lets a cursor built from one still name the same row later (see `Cursor`).
-/// `leaf_key` is the leaf's key set hashed; `seq` is the ordinal the row was given when it
-/// was ingested. The order is total and computed from the data alone, so the differential
-/// compares the answer exactly instead of as an unordered set.
+/// `leaf_key` is the leaf's key set hashed; `seq` is the ordinal its store gave it. The
+/// order is total and computed from the data alone, so the differential compares the
+/// answer exactly instead of as an unordered set.
 ///
-/// This order is also what will let a disk store stop a partition scan once the limit
-/// fills: partitioned by day and read newest-first, the first `limit` rows it sees are the
-/// answer. Nothing here forecloses that - `Newest` becomes redundant, not wrong.
+/// **`seq` is only ever compared within a tie**, which is what lets a disk store define it
+/// as the row's position in its day partition rather than a number it has to write down.
+/// Equal timestamps are in the same day, so a tie group never spans two partitions; rows
+/// that cannot be placed in time all tie, and all live in the one undated partition. The
+/// in-memory store counts per leaf instead, so the two mint different cursor *bytes* for
+/// one row - and the same row *order*, because within a partition the two counts run in
+/// the same direction.
+///
+/// This order is also what lets a disk store skip whole partitions once the limit fills:
+/// read newest-first, a day whose newest row is older than the worst row already held
+/// cannot contain an answer. It does not license stopping mid-partition - rows inside a
+/// day are in arrival order, not timestamp order - so `Newest` stays.
 pub type Rank = (Reverse<Option<i64>>, u64, u64);
 
 /// A leaf's place in the order, from its key set alone.
@@ -831,7 +843,7 @@ pub type Rank = (Reverse<Option<i64>>, u64, u64);
 /// It replaced the leaf's rank among the leaves *this query* matched, which was a fact
 /// about the query and not the leaf: one new template matching the pattern renumbered every
 /// leaf after it, and a cursor issued before that landed between rows. A key-set hash is
-/// content-derived, so it is the same number in the next process and on disk at M5.
+/// content-derived, so it is the same number in the next process and off disk.
 ///
 /// Two paths colliding on 64 bits interleave their tied rows - identically on both sides,
 /// and those rows were arbitrarily ordered anyway.
@@ -855,17 +867,6 @@ fn fnv(mut h: u64, bytes: &[u8]) -> u64 {
     h
 }
 
-/// A row's timestamp, or `None` for a row that cannot be placed in time.
-///
-/// The same reading `store::in_window` uses: a column widened to `String` by one bad line
-/// is not a timestamp any more, and it should sort to the end rather than be guessed at.
-fn ts_of(row: &Row, ts: &str) -> Option<i64> {
-    match row.get(ts) {
-        Some(ColValue::Datetime(ns)) => Some(*ns),
-        _ => None,
-    }
-}
-
 // ── Cursors ────────────────────────────────────────────────────────────────────────
 
 /// Where a page stopped: the `Rank` of its last row, plus a guard.
@@ -880,10 +881,11 @@ fn ts_of(row: &Row, ts: &str) -> Option<i64> {
 /// frozen result set server-side.
 ///
 /// **What it names, and what a restart does to it.** All three components are properties of
-/// the row - its timestamp, its leaf's key set hashed, the ordinal it was given at ingest -
-/// and none is a position in a structure a restart rebuilds. So it resolves to the same row
-/// in the next process as long as that row is still stored, which is what M5 needs: rows in
-/// day partitions flushed in batches, the ingest ordinal read back from a column.
+/// the row - its timestamp, its leaf's key set hashed, the ordinal its store gave it - and
+/// none is a position in a structure a restart rebuilds. So it resolves to the same row in
+/// the next process as long as that row is still stored. On disk that ordinal is the row's
+/// position inside its day partition, which is not written down anywhere because it does
+/// not have to be: it is where the row sits in the file.
 ///
 /// It still does not freeze the data. A row ingested ahead of the cursor between two pages
 /// is not shown until you start again without one, as under `Cursor::guard`.
@@ -1100,6 +1102,21 @@ impl Newest {
         }
     }
 
+    /// The rank one more `offer` would drop, or `None` while there is still room.
+    ///
+    /// What a partition is measured against: a partition whose best possible row is worse
+    /// than this one holds nothing that belongs in the answer. `None` while the heap is
+    /// filling, because nothing can be ruled out until it is full - and `None` for an
+    /// unlimited query, which has to read everything by definition.
+    fn worst(&self) -> Option<Rank> {
+        let keep = self.keep?;
+        if self.heap.len() >= keep + 1 {
+            self.heap.peek().map(|ranked| ranked.rank)
+        } else {
+            None
+        }
+    }
+
     /// Newest first, and the `Rank` the next page should resume after.
     ///
     /// `into_sorted_vec` is ascending by `Ord`, and `Rank` is smallest-first. The overflow
@@ -1114,6 +1131,51 @@ impl Newest {
         }
         let next = more.then(|| ranked.last().map(|r| r.rank)).flatten();
         (ranked.into_iter().map(|r| r.row).collect(), next)
+    }
+}
+
+/// The `Fetch` mode's sink: rank each row, drop the ones an earlier page served, and let
+/// the heap keep the best.
+///
+/// A struct rather than a closure because it answers `wants_partition` too, and that is
+/// the whole reason `Visitor` is a trait.
+struct Fetch<'a> {
+    keep: &'a mut Newest,
+    key: u64,
+    ts: &'a str,
+    after: Option<Rank>,
+}
+
+impl Visitor for Fetch<'_> {
+    fn row(&mut self, row: &Row, seq: u64) {
+        // `seq` comes from the store, so it is the row's own ordinal and not a count of
+        // what this scan admitted. A row leaving a relative `SINCE` window between two
+        // pages used to renumber every row behind it in its leaf.
+        let rank = (Reverse(ts_of(row, self.ts)), self.key, seq);
+        // Served on an earlier page. `Rank` is a total order, so this is exact where a
+        // `ts` comparison alone is not: rows sharing one nanosecond split across the page
+        // boundary rather than being repeated by an inclusive bound or dropped by an
+        // exclusive one.
+        if self.after.is_some_and(|stop| rank <= stop) {
+            return;
+        }
+        self.keep.offer(rank, row.clone());
+    }
+
+    /// The best `Rank` any row in this partition could carry, against the worst one
+    /// already held.
+    ///
+    /// `seq: 0` is the floor for this leaf at this timestamp, so the tuple really is a
+    /// lower bound and a partition rejected here cannot contain an answer. The undated
+    /// partition reports `None`, and `Reverse(None)` is the greatest `Rank` there is - so
+    /// it is skipped exactly when the heap is full of dated rows and read when the worst
+    /// row held is itself undated. That rule is the existing ordering, not a special case.
+    ///
+    /// `Newest` is shared across the leaves of one query, so the cut tightens as the scan
+    /// goes on rather than restarting at each leaf.
+    fn wants_partition(&mut self, newest: Option<i64>) -> bool {
+        let best = (Reverse(newest), self.key, 0u64);
+        self.keep.worst().is_none_or(|worst| best < worst)
     }
 }
 
@@ -1148,7 +1210,11 @@ pub enum ExecError {
     Buckets(#[from] BucketError),
 }
 
-pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResult, ExecError> {
+pub fn execute(
+    trie: &Trie,
+    stores: &StoreManager,
+    query: &Query,
+) -> Result<QueryResult, ExecError> {
     let plan = plan(trie, query);
     let mut result = QueryResult {
         exists: !plan.leaves.is_empty(),
@@ -1193,47 +1259,44 @@ pub fn execute(trie: &Trie, stores: &Stores, query: &Query) -> Result<QueryResul
         result.meta.files_opened += 1;
         let preds: Vec<Predicate> = leaf.residual.iter().map(predicate).collect();
 
-        // The store's own limit stops the read once `limit` rows have matched, and a disk
-        // store will lean on it. Not used for `Fetch` here, deliberately: an in-memory
-        // `Vec<Row>` is in insertion order, so stopping early would return the *oldest*
-        // rows under an ordering that promises the newest. `Newest` bounds the memory
-        // instead. Once partitions are read newest-first the early stop becomes correct
-        // and this override goes away.
+        // The store's own limit stops the read once `limit` rows have matched. Not used
+        // for `Fetch`, and a disk store does not change that: rows are in arrival order
+        // *within* a partition as much as within a `Vec`, so stopping at the first `limit`
+        // matches returns the oldest of them under an order that promises the newest.
+        // `Newest` bounds the memory instead, and what partitioning buys is one level up -
+        // whole days skipped before they are opened, through `wants_partition`.
         opts.limit = if exists_only { 1 } else { 0 };
 
         let scan = match &query.mode {
             // One row is the whole answer, and `visit` stops on it.
-            QueryMode::Exists | QueryMode::Count => store.visit(&opts, &preds, &mut |_, _| {})?,
+            QueryMode::Exists | QueryMode::Count => {
+                store.visit(&opts, &preds, &mut Rows(|_: &Row, _| {}))?
+            }
             QueryMode::Fetch => {
-                let key = leaf_key(&leaf.path);
-                let keep = &mut newest;
-                let after = query.cursor.map(|c| c.rank);
-                // `seq` comes from the store, so it is the row's ingest ordinal and not a
-                // count of what this scan admitted. A row leaving a relative `SINCE` window
-                // between two pages used to renumber every row behind it in its leaf.
-                store.visit(&opts, &preds, &mut |row, seq| {
-                    let rank = (Reverse(ts_of(row, &ts)), key, seq);
-                    // Served on an earlier page. `Rank` is a total order, so this is exact
-                    // where a `ts` comparison alone is not: rows sharing one nanosecond
-                    // split across the page boundary rather than being repeated by an
-                    // inclusive bound or dropped by an exclusive one.
-                    if after.is_some_and(|stop| rank <= stop) {
-                        return;
-                    }
-                    keep.offer(rank, row.clone());
-                })?
+                let mut fetch = Fetch {
+                    keep: &mut newest,
+                    key: leaf_key(&leaf.path),
+                    ts: &ts,
+                    after: query.cursor.map(|c| c.rank),
+                };
+                store.visit(&opts, &preds, &mut fetch)?
             }
             QueryMode::GroupBy(_) => {
                 let (tally, columns) = (&mut tally, &columns);
-                store.visit(&opts, &preds, &mut |row, _| {
-                    // `None` twice over: no `time(...)` was asked for, or one was and this
-                    // row has no timestamp to place it by. The renderers tell the two
-                    // apart from the width, which they already hold.
-                    let bucket = bucket_ns.and_then(|w| ts_of(row, &ts).map(|ns| bucket_of(ns, w)));
-                    *tally
-                        .entry((bucket, group_values(row, columns)))
-                        .or_insert(0) += 1;
-                })?
+                store.visit(
+                    &opts,
+                    &preds,
+                    &mut Rows(|row: &Row, _| {
+                        // `None` twice over: no `time(...)` was asked for, or one was and this
+                        // row has no timestamp to place it by. The renderers tell the two
+                        // apart from the width, which they already hold.
+                        let bucket =
+                            bucket_ns.and_then(|w| ts_of(row, &ts).map(|ns| bucket_of(ns, w)));
+                        *tally
+                            .entry((bucket, group_values(row, columns)))
+                            .or_insert(0) += 1;
+                    }),
+                )?
             }
         };
 

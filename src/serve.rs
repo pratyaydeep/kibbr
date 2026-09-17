@@ -1,21 +1,26 @@
 //! `triedb serve` - the native HTTP surface, on :7700.
 //!
-//! One `Trie` and one set of `Stores`, held for the life of the process, wrapped in the
-//! five endpoints below. The engine underneath is M2's, unchanged: `/query` builds
-//! the same `Query` the CLI builds and calls the same `engine::execute`, and `/ingest`
-//! goes through `db::ingest_line`, which is also what `db::load` calls. Nothing in this
-//! module knows how a line becomes a row.
+//! One `Trie` and one `StoreManager`, held for the life of the process, wrapped in the
+//! five endpoints below. Nothing here knows how a line becomes a row: `/query` builds the
+//! same `Query` the CLI builds and calls the same `engine::execute`, and `/ingest` goes
+//! through `db::ingest_line`, which is what `db::load` calls.
 //!
-//! **Storage is memory and only memory.** There is no WAL (M6) and nothing writes the
-//! trie down (M5), so every byte ingested here dies with the process. The banner says so
-//! in as many words, `/stats` repeats it as a field, and the shutdown log names each
-//! persistence step it is skipping. It is the single most important thing about this
-//! milestone and it is not something to find out afterwards.
+//! **What survives, and what does not.** With a data directory, rows go to day partitions
+//! on a timer and the trie is snapshotted on a graceful shutdown, so `SIGTERM` and restart
+//! give the same answers. There is no write-ahead log, so a `kill -9` loses whatever had
+//! not reached a flush - up to one interval. With `--storage memory` nothing is written at
+//! all. The banner says which of the two this process is, `/stats` repeats it as a field,
+//! and the shutdown log names every step including the ones still skipped.
+//!
+//! **The flush clock lives here and not in the store.** A `LeafStore` has a buffer and a
+//! synchronous `flush()` and no timer, so it can be driven from a test with no runtime;
+//! the interval that calls it watches the same cancellation token as the listener, because
+//! deciding *when* to write is a fact about the process lifecycle.
 //!
 //! A future `Ingestor` would sit between the API and the trie. There is no such type here:
 //! `ingest` is a plain function with one implementation, and a trait with one caller is a
-//! guess at what the second one will need. The WAL, the detector cache and the
-//! flush timer are the arrows that will make it a type, and none of them exists yet.
+//! guess at what the second one will need. The WAL and the detector cache are the arrows
+//! that will make it a type, and neither exists yet.
 
 use std::borrow::Cow;
 use std::io::{Cursor, Read};
@@ -39,13 +44,13 @@ use serde_json::{json, Value};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{ApiLimits, Limits};
+use crate::config::{ApiLimits, Limits, Storage};
 use crate::db;
 use crate::engine;
 use crate::error::{self, CliError, DetectorError, ServeError};
 use crate::fmt::{commas, rfc3339_at};
 use crate::query;
-use crate::store::Stores;
+use crate::store::{Durability, StoreManager};
 use crate::trie::Trie;
 
 /// The default port this server listens on.
@@ -95,8 +100,8 @@ const VIEWER: &str = include_str!("viewer.html");
 /// Everything the handlers share.
 ///
 /// `Trie` is not behind a lock: it synchronises itself per node, so an ingest and a walk
-/// can proceed together. `Stores` is, because `append` needs `&mut` and `engine::execute`
-/// needs `&`.
+/// can proceed together. The store registry is, because `append` and `flush` need `&mut`
+/// and `engine::execute` needs `&`.
 ///
 /// The write lock is taken **once per body**, not once per line. That makes a body atomic
 /// to anything reading rows - a client that ingests 500 lines and then queries cannot
@@ -105,7 +110,7 @@ const VIEWER: &str = include_str!("viewer.html");
 /// half-applied batch, which is the harder thing for an operator to reason about.
 pub struct Server {
     trie: Trie,
-    stores: RwLock<Stores>,
+    stores: RwLock<StoreManager>,
     started: Instant,
     started_at: DateTime<Utc>,
     lines_read: AtomicU64,
@@ -122,6 +127,7 @@ pub struct Server {
     /// protection it is there for.
     limits: Limits,
     api: ApiLimits,
+    storage: Storage,
     /// How many bodies may be in the parse-and-walk at once.
     ///
     /// The whole of the backpressure answer. Without it every body takes a blocking-pool
@@ -133,10 +139,103 @@ pub struct Server {
 }
 
 impl Server {
-    fn new(now: DateTime<Utc>, limits: Limits, api: ApiLimits) -> Self {
-        Self {
-            trie: Trie::new(),
-            stores: RwLock::new(Stores::new()),
+    /// Build the state, restoring what is on disk.
+    ///
+    /// The trie comes back first because it is what says which leaves exist; every one of
+    /// them is then opened, so a template that existed before the restart is a template
+    /// that exists after it even when its directory holds no rows. A leaf opened and empty
+    /// is the "known template, nothing in it" answer, which is a different thing from "no
+    /// such template" and has to stay different across a restart.
+    fn new(
+        now: DateTime<Utc>,
+        limits: Limits,
+        api: ApiLimits,
+        storage: Storage,
+    ) -> Result<Self, ServeError> {
+        let (trie, stores) = match storage.base_path.clone() {
+            Some(base) => {
+                let data_dir = storage.data_dir();
+                let trie = match storage.trie_file.as_deref() {
+                    Some(path) => {
+                        let (trie, failure) = crate::triefile::load_reporting(path, &data_dir);
+                        match failure {
+                            // Absent is not damaged: a first start has no snapshot, and
+                            // saying so would train an operator to ignore the line that
+                            // matters.
+                            Some(crate::triefile::TrieFileError::Io { .. }) if !path.exists() => {
+                                log(&format!(
+                                    "trie.json - {} not found, starting empty",
+                                    path.display()
+                                ));
+                            }
+                            Some(e) => {
+                                log(&format!("WARN trie.json - {}", error::chain(&e)));
+                                log("WARN trie.json - starting with an empty trie; templates \
+                                     are relearned from the next lines ingested");
+                            }
+                            None => log(&format!(
+                                "trie.json - {} restored {} template(s)",
+                                path.display(),
+                                commas(trie.template_count())
+                            )),
+                        }
+                        trie
+                    }
+                    None => Trie::new_in(&data_dir),
+                };
+
+                // Applied whatever the snapshot said, including when it parsed cleanly:
+                // the hazard is a trie that does not know about a directory, and a stale
+                // or hand-edited snapshot that parses is as unaware as one that did not.
+                // See `Trie::reserve_template_ids_through` for what reissuing an id costs.
+                let claimed = crate::store::disk::claimed_template_ids(&base);
+                if let Some(highest) = claimed.last() {
+                    trie.reserve_template_ids_through(*highest);
+                }
+                let known: std::collections::BTreeSet<u64> = trie
+                    .all_leaves()
+                    .iter()
+                    .filter_map(|leaf| {
+                        leaf.leaf_meta
+                            .read()
+                            .ok()
+                            .and_then(|slot| slot.as_ref().map(|meta| meta.template_id))
+                    })
+                    .collect();
+                let orphans = claimed.iter().filter(|id| !known.contains(id)).count();
+                if orphans > 0 {
+                    log(&format!(
+                        "WARN storage - {} leaf director(ies) on disk that no template \
+                         refers to; those rows are not queryable, and new templates take \
+                         fresh ids rather than reusing them",
+                        commas(orphans as u64)
+                    ));
+                }
+                let mut stores = StoreManager::disk(base).map_err(|e| ServeError::Storage {
+                    detail: error::chain(&e),
+                })?;
+                for leaf in trie.all_leaves() {
+                    let id = leaf
+                        .leaf_meta
+                        .read()
+                        .ok()
+                        .and_then(|slot| slot.as_ref().map(|meta| meta.template_id));
+                    if let Some(id) = id {
+                        if let Err(e) = stores.open_existing(id) {
+                            // One unreadable leaf directory is one template answering
+                            // empty, not a server that will not start.
+                            log(&format!("WARN leaf {id} - {}", error::chain(&e)));
+                        }
+                    }
+                }
+                (trie, stores)
+            }
+            None => (Trie::new(), StoreManager::memory()),
+        };
+
+        Ok(Self {
+            trie,
+            stores: RwLock::new(stores),
             started: Instant::now(),
             started_at: now,
             lines_read: AtomicU64::new(0),
@@ -147,8 +246,9 @@ impl Server {
             requests_shed: AtomicU64::new(0),
             limits,
             api,
+            storage,
             ingest_permits: Arc::new(Semaphore::new(api.ingest_concurrency)),
-        }
+        })
     }
 
     /// Take the stores lock, recovering from a poisoning rather than propagating it.
@@ -158,11 +258,11 @@ impl Server {
     /// refusing every later request would turn one bad line into a dead server. This is
     /// `PoisonError::into_inner`, not `.unwrap()`: nothing here can end the
     /// process.
-    fn read_stores(&self) -> RwLockReadGuard<'_, Stores> {
+    fn read_stores(&self) -> RwLockReadGuard<'_, StoreManager> {
         self.stores.read().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn write_stores(&self) -> RwLockWriteGuard<'_, Stores> {
+    fn write_stores(&self) -> RwLockWriteGuard<'_, StoreManager> {
         self.stores.write().unwrap_or_else(|e| e.into_inner())
     }
 }
@@ -642,9 +742,15 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
 
 /// Throughput, template count, storage sizes.
 ///
-/// `storage.durable` is `false` and `storage.note` says what that costs. The banner is
-/// seen once by whoever started the process; this is the field a dashboard can read, and
-/// M5 is where it starts being able to say something else.
+/// `storage` says which of the two modes this process is in and what that costs. The
+/// banner is seen once by whoever started it; this is the field a dashboard can read.
+///
+/// `buffered_rows` and `write_failures` are the two numbers that are only visible here.
+/// The first is exactly what a `kill -9` would cost while there is no write-ahead log. The
+/// second exists because a disk that has gone away is otherwise invisible: `/ingest` keeps
+/// answering 200 - the line *was* parsed, and the trie *did* take it - while nothing
+/// reaches a file. A silent write failure behind a successful response is the worst
+/// outcome available here, so it gets a counter.
 async fn get_stats(State(server): State<Arc<Server>>) -> Response {
     let stores = server.read_stores();
     let uptime = server.started.elapsed().as_secs_f64();
@@ -655,14 +761,29 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
         "uptime_seconds": uptime,
         "started_at": rfc3339_at(server.started_at),
         "storage": {
-            "kind": "memory",
-            "durable": false,
-            "note": "in-memory only - every row is lost when this process exits",
+            "kind": stores.kind(),
+            "durable": server.storage.is_durable(),
+            "note": if server.storage.is_durable() {
+                "day partitions on disk; no write-ahead log yet, so an unclean exit loses up to one flush interval"
+            } else {
+                "in-memory only - every row is lost when this process exits"
+            },
+            "base_path": stores.base_path().map(|p| p.display().to_string()),
+            "trie_file": server
+                .storage
+                .trie_file
+                .as_ref()
+                .map(|p| p.display().to_string()),
+            "flush_interval_ms": server.storage.flush_interval.as_millis() as u64,
             "stores_open": stores.open(),
             "rows": stores.rows(),
-            // Payload bytes: key text, string values, and a scalar's fixed width. The
-            // resident size is larger - allocator slack and the hash tables are not in
-            // it - so the name says estimated and the number is a floor.
+            "buffered_rows": stores.buffered(),
+            "write_failures": stores.write_failures(),
+            "last_write_error": stores.last_write_error(),
+            // On disk this is the column files' bytes as of the last flush, plus what the
+            // buffer would add. In memory it is payload bytes - key text, string values,
+            // and a scalar's fixed width - and the resident size is larger, because
+            // allocator slack and the hash tables are not in it. Estimated either way.
             "approx_bytes": stores.approx_bytes(),
         },
         "trie": {
@@ -745,16 +866,28 @@ fn router(server: Arc<Server>) -> Router {
 /// The runtime is built here rather than by putting `#[tokio::main]` on `main`, because
 /// every other subcommand is synchronous and none of them should pay for a thread pool
 /// to parse a file.
-pub fn run(host: &str, port: u16, limits: Limits, api: ApiLimits) -> Result<(), CliError> {
+pub fn run(
+    host: &str,
+    port: u16,
+    limits: Limits,
+    api: ApiLimits,
+    storage: Storage,
+) -> Result<(), CliError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(ServeError::Runtime)?;
-    runtime.block_on(serve(host, port, limits, api))?;
+    runtime.block_on(serve(host, port, limits, api, storage))?;
     Ok(())
 }
 
-async fn serve(host: &str, port: u16, limits: Limits, api: ApiLimits) -> Result<(), ServeError> {
+async fn serve(
+    host: &str,
+    port: u16,
+    limits: Limits,
+    api: ApiLimits,
+    storage: Storage,
+) -> Result<(), ServeError> {
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -766,14 +899,19 @@ async fn serve(host: &str, port: u16, limits: Limits, api: ApiLimits) -> Result<
         .local_addr()
         .map_err(|source| ServeError::Bind { addr, source })?;
 
-    let server = Arc::new(Server::new(Utc::now(), limits, api));
+    let server = Arc::new(Server::new(Utc::now(), limits, api, storage)?);
     let token = CancellationToken::new();
     // Installed before the banner: a server that cannot hear SIGTERM will be killed by
     // the SIGKILL that follows it, and a deploy is a bad place to discover that.
     let signals = signals(token.clone())?;
 
-    banner(bound, limits, api);
+    banner(bound, &server);
     tokio::spawn(signals);
+
+    // The clock the stores deliberately do not own. Held rather than detached: a tick
+    // still running after the final flush would write behind the `trie.json` snapshot, and
+    // the two would then disagree about what exists.
+    let flusher = tokio::spawn(flush_loop(Arc::clone(&server), token.clone()));
 
     let shutdown = {
         let token = token.clone();
@@ -796,8 +934,53 @@ async fn serve(host: &str, port: u16, limits: Limits, api: ApiLimits) -> Result<
 
     // `axum::serve` returns once every connection it accepted has finished, so reaching
     // this line *is* "in-flight requests complete first".
+    //
+    // The flush task is joined before the wind-down and not after: the final flush and the
+    // trie snapshot both take the same lock, and a tick arriving between them would write
+    // rows the snapshot does not describe.
+    let _ = flusher.await;
     shutdown_sequence(&server);
     Ok(())
+}
+
+/// Write every store's buffer, every interval, until the token is cancelled.
+///
+/// Two details that are not decoration:
+///
+/// - **`spawn_blocking`.** The guard is a `std::sync::RwLock` and the work under it is
+///   file I/O. On a runtime worker that blocks the whole executor, including `/health`,
+///   which is the endpoint an orchestrator reads to decide whether to kill the process.
+/// - **`MissedTickBehavior::Delay`.** The default fires catch-up ticks back to back after
+///   a slow flush, which turns one stall into a burst of them at exactly the moment the
+///   disk is already behind.
+async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
+    if !server.storage.is_durable() {
+        return;
+    }
+    let mut tick = tokio::time::interval(server.storage.flush_interval);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The first tick completes immediately; consumed here so the loop's first real wait is
+    // a whole interval rather than none.
+    tick.tick().await;
+    loop {
+        tokio::select! {
+            () = token.cancelled() => return,
+            _ = tick.tick() => {}
+        }
+        let held = Arc::clone(&server);
+        let flushed = tokio::task::spawn_blocking(move || {
+            held.write_stores().flush_all(Durability::Deferred)
+        });
+        match flushed.await {
+            Ok(summary) if summary.failed > 0 => log(&format!(
+                "WARN flush - {} leaf/leaves could not be written; their rows stay buffered \
+                 and the next tick retries",
+                summary.failed
+            )),
+            Ok(_) => {}
+            Err(join) => log(&format!("WARN flush task failed: {join}")),
+        }
+    }
 }
 
 /// SIGTERM and SIGINT, both cancelling the one token that every long-running part of the
@@ -843,25 +1026,60 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
 /// stop accepting → final flush → WAL checkpoint → trie.json → close stores → close WAL
 /// ```
 ///
-/// Printing the skipped steps rather than omitting them is the point. Four of the six are
-/// the difference between this milestone and a database that survives being restarted,
-/// and an operator watching a clean shutdown scroll past should be able to see exactly
-/// which durability they do not have yet.
+/// Printing the skipped steps rather than omitting them is the point: an operator watching
+/// a clean shutdown scroll past should see exactly which durability they have and which
+/// they do not. Two of the six are real; the WAL's two are not yet.
 fn shutdown_sequence(server: &Server) {
     log("in-flight requests complete");
-    log("final flush - skipped, storage is memory (M5 puts the stores on disk)");
-    log("WAL checkpoint - skipped, there is no WAL yet (M6)");
-    log("trie.json - skipped, nothing persists the trie yet (M5)");
+
+    if server.storage.is_durable() {
+        let summary = server.write_stores().flush_all(Durability::Fsync);
+        log(&format!(
+            "final flush - {} row(s) into {} partition(s), {} byte(s){}",
+            commas(summary.rows),
+            summary.partitions,
+            commas(summary.bytes),
+            match summary.failed {
+                0 => String::new(),
+                n => format!(", {n} leaf/leaves FAILED and their rows are lost"),
+            },
+        ));
+    } else {
+        log("final flush - skipped, storage is memory (--data-dir puts the stores on disk)");
+    }
+
+    log("WAL checkpoint - skipped, there is no WAL yet");
+
+    match server.storage.trie_file.as_deref() {
+        Some(path) => match crate::triefile::save(&server.trie, path) {
+            Ok(bytes) => log(&format!(
+                "trie.json - {} {} byte(s), {} template(s)",
+                path.display(),
+                commas(bytes),
+                commas(server.trie.template_count())
+            )),
+            // Not a reason to fail the exit. The rows are already written, and the next
+            // start relearns the templates from the lines it is sent - which is the same
+            // recovery an unparsable snapshot gets, for the same reason.
+            Err(e) => log(&format!("WARN trie.json - {}", error::chain(&e))),
+        },
+        None => log("trie.json - skipped, storage is memory"),
+    }
 
     let stores = server.read_stores();
+    let kept = if server.storage.is_durable() {
+        "written"
+    } else {
+        "discarded, they were only in memory"
+    };
     log(&format!(
-        "close stores - {} store(s), {} row(s) discarded, they were only in memory",
+        "close stores - {} store(s), {} row(s) {kept}",
         commas(stores.open() as u64),
         commas(stores.rows()),
     ));
     drop(stores);
 
-    log("close WAL - skipped, there is no WAL yet (M6)");
+    log("close WAL - skipped, there is no WAL yet");
     log("exit 0");
 }
 
@@ -871,17 +1089,40 @@ fn shutdown_sequence(server: &Server) {
 /// about losing data. A warning a redirect can silence is a warning that will be silenced
 /// by the first person who pipes the process into a log file, and this is something to
 /// say rather than hide.
-fn banner(addr: SocketAddr, limits: Limits, api: ApiLimits) {
+fn banner(addr: SocketAddr, server: &Server) {
+    let (limits, api) = (server.limits, server.api);
     let lines = [
         String::new(),
         "triedb serve".to_string(),
         String::new(),
         format!("  listening   http://{addr}"),
         String::new(),
-        "  STORAGE IS IN MEMORY. Everything ingested is lost when this process exits.".to_string(),
-        "  Nothing is written to disk: there is no write-ahead log and no snapshot of".to_string(),
-        "  the trie. A restart starts an empty database. Do not point anything at this".to_string(),
-        "  that you would be unhappy to lose.".to_string(),
+        // Two paragraphs, one per storage mode, and the memory one is unchanged from when
+        // it was the only one. A warning that softens once a feature lands beside it is a
+        // warning nobody reads the second time.
+        match (&server.storage.base_path, &server.storage.trie_file) {
+            (Some(base), trie_file) => format!(
+                "  storage     {}\n\
+                 \x20             trie      {}\n\
+                 \x20             flush     every {}ms - a row is queryable at once and on\n\
+                 \x20                       disk within this; SIGTERM flushes before exiting\n\
+                 \x20             NO WRITE-AHEAD LOG YET. A clean exit loses nothing. A\n\
+                 \x20             kill -9 or a power cut loses up to one flush interval of\n\
+                 \x20             rows, and the trie snapshot with them.",
+                base.display(),
+                trie_file
+                    .as_ref()
+                    .map_or_else(|| "none".to_string(), |p| p.display().to_string()),
+                server.storage.flush_interval.as_millis(),
+            ),
+            (None, _) => {
+                "  STORAGE IS IN MEMORY. Everything ingested is lost when this process exits.\n\
+                 \x20 Nothing is written to disk: there is no write-ahead log and no snapshot of\n\
+                 \x20 the trie. A restart starts an empty database. Do not point anything at this\n\
+                 \x20 that you would be unhappy to lose."
+                    .to_string()
+            }
+        },
         String::new(),
         "  endpoints   GET  /            the log viewer, in a browser".to_string(),
         "              POST /ingest      NDJSON body, one log line per line; gzip ok".to_string(),

@@ -8,7 +8,7 @@
 #
 # Three numbers, and the middle one is the point:
 #
-#   COUNT          the floor - every row is in memory at M3, and no answer is materialised
+#   COUNT          the floor - the file is in memory, and no answer is materialised
 #   MATCH  capped  the floor plus one page
 #   MATCH  uncapped  the floor plus a second full copy of every matching row
 #
