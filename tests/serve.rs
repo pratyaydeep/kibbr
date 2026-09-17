@@ -10,9 +10,12 @@
 //! The corpus comes from `gen-logs` - real generated data, seeded, with the
 //! three corruptions written in at known line numbers.
 
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -27,6 +30,23 @@ struct Server {
     child: Child,
     port: u16,
     stderr: BufReader<ChildStderr>,
+    data_dir: Option<PathBuf>,
+}
+
+/// A data directory of this test's own.
+///
+/// Storage defaults to disk, so a server started with no `--data-dir` would write into
+/// whatever directory `cargo test` happened to run from - and every test in this file
+/// would then share one database. Each gets its own, removed when the server is dropped.
+fn scratch_dir() -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "triedb-serve-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    dir
 }
 
 impl Server {
@@ -42,8 +62,14 @@ impl Server {
     /// The same, with extra flags - `--max-rows` is the one this needs, and a backstop the
     /// corpus can actually reach has to be smaller than the 10,000-row default.
     fn start_with(extra: &[&str]) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
-            .args(["serve", "--port", "0"])
+        let memory = extra.windows(2).any(|pair| pair == ["--storage", "memory"]);
+        let data_dir = (!memory).then(scratch_dir);
+        let mut command = Command::new(env!("CARGO_BIN_EXE_triedb"));
+        command.args(["serve", "--port", "0"]);
+        if let Some(dir) = &data_dir {
+            command.args(["--data-dir", &dir.display().to_string()]);
+        }
+        let mut child = command
             .args(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -78,24 +104,26 @@ impl Server {
             banner.contains("max rows"),
             "banner does not name the backstop:\n{banner}"
         );
-        // The banner is the one place a person is told the data is not durable, so its
-        // saying so is part of the contract and not decoration.
+        // The banner is the one place a person is told what survives, so its saying so is
+        // part of the contract and not decoration. The two modes say different things and
+        // both have to say theirs - see `the_banner_names_what_survives_in_either_mode`.
         assert!(
-            banner.contains("STORAGE IS IN MEMORY"),
-            "banner does not say storage is in memory:\n{banner}"
-        );
-        assert!(
-            banner
-                .to_lowercase()
-                .contains("lost when this process exits"),
-            "banner does not say the data is lost on exit:\n{banner}"
+            banner.contains("STORAGE IS IN MEMORY") || banner.contains("storage     "),
+            "banner does not say where storage is:\n{banner}"
         );
 
         Self {
             child,
             port,
             stderr,
+            data_dir,
         }
+    }
+
+    fn data_dir(&self) -> &Path {
+        self.data_dir
+            .as_deref()
+            .expect("this server was started in memory")
     }
 
     fn get(&self, path: &str) -> (u16, String) {
@@ -128,7 +156,8 @@ impl Server {
         let status = self.child.wait().expect("failed to wait for triedb serve");
         let mut log = String::new();
         let _ = self.stderr.read_to_string(&mut log);
-        // Already reaped; stop `Drop` from killing a pid that may have been reused.
+        // Already reaped; stop `Drop` from killing a pid that may have been reused. The
+        // data directory is left on `self`, so `Drop` still removes it.
         self.child = Command::new("true").spawn().expect("failed to spawn true");
         let _ = self.child.wait();
         (status.code(), log)
@@ -139,6 +168,9 @@ impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(dir) = &self.data_dir {
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 }
 
@@ -333,7 +365,7 @@ fn every_endpoint_answers() {
     // endpoint has to have an answer for it rather than a division by zero.
     let stats = json(&server.get("/stats").1);
     assert_eq!(stats["storage"]["rows"], 0);
-    assert_eq!(stats["storage"]["durable"], false);
+    assert_eq!(stats["storage"]["durable"], true);
     assert_eq!(stats["ingest"]["lines_per_second"], 0.0);
     assert_eq!(json(&server.get("/templates").1)["count"], 0);
 
@@ -363,9 +395,14 @@ fn every_endpoint_answers() {
     assert_eq!(stats["storage"]["rows"], (LINES - BAD.len()) as u64);
     assert_eq!(stats["ingest"]["lines_read"], LINES as u64);
     assert_eq!(stats["ingest"]["lines_rejected"], BAD.len() as u64);
-    // Still says so as a field, not only in a banner nobody scrolls back to.
-    assert_eq!(stats["storage"]["kind"], "memory");
-    assert_eq!(stats["storage"]["durable"], false);
+    // Still says where the rows live as a field, not only in a banner nobody scrolls
+    // back to.
+    assert_eq!(stats["storage"]["kind"], "disk");
+    assert_eq!(stats["storage"]["durable"], true);
+    assert!(
+        !stats["storage"]["base_path"].is_null(),
+        "a durable server does not report where it writes: {stats}"
+    );
 
     let answer = server.query(r#"COUNT LOG {}"#);
     assert_eq!(answer["count"], (LINES - BAD.len()) as u64);

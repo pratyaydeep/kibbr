@@ -21,8 +21,8 @@
 #                   off - a falling concurrency limit and a bounded buffer - rather than
 #                   queueing without limit.
 #
-# What A cannot test: **TrieDB's storage is memory** (M5/M6 change that), so every row it
-# held before the kill is gone by design. A is about the shipper's half of the contract.
+# What A cannot test: durability. There is no write-ahead log, so a kill loses whatever had
+# not reached a flush. A is about the shipper's half of the contract, not the server's.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."

@@ -209,6 +209,12 @@ pub enum ServeError {
         #[source]
         source: std::io::Error,
     },
+
+    /// The data directory could not be opened. At startup rather than at the first flush:
+    /// an operator watching a server come up should be told the disk is unusable before a
+    /// shipper has been told its lines were accepted.
+    #[error("opening storage: {detail}")]
+    Storage { detail: String },
 }
 
 /// Errors surfaced by the CLI itself.

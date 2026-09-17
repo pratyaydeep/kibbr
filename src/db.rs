@@ -16,9 +16,9 @@ use chrono::{DateTime, Utc};
 use crate::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::flatten::{parse_line, ParsedLog};
 use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
-use crate::store::{Row, Stores};
+use crate::store::{Row, StoreManager};
 use crate::trie::Trie;
-use crate::types::ColValue;
+use crate::types::{ColValue, ColumnType, DtForm};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LoadStats {
@@ -30,7 +30,7 @@ pub struct LoadStats {
 
 pub struct Db {
     pub trie: Trie,
-    pub stores: Stores,
+    pub stores: StoreManager,
     pub stats: LoadStats,
 }
 
@@ -53,20 +53,40 @@ pub fn row_of(parsed: &ParsedLog) -> Row {
         .collect()
 }
 
+/// Which rung read each of this line's datetimes.
+///
+/// Beside the `Row` rather than inside it: a `Row` holds `ColValue`, and a query compares
+/// a stored `ColValue` against one the ladder just built from the query's own text. Tagging
+/// the value with its rung would stop `ts=1705314600` matching a row ingested as RFC 3339.
+///
+/// Datetime columns only, so this is empty for most lines and one entry for most of the
+/// rest. The column store folds them per partition; see `types::DtForm`.
+pub fn dt_forms_of(parsed: &ParsedLog) -> Vec<(String, DtForm)> {
+    parsed
+        .typed_values
+        .iter()
+        .filter(|(_, typed)| typed.ty == Some(ColumnType::Datetime))
+        .filter_map(|(key, typed)| typed.dt_form.map(|form| (key.clone(), form)))
+        .collect()
+}
+
 /// One parsed line into the trie, and into its leaf's store unless `stores` is `None`.
 ///
-/// The whole write path as of M3. A future `Ingestor` would sit between the API and the
-/// trie; this is a plain function instead, because there is one implementation of it and
-/// an interface with one caller is a guess at what the second one will need. The
-/// WAL, the detector cache and the flush timer are the arrows that will make it a type,
-/// and none of them exists yet.
+/// The whole write path. A future `Ingestor` would sit between the API and the trie; this
+/// is a plain function instead, because there is one implementation of it and an interface
+/// with one caller is a guess at what the second one will need. The WAL and the detector
+/// cache are the arrows that will make it a type, and neither exists yet.
+///
+/// It holds no clock and no store lifecycle, which is the third of the three-way split:
+/// the registry opens the leaf on first write and something else decides when the buffer
+/// is written out.
 ///
 /// `now` is a parameter for the reason it is one in `Trie::ingest`: `first_seen` and
 /// `last_seen` are what `/templates` reports, and a test that pins them needs to be able
 /// to fix the clock.
 pub fn ingest_line(
     trie: &Trie,
-    stores: Option<&mut Stores>,
+    stores: Option<&mut StoreManager>,
     parsed: &ParsedLog,
     now: DateTime<Utc>,
 ) -> Result<(), CliError> {
@@ -82,7 +102,7 @@ pub fn ingest_line(
     // `ingest` just wrote the meta, so `None` is a poisoned lock and nothing else.
     // Dropping the row is the only option left and it is counted nowhere.
     if let Some(id) = id {
-        stores.append(id, row_of(parsed));
+        stores.append(id, row_of(parsed), &dt_forms_of(parsed));
     }
     Ok(())
 }
@@ -91,9 +111,14 @@ pub fn ingest_line(
 ///
 /// `--explain` passes `false`: the walk needs the schema and nothing else, and skipping
 /// row materialisation applies the walk/scan separation to the load.
+///
+/// Always in memory, and it has to be: the CLI rebuilds the whole database from its input
+/// file per invocation, so there is nothing for it to persist and nothing it should read
+/// back. A `triedb query` that picked up a `trie.json` would answer about rows its input
+/// file does not contain.
 pub fn load<R: BufRead>(input: R, with_rows: bool) -> Result<Db, CliError> {
     let trie = Trie::new();
-    let mut stores = Stores::new();
+    let mut stores = StoreManager::memory();
     let stats = read_lines(
         input,
         &mut |parsed| ingest_line(&trie, with_rows.then_some(&mut stores), &parsed, Utc::now()),

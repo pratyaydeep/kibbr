@@ -33,12 +33,16 @@ pub const PLACEHOLDER_LABEL: &str = "[*]";
 /// Template ids start here rather than at 0 so that a leaf id is never confused with a
 /// node id in a log line or a query plan: they are two counters over the same trie, and
 /// an explained query prints both.
-const FIRST_TEMPLATE_ID: u64 = 101;
+pub const FIRST_TEMPLATE_ID: u64 = 101;
 
-/// Where a leaf's columns will live once there is a column store. Recorded now because
-/// `LeafMeta` is written once per template and there is no configuration file to read a
-/// data directory out of yet; nothing opens it at this point.
-const DEFAULT_DATA_DIR: &str = "/var/lib/triedb/data";
+/// Where a leaf's columns live when nothing said otherwise - the CLI, which has no data
+/// directory because it rebuilds the database per invocation.
+///
+/// `LeafMeta::storage_path` is written once per template and persisted with it, so it is
+/// documentation and not authority: the store derives a leaf's directory from the
+/// configured base and the template id, because a restart under a different `--data-dir`
+/// would otherwise send every leaf back to the directory it was first seen under.
+pub const DEFAULT_DATA_DIR: &str = "/var/lib/triedb/data";
 
 /// The only way a trie operation fails.
 ///
@@ -58,7 +62,7 @@ pub enum TrieError {
 /// is `Static`. The variant and the preference in `find_child` are the contract for
 /// whenever a producer exists - most likely a label whose distinct-value count crosses a
 /// bound - and until then the rule is unreachable rather than wrong.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NodeType {
     Static,
     Placeholder,
@@ -128,10 +132,35 @@ impl Node {
             leaf_meta: RwLock::new(None),
         }
     }
+
+    /// A node rebuilt from `trie.json`, children attached afterwards.
+    ///
+    /// Two-pass, because an adjacency list names children by id and an id may be written
+    /// before the node it names. The loader validates the records into a tree *before*
+    /// calling this, so no `Arc` cycle can be built here - a cycle in the file would
+    /// otherwise be a leak rather than an error.
+    pub fn restored(
+        id: u64,
+        label: String,
+        node_type: NodeType,
+        is_leaf: bool,
+        leaf_meta: Option<LeafMeta>,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            node_type,
+            children: RwLock::new(Vec::new()),
+            is_leaf: AtomicBool::new(is_leaf),
+            leaf_meta: RwLock::new(leaf_meta),
+        }
+    }
 }
 
 pub struct Trie {
     root: Arc<Node>,
+    /// Stamped into every new `LeafMeta`. See `DEFAULT_DATA_DIR`.
+    data_dir: String,
     /// Node ids. The root took 0, so this is also the count of nodes below it.
     next_id: AtomicU64,
     next_template_id: AtomicU64,
@@ -148,12 +177,43 @@ impl Default for Trie {
 
 impl Trie {
     pub fn new() -> Self {
+        Self::new_in(DEFAULT_DATA_DIR)
+    }
+
+    pub fn new_in(data_dir: &str) -> Self {
         Self {
             root: Arc::new(Node::new(0, ROOT_LABEL, NodeType::Static)),
+            data_dir: data_dir.to_string(),
             next_id: AtomicU64::new(1),
             next_template_id: AtomicU64::new(FIRST_TEMPLATE_ID),
             tokens: AtomicU64::new(0),
         }
+    }
+
+    /// A trie rebuilt from `trie.json`.
+    ///
+    /// `next_id` and `next_template_id` are handed in rather than recomputed here because
+    /// only the loader has seen the whole file - and they are *derived* from it rather than
+    /// trusted: a stale counter hands out an id that is already in use, and for a template
+    /// id that means two leaves sharing one storage directory.
+    pub fn restored(
+        root: Arc<Node>,
+        data_dir: &str,
+        next_id: u64,
+        next_template_id: u64,
+        tokens: u64,
+    ) -> Self {
+        Self {
+            root,
+            data_dir: data_dir.to_string(),
+            next_id: AtomicU64::new(next_id),
+            next_template_id: AtomicU64::new(next_template_id),
+            tokens: AtomicU64::new(tokens),
+        }
+    }
+
+    pub fn data_dir(&self) -> &str {
+        &self.data_dir
     }
 
     pub fn root(&self) -> Arc<Node> {
@@ -173,8 +233,33 @@ impl Trie {
         self.next_id.load(Ordering::Relaxed)
     }
 
+    /// The leaves that exist, counted - not the ids handed out.
+    ///
+    /// Those were the same number until `reserve_template_ids_through` started skipping
+    /// the ids that leaf directories on disk have already spent. A trie recovered from a
+    /// lost snapshot holds no templates and may still have reserved a hundred ids, and
+    /// every caller of this wants the first number: the banner, `/stats`, and the line
+    /// the shutdown prints.
     pub fn template_count(&self) -> u64 {
-        self.next_template_id.load(Ordering::Relaxed) - FIRST_TEMPLATE_ID
+        self.all_leaves().len() as u64
+    }
+
+    /// Refuse to hand out a template id at or below one already spent.
+    ///
+    /// The counter's floor is normally `trie.json`, which records every id issued. But
+    /// leaf directories are *named* by template id, so the ids they hold are spent whether
+    /// or not anything still remembers issuing them - and when the snapshot is missing or
+    /// unparsable the trie starts empty and the counter restarts from `FIRST_TEMPLATE_ID`
+    /// while those directories are still sitting there.
+    ///
+    /// Reissuing one points a freshly learned template at another template's rows. The
+    /// symptom is the bad kind: the two key sets are merged into one directory, so an
+    /// unfiltered `MATCH` still returns everything and looks right, while a filtered one
+    /// prunes to the template the trie names and silently misses the rows in the directory
+    /// it actually opened. A wrong answer, not an error.
+    pub fn reserve_template_ids_through(&self, highest_used: u64) {
+        self.next_template_id
+            .fetch_max(highest_used + 1, Ordering::Relaxed);
     }
 
     /// What the same templates would cost with no prefix sharing at all: every template's
@@ -356,7 +441,7 @@ impl Trie {
                 LeafMeta {
                     template_id,
                     columns: Vec::new(),
-                    storage_path: format!("{DEFAULT_DATA_DIR}/leaf_{template_id}"),
+                    storage_path: format!("{}/leaf_{template_id}", self.data_dir),
                     first_seen: now,
                     last_seen: now,
                 }

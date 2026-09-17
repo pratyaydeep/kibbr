@@ -472,6 +472,7 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
             Typed {
                 ty: None,
                 value: ColValue::Null,
+                dt_form: None,
             }
         } else {
             infer(&raw)
