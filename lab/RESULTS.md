@@ -36,6 +36,7 @@ python       3.12.2
 - [01_profile_logs - What the logs look like](#01-profile-logs)
 - [02_split_vs_wide - Splitting by template: does it help or hurt compression](#02-split-vs-wide)
 - [03_layout_model - Files, row groups and overhead per layout](#03-layout-model)
+- [04_merge_rules - Which merging rule](#04-merge-rules)
 
 ## 00_frontend_agree
 
@@ -481,117 +482,141 @@ Run 2026-09-18T20:08:35+00:00, git `7f71815`, 252 rows.
 
 _Splitting by template: does it help or hurt compression_
 
-Run 2026-09-18T20:15:52+00:00, git `365bb93`, 315 rows.
+Run 2026-09-18T20:55:07+00:00, git `365bb93`, 363 rows.
 
 ### `02_split_vs_wide` / dataset `flat30`
 
-| variant                   | metric                      |            value | unit   |
-|---------------------------|-----------------------------|------------------|--------|
-| raw NDJSON                | bytes                       |      4.6792e+07  | bytes  |
-| raw NDJSON                | disk_blocks                 |      4.67927e+07 | bytes  |
-| raw NDJSON                | files                       |      1           | count  |
-| raw NDJSON                | ratio_to_raw_bytes          |      1           | ratio  |
-| raw NDJSON                | ratio_to_raw_blocks         |      1           | ratio  |
-| raw NDJSON                | ratio_to_gzip9              |      4.321       | ratio  |
-| gzip -9                   | bytes                       |      1.0829e+07  | bytes  |
-| gzip -9                   | disk_blocks                 |      1.16654e+07 | bytes  |
-| gzip -9                   | files                       |      1           | count  |
-| gzip -9                   | ratio_to_raw_bytes          |      0.2314      | ratio  |
-| gzip -9                   | ratio_to_raw_blocks         |      0.2493      | ratio  |
-| gzip -9                   | ratio_to_gzip9              |      1           | ratio  |
-| zstd -19                  | bytes                       |      8.28201e+06 | bytes  |
-| zstd -19                  | disk_blocks                 |      8.3968e+06  | bytes  |
-| zstd -19                  | files                       |      1           | count  |
-| zstd -19                  | ratio_to_raw_bytes          |      0.177       | ratio  |
-| zstd -19                  | ratio_to_raw_blocks         |      0.1794      | ratio  |
-| zstd -19                  | ratio_to_gzip9              |      0.7648      | ratio  |
-| WIDE rg=1,000             | bytes                       |      1.25716e+07 | bytes  |
-| WIDE rg=1,000             | disk_blocks                 |      1.25747e+07 | bytes  |
-| WIDE rg=1,000             | files                       |      1           | count  |
-| WIDE rg=1,000             | ratio_to_raw_bytes          |      0.2687      | ratio  |
-| WIDE rg=1,000             | ratio_to_raw_blocks         |      0.2687      | ratio  |
-| WIDE rg=1,000             | ratio_to_gzip9              |      1.161       | ratio  |
-| WIDE rg=8,192             | bytes                       |      9.69406e+06 | bytes  |
-| WIDE rg=8,192             | disk_blocks                 |      9.69523e+06 | bytes  |
-| WIDE rg=8,192             | files                       |      1           | count  |
-| WIDE rg=8,192             | ratio_to_raw_bytes          |      0.2072      | ratio  |
-| WIDE rg=8,192             | ratio_to_raw_blocks         |      0.2072      | ratio  |
-| WIDE rg=8,192             | ratio_to_gzip9              |      0.8952      | ratio  |
-| WIDE rg=122,880           | bytes                       |      9.3771e+06  | bytes  |
-| WIDE rg=122,880           | disk_blocks                 |      9.37984e+06 | bytes  |
-| WIDE rg=122,880           | files                       |      1           | count  |
-| WIDE rg=122,880           | ratio_to_raw_bytes          |      0.2004      | ratio  |
-| WIDE rg=122,880           | ratio_to_raw_blocks         |      0.2005      | ratio  |
-| WIDE rg=122,880           | ratio_to_gzip9              |      0.8659      | ratio  |
-| PER_TEMPLATE rg=1,000     | bytes                       |      1.23934e+07 | bytes  |
-| PER_TEMPLATE rg=1,000     | disk_blocks                 |      1.40984e+07 | bytes  |
-| PER_TEMPLATE rg=1,000     | files                       |    870           | count  |
-| PER_TEMPLATE rg=1,000     | ratio_to_raw_bytes          |      0.2649      | ratio  |
-| PER_TEMPLATE rg=1,000     | ratio_to_raw_blocks         |      0.3013      | ratio  |
-| PER_TEMPLATE rg=1,000     | ratio_to_gzip9              |      1.144       | ratio  |
-| PER_TEMPLATE rg=8,192     | bytes                       |      1.23556e+07 | bytes  |
-| PER_TEMPLATE rg=8,192     | disk_blocks                 |      1.40616e+07 | bytes  |
-| PER_TEMPLATE rg=8,192     | files                       |    870           | count  |
-| PER_TEMPLATE rg=8,192     | ratio_to_raw_bytes          |      0.2641      | ratio  |
-| PER_TEMPLATE rg=8,192     | ratio_to_raw_blocks         |      0.3005      | ratio  |
-| PER_TEMPLATE rg=8,192     | ratio_to_gzip9              |      1.141       | ratio  |
-| PER_TEMPLATE rg=122,880   | bytes                       |      1.23556e+07 | bytes  |
-| PER_TEMPLATE rg=122,880   | disk_blocks                 |      1.40616e+07 | bytes  |
-| PER_TEMPLATE rg=122,880   | files                       |    870           | count  |
-| PER_TEMPLATE rg=122,880   | ratio_to_raw_bytes          |      0.2641      | ratio  |
-| PER_TEMPLATE rg=122,880   | ratio_to_raw_blocks         |      0.3005      | ratio  |
-| PER_TEMPLATE rg=122,880   | ratio_to_gzip9              |      1.141       | ratio  |
-| PER_TEMPLATE_DAY rg=8,192 | bytes                       |      8.52018e+07 | bytes  |
-| PER_TEMPLATE_DAY rg=8,192 | disk_blocks                 |      1.2236e+08  | bytes  |
-| PER_TEMPLATE_DAY rg=8,192 | files                       |  16694           | count  |
-| PER_TEMPLATE_DAY rg=8,192 | ratio_to_raw_bytes          |      1.821       | ratio  |
-| PER_TEMPLATE_DAY rg=8,192 | ratio_to_raw_blocks         |      2.615       | ratio  |
-| PER_TEMPLATE_DAY rg=8,192 | ratio_to_gzip9              |      7.868       | ratio  |
-| SHARED_DAY rg=1,000       | bytes                       |      8.56085e+07 | bytes  |
-| SHARED_DAY rg=1,000       | disk_blocks                 |      8.56801e+07 | bytes  |
-| SHARED_DAY rg=1,000       | files                       |     32           | count  |
-| SHARED_DAY rg=1,000       | ratio_to_raw_bytes          |      1.83        | ratio  |
-| SHARED_DAY rg=1,000       | ratio_to_raw_blocks         |      1.831       | ratio  |
-| SHARED_DAY rg=1,000       | ratio_to_gzip9              |      7.905       | ratio  |
-| SHARED_DAY rg=8,192       | bytes                       |      8.56031e+07 | bytes  |
-| SHARED_DAY rg=8,192       | disk_blocks                 |      8.5676e+07  | bytes  |
-| SHARED_DAY rg=8,192       | files                       |     32           | count  |
-| SHARED_DAY rg=8,192       | ratio_to_raw_bytes          |      1.829       | ratio  |
-| SHARED_DAY rg=8,192       | ratio_to_raw_blocks         |      1.831       | ratio  |
-| SHARED_DAY rg=8,192       | ratio_to_gzip9              |      7.905       | ratio  |
-| SHARED_DAY rg=122,880     | bytes                       |      8.56031e+07 | bytes  |
-| SHARED_DAY rg=122,880     | disk_blocks                 |      8.5676e+07  | bytes  |
-| SHARED_DAY rg=122,880     | files                       |     32           | count  |
-| SHARED_DAY rg=122,880     | ratio_to_raw_bytes          |      1.829       | ratio  |
-| SHARED_DAY rg=122,880     | ratio_to_raw_blocks         |      1.831       | ratio  |
-| SHARED_DAY rg=122,880     | ratio_to_gzip9              |      7.905       | ratio  |
-| window rg=1000            | rows                        |  10711           | count  |
-| window rg=1000            | row_groups                  |     11           | count  |
-| window rg=1000            | groups_touched              |      1           | count  |
-| window rg=1000            | file_bytes                  | 292304           | bytes  |
-| window rg=1000            | bytes_read                  |  27337           | bytes  |
-| window rg=1000            | read_share_pct              |      9.352       | count  |
-| window rg=1000            | matching_rows               |      2           | count  |
-| window rg=1000            | rows_scanned                |   1000           | count  |
-| window rg=8192            | rows                        |  10711           | count  |
-| window rg=8192            | row_groups                  |      2           | count  |
-| window rg=8192            | groups_touched              |      1           | count  |
-| window rg=8192            | file_bytes                  | 297726           | bytes  |
-| window rg=8192            | bytes_read                  | 224124           | bytes  |
-| window rg=8192            | read_share_pct              |     75.28        | count  |
-| window rg=8192            | matching_rows               |      2           | count  |
-| window rg=8192            | rows_scanned                |   8192           | count  |
-| window rg=122880          | rows                        |  10711           | count  |
-| window rg=122880          | row_groups                  |      1           | count  |
-| window rg=122880          | groups_touched              |      1           | count  |
-| window rg=122880          | file_bytes                  | 295031           | bytes  |
-| window rg=122880          | bytes_read                  | 295031           | bytes  |
-| window rg=122880          | read_share_pct              |    100           | count  |
-| window rg=122880          | matching_rows               |      2           | count  |
-| window rg=122880          | rows_scanned                |  10711           | count  |
-| verdict                   | per_template_vs_gzip9_bytes |      1.141       | ratio  |
-| verdict                   | smallest_by_bytes           |      8.28201e+06 | bytes  |
-| verdict                   | smallest_by_blocks          |      8.3968e+06  | bytes  |
+| variant                    | metric                      |            value | unit   |
+|----------------------------|-----------------------------|------------------|--------|
+| raw NDJSON                 | bytes                       |      4.6792e+07  | bytes  |
+| raw NDJSON                 | disk_blocks                 |      4.67927e+07 | bytes  |
+| raw NDJSON                 | files                       |      1           | count  |
+| raw NDJSON                 | ratio_to_raw_bytes          |      1           | ratio  |
+| raw NDJSON                 | ratio_to_raw_blocks         |      1           | ratio  |
+| raw NDJSON                 | ratio_to_gzip9              |      4.321       | ratio  |
+| gzip -9                    | bytes                       |      1.0829e+07  | bytes  |
+| gzip -9                    | disk_blocks                 |      1.17965e+07 | bytes  |
+| gzip -9                    | files                       |      1           | count  |
+| gzip -9                    | ratio_to_raw_bytes          |      0.2314      | ratio  |
+| gzip -9                    | ratio_to_raw_blocks         |      0.2521      | ratio  |
+| gzip -9                    | ratio_to_gzip9              |      1           | ratio  |
+| zstd -19                   | bytes                       |      8.28201e+06 | bytes  |
+| zstd -19                   | disk_blocks                 |      8.42138e+06 | bytes  |
+| zstd -19                   | files                       |      1           | count  |
+| zstd -19                   | ratio_to_raw_bytes          |      0.177       | ratio  |
+| zstd -19                   | ratio_to_raw_blocks         |      0.18        | ratio  |
+| zstd -19                   | ratio_to_gzip9              |      0.7648      | ratio  |
+| WIDE rg=1,000              | bytes                       |      1.25716e+07 | bytes  |
+| WIDE rg=1,000              | disk_blocks                 |      1.25747e+07 | bytes  |
+| WIDE rg=1,000              | files                       |      1           | count  |
+| WIDE rg=1,000              | ratio_to_raw_bytes          |      0.2687      | ratio  |
+| WIDE rg=1,000              | ratio_to_raw_blocks         |      0.2687      | ratio  |
+| WIDE rg=1,000              | ratio_to_gzip9              |      1.161       | ratio  |
+| WIDE rg=8,192              | bytes                       |      9.69406e+06 | bytes  |
+| WIDE rg=8,192              | disk_blocks                 |      9.69523e+06 | bytes  |
+| WIDE rg=8,192              | files                       |      1           | count  |
+| WIDE rg=8,192              | ratio_to_raw_bytes          |      0.2072      | ratio  |
+| WIDE rg=8,192              | ratio_to_raw_blocks         |      0.2072      | ratio  |
+| WIDE rg=8,192              | ratio_to_gzip9              |      0.8952      | ratio  |
+| WIDE rg=122,880            | bytes                       |      9.3771e+06  | bytes  |
+| WIDE rg=122,880            | disk_blocks                 |      9.37984e+06 | bytes  |
+| WIDE rg=122,880            | files                       |      1           | count  |
+| WIDE rg=122,880            | ratio_to_raw_bytes          |      0.2004      | ratio  |
+| WIDE rg=122,880            | ratio_to_raw_blocks         |      0.2005      | ratio  |
+| WIDE rg=122,880            | ratio_to_gzip9              |      0.8659      | ratio  |
+| PER_TEMPLATE rg=1,000      | bytes                       |      1.23934e+07 | bytes  |
+| PER_TEMPLATE rg=1,000      | disk_blocks                 |      1.40984e+07 | bytes  |
+| PER_TEMPLATE rg=1,000      | files                       |    870           | count  |
+| PER_TEMPLATE rg=1,000      | ratio_to_raw_bytes          |      0.2649      | ratio  |
+| PER_TEMPLATE rg=1,000      | ratio_to_raw_blocks         |      0.3013      | ratio  |
+| PER_TEMPLATE rg=1,000      | ratio_to_gzip9              |      1.144       | ratio  |
+| PER_TEMPLATE rg=8,192      | bytes                       |      1.23556e+07 | bytes  |
+| PER_TEMPLATE rg=8,192      | disk_blocks                 |      1.40616e+07 | bytes  |
+| PER_TEMPLATE rg=8,192      | files                       |    870           | count  |
+| PER_TEMPLATE rg=8,192      | ratio_to_raw_bytes          |      0.2641      | ratio  |
+| PER_TEMPLATE rg=8,192      | ratio_to_raw_blocks         |      0.3005      | ratio  |
+| PER_TEMPLATE rg=8,192      | ratio_to_gzip9              |      1.141       | ratio  |
+| PER_TEMPLATE rg=122,880    | bytes                       |      1.23556e+07 | bytes  |
+| PER_TEMPLATE rg=122,880    | disk_blocks                 |      1.40616e+07 | bytes  |
+| PER_TEMPLATE rg=122,880    | files                       |    870           | count  |
+| PER_TEMPLATE rg=122,880    | ratio_to_raw_bytes          |      0.2641      | ratio  |
+| PER_TEMPLATE rg=122,880    | ratio_to_raw_blocks         |      0.3005      | ratio  |
+| PER_TEMPLATE rg=122,880    | ratio_to_gzip9              |      1.141       | ratio  |
+| PER_TEMPLATE_DAY rg=8,192  | bytes                       |      8.52018e+07 | bytes  |
+| PER_TEMPLATE_DAY rg=8,192  | disk_blocks                 |      1.2236e+08  | bytes  |
+| PER_TEMPLATE_DAY rg=8,192  | files                       |  16694           | count  |
+| PER_TEMPLATE_DAY rg=8,192  | ratio_to_raw_bytes          |      1.821       | ratio  |
+| PER_TEMPLATE_DAY rg=8,192  | ratio_to_raw_blocks         |      2.615       | ratio  |
+| PER_TEMPLATE_DAY rg=8,192  | ratio_to_gzip9              |      7.868       | ratio  |
+| SHARED_DAY rg=1,000        | bytes                       |      8.56085e+07 | bytes  |
+| SHARED_DAY rg=1,000        | disk_blocks                 |      8.56801e+07 | bytes  |
+| SHARED_DAY rg=1,000        | files                       |     32           | count  |
+| SHARED_DAY rg=1,000        | ratio_to_raw_bytes          |      1.83        | ratio  |
+| SHARED_DAY rg=1,000        | ratio_to_raw_blocks         |      1.831       | ratio  |
+| SHARED_DAY rg=1,000        | ratio_to_gzip9              |      7.905       | ratio  |
+| SHARED_DAY rg=8,192        | bytes                       |      8.56031e+07 | bytes  |
+| SHARED_DAY rg=8,192        | disk_blocks                 |      8.5676e+07  | bytes  |
+| SHARED_DAY rg=8,192        | files                       |     32           | count  |
+| SHARED_DAY rg=8,192        | ratio_to_raw_bytes          |      1.829       | ratio  |
+| SHARED_DAY rg=8,192        | ratio_to_raw_blocks         |      1.831       | ratio  |
+| SHARED_DAY rg=8,192        | ratio_to_gzip9              |      7.905       | ratio  |
+| SHARED_DAY rg=122,880      | bytes                       |      8.56031e+07 | bytes  |
+| SHARED_DAY rg=122,880      | disk_blocks                 |      8.5676e+07  | bytes  |
+| SHARED_DAY rg=122,880      | files                       |     32           | count  |
+| SHARED_DAY rg=122,880      | ratio_to_raw_bytes          |      1.829       | ratio  |
+| SHARED_DAY rg=122,880      | ratio_to_raw_blocks         |      1.831       | ratio  |
+| SHARED_DAY rg=122,880      | ratio_to_gzip9              |      7.905       | ratio  |
+| PER_TEMPLATE[J70] rg=8,192 | bytes                       |      8.4511e+06  | bytes  |
+| PER_TEMPLATE[J70] rg=8,192 | disk_blocks                 |      8.56474e+06 | bytes  |
+| PER_TEMPLATE[J70] rg=8,192 | files                       |     68           | count  |
+| PER_TEMPLATE[J70] rg=8,192 | ratio_to_raw_bytes          |      0.1806      | ratio  |
+| PER_TEMPLATE[J70] rg=8,192 | ratio_to_raw_blocks         |      0.183       | ratio  |
+| PER_TEMPLATE[J70] rg=8,192 | ratio_to_gzip9              |      0.7804      | ratio  |
+| SHARED_DAY[J70] rg=8,192   | bytes                       |      1.39382e+07 | bytes  |
+| SHARED_DAY[J70] rg=8,192   | disk_blocks                 |      1.40001e+07 | bytes  |
+| SHARED_DAY[J70] rg=8,192   | files                       |     32           | count  |
+| SHARED_DAY[J70] rg=8,192   | ratio_to_raw_bytes          |      0.2979      | ratio  |
+| SHARED_DAY[J70] rg=8,192   | ratio_to_raw_blocks         |      0.2992      | ratio  |
+| SHARED_DAY[J70] rg=8,192   | ratio_to_gzip9              |      1.287       | ratio  |
+| PER_TEMPLATE[J80] rg=8,192 | bytes                       |      8.58724e+06 | bytes  |
+| PER_TEMPLATE[J80] rg=8,192 | disk_blocks                 |      8.83507e+06 | bytes  |
+| PER_TEMPLATE[J80] rg=8,192 | files                       |    125           | count  |
+| PER_TEMPLATE[J80] rg=8,192 | ratio_to_raw_bytes          |      0.1835      | ratio  |
+| PER_TEMPLATE[J80] rg=8,192 | ratio_to_raw_blocks         |      0.1888      | ratio  |
+| PER_TEMPLATE[J80] rg=8,192 | ratio_to_gzip9              |      0.793       | ratio  |
+| SHARED_DAY[J80] rg=8,192   | bytes                       |      1.86566e+07 | bytes  |
+| SHARED_DAY[J80] rg=8,192   | disk_blocks                 |      1.87146e+07 | bytes  |
+| SHARED_DAY[J80] rg=8,192   | files                       |     32           | count  |
+| SHARED_DAY[J80] rg=8,192   | ratio_to_raw_bytes          |      0.3987      | ratio  |
+| SHARED_DAY[J80] rg=8,192   | ratio_to_raw_blocks         |      0.4         | ratio  |
+| SHARED_DAY[J80] rg=8,192   | ratio_to_gzip9              |      1.723       | ratio  |
+| window rg=1000             | rows                        |  10711           | count  |
+| window rg=1000             | row_groups                  |     11           | count  |
+| window rg=1000             | groups_touched              |      1           | count  |
+| window rg=1000             | file_bytes                  | 292304           | bytes  |
+| window rg=1000             | bytes_read                  |  27337           | bytes  |
+| window rg=1000             | read_share_pct              |      9.352       | count  |
+| window rg=1000             | matching_rows               |      2           | count  |
+| window rg=1000             | rows_scanned                |   1000           | count  |
+| window rg=8192             | rows                        |  10711           | count  |
+| window rg=8192             | row_groups                  |      2           | count  |
+| window rg=8192             | groups_touched              |      1           | count  |
+| window rg=8192             | file_bytes                  | 297726           | bytes  |
+| window rg=8192             | bytes_read                  | 224124           | bytes  |
+| window rg=8192             | read_share_pct              |     75.28        | count  |
+| window rg=8192             | matching_rows               |      2           | count  |
+| window rg=8192             | rows_scanned                |   8192           | count  |
+| window rg=122880           | rows                        |  10711           | count  |
+| window rg=122880           | row_groups                  |      1           | count  |
+| window rg=122880           | groups_touched              |      1           | count  |
+| window rg=122880           | file_bytes                  | 295031           | bytes  |
+| window rg=122880           | bytes_read                  | 295031           | bytes  |
+| window rg=122880           | read_share_pct              |    100           | count  |
+| window rg=122880           | matching_rows               |      2           | count  |
+| window rg=122880           | rows_scanned                |  10711           | count  |
+| verdict                    | per_template_vs_gzip9_bytes |      1.141       | ratio  |
+| verdict                    | smallest_by_bytes           |      8.28201e+06 | bytes  |
+| verdict                    | smallest_by_blocks          |      8.42138e+06 | bytes  |
 
 ### `02_split_vs_wide` / dataset `oneday`
 
@@ -705,113 +730,137 @@ Run 2026-09-18T20:15:52+00:00, git `365bb93`, 315 rows.
 
 ### `02_split_vs_wide` / dataset `uneven`
 
-| variant                   | metric                      |            value | unit   |
-|---------------------------|-----------------------------|------------------|--------|
-| raw NDJSON                | bytes                       |      4.49597e+07 | bytes  |
-| raw NDJSON                | disk_blocks                 |      4.49618e+07 | bytes  |
-| raw NDJSON                | files                       |      1           | count  |
-| raw NDJSON                | ratio_to_raw_bytes          |      1           | ratio  |
-| raw NDJSON                | ratio_to_raw_blocks         |      1           | ratio  |
-| raw NDJSON                | ratio_to_gzip9              |     11.07        | ratio  |
-| gzip -9                   | bytes                       |      4.06238e+06 | bytes  |
-| gzip -9                   | disk_blocks                 |      4.06323e+06 | bytes  |
-| gzip -9                   | files                       |      1           | count  |
-| gzip -9                   | ratio_to_raw_bytes          |      0.09036     | ratio  |
-| gzip -9                   | ratio_to_raw_blocks         |      0.09038     | ratio  |
-| gzip -9                   | ratio_to_gzip9              |      1           | ratio  |
-| zstd -19                  | bytes                       |      2.89697e+06 | bytes  |
-| zstd -19                  | disk_blocks                 |      3.20307e+06 | bytes  |
-| zstd -19                  | files                       |      1           | count  |
-| zstd -19                  | ratio_to_raw_bytes          |      0.06443     | ratio  |
-| zstd -19                  | ratio_to_raw_blocks         |      0.07124     | ratio  |
-| zstd -19                  | ratio_to_gzip9              |      0.7131      | ratio  |
-| WIDE rg=1,000             | bytes                       |      7.77741e+06 | bytes  |
-| WIDE rg=1,000             | disk_blocks                 |      7.7783e+06  | bytes  |
-| WIDE rg=1,000             | files                       |      1           | count  |
-| WIDE rg=1,000             | ratio_to_raw_bytes          |      0.173       | ratio  |
-| WIDE rg=1,000             | ratio_to_raw_blocks         |      0.173       | ratio  |
-| WIDE rg=1,000             | ratio_to_gzip9              |      1.915       | ratio  |
-| WIDE rg=8,192             | bytes                       |      4.20096e+06 | bytes  |
-| WIDE rg=8,192             | disk_blocks                 |      4.2025e+06  | bytes  |
-| WIDE rg=8,192             | files                       |      1           | count  |
-| WIDE rg=8,192             | ratio_to_raw_bytes          |      0.09344     | ratio  |
-| WIDE rg=8,192             | ratio_to_raw_blocks         |      0.09347     | ratio  |
-| WIDE rg=8,192             | ratio_to_gzip9              |      1.034       | ratio  |
-| WIDE rg=122,880           | bytes                       |      3.86484e+06 | bytes  |
-| WIDE rg=122,880           | disk_blocks                 |      3.86662e+06 | bytes  |
-| WIDE rg=122,880           | files                       |      1           | count  |
-| WIDE rg=122,880           | ratio_to_raw_bytes          |      0.08596     | ratio  |
-| WIDE rg=122,880           | ratio_to_raw_blocks         |      0.086       | ratio  |
-| WIDE rg=122,880           | ratio_to_gzip9              |      0.9514      | ratio  |
-| PER_TEMPLATE rg=1,000     | bytes                       |      2.61029e+07 | bytes  |
-| PER_TEMPLATE rg=1,000     | disk_blocks                 |      3.48488e+07 | bytes  |
-| PER_TEMPLATE rg=1,000     | files                       |   4931           | count  |
-| PER_TEMPLATE rg=1,000     | ratio_to_raw_bytes          |      0.5806      | ratio  |
-| PER_TEMPLATE rg=1,000     | ratio_to_raw_blocks         |      0.7751      | ratio  |
-| PER_TEMPLATE rg=1,000     | ratio_to_gzip9              |      6.426       | ratio  |
-| PER_TEMPLATE rg=8,192     | bytes                       |      2.58339e+07 | bytes  |
-| PER_TEMPLATE rg=8,192     | disk_blocks                 |      3.45702e+07 | bytes  |
-| PER_TEMPLATE rg=8,192     | files                       |   4931           | count  |
-| PER_TEMPLATE rg=8,192     | ratio_to_raw_bytes          |      0.5746      | ratio  |
-| PER_TEMPLATE rg=8,192     | ratio_to_raw_blocks         |      0.7689      | ratio  |
-| PER_TEMPLATE rg=8,192     | ratio_to_gzip9              |      6.359       | ratio  |
-| PER_TEMPLATE rg=122,880   | bytes                       |      2.58005e+07 | bytes  |
-| PER_TEMPLATE rg=122,880   | disk_blocks                 |      3.45334e+07 | bytes  |
-| PER_TEMPLATE rg=122,880   | files                       |   4931           | count  |
-| PER_TEMPLATE rg=122,880   | ratio_to_raw_bytes          |      0.5739      | ratio  |
-| PER_TEMPLATE rg=122,880   | ratio_to_raw_blocks         |      0.7681      | ratio  |
-| PER_TEMPLATE rg=122,880   | ratio_to_gzip9              |      6.351       | ratio  |
-| PER_TEMPLATE_DAY rg=8,192 | bytes                       |      2.58339e+07 | bytes  |
-| PER_TEMPLATE_DAY rg=8,192 | disk_blocks                 |      3.45702e+07 | bytes  |
-| PER_TEMPLATE_DAY rg=8,192 | files                       |   4931           | count  |
-| PER_TEMPLATE_DAY rg=8,192 | ratio_to_raw_bytes          |      0.5746      | ratio  |
-| PER_TEMPLATE_DAY rg=8,192 | ratio_to_raw_blocks         |      0.7689      | ratio  |
-| PER_TEMPLATE_DAY rg=8,192 | ratio_to_gzip9              |      6.359       | ratio  |
-| SHARED_DAY rg=1,000       | bytes                       |      2.62213e+07 | bytes  |
-| SHARED_DAY rg=1,000       | disk_blocks                 |      2.66609e+07 | bytes  |
-| SHARED_DAY rg=1,000       | files                       |      2           | count  |
-| SHARED_DAY rg=1,000       | ratio_to_raw_bytes          |      0.5832      | ratio  |
-| SHARED_DAY rg=1,000       | ratio_to_raw_blocks         |      0.593       | ratio  |
-| SHARED_DAY rg=1,000       | ratio_to_gzip9              |      6.455       | ratio  |
-| SHARED_DAY rg=8,192       | bytes                       |      2.59523e+07 | bytes  |
-| SHARED_DAY rg=8,192       | disk_blocks                 |      2.6751e+07  | bytes  |
-| SHARED_DAY rg=8,192       | files                       |      2           | count  |
-| SHARED_DAY rg=8,192       | ratio_to_raw_bytes          |      0.5772      | ratio  |
-| SHARED_DAY rg=8,192       | ratio_to_raw_blocks         |      0.595       | ratio  |
-| SHARED_DAY rg=8,192       | ratio_to_gzip9              |      6.388       | ratio  |
-| SHARED_DAY rg=122,880     | bytes                       |      2.59189e+07 | bytes  |
-| SHARED_DAY rg=122,880     | disk_blocks                 |      2.69148e+07 | bytes  |
-| SHARED_DAY rg=122,880     | files                       |      2           | count  |
-| SHARED_DAY rg=122,880     | ratio_to_raw_bytes          |      0.5765      | ratio  |
-| SHARED_DAY rg=122,880     | ratio_to_raw_blocks         |      0.5986      | ratio  |
-| SHARED_DAY rg=122,880     | ratio_to_gzip9              |      6.38        | ratio  |
-| window rg=1000            | rows                        |  54721           | count  |
-| window rg=1000            | row_groups                  |     55           | count  |
-| window rg=1000            | groups_touched              |      1           | count  |
-| window rg=1000            | file_bytes                  | 179672           | bytes  |
-| window rg=1000            | bytes_read                  |   3368           | bytes  |
-| window rg=1000            | read_share_pct              |      1.875       | count  |
-| window rg=1000            | matching_rows               |    201           | count  |
-| window rg=1000            | rows_scanned                |   1000           | count  |
-| window rg=8192            | rows                        |  54721           | count  |
-| window rg=8192            | row_groups                  |      7           | count  |
-| window rg=8192            | groups_touched              |      1           | count  |
-| window rg=8192            | file_bytes                  | 123372           | bytes  |
-| window rg=8192            | bytes_read                  |  18979           | bytes  |
-| window rg=8192            | read_share_pct              |     15.38        | count  |
-| window rg=8192            | matching_rows               |    201           | count  |
-| window rg=8192            | rows_scanned                |   8192           | count  |
-| window rg=122880          | rows                        |  54721           | count  |
-| window rg=122880          | row_groups                  |      1           | count  |
-| window rg=122880          | groups_touched              |      1           | count  |
-| window rg=122880          | file_bytes                  | 116525           | bytes  |
-| window rg=122880          | bytes_read                  | 116525           | bytes  |
-| window rg=122880          | read_share_pct              |    100           | count  |
-| window rg=122880          | matching_rows               |    201           | count  |
-| window rg=122880          | rows_scanned                |  54721           | count  |
-| verdict                   | per_template_vs_gzip9_bytes |      6.359       | ratio  |
-| verdict                   | smallest_by_bytes           |      2.89697e+06 | bytes  |
-| verdict                   | smallest_by_blocks          |      3.20307e+06 | bytes  |
+| variant                          | metric                      |            value | unit   |
+|----------------------------------|-----------------------------|------------------|--------|
+| raw NDJSON                       | bytes                       |      4.49597e+07 | bytes  |
+| raw NDJSON                       | disk_blocks                 |      4.49618e+07 | bytes  |
+| raw NDJSON                       | files                       |      1           | count  |
+| raw NDJSON                       | ratio_to_raw_bytes          |      1           | ratio  |
+| raw NDJSON                       | ratio_to_raw_blocks         |      1           | ratio  |
+| raw NDJSON                       | ratio_to_gzip9              |     11.07        | ratio  |
+| gzip -9                          | bytes                       |      4.06238e+06 | bytes  |
+| gzip -9                          | disk_blocks                 |      4.06323e+06 | bytes  |
+| gzip -9                          | files                       |      1           | count  |
+| gzip -9                          | ratio_to_raw_bytes          |      0.09036     | ratio  |
+| gzip -9                          | ratio_to_raw_blocks         |      0.09038     | ratio  |
+| gzip -9                          | ratio_to_gzip9              |      1           | ratio  |
+| zstd -19                         | bytes                       |      2.89697e+06 | bytes  |
+| zstd -19                         | disk_blocks                 |      3.18259e+06 | bytes  |
+| zstd -19                         | files                       |      1           | count  |
+| zstd -19                         | ratio_to_raw_bytes          |      0.06443     | ratio  |
+| zstd -19                         | ratio_to_raw_blocks         |      0.07079     | ratio  |
+| zstd -19                         | ratio_to_gzip9              |      0.7131      | ratio  |
+| WIDE rg=1,000                    | bytes                       |      7.77741e+06 | bytes  |
+| WIDE rg=1,000                    | disk_blocks                 |      7.7783e+06  | bytes  |
+| WIDE rg=1,000                    | files                       |      1           | count  |
+| WIDE rg=1,000                    | ratio_to_raw_bytes          |      0.173       | ratio  |
+| WIDE rg=1,000                    | ratio_to_raw_blocks         |      0.173       | ratio  |
+| WIDE rg=1,000                    | ratio_to_gzip9              |      1.915       | ratio  |
+| WIDE rg=8,192                    | bytes                       |      4.20096e+06 | bytes  |
+| WIDE rg=8,192                    | disk_blocks                 |      4.2025e+06  | bytes  |
+| WIDE rg=8,192                    | files                       |      1           | count  |
+| WIDE rg=8,192                    | ratio_to_raw_bytes          |      0.09344     | ratio  |
+| WIDE rg=8,192                    | ratio_to_raw_blocks         |      0.09347     | ratio  |
+| WIDE rg=8,192                    | ratio_to_gzip9              |      1.034       | ratio  |
+| WIDE rg=122,880                  | bytes                       |      3.86484e+06 | bytes  |
+| WIDE rg=122,880                  | disk_blocks                 |      3.86662e+06 | bytes  |
+| WIDE rg=122,880                  | files                       |      1           | count  |
+| WIDE rg=122,880                  | ratio_to_raw_bytes          |      0.08596     | ratio  |
+| WIDE rg=122,880                  | ratio_to_raw_blocks         |      0.086       | ratio  |
+| WIDE rg=122,880                  | ratio_to_gzip9              |      0.9514      | ratio  |
+| PER_TEMPLATE rg=1,000            | bytes                       |      2.61029e+07 | bytes  |
+| PER_TEMPLATE rg=1,000            | disk_blocks                 |      3.48488e+07 | bytes  |
+| PER_TEMPLATE rg=1,000            | files                       |   4931           | count  |
+| PER_TEMPLATE rg=1,000            | ratio_to_raw_bytes          |      0.5806      | ratio  |
+| PER_TEMPLATE rg=1,000            | ratio_to_raw_blocks         |      0.7751      | ratio  |
+| PER_TEMPLATE rg=1,000            | ratio_to_gzip9              |      6.426       | ratio  |
+| PER_TEMPLATE rg=8,192            | bytes                       |      2.58339e+07 | bytes  |
+| PER_TEMPLATE rg=8,192            | disk_blocks                 |      3.45702e+07 | bytes  |
+| PER_TEMPLATE rg=8,192            | files                       |   4931           | count  |
+| PER_TEMPLATE rg=8,192            | ratio_to_raw_bytes          |      0.5746      | ratio  |
+| PER_TEMPLATE rg=8,192            | ratio_to_raw_blocks         |      0.7689      | ratio  |
+| PER_TEMPLATE rg=8,192            | ratio_to_gzip9              |      6.359       | ratio  |
+| PER_TEMPLATE rg=122,880          | bytes                       |      2.58005e+07 | bytes  |
+| PER_TEMPLATE rg=122,880          | disk_blocks                 |      3.45334e+07 | bytes  |
+| PER_TEMPLATE rg=122,880          | files                       |   4931           | count  |
+| PER_TEMPLATE rg=122,880          | ratio_to_raw_bytes          |      0.5739      | ratio  |
+| PER_TEMPLATE rg=122,880          | ratio_to_raw_blocks         |      0.7681      | ratio  |
+| PER_TEMPLATE rg=122,880          | ratio_to_gzip9              |      6.351       | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | bytes                       |      2.58339e+07 | bytes  |
+| PER_TEMPLATE_DAY rg=8,192        | disk_blocks                 |      3.45702e+07 | bytes  |
+| PER_TEMPLATE_DAY rg=8,192        | files                       |   4931           | count  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_raw_bytes          |      0.5746      | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_raw_blocks         |      0.7689      | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_gzip9              |      6.359       | ratio  |
+| SHARED_DAY rg=1,000              | bytes                       |      2.62213e+07 | bytes  |
+| SHARED_DAY rg=1,000              | disk_blocks                 |      2.66281e+07 | bytes  |
+| SHARED_DAY rg=1,000              | files                       |      2           | count  |
+| SHARED_DAY rg=1,000              | ratio_to_raw_bytes          |      0.5832      | ratio  |
+| SHARED_DAY rg=1,000              | ratio_to_raw_blocks         |      0.5923      | ratio  |
+| SHARED_DAY rg=1,000              | ratio_to_gzip9              |      6.455       | ratio  |
+| SHARED_DAY rg=8,192              | bytes                       |      2.59523e+07 | bytes  |
+| SHARED_DAY rg=8,192              | disk_blocks                 |      2.60833e+07 | bytes  |
+| SHARED_DAY rg=8,192              | files                       |      2           | count  |
+| SHARED_DAY rg=8,192              | ratio_to_raw_bytes          |      0.5772      | ratio  |
+| SHARED_DAY rg=8,192              | ratio_to_raw_blocks         |      0.5802      | ratio  |
+| SHARED_DAY rg=8,192              | ratio_to_gzip9              |      6.388       | ratio  |
+| SHARED_DAY rg=122,880            | bytes                       |      2.59189e+07 | bytes  |
+| SHARED_DAY rg=122,880            | disk_blocks                 |      2.61202e+07 | bytes  |
+| SHARED_DAY rg=122,880            | files                       |      2           | count  |
+| SHARED_DAY rg=122,880            | ratio_to_raw_bytes          |      0.5765      | ratio  |
+| SHARED_DAY rg=122,880            | ratio_to_raw_blocks         |      0.581       | ratio  |
+| SHARED_DAY rg=122,880            | ratio_to_gzip9              |      6.38        | ratio  |
+| PER_TEMPLATE[J70] rg=8,192       | bytes                       |      4.36436e+06 | bytes  |
+| PER_TEMPLATE[J70] rg=8,192       | disk_blocks                 |      5.0217e+06  | bytes  |
+| PER_TEMPLATE[J70] rg=8,192       | files                       |    277           | count  |
+| PER_TEMPLATE[J70] rg=8,192       | ratio_to_raw_bytes          |      0.09707     | ratio  |
+| PER_TEMPLATE[J70] rg=8,192       | ratio_to_raw_blocks         |      0.1117      | ratio  |
+| PER_TEMPLATE[J70] rg=8,192       | ratio_to_gzip9              |      1.074       | ratio  |
+| SHARED_DAY[J70] rg=8,192         | bytes                       |      4.37105e+06 | bytes  |
+| SHARED_DAY[J70] rg=8,192         | disk_blocks                 |      5.24698e+06 | bytes  |
+| SHARED_DAY[J70] rg=8,192         | files                       |      2           | count  |
+| SHARED_DAY[J70] rg=8,192         | ratio_to_raw_bytes          |      0.09722     | ratio  |
+| SHARED_DAY[J70] rg=8,192         | ratio_to_raw_blocks         |      0.1167      | ratio  |
+| SHARED_DAY[J70] rg=8,192         | ratio_to_gzip9              |      1.076       | ratio  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | bytes                       |      7.17526e+06 | bytes  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | disk_blocks                 |      9.00301e+06 | bytes  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | files                       |    982           | count  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_raw_bytes          |      0.1596      | ratio  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_raw_blocks         |      0.2003      | ratio  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_gzip9              |      1.766       | ratio  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | bytes                       |      7.19887e+06 | bytes  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | disk_blocks                 |      7.46291e+06 | bytes  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | files                       |      2           | count  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_raw_bytes          |      0.1601      | ratio  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_raw_blocks         |      0.166       | ratio  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_gzip9              |      1.772       | ratio  |
+| window rg=1000                   | rows                        |  54721           | count  |
+| window rg=1000                   | row_groups                  |     55           | count  |
+| window rg=1000                   | groups_touched              |      1           | count  |
+| window rg=1000                   | file_bytes                  | 179672           | bytes  |
+| window rg=1000                   | bytes_read                  |   3368           | bytes  |
+| window rg=1000                   | read_share_pct              |      1.875       | count  |
+| window rg=1000                   | matching_rows               |    201           | count  |
+| window rg=1000                   | rows_scanned                |   1000           | count  |
+| window rg=8192                   | rows                        |  54721           | count  |
+| window rg=8192                   | row_groups                  |      7           | count  |
+| window rg=8192                   | groups_touched              |      1           | count  |
+| window rg=8192                   | file_bytes                  | 123372           | bytes  |
+| window rg=8192                   | bytes_read                  |  18979           | bytes  |
+| window rg=8192                   | read_share_pct              |     15.38        | count  |
+| window rg=8192                   | matching_rows               |    201           | count  |
+| window rg=8192                   | rows_scanned                |   8192           | count  |
+| window rg=122880                 | rows                        |  54721           | count  |
+| window rg=122880                 | row_groups                  |      1           | count  |
+| window rg=122880                 | groups_touched              |      1           | count  |
+| window rg=122880                 | file_bytes                  | 116525           | bytes  |
+| window rg=122880                 | bytes_read                  | 116525           | bytes  |
+| window rg=122880                 | read_share_pct              |    100           | count  |
+| window rg=122880                 | matching_rows               |    201           | count  |
+| window rg=122880                 | rows_scanned                |  54721           | count  |
+| verdict                          | per_template_vs_gzip9_bytes |      6.359       | ratio  |
+| verdict                          | smallest_by_bytes           |      2.89697e+06 | bytes  |
+| verdict                          | smallest_by_blocks          |      3.18259e+06 | bytes  |
 
 **Notes**
 
@@ -819,10 +868,14 @@ Run 2026-09-18T20:15:52+00:00, git `365bb93`, 315 rows.
 - C zstd, level 19
 - what TrieDB does today
 - per-template bytes without per-file block rounding
+- 68 merged templates, from script 04
+- 125 merged templates, from script 04
 - 5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
-- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2054 over 870 files
+- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.1920 over 870 files
 - zstd -19
 - below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.3079 over 870 files
+- 277 merged templates, from script 04
+- 982 merged templates, from script 04
 - below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 8.5081 over 4,931 files
 
 ## 03_layout_model
@@ -1295,4 +1348,322 @@ Run 2026-09-18T20:31:25+00:00, git `32baccc`, 429 rows.
 - 54,680 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit
 - 218,722 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit
 - 437,444 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit
+
+## 04_merge_rules
+
+_Which merging rule_
+
+Run 2026-09-18T20:52:19+00:00, git `6f460b9`, 291 rows.
+
+### `04_merge_rules` / dataset `flat30`
+
+| variant                    | metric                       | value   | unit    |
+|----------------------------|------------------------------|---------|---------|
+| NONE                       | templates                    | 870     | count   |
+| NONE                       | rows_per_template_min        | 3       | count   |
+| NONE                       | rows_per_template_median     | 69      | count   |
+| NONE                       | rows_per_template_p90        | 545     | count   |
+| NONE                       | rows_per_template_max        | 10,711  | count   |
+| NONE                       | null_cell_share_pct          | 0       | percent |
+| NONE                       | columns_widened_to_string    | 0       | count   |
+| NONE                       | mixed_promoted_groups        | 0       | count   |
+| NONE                       | rows_in_mixed_promoted_group | 0       | count   |
+| NONE                       | template_count_min           | 870     | count   |
+| NONE                       | template_count_max           | 870     | count   |
+| NONE                       | template_count_spread        | 0       | count   |
+| NONE                       | moved_share_pct_max          | 0       | percent |
+| NONE                       | moved_share_pct_mean         | 0       | percent |
+| NONE                       | search_rows_scanned          | 137,439 | rows    |
+| NONE                       | search_scan_amplification    | 1       | ratio   |
+| J70                        | templates                    | 68      | count   |
+| J70                        | rows_per_template_min        | 743     | count   |
+| J70                        | rows_per_template_median     | 2,668   | count   |
+| J70                        | rows_per_template_p90        | 4,353   | count   |
+| J70                        | rows_per_template_max        | 16,622  | count   |
+| J70                        | null_cell_share_pct          | 16.56   | percent |
+| J70                        | columns_widened_to_string    | 0       | count   |
+| J70                        | mixed_promoted_groups        | 0       | count   |
+| J70                        | rows_in_mixed_promoted_group | 0       | count   |
+| J70                        | template_count_min           | 67      | count   |
+| J70                        | template_count_max           | 67      | count   |
+| J70                        | template_count_spread        | 0       | count   |
+| J70                        | moved_share_pct_max          | 19.32   | percent |
+| J70                        | moved_share_pct_mean         | 19.03   | percent |
+| J70                        | search_rows_scanned          | 181,058 | rows    |
+| J70                        | search_scan_amplification    | 1.317   | ratio   |
+| J80                        | templates                    | 125     | count   |
+| J80                        | rows_per_template_min        | 42      | count   |
+| J80                        | rows_per_template_median     | 1,256   | count   |
+| J80                        | rows_per_template_p90        | 2,903   | count   |
+| J80                        | rows_per_template_max        | 16,616  | count   |
+| J80                        | null_cell_share_pct          | 13.96   | percent |
+| J80                        | columns_widened_to_string    | 0       | count   |
+| J80                        | mixed_promoted_groups        | 0       | count   |
+| J80                        | rows_in_mixed_promoted_group | 0       | count   |
+| J80                        | template_count_min           | 133     | count   |
+| J80                        | template_count_max           | 137     | count   |
+| J80                        | template_count_spread        | 4       | count   |
+| J80                        | moved_share_pct_max          | 25.23   | percent |
+| J80                        | moved_share_pct_mean         | 23.79   | percent |
+| J80                        | search_rows_scanned          | 163,246 | rows    |
+| J80                        | search_scan_amplification    | 1.188   | ratio   |
+| J90                        | templates                    | 440     | count   |
+| J90                        | rows_per_template_min        | 5       | count   |
+| J90                        | rows_per_template_median     | 281     | count   |
+| J90                        | rows_per_template_p90        | 982     | count   |
+| J90                        | rows_per_template_max        | 10,711  | count   |
+| J90                        | null_cell_share_pct          | 4.032   | percent |
+| J90                        | columns_widened_to_string    | 0       | count   |
+| J90                        | mixed_promoted_groups        | 0       | count   |
+| J90                        | rows_in_mixed_promoted_group | 0       | count   |
+| J90                        | template_count_min           | 439     | count   |
+| J90                        | template_count_max           | 457     | count   |
+| J90                        | template_count_spread        | 18      | count   |
+| J90                        | moved_share_pct_max          | 9.572   | percent |
+| J90                        | moved_share_pct_mean         | 9.022   | percent |
+| J90                        | search_rows_scanned          | 143,332 | rows    |
+| J90                        | search_scan_amplification    | 1.043   | ratio   |
+| J80_GROWN                  | templates                    | 199     | count   |
+| J80_GROWN                  | rows_per_template_min        | 38      | count   |
+| J80_GROWN                  | rows_per_template_median     | 535     | count   |
+| J80_GROWN                  | rows_per_template_p90        | 2,393   | count   |
+| J80_GROWN                  | rows_per_template_max        | 16,616  | count   |
+| J80_GROWN                  | null_cell_share_pct          | 7.404   | percent |
+| J80_GROWN                  | columns_widened_to_string    | 0       | count   |
+| J80_GROWN                  | mixed_promoted_groups        | 0       | count   |
+| J80_GROWN                  | rows_in_mixed_promoted_group | 0       | count   |
+| J80_GROWN                  | template_count_min           | 181     | count   |
+| J80_GROWN                  | template_count_max           | 194     | count   |
+| J80_GROWN                  | template_count_spread        | 13      | count   |
+| J80_GROWN                  | moved_share_pct_max          | 19.95   | percent |
+| J80_GROWN                  | moved_share_pct_mean         | 18.53   | percent |
+| J80_GROWN                  | search_rows_scanned          | 151,465 | rows    |
+| J80_GROWN                  | search_scan_amplification    | 1.102   | ratio   |
+| J80_SPEC                   | templates                    | 24      | count   |
+| J80_SPEC                   | rows_per_template_min        | 252     | count   |
+| J80_SPEC                   | rows_per_template_median     | 9,096   | count   |
+| J80_SPEC                   | rows_per_template_p90        | 16,616  | count   |
+| J80_SPEC                   | rows_per_template_max        | 23,299  | count   |
+| J80_SPEC                   | null_cell_share_pct          | 14.11   | percent |
+| J80_SPEC                   | columns_widened_to_string    | 0       | count   |
+| J80_SPEC                   | mixed_promoted_groups        | 21      | count   |
+| J80_SPEC                   | rows_in_mixed_promoted_group | 166,762 | count   |
+| J80_SPEC                   | template_count_min           | 24      | count   |
+| J80_SPEC                   | template_count_max           | 28      | count   |
+| J80_SPEC                   | template_count_spread        | 4       | count   |
+| J80_SPEC                   | moved_share_pct_max          | 28      | percent |
+| J80_SPEC                   | moved_share_pct_mean         | 21.9    | percent |
+| J80_SPEC                   | search_rows_scanned          | 883,214 | rows    |
+| J80_SPEC                   | search_scan_amplification    | 6.426   | ratio   |
+| PER_EVENT                  | templates                    | 7       | count   |
+| PER_EVENT                  | rows_per_template_min        | 27,694  | count   |
+| PER_EVENT                  | rows_per_template_median     | 27,812  | count   |
+| PER_EVENT                  | rows_per_template_p90        | 33,238  | count   |
+| PER_EVENT                  | rows_per_template_max        | 33,238  | count   |
+| PER_EVENT                  | null_cell_share_pct          | 77.77   | percent |
+| PER_EVENT                  | columns_widened_to_string    | 0       | count   |
+| PER_EVENT                  | mixed_promoted_groups        | 0       | count   |
+| PER_EVENT                  | rows_in_mixed_promoted_group | 0       | count   |
+| PER_EVENT                  | template_count_min           | 7       | count   |
+| PER_EVENT                  | template_count_max           | 7       | count   |
+| PER_EVENT                  | template_count_spread        | 0       | count   |
+| PER_EVENT                  | moved_share_pct_max          | 0       | percent |
+| PER_EVENT                  | moved_share_pct_mean         | 0       | percent |
+| PER_EVENT                  | search_rows_scanned          | 566,762 | rows    |
+| PER_EVENT                  | search_scan_amplification    | 4.124   | ratio   |
+| all                        | keys_with_more_than_one_type | 0       | count   |
+| promote=nothing/NONE       | templates                    | 150     | count   |
+| promote=nothing/NONE       | rows_scanned_event_search    | 166,762 | rows    |
+| promote=nothing/NONE       | rows_scanned_service_search  | 66,464  | rows    |
+| promote=nothing/J80        | templates                    | 24      | count   |
+| promote=nothing/J80        | rows_scanned_event_search    | 166,762 | rows    |
+| promote=nothing/J80        | rows_scanned_service_search  | 66,464  | rows    |
+| promote=event/NONE         | templates                    | 870     | count   |
+| promote=event/NONE         | rows_scanned_event_search    | 27,892  | rows    |
+| promote=event/NONE         | rows_scanned_service_search  | 66,464  | rows    |
+| promote=event/J80          | templates                    | 125     | count   |
+| promote=event/J80          | rows_scanned_event_search    | 27,892  | rows    |
+| promote=event/J80          | rows_scanned_service_search  | 66,464  | rows    |
+| promote=event+service/NONE | templates                    | 1,182   | count   |
+| promote=event+service/NONE | rows_scanned_event_search    | 27,892  | rows    |
+| promote=event+service/NONE | rows_scanned_service_search  | 13,447  | rows    |
+| promote=event+service/J80  | templates                    | 259     | count   |
+| promote=event+service/J80  | rows_scanned_event_search    | 27,892  | rows    |
+| promote=event+service/J80  | rows_scanned_service_search  | 13,447  | rows    |
+| promote=binary/NONE        | templates                    | 870     | count   |
+| promote=binary/NONE        | rows_scanned_event_search    | 27,892  | rows    |
+| promote=binary/NONE        | rows_scanned_service_search  | 66,464  | rows    |
+| promote=binary/J80         | templates                    | 125     | count   |
+| promote=binary/J80         | rows_scanned_event_search    | 27,892  | rows    |
+| promote=binary/J80         | rows_scanned_service_search  | 66,464  | rows    |
+| J80 cap=100                | leftover_rows                | 5,053   | count   |
+| J80 cap=100                | leftover_row_share_pct       | 2.526   | percent |
+| J80 cap=100                | leftover_columns             | 38      | count   |
+| J80 cap=100                | leftover_null_cell_share_pct | 69.53   | percent |
+| J80 cap=500                | leftover_rows                | 0       | rows    |
+| J80 cap=2000               | leftover_rows                | 0       | rows    |
+| verdict                    | best_two_rules               | J70 J80 | name    |
+
+### `04_merge_rules` / dataset `uneven`
+
+| variant                    | metric                       | value         | unit    |
+|----------------------------|------------------------------|---------------|---------|
+| NONE                       | templates                    | 4,931         | count   |
+| NONE                       | rows_per_template_min        | 4             | count   |
+| NONE                       | rows_per_template_median     | 6             | count   |
+| NONE                       | rows_per_template_p90        | 13            | count   |
+| NONE                       | rows_per_template_max        | 54,721        | count   |
+| NONE                       | null_cell_share_pct          | 0             | percent |
+| NONE                       | columns_widened_to_string    | 0             | count   |
+| NONE                       | mixed_promoted_groups        | 0             | count   |
+| NONE                       | rows_in_mixed_promoted_group | 0             | count   |
+| NONE                       | template_count_min           | 4,931         | count   |
+| NONE                       | template_count_max           | 4,931         | count   |
+| NONE                       | template_count_spread        | 0             | count   |
+| NONE                       | moved_share_pct_max          | 0             | percent |
+| NONE                       | moved_share_pct_mean         | 0             | percent |
+| NONE                       | search_rows_scanned          | 54,159        | rows    |
+| NONE                       | search_scan_amplification    | 1             | ratio   |
+| J70                        | templates                    | 277           | count   |
+| J70                        | rows_per_template_min        | 30            | count   |
+| J70                        | rows_per_template_median     | 79            | count   |
+| J70                        | rows_per_template_p90        | 333           | count   |
+| J70                        | rows_per_template_max        | 70,149        | count   |
+| J70                        | null_cell_share_pct          | 22.55         | percent |
+| J70                        | columns_widened_to_string    | 0             | count   |
+| J70                        | mixed_promoted_groups        | 0             | count   |
+| J70                        | rows_in_mixed_promoted_group | 0             | count   |
+| J70                        | template_count_min           | 268           | count   |
+| J70                        | template_count_max           | 278           | count   |
+| J70                        | template_count_spread        | 10            | count   |
+| J70                        | moved_share_pct_max          | 47.54         | percent |
+| J70                        | moved_share_pct_mean         | 26.69         | percent |
+| J70                        | search_rows_scanned          | 76,651        | rows    |
+| J70                        | search_scan_amplification    | 1.415         | ratio   |
+| J80                        | templates                    | 700           | count   |
+| J80                        | rows_per_template_min        | 5             | count   |
+| J80                        | rows_per_template_median     | 42            | count   |
+| J80                        | rows_per_template_p90        | 141           | count   |
+| J80                        | rows_per_template_max        | 71,200        | count   |
+| J80                        | null_cell_share_pct          | 14.61         | percent |
+| J80                        | columns_widened_to_string    | 0             | count   |
+| J80                        | mixed_promoted_groups        | 0             | count   |
+| J80                        | rows_in_mixed_promoted_group | 0             | count   |
+| J80                        | template_count_min           | 674           | count   |
+| J80                        | template_count_max           | 690           | count   |
+| J80                        | template_count_spread        | 16            | count   |
+| J80                        | moved_share_pct_max          | 45.57         | percent |
+| J80                        | moved_share_pct_mean         | 37.79         | percent |
+| J80                        | search_rows_scanned          | 118,477       | rows    |
+| J80                        | search_scan_amplification    | 2.188         | ratio   |
+| J90                        | templates                    | 2,522         | count   |
+| J90                        | rows_per_template_min        | 4             | count   |
+| J90                        | rows_per_template_median     | 10            | count   |
+| J90                        | rows_per_template_p90        | 34            | count   |
+| J90                        | rows_per_template_max        | 54,721        | count   |
+| J90                        | null_cell_share_pct          | 1.943         | percent |
+| J90                        | columns_widened_to_string    | 0             | count   |
+| J90                        | mixed_promoted_groups        | 0             | count   |
+| J90                        | rows_in_mixed_promoted_group | 0             | count   |
+| J90                        | template_count_min           | 2,487         | count   |
+| J90                        | template_count_max           | 2,562         | count   |
+| J90                        | template_count_spread        | 75            | count   |
+| J90                        | moved_share_pct_max          | 4.747         | percent |
+| J90                        | moved_share_pct_mean         | 4.691         | percent |
+| J90                        | search_rows_scanned          | 60,728        | rows    |
+| J90                        | search_scan_amplification    | 1.121         | ratio   |
+| J80_GROWN                  | templates                    | 982           | count   |
+| J80_GROWN                  | rows_per_template_min        | 1             | count   |
+| J80_GROWN                  | rows_per_template_median     | 26            | count   |
+| J80_GROWN                  | rows_per_template_p90        | 75            | count   |
+| J80_GROWN                  | rows_per_template_max        | 60,730        | count   |
+| J80_GROWN                  | null_cell_share_pct          | 3.612         | percent |
+| J80_GROWN                  | columns_widened_to_string    | 0             | count   |
+| J80_GROWN                  | mixed_promoted_groups        | 0             | count   |
+| J80_GROWN                  | rows_in_mixed_promoted_group | 0             | count   |
+| J80_GROWN                  | template_count_min           | 958           | count   |
+| J80_GROWN                  | template_count_max           | 989           | count   |
+| J80_GROWN                  | template_count_spread        | 31            | count   |
+| J80_GROWN                  | moved_share_pct_max          | 10.29         | percent |
+| J80_GROWN                  | moved_share_pct_mean         | 8.023         | percent |
+| J80_GROWN                  | search_rows_scanned          | 61,864        | rows    |
+| J80_GROWN                  | search_scan_amplification    | 1.142         | ratio   |
+| J80_SPEC                   | templates                    | 135           | count   |
+| J80_SPEC                   | rows_per_template_min        | 30            | count   |
+| J80_SPEC                   | rows_per_template_median     | 265           | count   |
+| J80_SPEC                   | rows_per_template_p90        | 881           | count   |
+| J80_SPEC                   | rows_per_template_max        | 71,200        | count   |
+| J80_SPEC                   | null_cell_share_pct          | 14.26         | percent |
+| J80_SPEC                   | columns_widened_to_string    | 0             | count   |
+| J80_SPEC                   | mixed_promoted_groups        | 116           | count   |
+| J80_SPEC                   | rows_in_mixed_promoted_group | 35,603        | count   |
+| J80_SPEC                   | template_count_min           | 125           | count   |
+| J80_SPEC                   | template_count_max           | 136           | count   |
+| J80_SPEC                   | template_count_spread        | 11            | count   |
+| J80_SPEC                   | moved_share_pct_max          | 45.87         | percent |
+| J80_SPEC                   | moved_share_pct_mean         | 37.89         | percent |
+| J80_SPEC                   | search_rows_scanned          | 260,443       | rows    |
+| J80_SPEC                   | search_scan_amplification    | 4.809         | ratio   |
+| PER_EVENT                  | templates                    | 7             | count   |
+| PER_EVENT                  | rows_per_template_min        | 5,912         | count   |
+| PER_EVENT                  | rows_per_template_median     | 5,938         | count   |
+| PER_EVENT                  | rows_per_template_p90        | 164,397       | count   |
+| PER_EVENT                  | rows_per_template_max        | 164,397       | count   |
+| PER_EVENT                  | null_cell_share_pct          | 69.85         | percent |
+| PER_EVENT                  | columns_widened_to_string    | 0             | count   |
+| PER_EVENT                  | mixed_promoted_groups        | 0             | count   |
+| PER_EVENT                  | rows_in_mixed_promoted_group | 0             | count   |
+| PER_EVENT                  | template_count_min           | 7             | count   |
+| PER_EVENT                  | template_count_max           | 7             | count   |
+| PER_EVENT                  | template_count_spread        | 0             | count   |
+| PER_EVENT                  | moved_share_pct_max          | 0             | percent |
+| PER_EVENT                  | moved_share_pct_mean         | 0             | percent |
+| PER_EVENT                  | search_rows_scanned          | 435,603       | rows    |
+| PER_EVENT                  | search_scan_amplification    | 8.043         | ratio   |
+| all                        | keys_with_more_than_one_type | 0             | count   |
+| promote=nothing/NONE       | templates                    | 894           | count   |
+| promote=nothing/NONE       | rows_scanned_event_search    | 35,603        | rows    |
+| promote=nothing/NONE       | rows_scanned_service_search  | 168,736       | rows    |
+| promote=nothing/J80        | templates                    | 135           | count   |
+| promote=nothing/J80        | rows_scanned_event_search    | 35,603        | rows    |
+| promote=nothing/J80        | rows_scanned_service_search  | 168,736       | rows    |
+| promote=event/NONE         | templates                    | 4,931         | count   |
+| promote=event/NONE         | rows_scanned_event_search    | 5,957         | rows    |
+| promote=event/NONE         | rows_scanned_service_search  | 168,736       | rows    |
+| promote=event/J80          | templates                    | 700           | count   |
+| promote=event/J80          | rows_scanned_event_search    | 5,957         | rows    |
+| promote=event/J80          | rows_scanned_service_search  | 168,736       | rows    |
+| promote=event+service/NONE | templates                    | 6,459         | count   |
+| promote=event+service/NONE | rows_scanned_event_search    | 5,957         | rows    |
+| promote=event+service/NONE | rows_scanned_service_search  | 33,932        | rows    |
+| promote=event+service/J80  | templates                    | 1,306         | count   |
+| promote=event+service/J80  | rows_scanned_event_search    | 5,957         | rows    |
+| promote=event+service/J80  | rows_scanned_service_search  | 33,932        | rows    |
+| promote=binary/NONE        | templates                    | 4,931         | count   |
+| promote=binary/NONE        | rows_scanned_event_search    | 5,957         | rows    |
+| promote=binary/NONE        | rows_scanned_service_search  | 168,736       | rows    |
+| promote=binary/J80         | templates                    | 700           | count   |
+| promote=binary/J80         | rows_scanned_event_search    | 5,957         | rows    |
+| promote=binary/J80         | rows_scanned_service_search  | 168,736       | rows    |
+| J80 cap=100                | leftover_rows                | 22,427        | count   |
+| J80 cap=100                | leftover_row_share_pct       | 11.21         | percent |
+| J80 cap=100                | leftover_columns             | 63            | count   |
+| J80 cap=100                | leftover_null_cell_share_pct | 84.18         | percent |
+| J80 cap=500                | leftover_rows                | 2,156         | count   |
+| J80 cap=500                | leftover_row_share_pct       | 1.078         | percent |
+| J80 cap=500                | leftover_columns             | 58            | count   |
+| J80 cap=500                | leftover_null_cell_share_pct | 85.92         | percent |
+| J80 cap=2000               | leftover_rows                | 0             | rows    |
+| verdict                    | best_two_rules               | J70 J80_GROWN | name    |
+
+**Notes**
+
+- 20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost
+- rows scanned divided by rows that match
+- the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous
+- one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column
+- lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target
+- the cap was never reached
+- written to lab/out/04/best_rules.json for script 02 to pick up
+- 20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost
 

@@ -329,9 +329,9 @@ def _overlaps(md, i, ts_col, lo, hi) -> bool:
 # --- merge mappings from script 04 ----------------------------------------------
 
 
-def merge_mappings() -> list:
-    """The best two merge rules from script 04, if it has been run."""
-    d = measure.OUT / "04"
+def merge_mappings(dataset: str) -> list:
+    """The best two merge rules from script 04, if it has been run on this dataset."""
+    d = measure.OUT / "04" / dataset
     best = d / "best_rules.json"
     if not best.exists():
         return []
@@ -391,7 +391,7 @@ def main() -> int:
             "per-template bytes without per-file block rounding",
         )
 
-    for name, mapping in merge_mappings():
+    for name, mapping in merge_mappings(ds.name):
         groups = groups_from_mapping(P, mapping)
         if not groups:
             print(f"  merge rule {name}: mapping does not cover this dataset, skipped")
@@ -406,7 +406,7 @@ def main() -> int:
             layout_shared_day(P, groups, out, DEFAULT_RG, f"sd_{name}"),
             f"{len(groups)} merged templates, from script 04",
         )
-    if not merge_mappings():
+    if not merge_mappings(ds.name):
         print("  script 04 has not run: no merged-template layouts in this table")
 
     body = []

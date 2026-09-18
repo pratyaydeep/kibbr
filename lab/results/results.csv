@@ -1897,3 +1897,552 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,model_col_files,4931,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,model_col_blocks,34557952,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,model_minus_real_pct,0.543,percent,the model's per-template-per-day bytes against the binary's
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,templates,4931,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,rows_per_template_min,4,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,rows_per_template_median,6,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,rows_per_template_p90,13,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,rows_per_template_max,54721,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,null_cell_share_pct,0.0,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,columns_widened_to_string,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,mixed_promoted_groups,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,template_count_min,4931,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,template_count_max,4931,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,template_count_spread,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,moved_share_pct_max,0.0,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,moved_share_pct_mean,0.0,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,search_rows_scanned,54159,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,NONE,search_scan_amplification,1.0,ratio,rows scanned divided by rows that match
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,templates,277,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,rows_per_template_min,30,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,rows_per_template_median,79,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,rows_per_template_p90,333,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,rows_per_template_max,70149,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,null_cell_share_pct,22.5548,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,columns_widened_to_string,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,mixed_promoted_groups,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,template_count_min,268,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,template_count_max,278,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,template_count_spread,10,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,moved_share_pct_max,47.54,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,moved_share_pct_mean,26.6931,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,search_rows_scanned,76651,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J70,search_scan_amplification,1.4153,ratio,rows scanned divided by rows that match
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,templates,700,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,rows_per_template_min,5,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,rows_per_template_median,42,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,rows_per_template_p90,141,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,rows_per_template_max,71200,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,null_cell_share_pct,14.6132,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,columns_widened_to_string,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,mixed_promoted_groups,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,template_count_min,674,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,template_count_max,690,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,template_count_spread,16,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,moved_share_pct_max,45.571,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,moved_share_pct_mean,37.7944,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,search_rows_scanned,118477,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80,search_scan_amplification,2.1876,ratio,rows scanned divided by rows that match
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,templates,2522,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,rows_per_template_min,4,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,rows_per_template_median,10,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,rows_per_template_p90,34,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,rows_per_template_max,54721,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,null_cell_share_pct,1.9433,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,columns_widened_to_string,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,mixed_promoted_groups,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,template_count_min,2487,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,template_count_max,2562,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,template_count_spread,75,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,moved_share_pct_max,4.7475,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,moved_share_pct_mean,4.6914,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,search_rows_scanned,60728,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J90,search_scan_amplification,1.1213,ratio,rows scanned divided by rows that match
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,templates,982,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,rows_per_template_min,1,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,rows_per_template_median,26,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,rows_per_template_p90,75,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,rows_per_template_max,60730,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,null_cell_share_pct,3.6124,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,columns_widened_to_string,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,mixed_promoted_groups,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,template_count_min,958,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,template_count_max,989,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,template_count_spread,31,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,moved_share_pct_max,10.2865,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,moved_share_pct_mean,8.023,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,search_rows_scanned,61864,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_GROWN,search_scan_amplification,1.1423,ratio,rows scanned divided by rows that match
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,templates,135,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,rows_per_template_min,30,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,rows_per_template_median,265,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,rows_per_template_p90,881,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,rows_per_template_max,71200,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,null_cell_share_pct,14.2608,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,columns_widened_to_string,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,mixed_promoted_groups,116,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,rows_in_mixed_promoted_group,35603,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,template_count_min,125,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,template_count_max,136,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,template_count_spread,11,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,moved_share_pct_max,45.8685,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,moved_share_pct_mean,37.8885,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,search_rows_scanned,260443,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80_SPEC,search_scan_amplification,4.8089,ratio,rows scanned divided by rows that match
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,templates,7,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,rows_per_template_min,5912,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,rows_per_template_median,5938,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,rows_per_template_p90,164397,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,rows_per_template_max,164397,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,null_cell_share_pct,69.853,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,columns_widened_to_string,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,mixed_promoted_groups,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,template_count_min,7,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,template_count_max,7,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,template_count_spread,0,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,moved_share_pct_max,0.0,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,moved_share_pct_mean,0.0,percent,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,search_rows_scanned,435603,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,PER_EVENT,search_scan_amplification,8.043,ratio,rows scanned divided by rows that match
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,all,keys_with_more_than_one_type,0,count,"the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=nothing/NONE,templates,894,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=nothing/NONE,rows_scanned_event_search,35603,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=nothing/NONE,rows_scanned_service_search,168736,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=nothing/J80,templates,135,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=nothing/J80,rows_scanned_event_search,35603,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=nothing/J80,rows_scanned_service_search,168736,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event/NONE,templates,4931,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event/NONE,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event/NONE,rows_scanned_service_search,168736,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event/J80,templates,700,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event/J80,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event/J80,rows_scanned_service_search,168736,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event+service/NONE,templates,6459,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event+service/NONE,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event+service/NONE,rows_scanned_service_search,33932,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event+service/J80,templates,1306,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event+service/J80,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=event+service/J80,rows_scanned_service_search,33932,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=binary/NONE,templates,4931,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=binary/NONE,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=binary/NONE,rows_scanned_service_search,168736,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=binary/J80,templates,700,count,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=binary/J80,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,promote=binary/J80,rows_scanned_service_search,168736,rows,
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=100,leftover_rows,22427,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=100,leftover_row_share_pct,11.213,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=100,leftover_columns,63,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=100,leftover_null_cell_share_pct,84.178,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=500,leftover_rows,2156,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=500,leftover_row_share_pct,1.078,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=500,leftover_columns,58,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=500,leftover_null_cell_share_pct,85.915,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,J80 cap=2000,leftover_rows,0,rows,the cap was never reached
+2026-09-18T20:49:44+00:00,6f460b9,04_merge_rules,uneven,verdict,best_two_rules,J70 J80_GROWN,name,written to lab/out/04/best_rules.json for script 02 to pick up
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,templates,870,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,rows_per_template_min,3,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,rows_per_template_median,69,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,rows_per_template_p90,545,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,rows_per_template_max,10711,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,null_cell_share_pct,0.0,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,columns_widened_to_string,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,mixed_promoted_groups,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,template_count_min,870,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,template_count_max,870,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,template_count_spread,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,moved_share_pct_max,0.0,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,moved_share_pct_mean,0.0,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,search_rows_scanned,137439,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,NONE,search_scan_amplification,1.0,ratio,rows scanned divided by rows that match
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,templates,68,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,rows_per_template_min,743,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,rows_per_template_median,2668,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,rows_per_template_p90,4353,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,rows_per_template_max,16622,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,null_cell_share_pct,16.5551,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,columns_widened_to_string,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,mixed_promoted_groups,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,template_count_min,67,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,template_count_max,67,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,template_count_spread,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,moved_share_pct_max,19.3165,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,moved_share_pct_mean,19.0281,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,search_rows_scanned,181058,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J70,search_scan_amplification,1.3174,ratio,rows scanned divided by rows that match
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,templates,125,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,rows_per_template_min,42,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,rows_per_template_median,1256,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,rows_per_template_p90,2903,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,rows_per_template_max,16616,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,null_cell_share_pct,13.9615,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,columns_widened_to_string,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,mixed_promoted_groups,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,template_count_min,133,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,template_count_max,137,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,template_count_spread,4,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,moved_share_pct_max,25.2315,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,moved_share_pct_mean,23.7915,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,search_rows_scanned,163246,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80,search_scan_amplification,1.1878,ratio,rows scanned divided by rows that match
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,templates,440,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,rows_per_template_min,5,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,rows_per_template_median,281,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,rows_per_template_p90,982,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,rows_per_template_max,10711,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,null_cell_share_pct,4.0317,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,columns_widened_to_string,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,mixed_promoted_groups,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,template_count_min,439,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,template_count_max,457,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,template_count_spread,18,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,moved_share_pct_max,9.572,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,moved_share_pct_mean,9.0222,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,search_rows_scanned,143332,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J90,search_scan_amplification,1.0429,ratio,rows scanned divided by rows that match
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,templates,199,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,rows_per_template_min,38,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,rows_per_template_median,535,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,rows_per_template_p90,2393,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,rows_per_template_max,16616,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,null_cell_share_pct,7.4041,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,columns_widened_to_string,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,mixed_promoted_groups,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,template_count_min,181,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,template_count_max,194,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,template_count_spread,13,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,moved_share_pct_max,19.948,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,moved_share_pct_mean,18.5263,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,search_rows_scanned,151465,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_GROWN,search_scan_amplification,1.1021,ratio,rows scanned divided by rows that match
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,templates,24,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,rows_per_template_min,252,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,rows_per_template_median,9096,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,rows_per_template_p90,16616,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,rows_per_template_max,23299,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,null_cell_share_pct,14.1131,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,columns_widened_to_string,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,mixed_promoted_groups,21,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,rows_in_mixed_promoted_group,166762,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,template_count_min,24,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,template_count_max,28,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,template_count_spread,4,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,moved_share_pct_max,28.001,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,moved_share_pct_mean,21.9002,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,search_rows_scanned,883214,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80_SPEC,search_scan_amplification,6.4262,ratio,rows scanned divided by rows that match
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,templates,7,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,rows_per_template_min,27694,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,rows_per_template_median,27812,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,rows_per_template_p90,33238,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,rows_per_template_max,33238,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,null_cell_share_pct,77.7703,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,columns_widened_to_string,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,mixed_promoted_groups,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,rows_in_mixed_promoted_group,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,template_count_min,7,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,template_count_max,7,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,template_count_spread,0,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,moved_share_pct_max,0.0,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,moved_share_pct_mean,0.0,percent,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,search_rows_scanned,566762,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,PER_EVENT,search_scan_amplification,4.1237,ratio,rows scanned divided by rows that match
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,all,keys_with_more_than_one_type,0,count,"the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=nothing/NONE,templates,150,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=nothing/NONE,rows_scanned_event_search,166762,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=nothing/NONE,rows_scanned_service_search,66464,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=nothing/J80,templates,24,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=nothing/J80,rows_scanned_event_search,166762,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=nothing/J80,rows_scanned_service_search,66464,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event/NONE,templates,870,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event/NONE,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event/NONE,rows_scanned_service_search,66464,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event/J80,templates,125,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event/J80,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event/J80,rows_scanned_service_search,66464,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event+service/NONE,templates,1182,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event+service/NONE,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event+service/NONE,rows_scanned_service_search,13447,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event+service/J80,templates,259,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event+service/J80,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=event+service/J80,rows_scanned_service_search,13447,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=binary/NONE,templates,870,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=binary/NONE,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=binary/NONE,rows_scanned_service_search,66464,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=binary/J80,templates,125,count,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=binary/J80,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,promote=binary/J80,rows_scanned_service_search,66464,rows,
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80 cap=100,leftover_rows,5053,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80 cap=100,leftover_row_share_pct,2.526,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80 cap=100,leftover_columns,38,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80 cap=100,leftover_null_cell_share_pct,69.533,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80 cap=500,leftover_rows,0,rows,the cap was never reached
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,J80 cap=2000,leftover_rows,0,rows,the cap was never reached
+2026-09-18T20:52:19+00:00,6f460b9,04_merge_rules,flat30,verdict,best_two_rules,J70 J80,name,written to lab/out/04/best_rules.json for script 02 to pick up
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,raw NDJSON,bytes,44959683,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,raw NDJSON,disk_blocks,44961792,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,raw NDJSON,files,1,count,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,raw NDJSON,ratio_to_raw_bytes,1.0,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,raw NDJSON,ratio_to_raw_blocks,1.00005,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,raw NDJSON,ratio_to_gzip9,11.06733,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,gzip -9,bytes,4062380,bytes,"C zlib, level 9"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,gzip -9,disk_blocks,4063232,bytes,"C zlib, level 9"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,gzip -9,files,1,count,"C zlib, level 9"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,gzip -9,ratio_to_raw_bytes,0.09036,ratio,"C zlib, level 9"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,gzip -9,ratio_to_raw_blocks,0.09038,ratio,"C zlib, level 9"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,gzip -9,ratio_to_gzip9,1.0,ratio,"C zlib, level 9"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,zstd -19,bytes,2896966,bytes,"C zstd, level 19"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,zstd -19,disk_blocks,3182592,bytes,"C zstd, level 19"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,zstd -19,files,1,count,"C zstd, level 19"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,zstd -19,ratio_to_raw_bytes,0.06443,ratio,"C zstd, level 19"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,zstd -19,ratio_to_raw_blocks,0.07079,ratio,"C zstd, level 19"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,zstd -19,ratio_to_gzip9,0.71312,ratio,"C zstd, level 19"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=1,000",bytes,7777410,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=1,000",disk_blocks,7778304,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=1,000",files,1,count,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=1,000",ratio_to_raw_bytes,0.17299,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=1,000",ratio_to_raw_blocks,0.17301,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=1,000",ratio_to_gzip9,1.9145,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=8,192",bytes,4200957,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=8,192",disk_blocks,4202496,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=8,192",files,1,count,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=8,192",ratio_to_raw_bytes,0.09344,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=8,192",ratio_to_raw_blocks,0.09347,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=8,192",ratio_to_gzip9,1.03411,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=122,880",bytes,3864844,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=122,880",disk_blocks,3866624,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=122,880",files,1,count,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=122,880",ratio_to_raw_bytes,0.08596,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=122,880",ratio_to_raw_blocks,0.086,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"WIDE rg=122,880",ratio_to_gzip9,0.95137,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",bytes,26102869,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",disk_blocks,34848768,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",files,4931,count,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",ratio_to_raw_bytes,0.58058,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",ratio_to_raw_blocks,0.77511,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",ratio_to_gzip9,6.42551,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",bytes,25833908,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",disk_blocks,34570240,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",files,4931,count,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",ratio_to_raw_bytes,0.5746,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",ratio_to_raw_blocks,0.76892,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",ratio_to_gzip9,6.3593,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",bytes,25800510,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",disk_blocks,34533376,bytes,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",files,4931,count,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",ratio_to_raw_bytes,0.57386,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",ratio_to_raw_blocks,0.7681,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",ratio_to_gzip9,6.35108,ratio,
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",bytes,25833908,bytes,what TrieDB does today
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",disk_blocks,34570240,bytes,what TrieDB does today
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",files,4931,count,what TrieDB does today
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_bytes,0.5746,ratio,what TrieDB does today
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_blocks,0.76892,ratio,what TrieDB does today
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",ratio_to_gzip9,6.3593,ratio,what TrieDB does today
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",bytes,26221253,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",disk_blocks,26628096,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",ratio_to_raw_bytes,0.58322,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",ratio_to_raw_blocks,0.59227,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",ratio_to_gzip9,6.45465,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",bytes,25952292,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",disk_blocks,26083328,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",ratio_to_raw_bytes,0.57723,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",ratio_to_raw_blocks,0.58015,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",ratio_to_gzip9,6.38845,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",bytes,25918894,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",disk_blocks,26120192,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",ratio_to_raw_bytes,0.57649,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",ratio_to_raw_blocks,0.58097,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",ratio_to_gzip9,6.38022,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J70] rg=8,192",bytes,4364362,bytes,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J70] rg=8,192",disk_blocks,5021696,bytes,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J70] rg=8,192",files,277,count,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J70] rg=8,192",ratio_to_raw_bytes,0.09707,ratio,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J70] rg=8,192",ratio_to_raw_blocks,0.11169,ratio,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J70] rg=8,192",ratio_to_gzip9,1.07434,ratio,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J70] rg=8,192",bytes,4371050,bytes,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J70] rg=8,192",disk_blocks,5246976,bytes,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J70] rg=8,192",files,2,count,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J70] rg=8,192",ratio_to_raw_bytes,0.09722,ratio,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J70] rg=8,192",ratio_to_raw_blocks,0.1167,ratio,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J70] rg=8,192",ratio_to_gzip9,1.07598,ratio,"277 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J80_GROWN] rg=8,192",bytes,7175259,bytes,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J80_GROWN] rg=8,192",disk_blocks,9003008,bytes,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J80_GROWN] rg=8,192",files,982,count,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J80_GROWN] rg=8,192",ratio_to_raw_bytes,0.15959,ratio,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J80_GROWN] rg=8,192",ratio_to_raw_blocks,0.20025,ratio,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"PER_TEMPLATE[J80_GROWN] rg=8,192",ratio_to_gzip9,1.76627,ratio,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J80_GROWN] rg=8,192",bytes,7198867,bytes,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J80_GROWN] rg=8,192",disk_blocks,7462912,bytes,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J80_GROWN] rg=8,192",files,2,count,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J80_GROWN] rg=8,192",ratio_to_raw_bytes,0.16012,ratio,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J80_GROWN] rg=8,192",ratio_to_raw_blocks,0.16599,ratio,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,"SHARED_DAY[J80_GROWN] rg=8,192",ratio_to_gzip9,1.77208,ratio,"982 merged templates, from script 04"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,rows,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,row_groups,55,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,file_bytes,179672,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,bytes_read,3368,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,read_share_pct,1.8745,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,matching_rows,201,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=1000,rows_scanned,1000,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,rows,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,row_groups,7,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,file_bytes,123372,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,bytes_read,18979,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,read_share_pct,15.3836,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,matching_rows,201,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=8192,rows_scanned,8192,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,rows,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,row_groups,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,file_bytes,116525,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,bytes_read,116525,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,read_share_pct,100.0,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,matching_rows,201,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,window rg=122880,rows_scanned,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,verdict,per_template_vs_gzip9_bytes,6.3593,ratio,"below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 8.5081 over 4,931 files"
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,verdict,smallest_by_bytes,2896966,bytes,zstd -19
+2026-09-18T20:53:28+00:00,6f460b9,02_split_vs_wide,uneven,verdict,smallest_by_blocks,3182592,bytes,zstd -19
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,raw NDJSON,bytes,46791991,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,raw NDJSON,disk_blocks,46792704,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,raw NDJSON,files,1,count,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,raw NDJSON,ratio_to_raw_bytes,1.0,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,raw NDJSON,ratio_to_raw_blocks,1.00002,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,raw NDJSON,ratio_to_gzip9,4.32098,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,gzip -9,bytes,10829031,bytes,"C zlib, level 9"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,gzip -9,disk_blocks,11796480,bytes,"C zlib, level 9"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,gzip -9,files,1,count,"C zlib, level 9"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,gzip -9,ratio_to_raw_bytes,0.23143,ratio,"C zlib, level 9"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,gzip -9,ratio_to_raw_blocks,0.2521,ratio,"C zlib, level 9"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,gzip -9,ratio_to_gzip9,1.0,ratio,"C zlib, level 9"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,zstd -19,bytes,8282006,bytes,"C zstd, level 19"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,zstd -19,disk_blocks,8421376,bytes,"C zstd, level 19"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,zstd -19,files,1,count,"C zstd, level 19"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,zstd -19,ratio_to_raw_bytes,0.177,ratio,"C zstd, level 19"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,zstd -19,ratio_to_raw_blocks,0.17997,ratio,"C zstd, level 19"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,zstd -19,ratio_to_gzip9,0.7648,ratio,"C zstd, level 19"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=1,000",bytes,12571609,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=1,000",disk_blocks,12574720,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=1,000",files,1,count,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=1,000",ratio_to_raw_bytes,0.26867,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=1,000",ratio_to_raw_blocks,0.26874,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=1,000",ratio_to_gzip9,1.16092,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=8,192",bytes,9694060,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=8,192",disk_blocks,9695232,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=8,192",files,1,count,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=8,192",ratio_to_raw_bytes,0.20717,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=8,192",ratio_to_raw_blocks,0.2072,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=8,192",ratio_to_gzip9,0.89519,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=122,880",bytes,9377098,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=122,880",disk_blocks,9379840,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=122,880",files,1,count,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=122,880",ratio_to_raw_bytes,0.2004,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=122,880",ratio_to_raw_blocks,0.20046,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"WIDE rg=122,880",ratio_to_gzip9,0.86592,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",bytes,12393351,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",disk_blocks,14098432,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",files,870,count,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",ratio_to_raw_bytes,0.26486,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",ratio_to_raw_blocks,0.3013,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",ratio_to_gzip9,1.14446,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",bytes,12355553,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",disk_blocks,14061568,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",files,870,count,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",ratio_to_raw_bytes,0.26405,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",ratio_to_raw_blocks,0.30051,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",ratio_to_gzip9,1.14097,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",bytes,12355563,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",disk_blocks,14061568,bytes,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",files,870,count,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",ratio_to_raw_bytes,0.26405,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",ratio_to_raw_blocks,0.30051,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",ratio_to_gzip9,1.14097,ratio,
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",bytes,85201823,bytes,what TrieDB does today
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",disk_blocks,122359808,bytes,what TrieDB does today
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",files,16694,count,what TrieDB does today
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_bytes,1.82086,ratio,what TrieDB does today
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_blocks,2.61497,ratio,what TrieDB does today
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",ratio_to_gzip9,7.86791,ratio,what TrieDB does today
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",bytes,85608536,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",disk_blocks,85680128,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",files,32,count,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",ratio_to_raw_bytes,1.82956,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",ratio_to_raw_blocks,1.83109,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",ratio_to_gzip9,7.90547,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",bytes,85603119,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",disk_blocks,85676032,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",files,32,count,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",ratio_to_raw_bytes,1.82944,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",ratio_to_raw_blocks,1.831,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",ratio_to_gzip9,7.90497,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",bytes,85603119,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",disk_blocks,85676032,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",files,32,count,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",ratio_to_raw_bytes,1.82944,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",ratio_to_raw_blocks,1.831,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",ratio_to_gzip9,7.90497,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J70] rg=8,192",bytes,8451097,bytes,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J70] rg=8,192",disk_blocks,8564736,bytes,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J70] rg=8,192",files,68,count,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J70] rg=8,192",ratio_to_raw_bytes,0.18061,ratio,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J70] rg=8,192",ratio_to_raw_blocks,0.18304,ratio,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J70] rg=8,192",ratio_to_gzip9,0.78041,ratio,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J70] rg=8,192",bytes,13938154,bytes,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J70] rg=8,192",disk_blocks,14000128,bytes,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J70] rg=8,192",files,32,count,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J70] rg=8,192",ratio_to_raw_bytes,0.29787,ratio,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J70] rg=8,192",ratio_to_raw_blocks,0.2992,ratio,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J70] rg=8,192",ratio_to_gzip9,1.28711,ratio,"68 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J80] rg=8,192",bytes,8587235,bytes,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J80] rg=8,192",disk_blocks,8835072,bytes,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J80] rg=8,192",files,125,count,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J80] rg=8,192",ratio_to_raw_bytes,0.18352,ratio,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J80] rg=8,192",ratio_to_raw_blocks,0.18882,ratio,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"PER_TEMPLATE[J80] rg=8,192",ratio_to_gzip9,0.79298,ratio,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J80] rg=8,192",bytes,18656587,bytes,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J80] rg=8,192",disk_blocks,18714624,bytes,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J80] rg=8,192",files,32,count,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J80] rg=8,192",ratio_to_raw_bytes,0.39871,ratio,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J80] rg=8,192",ratio_to_raw_blocks,0.39995,ratio,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,"SHARED_DAY[J80] rg=8,192",ratio_to_gzip9,1.72283,ratio,"125 merged templates, from script 04"
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,row_groups,11,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,file_bytes,292304,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,bytes_read,27337,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,read_share_pct,9.3522,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,matching_rows,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=1000,rows_scanned,1000,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,row_groups,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,file_bytes,297726,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,bytes_read,224124,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,read_share_pct,75.2786,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,matching_rows,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=8192,rows_scanned,8192,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,row_groups,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,file_bytes,295031,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,bytes_read,295031,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,read_share_pct,100.0,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,matching_rows,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,window rg=122880,rows_scanned,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,verdict,per_template_vs_gzip9_bytes,1.141,ratio,below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.1920 over 870 files
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,verdict,smallest_by_bytes,8282006,bytes,zstd -19
+2026-09-18T20:55:07+00:00,6f460b9,02_split_vs_wide,flat30,verdict,smallest_by_blocks,8421376,bytes,zstd -19
