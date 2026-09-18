@@ -212,6 +212,69 @@ def findings(kept: dict) -> list:
             "range, the difference between a second and nothing."
         )
 
+    # Script 07, where the storage claim meets other people's answers to it.
+    for ds in sorted({r["dataset"] for r in kept.get("07_vs_others", [])}):
+        others = []
+        for system in ("Elasticsearch standard", "Elasticsearch logsdb", "ClickHouse",
+                       "clp-s"):
+            r = _pick(kept, "07_vs_others", ds, system, "ratio_to_raw")
+            if r:
+                others.append((system, float(r["value"])))
+        if not others:
+            continue
+        best_ours = None
+        # The metric name differs by script - 02 distinguishes bytes from blocks and
+        # calls it `ratio_to_raw_bytes`, 05 has only bytes and calls it `ratio_to_raw`.
+        # Looking for one name found only 05 and quietly reported the larger figure as
+        # TrieDB's best.
+        for script, variant, metric in (
+            ("02_split_vs_wide", "WIDE rg=122,880", "ratio_to_raw_bytes"),
+            ("05_encodings", "BEST_PER_CHUNK sorted", "ratio_to_raw"),
+        ):
+            r = _pick(kept, script, ds, variant, metric)
+            if r and (best_ours is None or float(r["value"]) < best_ours[1]):
+                best_ours = (variant, float(r["value"]))
+
+        out.append(
+            f"- **Against other systems on `{ds}`**: "
+            + ", ".join(f"{n} {v:.3f}x of raw" for n, v in others)
+            + (f"; TrieDB's best measured layout is {best_ours[0]} at "
+               f"{best_ours[1]:.3f}x" if best_ours else "")
+            + "."
+        )
+
+        clps = next((v for n, v in others if n == "clp-s"), None)
+        if clps is not None and best_ours is not None:
+            rt = _pick(kept, "07_vs_others", ds, "clp-s", "roundtrip_lines")
+            verified = (
+                f" Its archive was decompressed and counted back to "
+                f"{int(float(rt['value'])):,} lines, so the ratio is not a partial "
+                "compression." if rt else ""
+            )
+            if clps < best_ours[1]:
+                out.append(
+                    f"- **clp-s stores these logs smaller than TrieDB does**: "
+                    f"{clps:.3f}x of raw against {best_ours[1]:.3f}x, on the same "
+                    f"200,000 lines.{verified} Its searches are the slower side of that "
+                    "trade, but on the storage question this lab was built to answer, "
+                    "clp-s wins."
+                )
+            else:
+                out.append(
+                    f"- **TrieDB's best layout is smaller than clp-s**: "
+                    f"{best_ours[1]:.3f}x of raw against {clps:.3f}x.{verified}"
+                )
+
+        note = _pick(kept, "07_vs_others", ds, "all", "at_timestamp_added")
+        if note:
+            out.append(
+                "- **One asymmetry in that comparison**: Elasticsearch and ClickHouse "
+                "each received an added `@timestamp` field, roughly 30 bytes per "
+                "document, because logsdb mode requires one and the dataset carries "
+                "`ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw "
+                "payloads, so their ratios are flattered by that much."
+            )
+
     sl = _pick(kept, "09_template_lookup", "synthetic", "verdict", "scan_superlinearity")
     if sl:
         out.append(

@@ -35,6 +35,9 @@ python       3.12.2
 - **Which durability call matters as much as batching**: a per-record `fsync(2)` reaches 39,898 records/sec on this platform, the same loop with `F_FULLFSYNC` reaches 360 - Darwin's `fsync` stops at the drive cache. Shape only.
 - **WAL batching pays twice**: zstd 3 over batches of 500 lines compresses to 0.114 of raw, against 0.864 at one line per batch.
 - **Grouping a template's row groups together** turns 51 separate byte ranges into 1 for a one-template search - on S3 at 15 ms a range, the difference between a second and nothing.
+- **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; TrieDB's best measured layout is WIDE rg=122,880 at 0.086x.
+- **clp-s stores these logs smaller than TrieDB does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
+- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
 - **Scanning every template for an unpromoted key bends the wrong way**: 100x the templates costs 2.4x more than linear, not the same. A key-to-templates map is flat.
 
 ## Comparison systems (script 07)
