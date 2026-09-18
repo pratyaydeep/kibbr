@@ -24,7 +24,7 @@ python       3.12.2
 ## Findings so far
 
 - **The Python frontend agrees with the binary**: 0 disagreements over 3 datasets. Every template id and inferred type below is the one TrieDB would assign.
-- **The byte model is calibrated on `flat30`**: it predicts +1.10% of the segment bytes the real binary wrote (bound: 10%).
+- **The byte model is calibrated on `flat30`**: it predicts +0.00% of the segment bytes the real binary wrote (bound: 10%).
 - **The byte model is calibrated on `uneven`**: it predicts +0.54% of the segment bytes the real binary wrote (bound: 10%).
 - **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.36x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
 - **`flat30`**: the smallest layout is zstd -19 at 8,282,006 bytes. Per-template Parquet loses to gzip -9 by 1.14x on bytes; what TrieDB does today (one Parquet per template per day) costs 1.82x of raw NDJSON.
@@ -37,6 +37,8 @@ python       3.12.2
 - [02_split_vs_wide - Splitting by template: does it help or hurt compression](#02-split-vs-wide)
 - [03_layout_model - Files, row groups and overhead per layout](#03-layout-model)
 - [04_merge_rules - Which merging rule](#04-merge-rules)
+- [05_encodings - What each encoding saves](#05-encodings)
+- [06_bloom - Is a bloom filter per row group worth its bytes](#06-bloom)
 
 ## 00_frontend_agree
 
@@ -882,19 +884,12 @@ Run 2026-09-18T20:55:07+00:00, git `365bb93`, 363 rows.
 
 _Files, row groups and overhead per layout_
 
-Run 2026-09-18T20:31:25+00:00, git `32baccc`, 429 rows.
+Run 2026-09-18T21:06:43+00:00, git `32baccc`, 353 rows.
 
 ### `03_layout_model` / dataset `flat30`
 
 | variant                        | metric                           |            value | unit    |
 |--------------------------------|----------------------------------|------------------|---------|
-| rate=12 wait=60                | closes_wait                      |  51458           | count   |
-| rate=12 wait=60                | closes_shutdown                  |    112           | count   |
-| rate=12 wait=60                | row_groups                       |  51570           | count   |
-| rate=12 wait=60                | rows_per_rg_median               |      2           | rows    |
-| rate=12 wait=60                | rows_per_rg_p90                  |      8           | rows    |
-| rate=12 wait=60                | backlog_max_lines                |    720           | lines   |
-| rate=12 wait=60                | backlog_median_lines             |    450           | lines   |
 | rate=12 wait=300               | closes_wait                      |  21177           | count   |
 | rate=12 wait=300               | closes_shutdown                  |    135           | count   |
 | rate=12 wait=300               | row_groups                       |  21312           | count   |
@@ -902,90 +897,21 @@ Run 2026-09-18T20:31:25+00:00, git `32baccc`, 429 rows.
 | rate=12 wait=300               | rows_per_rg_p90                  |     23           | rows    |
 | rate=12 wait=300               | backlog_max_lines                |   3597           | lines   |
 | rate=12 wait=300               | backlog_median_lines             |   1905           | lines   |
-| rate=12 wait=900               | closes_wait                      |  17565           | count   |
-| rate=12 wait=900               | closes_shutdown                  |    146           | count   |
-| rate=12 wait=900               | row_groups                       |  17711           | count   |
-| rate=12 wait=900               | rows_per_rg_median               |      3           | rows    |
-| rate=12 wait=900               | rows_per_rg_p90                  |     23           | rows    |
-| rate=12 wait=900               | backlog_max_lines                |  10798           | lines   |
-| rate=12 wait=900               | backlog_median_lines             |   8537           | lines   |
-| rate=120 wait=60               | closes_wait                      |  18105           | count   |
-| rate=120 wait=60               | closes_shutdown                  |    140           | count   |
-| rate=120 wait=60               | row_groups                       |  18245           | count   |
-| rate=120 wait=60               | rows_per_rg_median               |      3           | rows    |
-| rate=120 wait=60               | rows_per_rg_p90                  |     26           | rows    |
-| rate=120 wait=60               | backlog_max_lines                |   7198           | lines   |
-| rate=120 wait=60               | backlog_median_lines             |   5035           | lines   |
-| rate=120 wait=300              | closes_wait                      |  16842           | count   |
-| rate=120 wait=300              | closes_shutdown                  |    148           | count   |
-| rate=120 wait=300              | row_groups                       |  16990           | count   |
-| rate=120 wait=300              | rows_per_rg_median               |      3           | rows    |
-| rate=120 wait=300              | rows_per_rg_p90                  |     18           | rows    |
-| rate=120 wait=300              | backlog_max_lines                |  35999           | lines   |
-| rate=120 wait=300              | backlog_median_lines             |  33598           | lines   |
-| rate=120 wait=900              | closes_wait                      |  13134           | count   |
-| rate=120 wait=900              | closes_shutdown                  |   3560           | count   |
-| rate=120 wait=900              | row_groups                       |  16694           | count   |
-| rate=120 wait=900              | rows_per_rg_median               |      3           | rows    |
-| rate=120 wait=900              | rows_per_rg_p90                  |     16           | rows    |
-| rate=120 wait=900              | backlog_max_lines                | 107999           | lines   |
-| rate=120 wait=900              | backlog_median_lines             |  99911           | lines   |
-| rate=1200 wait=60              | closes_wait                      |  16694           | count   |
-| rate=1200 wait=60              | closes_shutdown                  |    148           | count   |
-| rate=1200 wait=60              | row_groups                       |  16842           | count   |
-| rate=1200 wait=60              | rows_per_rg_median               |      3           | rows    |
-| rate=1200 wait=60              | rows_per_rg_p90                  |     17           | rows    |
-| rate=1200 wait=60              | backlog_max_lines                |  71999           | lines   |
-| rate=1200 wait=60              | backlog_median_lines             |  69579           | lines   |
-| rate=1200 wait=300             | closes_shutdown                  |  16694           | count   |
-| rate=1200 wait=300             | row_groups                       |  16694           | count   |
-| rate=1200 wait=300             | rows_per_rg_median               |      3           | rows    |
-| rate=1200 wait=300             | rows_per_rg_p90                  |     16           | rows    |
-| rate=1200 wait=300             | backlog_max_lines                | 199918           | lines   |
-| rate=1200 wait=300             | backlog_median_lines             |  99911           | lines   |
-| rate=1200 wait=900             | closes_shutdown                  |  16694           | count   |
-| rate=1200 wait=900             | row_groups                       |  16694           | count   |
-| rate=1200 wait=900             | rows_per_rg_median               |      3           | rows    |
-| rate=1200 wait=900             | rows_per_rg_p90                  |     16           | rows    |
-| rate=1200 wait=900             | backlog_max_lines                | 199918           | lines   |
-| rate=1200 wait=900             | backlog_median_lines             |  99911           | lines   |
-| rate=12 wait=900 tick          | closes_tick                      | 192516           | count   |
-| rate=12 wait=900 tick          | closes_shutdown                  |      2           | count   |
-| rate=12 wait=900 tick          | row_groups                       | 192518           | count   |
-| rate=12 wait=900 tick          | rows_per_rg_median               |      1           | rows    |
-| rate=12 wait=900 tick          | rows_per_rg_p90                  |      1           | rows    |
-| rate=12 wait=900 tick          | backlog_max_lines                |      6           | lines   |
-| rate=12 wait=900 tick          | backlog_median_lines             |      3           | lines   |
-| rate=120 wait=900 tick         | closes_tick                      | 150794           | count   |
-| rate=120 wait=900 tick         | closes_shutdown                  |     17           | count   |
-| rate=120 wait=900 tick         | row_groups                       | 150811           | count   |
-| rate=120 wait=900 tick         | rows_per_rg_median               |      1           | rows    |
-| rate=120 wait=900 tick         | rows_per_rg_p90                  |      2           | rows    |
-| rate=120 wait=900 tick         | backlog_max_lines                |     60           | lines   |
-| rate=120 wait=900 tick         | backlog_median_lines             |     30           | lines   |
-| rate=1200 wait=900 tick        | closes_tick                      |  67984           | count   |
-| rate=1200 wait=900 tick        | closes_shutdown                  |     87           | count   |
-| rate=1200 wait=900 tick        | row_groups                       |  68071           | count   |
-| rate=1200 wait=900 tick        | rows_per_rg_median               |      2           | rows    |
-| rate=1200 wait=900 tick        | rows_per_rg_p90                  |      6           | rows    |
-| rate=1200 wait=900 tick        | backlog_max_lines                |    600           | lines   |
-| rate=1200 wait=900 tick        | backlog_median_lines             |    300           | lines   |
-| rate=12 wait=60                | wal_24h_bytes_raw                |      2.7471e+08  | bytes   |
+| rate=12 wait=300 tick          | closes_tick                      | 192516           | count   |
+| rate=12 wait=300 tick          | closes_shutdown                  |      2           | count   |
+| rate=12 wait=300 tick          | row_groups                       | 192518           | count   |
+| rate=12 wait=300 tick          | rows_per_rg_median               |      1           | rows    |
+| rate=12 wait=300 tick          | rows_per_rg_p90                  |      1           | rows    |
+| rate=12 wait=300 tick          | backlog_max_lines                |      6           | lines   |
+| rate=12 wait=300 tick          | backlog_median_lines             |      3           | lines   |
 | rate=12 wait=300               | wal_24h_bytes_raw                |      2.7471e+08  | bytes   |
-| rate=12 wait=900               | wal_24h_bytes_raw                |      2.7471e+08  | bytes   |
-| rate=120 wait=60               | wal_24h_bytes_raw                |      2.7471e+09  | bytes   |
-| rate=120 wait=300              | wal_24h_bytes_raw                |      2.7471e+09  | bytes   |
-| rate=120 wait=900              | wal_24h_bytes_raw                |      2.7471e+09  | bytes   |
-| rate=1200 wait=60              | wal_24h_bytes_raw                |      2.7471e+10  | bytes   |
-| rate=1200 wait=300             | wal_24h_bytes_raw                |      2.7471e+10  | bytes   |
-| rate=1200 wait=900             | wal_24h_bytes_raw                |      2.7471e+10  | bytes   |
 | per_template_day               | files                            |  16694           | count   |
 | per_template_day               | row_groups                       |  21312           | count   |
-| per_template_day               | bytes                            |      3.7878e+07  | bytes   |
-| per_template_day               | overhead_bytes                   |      1.25699e+07 | bytes   |
-| per_template_day               | overhead_share_pct               |     33.19        | percent |
-| per_template_day               | disk_blocks                      |      8.13056e+07 | bytes   |
-| per_template_day               | ratio_to_raw                     |      1.745       | ratio   |
+| per_template_day               | bytes                            |      3.74804e+07 | bytes   |
+| per_template_day               | overhead_bytes                   |      1.25853e+07 | bytes   |
+| per_template_day               | overhead_share_pct               |     33.58        | percent |
+| per_template_day               | disk_blocks                      |      8.11131e+07 | bytes   |
+| per_template_day               | ratio_to_raw                     |      1.741       | ratio   |
 | per_template_day               | one_template_files               |      1           | count   |
 | per_template_day               | one_template_index_bytes         |    360           | bytes   |
 | per_template_day               | one_template_ranges              |      1           | count   |
@@ -994,112 +920,112 @@ Run 2026-09-18T20:31:25+00:00, git `32baccc`, 429 rows.
 | per_template_day               | all_templates_ranges             |    550           | count   |
 | shared_day_limit limit=128.0MB | files                            |     32           | count   |
 | shared_day_limit limit=128.0MB | row_groups                       |  21312           | count   |
-| shared_day_limit limit=128.0MB | bytes                            |      5.22325e+07 | bytes   |
-| shared_day_limit limit=128.0MB | overhead_bytes                   |      2.69244e+07 | bytes   |
-| shared_day_limit limit=128.0MB | overhead_share_pct               |     51.55        | percent |
-| shared_day_limit limit=128.0MB | disk_blocks                      |      5.22977e+07 | bytes   |
-| shared_day_limit limit=128.0MB | ratio_to_raw                     |      1.122       | ratio   |
+| shared_day_limit limit=128.0MB | bytes                            |      5.18349e+07 | bytes   |
+| shared_day_limit limit=128.0MB | overhead_bytes                   |      2.69398e+07 | bytes   |
+| shared_day_limit limit=128.0MB | overhead_share_pct               |     51.97        | percent |
+| shared_day_limit limit=128.0MB | disk_blocks                      |      5.18963e+07 | bytes   |
+| shared_day_limit limit=128.0MB | ratio_to_raw                     |      1.114       | ratio   |
 | shared_day_limit limit=128.0MB | one_template_files               |      1           | count   |
 | shared_day_limit limit=128.0MB | one_template_index_bytes         | 305628           | bytes   |
 | shared_day_limit limit=128.0MB | one_template_ranges              |      2           | count   |
 | shared_day_limit limit=128.0MB | all_templates_files              |      1           | count   |
 | shared_day_limit limit=128.0MB | all_templates_index_bytes        | 305628           | bytes   |
 | shared_day_limit limit=128.0MB | all_templates_ranges             |      1           | count   |
-| shared_day_limit limit=128.0MB | open_file_index_memory_bytes     |      2.69434e+07 | bytes   |
+| shared_day_limit limit=128.0MB | open_file_index_memory_bytes     |      2.715e+07   | bytes   |
 | shared_day_limit limit=512.0MB | files                            |     32           | count   |
 | shared_day_limit limit=512.0MB | row_groups                       |  21312           | count   |
-| shared_day_limit limit=512.0MB | bytes                            |      5.22325e+07 | bytes   |
-| shared_day_limit limit=512.0MB | overhead_bytes                   |      2.69244e+07 | bytes   |
-| shared_day_limit limit=512.0MB | overhead_share_pct               |     51.55        | percent |
-| shared_day_limit limit=512.0MB | disk_blocks                      |      5.22977e+07 | bytes   |
-| shared_day_limit limit=512.0MB | ratio_to_raw                     |      1.122       | ratio   |
+| shared_day_limit limit=512.0MB | bytes                            |      5.18349e+07 | bytes   |
+| shared_day_limit limit=512.0MB | overhead_bytes                   |      2.69398e+07 | bytes   |
+| shared_day_limit limit=512.0MB | overhead_share_pct               |     51.97        | percent |
+| shared_day_limit limit=512.0MB | disk_blocks                      |      5.18963e+07 | bytes   |
+| shared_day_limit limit=512.0MB | ratio_to_raw                     |      1.114       | ratio   |
 | shared_day_limit limit=512.0MB | one_template_files               |      1           | count   |
 | shared_day_limit limit=512.0MB | one_template_index_bytes         | 305628           | bytes   |
 | shared_day_limit limit=512.0MB | one_template_ranges              |      2           | count   |
 | shared_day_limit limit=512.0MB | all_templates_files              |      1           | count   |
 | shared_day_limit limit=512.0MB | all_templates_index_bytes        | 305628           | bytes   |
 | shared_day_limit limit=512.0MB | all_templates_ranges             |      1           | count   |
-| shared_day_limit limit=512.0MB | open_file_index_memory_bytes     |      1.07775e+08 | bytes   |
+| shared_day_limit limit=512.0MB | open_file_index_memory_bytes     |      1.08602e+08 | bytes   |
 | shared_day_limit limit=1.0GB   | files                            |     32           | count   |
 | shared_day_limit limit=1.0GB   | row_groups                       |  21312           | count   |
-| shared_day_limit limit=1.0GB   | bytes                            |      5.22325e+07 | bytes   |
-| shared_day_limit limit=1.0GB   | overhead_bytes                   |      2.69244e+07 | bytes   |
-| shared_day_limit limit=1.0GB   | overhead_share_pct               |     51.55        | percent |
-| shared_day_limit limit=1.0GB   | disk_blocks                      |      5.22977e+07 | bytes   |
-| shared_day_limit limit=1.0GB   | ratio_to_raw                     |      1.122       | ratio   |
+| shared_day_limit limit=1.0GB   | bytes                            |      5.18349e+07 | bytes   |
+| shared_day_limit limit=1.0GB   | overhead_bytes                   |      2.69398e+07 | bytes   |
+| shared_day_limit limit=1.0GB   | overhead_share_pct               |     51.97        | percent |
+| shared_day_limit limit=1.0GB   | disk_blocks                      |      5.18963e+07 | bytes   |
+| shared_day_limit limit=1.0GB   | ratio_to_raw                     |      1.114       | ratio   |
 | shared_day_limit limit=1.0GB   | one_template_files               |      1           | count   |
 | shared_day_limit limit=1.0GB   | one_template_index_bytes         | 305628           | bytes   |
 | shared_day_limit limit=1.0GB   | one_template_ranges              |      2           | count   |
 | shared_day_limit limit=1.0GB   | all_templates_files              |      1           | count   |
 | shared_day_limit limit=1.0GB   | all_templates_index_bytes        | 305628           | bytes   |
 | shared_day_limit limit=1.0GB   | all_templates_ranges             |      1           | count   |
-| shared_day_limit limit=1.0GB   | open_file_index_memory_bytes     |      2.1555e+08  | bytes   |
+| shared_day_limit limit=1.0GB   | open_file_index_memory_bytes     |      2.17203e+08 | bytes   |
 | mod_n n=4                      | files                            |    128           | count   |
 | mod_n n=4                      | row_groups                       |  21312           | count   |
-| mod_n n=4                      | bytes                            |      4.98873e+07 | bytes   |
-| mod_n n=4                      | overhead_bytes                   |      2.45792e+07 | bytes   |
-| mod_n n=4                      | overhead_share_pct               |     49.27        | percent |
-| mod_n n=4                      | disk_blocks                      |      5.01268e+07 | bytes   |
-| mod_n n=4                      | ratio_to_raw                     |      1.076       | ratio   |
+| mod_n n=4                      | bytes                            |      4.94897e+07 | bytes   |
+| mod_n n=4                      | overhead_bytes                   |      2.45946e+07 | bytes   |
+| mod_n n=4                      | overhead_share_pct               |     49.7         | percent |
+| mod_n n=4                      | disk_blocks                      |      4.97746e+07 | bytes   |
+| mod_n n=4                      | ratio_to_raw                     |      1.068       | ratio   |
 | mod_n n=4                      | one_template_files               |      1           | count   |
 | mod_n n=4                      | one_template_index_bytes         |  79800           | bytes   |
 | mod_n n=4                      | one_template_ranges              |      2           | count   |
 | mod_n n=4                      | all_templates_files              |      4           | count   |
 | mod_n n=4                      | all_templates_index_bytes        | 279636           | bytes   |
 | mod_n n=4                      | all_templates_ranges             |      4           | count   |
-| mod_n n=4                      | byte_spread_largest_over_average |      1.265       | ratio   |
+| mod_n n=4                      | byte_spread_largest_over_average |      1.264       | ratio   |
 | mod_n n=8                      | files                            |    256           | count   |
 | mod_n n=8                      | row_groups                       |  21312           | count   |
-| mod_n n=8                      | bytes                            |      4.76281e+07 | bytes   |
-| mod_n n=8                      | overhead_bytes                   |      2.232e+07   | bytes   |
-| mod_n n=8                      | overhead_share_pct               |     46.86        | percent |
-| mod_n n=8                      | disk_blocks                      |      4.8169e+07  | bytes   |
-| mod_n n=8                      | ratio_to_raw                     |      1.034       | ratio   |
+| mod_n n=8                      | bytes                            |      4.72305e+07 | bytes   |
+| mod_n n=8                      | overhead_bytes                   |      2.23354e+07 | bytes   |
+| mod_n n=8                      | overhead_share_pct               |     47.29        | percent |
+| mod_n n=8                      | disk_blocks                      |      4.77389e+07 | bytes   |
+| mod_n n=8                      | ratio_to_raw                     |      1.025       | ratio   |
 | mod_n n=8                      | one_template_files               |      1           | count   |
 | mod_n n=8                      | one_template_index_bytes         |  29874           | bytes   |
 | mod_n n=8                      | one_template_ranges              |      2           | count   |
 | mod_n n=8                      | all_templates_files              |      8           | count   |
 | mod_n n=8                      | all_templates_index_bytes        | 258100           | bytes   |
 | mod_n n=8                      | all_templates_ranges             |      8           | count   |
-| mod_n n=8                      | byte_spread_largest_over_average |      1.528       | ratio   |
+| mod_n n=8                      | byte_spread_largest_over_average |      1.529       | ratio   |
 | least_full n=4                 | files                            |    128           | count   |
 | least_full n=4                 | row_groups                       |  21312           | count   |
-| least_full n=4                 | bytes                            |      5.11718e+07 | bytes   |
-| least_full n=4                 | overhead_bytes                   |      2.58637e+07 | bytes   |
-| least_full n=4                 | overhead_share_pct               |     50.54        | percent |
-| least_full n=4                 | disk_blocks                      |      5.14335e+07 | bytes   |
-| least_full n=4                 | ratio_to_raw                     |      1.104       | ratio   |
+| least_full n=4                 | bytes                            |      5.08285e+07 | bytes   |
+| least_full n=4                 | overhead_bytes                   |      2.59334e+07 | bytes   |
+| least_full n=4                 | overhead_share_pct               |     51.02        | percent |
+| least_full n=4                 | disk_blocks                      |      5.10976e+07 | bytes   |
+| least_full n=4                 | ratio_to_raw                     |      1.097       | ratio   |
 | least_full n=4                 | one_template_files               |      2           | count   |
-| least_full n=4                 | one_template_index_bytes         | 148284           | bytes   |
+| least_full n=4                 | one_template_index_bytes         | 150744           | bytes   |
 | least_full n=4                 | one_template_ranges              |      2           | count   |
 | least_full n=4                 | all_templates_files              |      4           | count   |
-| least_full n=4                 | all_templates_index_bytes        | 295576           | bytes   |
+| least_full n=4                 | all_templates_index_bytes        | 295684           | bytes   |
 | least_full n=4                 | all_templates_ranges             |      4           | count   |
-| least_full n=4                 | byte_spread_largest_over_average |      1.053       | ratio   |
+| least_full n=4                 | byte_spread_largest_over_average |      1.06        | ratio   |
 | least_full n=8                 | files                            |    256           | count   |
 | least_full n=8                 | row_groups                       |  21312           | count   |
-| least_full n=8                 | bytes                            |      5.01936e+07 | bytes   |
-| least_full n=8                 | overhead_bytes                   |      2.48855e+07 | bytes   |
-| least_full n=8                 | overhead_share_pct               |     49.58        | percent |
-| least_full n=8                 | disk_blocks                      |      5.06921e+07 | bytes   |
-| least_full n=8                 | ratio_to_raw                     |      1.088       | ratio   |
-| least_full n=8                 | one_template_files               |      1           | count   |
-| least_full n=8                 | one_template_index_bytes         |  32076           | bytes   |
+| least_full n=8                 | bytes                            |      4.98138e+07 | bytes   |
+| least_full n=8                 | overhead_bytes                   |      2.49187e+07 | bytes   |
+| least_full n=8                 | overhead_share_pct               |     50.02        | percent |
+| least_full n=8                 | disk_blocks                      |      5.03439e+07 | bytes   |
+| least_full n=8                 | ratio_to_raw                     |      1.081       | ratio   |
+| least_full n=8                 | one_template_files               |      2           | count   |
+| least_full n=8                 | one_template_index_bytes         |  71532           | bytes   |
 | least_full n=8                 | one_template_ranges              |      2           | count   |
 | least_full n=8                 | all_templates_files              |      8           | count   |
-| least_full n=8                 | all_templates_index_bytes        | 280458           | bytes   |
+| least_full n=8                 | all_templates_index_bytes        | 284823           | bytes   |
 | least_full n=8                 | all_templates_ranges             |      8           | count   |
-| least_full n=8                 | byte_spread_largest_over_average |      1.095       | ratio   |
+| least_full n=8                 | byte_spread_largest_over_average |      1.113       | ratio   |
 | calibration                    | real_col_bytes                   |      3.60378e+07 | bytes   |
 | calibration                    | real_col_files                   |  16694           | count   |
 | calibration                    | real_col_blocks                  |      7.98188e+07 | bytes   |
 | calibration                    | real_meta_bytes                  |      2.5283e+06  | bytes   |
 | calibration                    | real_meta_blocks                 |      5.8368e+06  | bytes   |
 | calibration                    | real_meta_files                  |    871           | count   |
-| calibration                    | model_col_bytes                  |      3.6436e+07  | bytes   |
+| calibration                    | model_col_bytes                  |      3.60378e+07 | bytes   |
 | calibration                    | model_col_files                  |  16694           | count   |
-| calibration                    | model_col_blocks                 |      8.00236e+07 | bytes   |
-| calibration                    | model_minus_real_pct             |      1.105       | percent |
+| calibration                    | model_col_blocks                 |      7.98392e+07 | bytes   |
+| calibration                    | model_minus_real_pct             |      0           | percent |
 
 ### `03_layout_model` / dataset `uneven`
 
@@ -1331,11 +1257,11 @@ Run 2026-09-18T20:31:25+00:00, git `32baccc`, 429 rows.
 - what TrieDB does today: one segment per leaf per day
 - one day (2024-01-19); the one-template search is template 1055466456870197778
 - one shared file per day, rolled at 128.0MB
-- 54,763 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit
+- 55,183 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit
 - one shared file per day, rolled at 512.0MB
-- 219,055 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit
+- 220,735 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit
 - one shared file per day, rolled at 1.0GB
-- 438,110 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit
+- 441,470 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit
 - 4 files per day, by template mod 4
 - across the N files of one day; 1.0 is perfectly even
 - 8 files per day, by template mod 8
@@ -1666,4 +1592,899 @@ Run 2026-09-18T20:52:19+00:00, git `6f460b9`, 291 rows.
 - the cap was never reached
 - written to lab/out/04/best_rules.json for script 02 to pick up
 - 20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost
+
+## 05_encodings
+
+_What each encoding saves_
+
+Run 2026-09-18T21:07:36+00:00, git `7bb9de5`, 614 rows.
+
+### `05_encodings` / dataset `flat30`
+
+| variant                | metric                        | value              | unit    |
+|------------------------|-------------------------------|--------------------|---------|
+| arrival/Bool           | bits                          | 6,290              | bytes   |
+| arrival/Bool           | bits+zstd3                    | 6,968              | bytes   |
+| arrival/Bool           | const                         | 50,049             | bytes   |
+| arrival/Bool           | const+zstd3                   | 15,001             | bytes   |
+| arrival/Bool           | delta_varint                  | 50,049             | bytes   |
+| arrival/Bool           | delta_varint+zstd3            | 15,001             | bytes   |
+| arrival/Bool           | dict                          | 50,574             | bytes   |
+| arrival/Bool           | dict+zstd3                    | 15,243             | bytes   |
+| arrival/Bool           | ip_bin                        | 50,049             | bytes   |
+| arrival/Bool           | ip_bin+zstd3                  | 15,001             | bytes   |
+| arrival/Bool           | plain                         | 50,049             | bytes   |
+| arrival/Bool           | plain+zstd3                   | 15,001             | bytes   |
+| arrival/Bool           | uuid16                        | 50,049             | bytes   |
+| arrival/Bool           | uuid16+zstd3                  | 15,001             | bytes   |
+| arrival/Bool           | varint                        | 50,049             | bytes   |
+| arrival/Bool           | varint+zstd3                  | 15,001             | bytes   |
+| arrival/Datetime       | bits                          | 3,088,072          | bytes   |
+| arrival/Datetime       | bits+zstd3                    | 2,806,442          | bytes   |
+| arrival/Datetime       | const                         | 3,088,072          | bytes   |
+| arrival/Datetime       | const+zstd3                   | 2,806,442          | bytes   |
+| arrival/Datetime       | delta_varint                  | 3,180,148          | bytes   |
+| arrival/Datetime       | delta_varint+zstd3            | 2,930,476          | bytes   |
+| arrival/Datetime       | dict                          | 3,288,132          | bytes   |
+| arrival/Datetime       | dict+zstd3                    | 3,018,965          | bytes   |
+| arrival/Datetime       | ip_bin                        | 3,088,072          | bytes   |
+| arrival/Datetime       | ip_bin+zstd3                  | 2,806,442          | bytes   |
+| arrival/Datetime       | plain                         | 3,088,072          | bytes   |
+| arrival/Datetime       | plain+zstd3                   | 2,806,442          | bytes   |
+| arrival/Datetime       | uuid16                        | 3,088,072          | bytes   |
+| arrival/Datetime       | uuid16+zstd3                  | 2,806,442          | bytes   |
+| arrival/Datetime       | varint                        | 3,547,920          | bytes   |
+| arrival/Datetime       | varint+zstd3                  | 2,918,497          | bytes   |
+| arrival/Float64        | bits                          | 800,392            | bytes   |
+| arrival/Float64        | bits+zstd3                    | 441,505            | bytes   |
+| arrival/Float64        | const                         | 800,392            | bytes   |
+| arrival/Float64        | const+zstd3                   | 441,505            | bytes   |
+| arrival/Float64        | delta_varint                  | 800,392            | bytes   |
+| arrival/Float64        | delta_varint+zstd3            | 441,505            | bytes   |
+| arrival/Float64        | dict                          | 870,842            | bytes   |
+| arrival/Float64        | dict+zstd3                    | 499,890            | bytes   |
+| arrival/Float64        | ip_bin                        | 800,392            | bytes   |
+| arrival/Float64        | ip_bin+zstd3                  | 441,505            | bytes   |
+| arrival/Float64        | plain                         | 800,392            | bytes   |
+| arrival/Float64        | plain+zstd3                   | 441,505            | bytes   |
+| arrival/Float64        | uuid16                        | 800,392            | bytes   |
+| arrival/Float64        | uuid16+zstd3                  | 441,505            | bytes   |
+| arrival/Float64        | varint                        | 800,392            | bytes   |
+| arrival/Float64        | varint+zstd3                  | 441,505            | bytes   |
+| arrival/Int64          | bits                          | 1,842,016          | bytes   |
+| arrival/Int64          | bits+zstd3                    | 682,919            | bytes   |
+| arrival/Int64          | const                         | 1,842,016          | bytes   |
+| arrival/Int64          | const+zstd3                   | 682,919            | bytes   |
+| arrival/Int64          | delta_varint                  | 583,286            | bytes   |
+| arrival/Int64          | delta_varint+zstd3            | 591,270            | bytes   |
+| arrival/Int64          | dict                          | 2,048,420          | bytes   |
+| arrival/Int64          | dict+zstd3                    | 928,634            | bytes   |
+| arrival/Int64          | ip_bin                        | 1,842,016          | bytes   |
+| arrival/Int64          | ip_bin+zstd3                  | 682,919            | bytes   |
+| arrival/Int64          | plain                         | 1,842,016          | bytes   |
+| arrival/Int64          | plain+zstd3                   | 682,919            | bytes   |
+| arrival/Int64          | uuid16                        | 1,842,016          | bytes   |
+| arrival/Int64          | uuid16+zstd3                  | 682,919            | bytes   |
+| arrival/Int64          | varint                        | 614,695            | bytes   |
+| arrival/Int64          | varint+zstd3                  | 602,402            | bytes   |
+| arrival/Ip             | bits                          | 1,622,899          | bytes   |
+| arrival/Ip             | bits+zstd3                    | 682,612            | bytes   |
+| arrival/Ip             | const                         | 1,622,899          | bytes   |
+| arrival/Ip             | const+zstd3                   | 682,612            | bytes   |
+| arrival/Ip             | delta_varint                  | 1,622,899          | bytes   |
+| arrival/Ip             | delta_varint+zstd3            | 682,612            | bytes   |
+| arrival/Ip             | dict                          | 1,623,017          | bytes   |
+| arrival/Ip             | dict+zstd3                    | 682,669            | bytes   |
+| arrival/Ip             | ip_bin                        | 620,974            | bytes   |
+| arrival/Ip             | ip_bin+zstd3                  | 447,041            | bytes   |
+| arrival/Ip             | plain                         | 1,622,899          | bytes   |
+| arrival/Ip             | plain+zstd3                   | 682,612            | bytes   |
+| arrival/Ip             | uuid16                        | 1,622,899          | bytes   |
+| arrival/Ip             | uuid16+zstd3                  | 682,612            | bytes   |
+| arrival/Ip             | varint                        | 1,622,899          | bytes   |
+| arrival/Ip             | varint+zstd3                  | 682,612            | bytes   |
+| arrival/Null           | bits                          | 6,714              | bytes   |
+| arrival/Null           | bits+zstd3                    | 8,857              | bytes   |
+| arrival/Null           | const                         | 6,714              | bytes   |
+| arrival/Null           | const+zstd3                   | 8,857              | bytes   |
+| arrival/Null           | delta_varint                  | 6,714              | bytes   |
+| arrival/Null           | delta_varint+zstd3            | 8,857              | bytes   |
+| arrival/Null           | dict                          | 6,714              | bytes   |
+| arrival/Null           | dict+zstd3                    | 8,857              | bytes   |
+| arrival/Null           | ip_bin                        | 6,714              | bytes   |
+| arrival/Null           | ip_bin+zstd3                  | 8,857              | bytes   |
+| arrival/Null           | plain                         | 6,714              | bytes   |
+| arrival/Null           | plain+zstd3                   | 8,857              | bytes   |
+| arrival/Null           | uuid16                        | 6,714              | bytes   |
+| arrival/Null           | uuid16+zstd3                  | 8,857              | bytes   |
+| arrival/Null           | varint                        | 6,714              | bytes   |
+| arrival/Null           | varint+zstd3                  | 8,857              | bytes   |
+| arrival/String         | bits                          | 14,167,083         | bytes   |
+| arrival/String         | bits+zstd3                    | 1,804,360          | bytes   |
+| arrival/String         | const                         | 11,599,826         | bytes   |
+| arrival/String         | const+zstd3                   | 1,800,675          | bytes   |
+| arrival/String         | delta_varint                  | 14,167,083         | bytes   |
+| arrival/String         | delta_varint+zstd3            | 1,804,360          | bytes   |
+| arrival/String         | dict                          | 4,015,191          | bytes   |
+| arrival/String         | dict+zstd3                    | 1,371,427          | bytes   |
+| arrival/String         | ip_bin                        | 14,167,083         | bytes   |
+| arrival/String         | ip_bin+zstd3                  | 1,804,360          | bytes   |
+| arrival/String         | plain                         | 14,167,083         | bytes   |
+| arrival/String         | plain+zstd3                   | 1,804,360          | bytes   |
+| arrival/String         | uuid16                        | 14,167,083         | bytes   |
+| arrival/String         | uuid16+zstd3                  | 1,804,360          | bytes   |
+| arrival/String         | varint                        | 14,167,083         | bytes   |
+| arrival/String         | varint+zstd3                  | 1,804,360          | bytes   |
+| arrival/Uuid           | bits                          | 3,324,600          | bytes   |
+| arrival/Uuid           | bits+zstd3                    | 1,741,273          | bytes   |
+| arrival/Uuid           | const                         | 3,324,600          | bytes   |
+| arrival/Uuid           | const+zstd3                   | 1,741,273          | bytes   |
+| arrival/Uuid           | delta_varint                  | 3,324,600          | bytes   |
+| arrival/Uuid           | delta_varint+zstd3            | 1,741,273          | bytes   |
+| arrival/Uuid           | dict                          | 3,324,659          | bytes   |
+| arrival/Uuid           | dict+zstd3                    | 1,741,339          | bytes   |
+| arrival/Uuid           | ip_bin                        | 3,324,600          | bytes   |
+| arrival/Uuid           | ip_bin+zstd3                  | 1,741,273          | bytes   |
+| arrival/Uuid           | plain                         | 3,324,600          | bytes   |
+| arrival/Uuid           | plain+zstd3                   | 1,741,273          | bytes   |
+| arrival/Uuid           | uuid16                        | 1,329,840          | bytes   |
+| arrival/Uuid           | uuid16+zstd3                  | 1,336,256          | bytes   |
+| arrival/Uuid           | varint                        | 3,324,600          | bytes   |
+| arrival/Uuid           | varint+zstd3                  | 1,741,273          | bytes   |
+| sorted/Bool            | bits                          | 6,290              | bytes   |
+| sorted/Bool            | bits+zstd3                    | 1,641              | bytes   |
+| sorted/Bool            | const                         | 50,049             | bytes   |
+| sorted/Bool            | const+zstd3                   | 1,666              | bytes   |
+| sorted/Bool            | delta_varint                  | 50,049             | bytes   |
+| sorted/Bool            | delta_varint+zstd3            | 1,666              | bytes   |
+| sorted/Bool            | dict                          | 50,574             | bytes   |
+| sorted/Bool            | dict+zstd3                    | 2,116              | bytes   |
+| sorted/Bool            | ip_bin                        | 50,049             | bytes   |
+| sorted/Bool            | ip_bin+zstd3                  | 1,666              | bytes   |
+| sorted/Bool            | plain                         | 50,049             | bytes   |
+| sorted/Bool            | plain+zstd3                   | 1,666              | bytes   |
+| sorted/Bool            | uuid16                        | 50,049             | bytes   |
+| sorted/Bool            | uuid16+zstd3                  | 1,666              | bytes   |
+| sorted/Bool            | varint                        | 50,049             | bytes   |
+| sorted/Bool            | varint+zstd3                  | 1,666              | bytes   |
+| sorted/Datetime        | bits                          | 3,088,072          | bytes   |
+| sorted/Datetime        | bits+zstd3                    | 2,806,248          | bytes   |
+| sorted/Datetime        | const                         | 3,088,072          | bytes   |
+| sorted/Datetime        | const+zstd3                   | 2,806,248          | bytes   |
+| sorted/Datetime        | delta_varint                  | 3,178,537          | bytes   |
+| sorted/Datetime        | delta_varint+zstd3            | 2,929,654          | bytes   |
+| sorted/Datetime        | dict                          | 3,288,132          | bytes   |
+| sorted/Datetime        | dict+zstd3                    | 3,018,768          | bytes   |
+| sorted/Datetime        | ip_bin                        | 3,088,072          | bytes   |
+| sorted/Datetime        | ip_bin+zstd3                  | 2,806,248          | bytes   |
+| sorted/Datetime        | plain                         | 3,088,072          | bytes   |
+| sorted/Datetime        | plain+zstd3                   | 2,806,248          | bytes   |
+| sorted/Datetime        | uuid16                        | 3,088,072          | bytes   |
+| sorted/Datetime        | uuid16+zstd3                  | 2,806,248          | bytes   |
+| sorted/Datetime        | varint                        | 3,547,920          | bytes   |
+| sorted/Datetime        | varint+zstd3                  | 2,918,775          | bytes   |
+| sorted/Float64         | bits                          | 800,392            | bytes   |
+| sorted/Float64         | bits+zstd3                    | 439,998            | bytes   |
+| sorted/Float64         | const                         | 800,392            | bytes   |
+| sorted/Float64         | const+zstd3                   | 439,998            | bytes   |
+| sorted/Float64         | delta_varint                  | 800,392            | bytes   |
+| sorted/Float64         | delta_varint+zstd3            | 439,998            | bytes   |
+| sorted/Float64         | dict                          | 870,842            | bytes   |
+| sorted/Float64         | dict+zstd3                    | 498,304            | bytes   |
+| sorted/Float64         | ip_bin                        | 800,392            | bytes   |
+| sorted/Float64         | ip_bin+zstd3                  | 439,998            | bytes   |
+| sorted/Float64         | plain                         | 800,392            | bytes   |
+| sorted/Float64         | plain+zstd3                   | 439,998            | bytes   |
+| sorted/Float64         | uuid16                        | 800,392            | bytes   |
+| sorted/Float64         | uuid16+zstd3                  | 439,998            | bytes   |
+| sorted/Float64         | varint                        | 800,392            | bytes   |
+| sorted/Float64         | varint+zstd3                  | 439,998            | bytes   |
+| sorted/Int64           | bits                          | 1,842,016          | bytes   |
+| sorted/Int64           | bits+zstd3                    | 679,937            | bytes   |
+| sorted/Int64           | const                         | 1,842,016          | bytes   |
+| sorted/Int64           | const+zstd3                   | 679,937            | bytes   |
+| sorted/Int64           | delta_varint                  | 572,499            | bytes   |
+| sorted/Int64           | delta_varint+zstd3            | 569,882            | bytes   |
+| sorted/Int64           | dict                          | 2,048,420          | bytes   |
+| sorted/Int64           | dict+zstd3                    | 927,413            | bytes   |
+| sorted/Int64           | ip_bin                        | 1,842,016          | bytes   |
+| sorted/Int64           | ip_bin+zstd3                  | 679,937            | bytes   |
+| sorted/Int64           | plain                         | 1,842,016          | bytes   |
+| sorted/Int64           | plain+zstd3                   | 679,937            | bytes   |
+| sorted/Int64           | uuid16                        | 1,842,016          | bytes   |
+| sorted/Int64           | uuid16+zstd3                  | 679,937            | bytes   |
+| sorted/Int64           | varint                        | 614,695            | bytes   |
+| sorted/Int64           | varint+zstd3                  | 602,500            | bytes   |
+| sorted/Ip              | bits                          | 1,622,899          | bytes   |
+| sorted/Ip              | bits+zstd3                    | 682,455            | bytes   |
+| sorted/Ip              | const                         | 1,622,899          | bytes   |
+| sorted/Ip              | const+zstd3                   | 682,455            | bytes   |
+| sorted/Ip              | delta_varint                  | 1,622,899          | bytes   |
+| sorted/Ip              | delta_varint+zstd3            | 682,455            | bytes   |
+| sorted/Ip              | dict                          | 1,623,017          | bytes   |
+| sorted/Ip              | dict+zstd3                    | 682,500            | bytes   |
+| sorted/Ip              | ip_bin                        | 620,974            | bytes   |
+| sorted/Ip              | ip_bin+zstd3                  | 447,087            | bytes   |
+| sorted/Ip              | plain                         | 1,622,899          | bytes   |
+| sorted/Ip              | plain+zstd3                   | 682,455            | bytes   |
+| sorted/Ip              | uuid16                        | 1,622,899          | bytes   |
+| sorted/Ip              | uuid16+zstd3                  | 682,455            | bytes   |
+| sorted/Ip              | varint                        | 1,622,899          | bytes   |
+| sorted/Ip              | varint+zstd3                  | 682,455            | bytes   |
+| sorted/Null            | bits                          | 6,714              | bytes   |
+| sorted/Null            | bits+zstd3                    | 8,857              | bytes   |
+| sorted/Null            | const                         | 6,714              | bytes   |
+| sorted/Null            | const+zstd3                   | 8,857              | bytes   |
+| sorted/Null            | delta_varint                  | 6,714              | bytes   |
+| sorted/Null            | delta_varint+zstd3            | 8,857              | bytes   |
+| sorted/Null            | dict                          | 6,714              | bytes   |
+| sorted/Null            | dict+zstd3                    | 8,857              | bytes   |
+| sorted/Null            | ip_bin                        | 6,714              | bytes   |
+| sorted/Null            | ip_bin+zstd3                  | 8,857              | bytes   |
+| sorted/Null            | plain                         | 6,714              | bytes   |
+| sorted/Null            | plain+zstd3                   | 8,857              | bytes   |
+| sorted/Null            | uuid16                        | 6,714              | bytes   |
+| sorted/Null            | uuid16+zstd3                  | 8,857              | bytes   |
+| sorted/Null            | varint                        | 6,714              | bytes   |
+| sorted/Null            | varint+zstd3                  | 8,857              | bytes   |
+| sorted/String          | bits                          | 14,167,083         | bytes   |
+| sorted/String          | bits+zstd3                    | 1,330,359          | bytes   |
+| sorted/String          | const                         | 11,599,826         | bytes   |
+| sorted/String          | const+zstd3                   | 1,326,674          | bytes   |
+| sorted/String          | delta_varint                  | 14,167,083         | bytes   |
+| sorted/String          | delta_varint+zstd3            | 1,330,359          | bytes   |
+| sorted/String          | dict                          | 4,015,191          | bytes   |
+| sorted/String          | dict+zstd3                    | 1,231,340          | bytes   |
+| sorted/String          | ip_bin                        | 14,167,083         | bytes   |
+| sorted/String          | ip_bin+zstd3                  | 1,330,359          | bytes   |
+| sorted/String          | plain                         | 14,167,083         | bytes   |
+| sorted/String          | plain+zstd3                   | 1,330,359          | bytes   |
+| sorted/String          | uuid16                        | 14,167,083         | bytes   |
+| sorted/String          | uuid16+zstd3                  | 1,330,359          | bytes   |
+| sorted/String          | varint                        | 14,167,083         | bytes   |
+| sorted/String          | varint+zstd3                  | 1,330,359          | bytes   |
+| sorted/Uuid            | bits                          | 3,324,600          | bytes   |
+| sorted/Uuid            | bits+zstd3                    | 1,741,329          | bytes   |
+| sorted/Uuid            | const                         | 3,324,600          | bytes   |
+| sorted/Uuid            | const+zstd3                   | 1,741,329          | bytes   |
+| sorted/Uuid            | delta_varint                  | 3,324,600          | bytes   |
+| sorted/Uuid            | delta_varint+zstd3            | 1,741,329          | bytes   |
+| sorted/Uuid            | dict                          | 3,324,659          | bytes   |
+| sorted/Uuid            | dict+zstd3                    | 1,741,396          | bytes   |
+| sorted/Uuid            | ip_bin                        | 3,324,600          | bytes   |
+| sorted/Uuid            | ip_bin+zstd3                  | 1,741,329          | bytes   |
+| sorted/Uuid            | plain                         | 3,324,600          | bytes   |
+| sorted/Uuid            | plain+zstd3                   | 1,741,329          | bytes   |
+| sorted/Uuid            | uuid16                        | 1,329,840          | bytes   |
+| sorted/Uuid            | uuid16+zstd3                  | 1,336,256          | bytes   |
+| sorted/Uuid            | varint                        | 3,324,600          | bytes   |
+| sorted/Uuid            | varint+zstd3                  | 1,741,329          | bytes   |
+| coverage/plain         | applies_to_pct_of_plain_bytes | 100                | percent |
+| coverage/const         | applies_to_pct_of_plain_bytes | 10.38              | percent |
+| coverage/dict          | applies_to_pct_of_plain_bytes | 60.54              | percent |
+| coverage/delta_varint  | applies_to_pct_of_plain_bytes | 19.8               | percent |
+| coverage/varint        | applies_to_pct_of_plain_bytes | 19.8               | percent |
+| coverage/bits          | applies_to_pct_of_plain_bytes | 0.2                | percent |
+| coverage/uuid16        | applies_to_pct_of_plain_bytes | 13.35              | percent |
+| coverage/ip_bin        | applies_to_pct_of_plain_bytes | 6.52               | percent |
+| zstd level 1           | bytes                         | 8,819,429          | bytes   |
+| zstd level 1           | compress_MBps                 | 693.5              | MB/s    |
+| zstd level 3           | bytes                         | 8,163,020          | bytes   |
+| zstd level 3           | compress_MBps                 | 385.2              | MB/s    |
+| zstd level 9           | bytes                         | 7,609,358          | bytes   |
+| zstd level 9           | compress_MBps                 | 85.1               | MB/s    |
+| zstd level 19          | bytes                         | 7,114,711          | bytes   |
+| zstd level 19          | compress_MBps                 | 3.54               | MB/s    |
+| wordlist per_chunk     | bytes                         | 15,227,549         | bytes   |
+| wordlist per_file      | bytes                         | 15,217,492         | bytes   |
+| column:event           | plain_bytes                   | 2,583,961          | bytes   |
+| column:event           | best_encoding                 | const              | name    |
+| column:ext1.label      | plain_bytes                   | 1,699,540          | bytes   |
+| column:ext1.label      | best_encoding                 | dict+zstd3         | name    |
+| column:request_id      | plain_bytes                   | 1,339,000          | bytes   |
+| column:request_id      | best_encoding                 | uuid16             | name    |
+| column:customer.id     | plain_bytes                   | 1,320,720          | bytes   |
+| column:customer.id     | best_encoding                 | uuid16             | name    |
+| column:client.ip       | plain_bytes                   | 1,155,922          | bytes   |
+| column:client.ip       | best_encoding                 | ip_bin+zstd3       | name    |
+| column:user.email      | plain_bytes                   | 967,137            | bytes   |
+| column:user.email      | best_encoding                 | plain+zstd3        | name    |
+| column:customer.email  | plain_bytes                   | 953,550            | bytes   |
+| column:customer.email  | best_encoding                 | plain+zstd3        | name    |
+| column:ts              | plain_bytes                   | 934,000            | bytes   |
+| column:ts              | best_encoding                 | delta_varint+zstd3 | name    |
+| column:reason          | plain_bytes                   | 892,342            | bytes   |
+| column:reason          | best_encoding                 | dict+zstd3         | name    |
+| column:level           | plain_bytes                   | 859,553            | bytes   |
+| column:level           | best_encoding                 | dict+zstd3         | name    |
+| column:event           | clp_split_bytes               | 16,848             | bytes   |
+| column:ext1.label      | clp_split_bytes               | 147,787            | bytes   |
+| column:user.email      | clp_split_bytes               | 199,543            | bytes   |
+| column:customer.email  | clp_split_bytes               | 136,207            | bytes   |
+| column:reason          | clp_split_bytes               | 52,895             | bytes   |
+| BEST_PER_CHUNK arrival | bytes                         | 6,870,373          | bytes   |
+| BEST_PER_CHUNK arrival | ratio_to_raw                  | 0.1475             | ratio   |
+| BEST_PER_CHUNK arrival | ratio_to_gzip9                | 0.6344             | ratio   |
+| BEST_PER_CHUNK sorted  | bytes                         | 6,696,927          | bytes   |
+| BEST_PER_CHUNK sorted  | ratio_to_raw                  | 0.1437             | ratio   |
+| BEST_PER_CHUNK sorted  | ratio_to_gzip9                | 0.6184             | ratio   |
+| plain                  | bytes                         | 24,901,825         | bytes   |
+| verdict                | sort_saving_pct               | 2.525              | percent |
+
+### `05_encodings` / dataset `uneven`
+
+| variant                 | metric                        | value              | unit    |
+|-------------------------|-------------------------------|--------------------|---------|
+| arrival/Bool            | bits                          | 20,745             | bytes   |
+| arrival/Bool            | bits+zstd3                    | 19,673             | bytes   |
+| arrival/Bool            | const                         | 163,381            | bytes   |
+| arrival/Bool            | const+zstd3                   | 32,361             | bytes   |
+| arrival/Bool            | delta_varint                  | 163,390            | bytes   |
+| arrival/Bool            | delta_varint+zstd3            | 32,370             | bytes   |
+| arrival/Bool            | dict                          | 170,217            | bytes   |
+| arrival/Bool            | dict+zstd3                    | 38,922             | bytes   |
+| arrival/Bool            | ip_bin                        | 163,390            | bytes   |
+| arrival/Bool            | ip_bin+zstd3                  | 32,370             | bytes   |
+| arrival/Bool            | plain                         | 163,390            | bytes   |
+| arrival/Bool            | plain+zstd3                   | 32,370             | bytes   |
+| arrival/Bool            | uuid16                        | 163,390            | bytes   |
+| arrival/Bool            | uuid16+zstd3                  | 32,370             | bytes   |
+| arrival/Bool            | varint                        | 163,390            | bytes   |
+| arrival/Bool            | varint+zstd3                  | 32,370             | bytes   |
+| arrival/Datetime        | bits                          | 3,995,136          | bytes   |
+| arrival/Datetime        | bits+zstd3                    | 1,256,972          | bytes   |
+| arrival/Datetime        | const                         | 3,985,776          | bytes   |
+| arrival/Datetime        | const+zstd3                   | 1,256,036          | bytes   |
+| arrival/Datetime        | delta_varint                  | 1,528,251          | bytes   |
+| arrival/Datetime        | delta_varint+zstd3            | 1,264,473          | bytes   |
+| arrival/Datetime        | dict                          | 1,991,927          | bytes   |
+| arrival/Datetime        | dict+zstd3                    | 1,394,302          | bytes   |
+| arrival/Datetime        | ip_bin                        | 3,995,136          | bytes   |
+| arrival/Datetime        | ip_bin+zstd3                  | 1,256,972          | bytes   |
+| arrival/Datetime        | plain                         | 3,995,136          | bytes   |
+| arrival/Datetime        | plain+zstd3                   | 1,256,972          | bytes   |
+| arrival/Datetime        | uuid16                        | 3,995,136          | bytes   |
+| arrival/Datetime        | uuid16+zstd3                  | 1,256,972          | bytes   |
+| arrival/Datetime        | varint                        | 4,571,189          | bytes   |
+| arrival/Datetime        | varint+zstd3                  | 1,378,973          | bytes   |
+| arrival/Float64         | bits                          | 148,280            | bytes   |
+| arrival/Float64         | bits+zstd3                    | 162,295            | bytes   |
+| arrival/Float64         | const                         | 147,540            | bytes   |
+| arrival/Float64         | const+zstd3                   | 162,209            | bytes   |
+| arrival/Float64         | delta_varint                  | 148,280            | bytes   |
+| arrival/Float64         | delta_varint+zstd3            | 162,295            | bytes   |
+| arrival/Float64         | dict                          | 148,708            | bytes   |
+| arrival/Float64         | dict+zstd3                    | 164,114            | bytes   |
+| arrival/Float64         | ip_bin                        | 148,280            | bytes   |
+| arrival/Float64         | ip_bin+zstd3                  | 162,295            | bytes   |
+| arrival/Float64         | plain                         | 148,280            | bytes   |
+| arrival/Float64         | plain+zstd3                   | 162,295            | bytes   |
+| arrival/Float64         | uuid16                        | 148,280            | bytes   |
+| arrival/Float64         | uuid16+zstd3                  | 162,295            | bytes   |
+| arrival/Float64         | varint                        | 148,280            | bytes   |
+| arrival/Float64         | varint+zstd3                  | 162,295            | bytes   |
+| arrival/Int64           | bits                          | 2,952,104          | bytes   |
+| arrival/Int64           | bits+zstd3                    | 475,467            | bytes   |
+| arrival/Int64           | const                         | 2,948,524          | bytes   |
+| arrival/Int64           | const+zstd3                   | 475,631            | bytes   |
+| arrival/Int64           | delta_varint                  | 554,600            | bytes   |
+| arrival/Int64           | delta_varint+zstd3            | 375,590            | bytes   |
+| arrival/Int64           | dict                          | 1,330,883          | bytes   |
+| arrival/Int64           | dict+zstd3                    | 584,086            | bytes   |
+| arrival/Int64           | ip_bin                        | 2,952,104          | bytes   |
+| arrival/Int64           | ip_bin+zstd3                  | 475,467            | bytes   |
+| arrival/Int64           | plain                         | 2,952,104          | bytes   |
+| arrival/Int64           | plain+zstd3                   | 475,467            | bytes   |
+| arrival/Int64           | uuid16                        | 2,952,104          | bytes   |
+| arrival/Int64           | uuid16+zstd3                  | 475,467            | bytes   |
+| arrival/Int64           | varint                        | 1,400,951          | bytes   |
+| arrival/Int64           | varint+zstd3                  | 364,155            | bytes   |
+| arrival/Ip              | bits                          | 568,510            | bytes   |
+| arrival/Ip              | bits+zstd3                    | 392,448            | bytes   |
+| arrival/Ip              | const                         | 555,067            | bytes   |
+| arrival/Ip              | const+zstd3                   | 391,819            | bytes   |
+| arrival/Ip              | delta_varint                  | 568,510            | bytes   |
+| arrival/Ip              | delta_varint+zstd3            | 392,448            | bytes   |
+| arrival/Ip              | dict                          | 546,190            | bytes   |
+| arrival/Ip              | dict+zstd3                    | 395,986            | bytes   |
+| arrival/Ip              | ip_bin                        | 243,571            | bytes   |
+| arrival/Ip              | ip_bin+zstd3                  | 230,835            | bytes   |
+| arrival/Ip              | plain                         | 568,510            | bytes   |
+| arrival/Ip              | plain+zstd3                   | 392,448            | bytes   |
+| arrival/Ip              | uuid16                        | 568,510            | bytes   |
+| arrival/Ip              | uuid16+zstd3                  | 392,448            | bytes   |
+| arrival/Ip              | varint                        | 568,510            | bytes   |
+| arrival/Ip              | varint+zstd3                  | 392,448            | bytes   |
+| arrival/Null            | bits                          | 3,220              | bytes   |
+| arrival/Null            | bits+zstd3                    | 30,373             | bytes   |
+| arrival/Null            | const                         | 3,220              | bytes   |
+| arrival/Null            | const+zstd3                   | 30,373             | bytes   |
+| arrival/Null            | delta_varint                  | 3,220              | bytes   |
+| arrival/Null            | delta_varint+zstd3            | 30,373             | bytes   |
+| arrival/Null            | dict                          | 3,220              | bytes   |
+| arrival/Null            | dict+zstd3                    | 30,373             | bytes   |
+| arrival/Null            | ip_bin                        | 3,220              | bytes   |
+| arrival/Null            | ip_bin+zstd3                  | 30,373             | bytes   |
+| arrival/Null            | plain                         | 3,220              | bytes   |
+| arrival/Null            | plain+zstd3                   | 30,373             | bytes   |
+| arrival/Null            | uuid16                        | 3,220              | bytes   |
+| arrival/Null            | uuid16+zstd3                  | 30,373             | bytes   |
+| arrival/Null            | varint                        | 3,220              | bytes   |
+| arrival/Null            | varint+zstd3                  | 30,373             | bytes   |
+| arrival/String          | bits                          | 11,635,444         | bytes   |
+| arrival/String          | bits+zstd3                    | 2,584,306          | bytes   |
+| arrival/String          | const                         | 11,131,140         | bytes   |
+| arrival/String          | const+zstd3                   | 2,568,564          | bytes   |
+| arrival/String          | delta_varint                  | 11,635,444         | bytes   |
+| arrival/String          | delta_varint+zstd3            | 2,584,306          | bytes   |
+| arrival/String          | dict                          | 3,123,115          | bytes   |
+| arrival/String          | dict+zstd3                    | 2,524,106          | bytes   |
+| arrival/String          | ip_bin                        | 11,635,444         | bytes   |
+| arrival/String          | ip_bin+zstd3                  | 2,584,306          | bytes   |
+| arrival/String          | plain                         | 11,635,444         | bytes   |
+| arrival/String          | plain+zstd3                   | 2,584,306          | bytes   |
+| arrival/String          | uuid16                        | 11,635,444         | bytes   |
+| arrival/String          | uuid16+zstd3                  | 2,584,306          | bytes   |
+| arrival/String          | varint                        | 11,635,444         | bytes   |
+| arrival/String          | varint+zstd3                  | 2,584,306          | bytes   |
+| arrival/Uuid            | bits                          | 1,116,120          | bytes   |
+| arrival/Uuid            | bits+zstd3                    | 572,545            | bytes   |
+| arrival/Uuid            | const                         | 1,103,244          | bytes   |
+| arrival/Uuid            | const+zstd3                   | 572,103            | bytes   |
+| arrival/Uuid            | delta_varint                  | 1,116,120          | bytes   |
+| arrival/Uuid            | delta_varint+zstd3            | 572,545            | bytes   |
+| arrival/Uuid            | dict                          | 903,739            | bytes   |
+| arrival/Uuid            | dict+zstd3                    | 581,296            | bytes   |
+| arrival/Uuid            | ip_bin                        | 1,116,120          | bytes   |
+| arrival/Uuid            | ip_bin+zstd3                  | 572,545            | bytes   |
+| arrival/Uuid            | plain                         | 1,116,120          | bytes   |
+| arrival/Uuid            | plain+zstd3                   | 572,545            | bytes   |
+| arrival/Uuid            | uuid16                        | 446,448            | bytes   |
+| arrival/Uuid            | uuid16+zstd3                  | 387,331            | bytes   |
+| arrival/Uuid            | varint                        | 1,116,120          | bytes   |
+| arrival/Uuid            | varint+zstd3                  | 572,545            | bytes   |
+| sorted/Bool             | bits                          | 20,745             | bytes   |
+| sorted/Bool             | bits+zstd3                    | 10,659             | bytes   |
+| sorted/Bool             | const                         | 163,381            | bytes   |
+| sorted/Bool             | const+zstd3                   | 17,365             | bytes   |
+| sorted/Bool             | delta_varint                  | 163,390            | bytes   |
+| sorted/Bool             | delta_varint+zstd3            | 17,374             | bytes   |
+| sorted/Bool             | dict                          | 170,217            | bytes   |
+| sorted/Bool             | dict+zstd3                    | 24,067             | bytes   |
+| sorted/Bool             | ip_bin                        | 163,390            | bytes   |
+| sorted/Bool             | ip_bin+zstd3                  | 17,374             | bytes   |
+| sorted/Bool             | plain                         | 163,390            | bytes   |
+| sorted/Bool             | plain+zstd3                   | 17,374             | bytes   |
+| sorted/Bool             | uuid16                        | 163,390            | bytes   |
+| sorted/Bool             | uuid16+zstd3                  | 17,374             | bytes   |
+| sorted/Bool             | varint                        | 163,390            | bytes   |
+| sorted/Bool             | varint+zstd3                  | 17,374             | bytes   |
+| sorted/Datetime         | bits                          | 3,995,136          | bytes   |
+| sorted/Datetime         | bits+zstd3                    | 1,275,768          | bytes   |
+| sorted/Datetime         | const                         | 3,985,776          | bytes   |
+| sorted/Datetime         | const+zstd3                   | 1,274,832          | bytes   |
+| sorted/Datetime         | delta_varint                  | 1,542,598          | bytes   |
+| sorted/Datetime         | delta_varint+zstd3            | 1,352,112          | bytes   |
+| sorted/Datetime         | dict                          | 1,991,927          | bytes   |
+| sorted/Datetime         | dict+zstd3                    | 1,452,097          | bytes   |
+| sorted/Datetime         | ip_bin                        | 3,995,136          | bytes   |
+| sorted/Datetime         | ip_bin+zstd3                  | 1,275,768          | bytes   |
+| sorted/Datetime         | plain                         | 3,995,136          | bytes   |
+| sorted/Datetime         | plain+zstd3                   | 1,275,768          | bytes   |
+| sorted/Datetime         | uuid16                        | 3,995,136          | bytes   |
+| sorted/Datetime         | uuid16+zstd3                  | 1,275,768          | bytes   |
+| sorted/Datetime         | varint                        | 4,571,189          | bytes   |
+| sorted/Datetime         | varint+zstd3                  | 1,402,214          | bytes   |
+| sorted/Float64          | bits                          | 148,280            | bytes   |
+| sorted/Float64          | bits+zstd3                    | 162,208            | bytes   |
+| sorted/Float64          | const                         | 147,540            | bytes   |
+| sorted/Float64          | const+zstd3                   | 162,122            | bytes   |
+| sorted/Float64          | delta_varint                  | 148,280            | bytes   |
+| sorted/Float64          | delta_varint+zstd3            | 162,208            | bytes   |
+| sorted/Float64          | dict                          | 148,708            | bytes   |
+| sorted/Float64          | dict+zstd3                    | 164,047            | bytes   |
+| sorted/Float64          | ip_bin                        | 148,280            | bytes   |
+| sorted/Float64          | ip_bin+zstd3                  | 162,208            | bytes   |
+| sorted/Float64          | plain                         | 148,280            | bytes   |
+| sorted/Float64          | plain+zstd3                   | 162,208            | bytes   |
+| sorted/Float64          | uuid16                        | 148,280            | bytes   |
+| sorted/Float64          | uuid16+zstd3                  | 162,208            | bytes   |
+| sorted/Float64          | varint                        | 148,280            | bytes   |
+| sorted/Float64          | varint+zstd3                  | 162,208            | bytes   |
+| sorted/Int64            | bits                          | 2,952,104          | bytes   |
+| sorted/Int64            | bits+zstd3                    | 466,635            | bytes   |
+| sorted/Int64            | const                         | 2,948,524          | bytes   |
+| sorted/Int64            | const+zstd3                   | 466,799            | bytes   |
+| sorted/Int64            | delta_varint                  | 543,346            | bytes   |
+| sorted/Int64            | delta_varint+zstd3            | 369,374            | bytes   |
+| sorted/Int64            | dict                          | 1,330,883          | bytes   |
+| sorted/Int64            | dict+zstd3                    | 566,272            | bytes   |
+| sorted/Int64            | ip_bin                        | 2,952,104          | bytes   |
+| sorted/Int64            | ip_bin+zstd3                  | 466,635            | bytes   |
+| sorted/Int64            | plain                         | 2,952,104          | bytes   |
+| sorted/Int64            | plain+zstd3                   | 466,635            | bytes   |
+| sorted/Int64            | uuid16                        | 2,952,104          | bytes   |
+| sorted/Int64            | uuid16+zstd3                  | 466,635            | bytes   |
+| sorted/Int64            | varint                        | 1,400,951          | bytes   |
+| sorted/Int64            | varint+zstd3                  | 357,464            | bytes   |
+| sorted/Ip               | bits                          | 568,510            | bytes   |
+| sorted/Ip               | bits+zstd3                    | 392,571            | bytes   |
+| sorted/Ip               | const                         | 555,067            | bytes   |
+| sorted/Ip               | const+zstd3                   | 391,942            | bytes   |
+| sorted/Ip               | delta_varint                  | 568,510            | bytes   |
+| sorted/Ip               | delta_varint+zstd3            | 392,571            | bytes   |
+| sorted/Ip               | dict                          | 546,190            | bytes   |
+| sorted/Ip               | dict+zstd3                    | 396,118            | bytes   |
+| sorted/Ip               | ip_bin                        | 243,571            | bytes   |
+| sorted/Ip               | ip_bin+zstd3                  | 230,807            | bytes   |
+| sorted/Ip               | plain                         | 568,510            | bytes   |
+| sorted/Ip               | plain+zstd3                   | 392,571            | bytes   |
+| sorted/Ip               | uuid16                        | 568,510            | bytes   |
+| sorted/Ip               | uuid16+zstd3                  | 392,571            | bytes   |
+| sorted/Ip               | varint                        | 568,510            | bytes   |
+| sorted/Ip               | varint+zstd3                  | 392,571            | bytes   |
+| sorted/Null             | bits                          | 3,220              | bytes   |
+| sorted/Null             | bits+zstd3                    | 30,373             | bytes   |
+| sorted/Null             | const                         | 3,220              | bytes   |
+| sorted/Null             | const+zstd3                   | 30,373             | bytes   |
+| sorted/Null             | delta_varint                  | 3,220              | bytes   |
+| sorted/Null             | delta_varint+zstd3            | 30,373             | bytes   |
+| sorted/Null             | dict                          | 3,220              | bytes   |
+| sorted/Null             | dict+zstd3                    | 30,373             | bytes   |
+| sorted/Null             | ip_bin                        | 3,220              | bytes   |
+| sorted/Null             | ip_bin+zstd3                  | 30,373             | bytes   |
+| sorted/Null             | plain                         | 3,220              | bytes   |
+| sorted/Null             | plain+zstd3                   | 30,373             | bytes   |
+| sorted/Null             | uuid16                        | 3,220              | bytes   |
+| sorted/Null             | uuid16+zstd3                  | 30,373             | bytes   |
+| sorted/Null             | varint                        | 3,220              | bytes   |
+| sorted/Null             | varint+zstd3                  | 30,373             | bytes   |
+| sorted/String           | bits                          | 11,635,444         | bytes   |
+| sorted/String           | bits+zstd3                    | 2,398,961          | bytes   |
+| sorted/String           | const                         | 11,131,140         | bytes   |
+| sorted/String           | const+zstd3                   | 2,383,219          | bytes   |
+| sorted/String           | delta_varint                  | 11,635,444         | bytes   |
+| sorted/String           | delta_varint+zstd3            | 2,398,961          | bytes   |
+| sorted/String           | dict                          | 3,123,115          | bytes   |
+| sorted/String           | dict+zstd3                    | 2,455,543          | bytes   |
+| sorted/String           | ip_bin                        | 11,635,444         | bytes   |
+| sorted/String           | ip_bin+zstd3                  | 2,398,961          | bytes   |
+| sorted/String           | plain                         | 11,635,444         | bytes   |
+| sorted/String           | plain+zstd3                   | 2,398,961          | bytes   |
+| sorted/String           | uuid16                        | 11,635,444         | bytes   |
+| sorted/String           | uuid16+zstd3                  | 2,398,961          | bytes   |
+| sorted/String           | varint                        | 11,635,444         | bytes   |
+| sorted/String           | varint+zstd3                  | 2,398,961          | bytes   |
+| sorted/Uuid             | bits                          | 1,116,120          | bytes   |
+| sorted/Uuid             | bits+zstd3                    | 572,261            | bytes   |
+| sorted/Uuid             | const                         | 1,103,244          | bytes   |
+| sorted/Uuid             | const+zstd3                   | 571,819            | bytes   |
+| sorted/Uuid             | delta_varint                  | 1,116,120          | bytes   |
+| sorted/Uuid             | delta_varint+zstd3            | 572,261            | bytes   |
+| sorted/Uuid             | dict                          | 903,739            | bytes   |
+| sorted/Uuid             | dict+zstd3                    | 581,041            | bytes   |
+| sorted/Uuid             | ip_bin                        | 1,116,120          | bytes   |
+| sorted/Uuid             | ip_bin+zstd3                  | 572,261            | bytes   |
+| sorted/Uuid             | plain                         | 1,116,120          | bytes   |
+| sorted/Uuid             | plain+zstd3                   | 572,261            | bytes   |
+| sorted/Uuid             | uuid16                        | 446,448            | bytes   |
+| sorted/Uuid             | uuid16+zstd3                  | 387,212            | bytes   |
+| sorted/Uuid             | varint                        | 1,116,120          | bytes   |
+| sorted/Uuid             | varint+zstd3                  | 572,261            | bytes   |
+| coverage/plain          | applies_to_pct_of_plain_bytes | 100                | percent |
+| coverage/const          | applies_to_pct_of_plain_bytes | 3.3                | percent |
+| coverage/dict           | applies_to_pct_of_plain_bytes | 85.28              | percent |
+| coverage/delta_varint   | applies_to_pct_of_plain_bytes | 33.75              | percent |
+| coverage/varint         | applies_to_pct_of_plain_bytes | 33.75              | percent |
+| coverage/bits           | applies_to_pct_of_plain_bytes | 0.79               | percent |
+| coverage/uuid16         | applies_to_pct_of_plain_bytes | 5.42               | percent |
+| coverage/ip_bin         | applies_to_pct_of_plain_bytes | 2.76               | percent |
+| zstd level 1            | bytes                         | 3,253,334          | bytes   |
+| zstd level 1            | compress_MBps                 | 1,072              | MB/s    |
+| zstd level 3            | bytes                         | 3,136,257          | bytes   |
+| zstd level 3            | compress_MBps                 | 676.8              | MB/s    |
+| zstd level 9            | bytes                         | 2,814,740          | bytes   |
+| zstd level 9            | compress_MBps                 | 121.4              | MB/s    |
+| zstd level 19           | bytes                         | 2,586,595          | bytes   |
+| zstd level 19           | compress_MBps                 | 6.21               | MB/s    |
+| wordlist per_chunk      | bytes                         | 8,217,999          | bytes   |
+| wordlist per_file       | bytes                         | 8,234,095          | bytes   |
+| column:region           | plain_bytes                   | 2,270,200          | bytes   |
+| column:region           | best_encoding                 | dict+zstd3         | name    |
+| column:service          | plain_bytes                   | 1,687,124          | bytes   |
+| column:service          | best_encoding                 | dict+zstd3         | name    |
+| column:level            | plain_bytes                   | 1,575,795          | bytes   |
+| column:level            | best_encoding                 | dict+zstd3         | name    |
+| column:ts               | plain_bytes                   | 1,457,160          | bytes   |
+| column:ts               | best_encoding                 | delta_varint+zstd3 | name    |
+| column:shard.id         | plain_bytes                   | 1,239,800          | bytes   |
+| column:shard.id         | best_encoding                 | plain+zstd3        | name    |
+| column:shard.rows       | plain_bytes                   | 1,239,800          | bytes   |
+| column:shard.rows       | best_encoding                 | plain+zstd3        | name    |
+| column:shard.checkpoint | plain_bytes                   | 1,185,016          | bytes   |
+| column:shard.checkpoint | best_encoding                 | varint+zstd3       | name    |
+| column:ext3.label       | plain_bytes                   | 837,887            | bytes   |
+| column:ext3.label       | best_encoding                 | dict+zstd3         | name    |
+| column:ext4.label       | plain_bytes                   | 608,647            | bytes   |
+| column:ext4.label       | best_encoding                 | dict+zstd3         | name    |
+| column:request_id       | plain_bytes                   | 576,640            | bytes   |
+| column:request_id       | best_encoding                 | uuid16             | name    |
+| column:region           | clp_split_bytes               | 22,114             | bytes   |
+| column:service          | clp_split_bytes               | 54,370             | bytes   |
+| column:level            | clp_split_bytes               | 155,130            | bytes   |
+| column:ext3.label       | clp_split_bytes               | 89,133             | bytes   |
+| column:ext4.label       | clp_split_bytes               | 89,358             | bytes   |
+| BEST_PER_CHUNK arrival  | bytes                         | 4,303,865          | bytes   |
+| BEST_PER_CHUNK arrival  | ratio_to_raw                  | 0.09615            | ratio   |
+| BEST_PER_CHUNK arrival  | ratio_to_gzip9                | 1.059              | ratio   |
+| BEST_PER_CHUNK sorted   | bytes                         | 4,274,800          | bytes   |
+| BEST_PER_CHUNK sorted   | ratio_to_raw                  | 0.09551            | ratio   |
+| BEST_PER_CHUNK sorted   | ratio_to_gzip9                | 1.052              | ratio   |
+| plain                   | bytes                         | 20,582,204         | bytes   |
+| verdict                 | sort_saving_pct               | 0.675              | percent |
+
+**Notes**
+
+- chunks of 8,192 rows, one column type
+- chunks where the encoder declines are charged plain in the tables above
+- one zstd call over every plain chunk concatenated
+- median of 3 runs; zstd is a C library and this is its speed, not TrieDB's
+- a per-file word list stores each distinct value once for the whole column; a per-chunk one repeats it, but indexes into a smaller list
+- type String
+- 16,848 bytes, 0.0065 of plain
+- 149,477 bytes, 0.0880 of plain
+- type Uuid
+- 535,600 bytes, 0.4000 of plain
+- 528,288 bytes, 0.4000 of plain
+- type Ip
+- 321,990 bytes, 0.2786 of plain
+- 227,805 bytes, 0.2355 of plain
+- 171,263 bytes, 0.1796 of plain
+- type Datetime
+- 825,456 bytes, 0.8838 of plain
+- 52,942 bytes, 0.0593 of plain
+- 80,096 bytes, 0.0932 of plain
+- fixed part through a word list, each changing part its own column; 1.0000 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.9887 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.8759 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.7953 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.9991 of the best encoding above
+- the smallest applicable encoding for every chunk of every column
+- section 6.2 chunk sizes, no codec
+- BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
+- 22,114 bytes, 0.0097 of plain
+- 56,831 bytes, 0.0337 of plain
+- 186,422 bytes, 0.1183 of plain
+- 291,919 bytes, 0.2003 of plain
+- type Int64
+- 59,219 bytes, 0.0478 of plain
+- 121,319 bytes, 0.0979 of plain
+- 124,779 bytes, 0.1053 of plain
+- 95,423 bytes, 0.1139 of plain
+- 95,712 bytes, 0.1573 of plain
+- 230,656 bytes, 0.4000 of plain
+- fixed part through a word list, each changing part its own column; 0.9567 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.8321 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.9341 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.9336 of the best encoding above
+
+## 06_bloom
+
+_Is a bloom filter per row group worth its bytes_
+
+Run 2026-09-18T21:11:01+00:00, git `5a9cb59`, 196 rows.
+
+### `06_bloom` / dataset `uneven`
+
+| variant           | metric                       |       value | unit    |
+|-------------------|------------------------------|-------------|---------|
+| request_id@8bits  | row_groups                   |   2837      | count   |
+| request_id@8bits  | filter_bytes                 |  14416      | bytes   |
+| request_id@8bits  | k                            |      6      | count   |
+| request_id@8bits  | misses_generated             |   1000      | count   |
+| request_id@8bits  | misses_rejected_out_of_range |      0      | count   |
+| request_id@8bits  | present_bloom_skipped_pct    |     96.09   | percent |
+| request_id@8bits  | present_minmax_skipped_pct   |     38.27   | percent |
+| request_id@8bits  | present_ideal_skipped_pct    |     99.96   | percent |
+| request_id@8bits  | absent_bloom_skipped_pct     |     96.08   | percent |
+| request_id@8bits  | absent_minmax_skipped_pct    |     38.28   | percent |
+| request_id@8bits  | absent_ideal_skipped_pct     |    100      | percent |
+| request_id@8bits  | share_of_best_total_pct      |      0.335  | percent |
+| request_id@10bits | row_groups                   |   2837      | count   |
+| request_id@10bits | filter_bytes                 |  19283      | bytes   |
+| request_id@10bits | k                            |      7      | count   |
+| request_id@10bits | misses_generated             |   1000      | count   |
+| request_id@10bits | misses_rejected_out_of_range |      0      | count   |
+| request_id@10bits | present_bloom_skipped_pct    |     97.31   | percent |
+| request_id@10bits | present_minmax_skipped_pct   |     38.27   | percent |
+| request_id@10bits | present_ideal_skipped_pct    |     99.96   | percent |
+| request_id@10bits | absent_bloom_skipped_pct     |     97.08   | percent |
+| request_id@10bits | absent_minmax_skipped_pct    |     38.28   | percent |
+| request_id@10bits | absent_ideal_skipped_pct     |    100      | percent |
+| request_id@10bits | share_of_best_total_pct      |      0.448  | percent |
+| request_id@16bits | row_groups                   |   2837      | count   |
+| request_id@16bits | filter_bytes                 |  28832      | bytes   |
+| request_id@16bits | k                            |     11      | count   |
+| request_id@16bits | misses_generated             |   1000      | count   |
+| request_id@16bits | misses_rejected_out_of_range |      0      | count   |
+| request_id@16bits | present_bloom_skipped_pct    |     99.14   | percent |
+| request_id@16bits | present_minmax_skipped_pct   |     38.27   | percent |
+| request_id@16bits | present_ideal_skipped_pct    |     99.96   | percent |
+| request_id@16bits | absent_bloom_skipped_pct     |     99.17   | percent |
+| request_id@16bits | absent_minmax_skipped_pct    |     38.28   | percent |
+| request_id@16bits | absent_ideal_skipped_pct     |    100      | percent |
+| request_id@16bits | share_of_best_total_pct      |      0.6699 | percent |
+| user.email@8bits  | row_groups                   |   2837      | count   |
+| user.email@8bits  | filter_bytes                 |  14416      | bytes   |
+| user.email@8bits  | k                            |      6      | count   |
+| user.email@8bits  | misses_generated             |   1000      | count   |
+| user.email@8bits  | misses_rejected_out_of_range |      0      | count   |
+| user.email@8bits  | present_bloom_skipped_pct    |     96.12   | percent |
+| user.email@8bits  | present_minmax_skipped_pct   |     38.66   | percent |
+| user.email@8bits  | present_ideal_skipped_pct    |     99.96   | percent |
+| user.email@8bits  | absent_bloom_skipped_pct     |     96.14   | percent |
+| user.email@8bits  | absent_minmax_skipped_pct    |     38.6    | percent |
+| user.email@8bits  | absent_ideal_skipped_pct     |    100      | percent |
+| user.email@8bits  | share_of_best_total_pct      |      0.335  | percent |
+| user.email@10bits | row_groups                   |   2837      | count   |
+| user.email@10bits | filter_bytes                 |  19283      | bytes   |
+| user.email@10bits | k                            |      7      | count   |
+| user.email@10bits | misses_generated             |   1000      | count   |
+| user.email@10bits | misses_rejected_out_of_range |      0      | count   |
+| user.email@10bits | present_bloom_skipped_pct    |     97.17   | percent |
+| user.email@10bits | present_minmax_skipped_pct   |     38.66   | percent |
+| user.email@10bits | present_ideal_skipped_pct    |     99.96   | percent |
+| user.email@10bits | absent_bloom_skipped_pct     |     97.12   | percent |
+| user.email@10bits | absent_minmax_skipped_pct    |     38.6    | percent |
+| user.email@10bits | absent_ideal_skipped_pct     |    100      | percent |
+| user.email@10bits | share_of_best_total_pct      |      0.448  | percent |
+| user.email@16bits | row_groups                   |   2837      | count   |
+| user.email@16bits | filter_bytes                 |  28832      | bytes   |
+| user.email@16bits | k                            |     11      | count   |
+| user.email@16bits | misses_generated             |   1000      | count   |
+| user.email@16bits | misses_rejected_out_of_range |      0      | count   |
+| user.email@16bits | present_bloom_skipped_pct    |     99.12   | percent |
+| user.email@16bits | present_minmax_skipped_pct   |     38.66   | percent |
+| user.email@16bits | present_ideal_skipped_pct    |     99.96   | percent |
+| user.email@16bits | absent_bloom_skipped_pct     |     99.16   | percent |
+| user.email@16bits | absent_minmax_skipped_pct    |     38.6    | percent |
+| user.email@16bits | absent_ideal_skipped_pct     |    100      | percent |
+| user.email@16bits | share_of_best_total_pct      |      0.6699 | percent |
+| ts_unix@8bits     | row_groups                   |   3249      | count   |
+| ts_unix@8bits     | filter_bytes                 |  27903      | bytes   |
+| ts_unix@8bits     | k                            |      6      | count   |
+| ts_unix@8bits     | misses_generated             |    138      | count   |
+| ts_unix@8bits     | misses_rejected_out_of_range | 199816      | count   |
+| ts_unix@8bits     | present_bloom_skipped_pct    |     96.08   | percent |
+| ts_unix@8bits     | present_minmax_skipped_pct   |     34.82   | percent |
+| ts_unix@8bits     | present_ideal_skipped_pct    |     99.97   | percent |
+| ts_unix@8bits     | absent_bloom_skipped_pct     |     96.09   | percent |
+| ts_unix@8bits     | absent_minmax_skipped_pct    |     36.01   | percent |
+| ts_unix@8bits     | absent_ideal_skipped_pct     |    100      | percent |
+| ts_unix@8bits     | share_of_best_total_pct      |      0.6483 | percent |
+| ts_unix@10bits    | row_groups                   |   3249      | count   |
+| ts_unix@10bits    | filter_bytes                 |  36300      | bytes   |
+| ts_unix@10bits    | k                            |      7      | count   |
+| ts_unix@10bits    | misses_generated             |    138      | count   |
+| ts_unix@10bits    | misses_rejected_out_of_range | 199816      | count   |
+| ts_unix@10bits    | present_bloom_skipped_pct    |     97.39   | percent |
+| ts_unix@10bits    | present_minmax_skipped_pct   |     34.82   | percent |
+| ts_unix@10bits    | present_ideal_skipped_pct    |     99.97   | percent |
+| ts_unix@10bits    | absent_bloom_skipped_pct     |     97.41   | percent |
+| ts_unix@10bits    | absent_minmax_skipped_pct    |     36.01   | percent |
+| ts_unix@10bits    | absent_ideal_skipped_pct     |    100      | percent |
+| ts_unix@10bits    | share_of_best_total_pct      |      0.8434 | percent |
+| ts_unix@16bits    | row_groups                   |   3249      | count   |
+| ts_unix@16bits    | filter_bytes                 |  55806      | bytes   |
+| ts_unix@16bits    | k                            |     11      | count   |
+| ts_unix@16bits    | misses_generated             |    138      | count   |
+| ts_unix@16bits    | misses_rejected_out_of_range | 199816      | count   |
+| ts_unix@16bits    | present_bloom_skipped_pct    |     99.19   | percent |
+| ts_unix@16bits    | present_minmax_skipped_pct   |     34.82   | percent |
+| ts_unix@16bits    | present_ideal_skipped_pct    |     99.97   | percent |
+| ts_unix@16bits    | absent_bloom_skipped_pct     |     99.25   | percent |
+| ts_unix@16bits    | absent_minmax_skipped_pct    |     36.01   | percent |
+| ts_unix@16bits    | absent_ideal_skipped_pct     |    100      | percent |
+| ts_unix@16bits    | share_of_best_total_pct      |      1.297  | percent |
+| client.ip@8bits   | row_groups                   |   3197      | count   |
+| client.ip@8bits   | filter_bytes                 |  18784      | bytes   |
+| client.ip@8bits   | k                            |      6      | count   |
+| client.ip@8bits   | misses_generated             |   1000      | count   |
+| client.ip@8bits   | misses_rejected_out_of_range |      0      | count   |
+| client.ip@8bits   | present_bloom_skipped_pct    |     96.12   | percent |
+| client.ip@8bits   | present_minmax_skipped_pct   |     35.91   | percent |
+| client.ip@8bits   | present_ideal_skipped_pct    |     99.97   | percent |
+| client.ip@8bits   | absent_bloom_skipped_pct     |     96.15   | percent |
+| client.ip@8bits   | absent_minmax_skipped_pct    |     35.95   | percent |
+| client.ip@8bits   | absent_ideal_skipped_pct     |    100      | percent |
+| client.ip@8bits   | share_of_best_total_pct      |      0.4364 | percent |
+| client.ip@10bits  | row_groups                   |   3197      | count   |
+| client.ip@10bits  | filter_bytes                 |  24916      | bytes   |
+| client.ip@10bits  | k                            |      7      | count   |
+| client.ip@10bits  | misses_generated             |   1000      | count   |
+| client.ip@10bits  | misses_rejected_out_of_range |      0      | count   |
+| client.ip@10bits  | present_bloom_skipped_pct    |     97.3    | percent |
+| client.ip@10bits  | present_minmax_skipped_pct   |     35.91   | percent |
+| client.ip@10bits  | present_ideal_skipped_pct    |     99.97   | percent |
+| client.ip@10bits  | absent_bloom_skipped_pct     |     97.26   | percent |
+| client.ip@10bits  | absent_minmax_skipped_pct    |     35.95   | percent |
+| client.ip@10bits  | absent_ideal_skipped_pct     |    100      | percent |
+| client.ip@10bits  | share_of_best_total_pct      |      0.5789 | percent |
+| client.ip@16bits  | row_groups                   |   3197      | count   |
+| client.ip@16bits  | filter_bytes                 |  37568      | bytes   |
+| client.ip@16bits  | k                            |     11      | count   |
+| client.ip@16bits  | misses_generated             |   1000      | count   |
+| client.ip@16bits  | misses_rejected_out_of_range |      0      | count   |
+| client.ip@16bits  | present_bloom_skipped_pct    |     99.16   | percent |
+| client.ip@16bits  | present_minmax_skipped_pct   |     35.91   | percent |
+| client.ip@16bits  | present_ideal_skipped_pct    |     99.97   | percent |
+| client.ip@16bits  | absent_bloom_skipped_pct     |     99.18   | percent |
+| client.ip@16bits  | absent_minmax_skipped_pct    |     35.95   | percent |
+| client.ip@16bits  | absent_ideal_skipped_pct     |    100      | percent |
+| client.ip@16bits  | share_of_best_total_pct      |      0.8729 | percent |
+| order_id@8bits    | row_groups                   |   3197      | count   |
+| order_id@8bits    | filter_bytes                 |  18481      | bytes   |
+| order_id@8bits    | k                            |      6      | count   |
+| order_id@8bits    | misses_generated             |   1000      | count   |
+| order_id@8bits    | misses_rejected_out_of_range |      0      | count   |
+| order_id@8bits    | present_bloom_skipped_pct    |     96.12   | percent |
+| order_id@8bits    | present_minmax_skipped_pct   |     35.86   | percent |
+| order_id@8bits    | present_ideal_skipped_pct    |     99.97   | percent |
+| order_id@8bits    | absent_bloom_skipped_pct     |     96.16   | percent |
+| order_id@8bits    | absent_minmax_skipped_pct    |     35.9    | percent |
+| order_id@8bits    | absent_ideal_skipped_pct     |    100      | percent |
+| order_id@8bits    | share_of_best_total_pct      |      0.4294 | percent |
+| order_id@10bits   | row_groups                   |   3197      | count   |
+| order_id@10bits   | filter_bytes                 |  24506      | bytes   |
+| order_id@10bits   | k                            |      7      | count   |
+| order_id@10bits   | misses_generated             |   1000      | count   |
+| order_id@10bits   | misses_rejected_out_of_range |      0      | count   |
+| order_id@10bits   | present_bloom_skipped_pct    |     97.41   | percent |
+| order_id@10bits   | present_minmax_skipped_pct   |     35.86   | percent |
+| order_id@10bits   | present_ideal_skipped_pct    |     99.97   | percent |
+| order_id@10bits   | absent_bloom_skipped_pct     |     97.4    | percent |
+| order_id@10bits   | absent_minmax_skipped_pct    |     35.9    | percent |
+| order_id@10bits   | absent_ideal_skipped_pct     |    100      | percent |
+| order_id@10bits   | share_of_best_total_pct      |      0.5694 | percent |
+| order_id@16bits   | row_groups                   |   3197      | count   |
+| order_id@16bits   | filter_bytes                 |  36962      | bytes   |
+| order_id@16bits   | k                            |     11      | count   |
+| order_id@16bits   | misses_generated             |   1000      | count   |
+| order_id@16bits   | misses_rejected_out_of_range |      0      | count   |
+| order_id@16bits   | present_bloom_skipped_pct    |     99.18   | percent |
+| order_id@16bits   | present_minmax_skipped_pct   |     35.86   | percent |
+| order_id@16bits   | present_ideal_skipped_pct    |     99.97   | percent |
+| order_id@16bits   | absent_bloom_skipped_pct     |     99.22   | percent |
+| order_id@16bits   | absent_minmax_skipped_pct    |     35.9    | percent |
+| order_id@16bits   | absent_ideal_skipped_pct     |    100      | percent |
+| order_id@16bits   | share_of_best_total_pct      |      0.8588 | percent |
+| words:ext3.label  | common_skipped_pct           |     40.33   | percent |
+| words:ext3.label  | rare_skipped_pct             |     44.28   | percent |
+| words:ext3.label  | never_skipped_pct            |     97.75   | percent |
+| words:ext3.label  | filter_bytes                 |   8418      | bytes   |
+| words:ext4.label  | common_skipped_pct           |     40.57   | percent |
+| words:ext4.label  | rare_skipped_pct             |     44.05   | percent |
+| words:ext4.label  | never_skipped_pct            |     97.79   | percent |
+| words:ext4.label  | filter_bytes                 |   8443      | bytes   |
+| words:ext5.label  | common_skipped_pct           |     40.52   | percent |
+| words:ext5.label  | rare_skipped_pct             |     42.86   | percent |
+| words:ext5.label  | never_skipped_pct            |     97.86   | percent |
+| words:ext5.label  | filter_bytes                 |   8476      | bytes   |
+| words:ext6.label  | common_skipped_pct           |     41.95   | percent |
+| words:ext6.label  | rare_skipped_pct             |     43.86   | percent |
+| words:ext6.label  | never_skipped_pct            |     97.77   | percent |
+| words:ext6.label  | filter_bytes                 |   8426      | bytes   |
+
+**Notes**
+
+- distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- against script 05's BEST_PER_CHUNK (4,303,865 bytes)
+- distinct/rows 0.928; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- distinct/rows 0.697; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- distinct/rows 0.955; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- 10 bits per distinct word, one filter per row group; 8 probe words; this column has fewer distinct words than the probe set, so `common` and `rare` are drawn from the same list and the two figures are not a comparison
+- 10 bits per distinct word, one filter per row group; 200 probe words; this column has fewer distinct words than the probe set, so `common` and `rare` are drawn from the same list and the two figures are not a comparison
+- 680 row groups, 17 distinct words
+- 681 row groups, 17 distinct words
+- 679 row groups, 17 distinct words
 
