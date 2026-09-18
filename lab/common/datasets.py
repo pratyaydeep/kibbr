@@ -370,11 +370,172 @@ def _build_real(size: str) -> Dataset:
     )
 
 
+
+
+# --- messy: type inconsistency, which the shipped generator never produces ------------
+#
+# NOT real logs. Hand-authored here, and every figure derived from it is a statement
+# about these rates and nothing else. It exists because `gen-logs` is too well behaved to
+# answer one question the lab needs: section 3.2's type lattice joins a key's types and a
+# column never narrows, so one bad value pins a column to String for the life of the
+# template. Across flat30, oneday, uneven, sample.ndjson and testdata/m2/1m.ndjson, zero
+# keys carry two types - so `columns widened to String` came back 0 for every merge rule,
+# which is a fact about the generator rather than a verdict on merging.
+#
+# The faults below are the ones production logs actually have, at rates in the range
+# real streams show. Each is listed so a reader can scale the result or disagree with it.
+MESSY_FAULTS = {
+    # key                  rate    what arrives instead
+    "duration_ms_na":     (0.012, '"N/A" where a timeout left no duration'),
+    "duration_ms_null":   (0.004, "JSON null, same field"),
+    "user_id_legacy":     (0.020, '"u-4821" from a pre-migration writer'),
+    "order_id_alpha":     (0.010, '"AX-99213" - and the clean value is ten digits, so '
+                                  "rung 2 calls the rest of them Datetime"),
+    "http_status_empty":  (0.005, 'empty string where the upstream never answered'),
+    "retry_stringy":      (0.015, '"1" / "0" instead of true / false'),
+    "bytes_sent_float":   (0.030, "a float in an otherwise integer column - the one "
+                                  "fault that widens to Float64 rather than String"),
+    "error_code_symbol":  (0.025, '"E_TIMEOUT" in an integer code column'),
+    "tags_scalar":        (0.010, "a bare string where the field is otherwise an array"),
+    "ts_epoch":           (0.050, "ten-digit epoch seconds where the field is otherwise "
+                                  "RFC 3339 - still Datetime, but a different dt_form, "
+                                  "which is the byte section 6.2 added dt_form for"),
+    "trace_id_empty":     (0.008, "empty string in a UUID column"),
+    "client_ip_unknown":  (0.006, '"unknown" in an IP column'),
+}
+
+_MESSY_SERVICES = {
+    "auth": ("login_ok", "login_failed", "token_refresh"),
+    "payment": ("charged", "declined", "refunded"),
+    "search": ("query", "no_results"),
+    "cart": ("item_added", "item_removed", "checkout"),
+    "shipping": ("label_created", "dispatched"),
+    "notify": ("email_sent", "push_sent"),
+    "inventory": ("reserved", "restocked"),
+    "gateway": ("rate_limited", "upstream_error"),
+}
+_MESSY_LEVELS = ("info", "info", "info", "warn", "error", "debug")
+_MESSY_REGIONS = ("us-east-1", "eu-west-1", "ap-south-1")
+
+
+def _build_messy(size: str) -> Dataset:
+    import random
+    from datetime import datetime, timezone
+
+    total = 2_000_000 if size == "big" else 200_000
+    rng = random.Random(90210)
+    rate = {k: v[0] for k, v in MESSY_FAULTS.items()}
+    hit = {k: 0 for k in MESSY_FAULTS}
+
+    def maybe(name: str) -> bool:
+        if rng.random() < rate[name]:
+            hit[name] += 1
+            return True
+        return False
+
+    raws = []
+    for i in range(total):
+        service = rng.choice(list(_MESSY_SERVICES))
+        event = rng.choice(_MESSY_SERVICES[service])
+        secs = DAY0 + int(rng.random() * (DAY_SECS - 1))
+
+        o = {}
+        # `ts` is the partition column, so its form is the one that matters most.
+        if maybe("ts_epoch"):
+            o["ts"] = secs
+        else:
+            o["ts"] = datetime.fromtimestamp(secs, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        o["level"] = rng.choice(_MESSY_LEVELS)
+        o["service"] = service
+        o["event"] = event
+        o["region"] = rng.choice(_MESSY_REGIONS)
+
+        if maybe("user_id_legacy"):
+            o["user_id"] = f"u-{rng.randint(1000, 99999)}"
+        else:
+            o["user_id"] = rng.randint(1000, 999999)
+
+        if maybe("trace_id_empty"):
+            o["trace_id"] = ""
+        else:
+            o["trace_id"] = str(
+                __import__("uuid").UUID(int=rng.getrandbits(128), version=4)
+            )
+
+        if maybe("client_ip_unknown"):
+            o["client"] = {"ip": "unknown"}
+        else:
+            o["client"] = {
+                "ip": f"{rng.randint(1,223)}.{rng.randint(0,255)}."
+                      f"{rng.randint(0,255)}.{rng.randint(1,254)}"
+            }
+
+        if maybe("duration_ms_na"):
+            o["duration_ms"] = "N/A"
+        elif maybe("duration_ms_null"):
+            o["duration_ms"] = None
+        else:
+            o["duration_ms"] = round(rng.random() * 5000, 2)
+
+        if maybe("bytes_sent_float"):
+            o["bytes_sent"] = round(rng.random() * 100000, 1)
+        else:
+            o["bytes_sent"] = rng.randint(0, 100000)
+
+        if maybe("retry_stringy"):
+            o["retry"] = rng.choice(("1", "0"))
+        else:
+            o["retry"] = rng.random() < 0.15
+
+        if maybe("tags_scalar"):
+            o["tags"] = rng.choice(("auth", "billing", "internal"))
+        else:
+            o["tags"] = rng.sample(["auth", "billing", "internal", "beta", "slow"],
+                                   rng.randint(1, 3))
+
+        # Optional fields, so merging has key sets that differ by one or two keys.
+        if service == "payment" or rng.random() < 0.3:
+            if maybe("order_id_alpha"):
+                o["order_id"] = f"AX-{rng.randint(10000, 99999)}"
+            else:
+                o["order_id"] = rng.randint(1_000_000_000, 9_999_999_999)
+        if rng.random() < 0.45:
+            status_empty = maybe("http_status_empty")
+            o["http"] = {
+                "method": rng.choice(("GET", "POST", "PUT", "DELETE")),
+                "status": "" if status_empty else rng.choice((200, 201, 400, 404, 500)),
+            }
+        if event in ("login_failed", "declined", "upstream_error") or rng.random() < 0.1:
+            if maybe("error_code_symbol"):
+                o["error"] = {"code": rng.choice(("E_TIMEOUT", "E_REFUSED", "E_AUTH"))}
+            else:
+                o["error"] = {"code": rng.randint(400, 599)}
+
+        raws.append(_dump(o))
+
+    faults = "; ".join(
+        f"{k} {100.0 * hit[k] / total:.2f}% ({hit[k]:,} lines)" for k in MESSY_FAULTS
+    )
+    return _write(
+        "messy",
+        raws,
+        "HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services "
+        "and 20 event types, written to carry the type inconsistency that `gen-logs` "
+        "never produces - across flat30, oneday, uneven and testdata, zero keys carry "
+        "two types, so every `columns widened to String` figure was vacuous. Injected "
+        f"fault rates, as realised: {faults}. Every number derived from this dataset is a "
+        "statement about these rates and about nothing else."
+    )
+
+
 BUILDERS = {
     "flat30": _build_flat30,
     "oneday": _build_oneday,
     "uneven": _build_uneven,
     "big": _build_big,
+    "messy": _build_messy,
     "real": _build_real,
 }
 
@@ -405,7 +566,7 @@ def ensure(name: str, size: str = "small", rebuild: bool = False) -> Dataset:
 
 def available(size: str = "small") -> list:
     """Every dataset that can be built here - `real` only when the env var points at one."""
-    names = ["flat30", "oneday", "uneven"]
+    names = ["flat30", "oneday", "uneven", "messy"]
     if size == "big":
         names.append("big")
     src = os.environ.get("LAB_REAL_LOGS")

@@ -9542,3 +9542,1080 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,search_level = ERROR_seconds,0.1915,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
 2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,search_one id_seconds,0.1797,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
 2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,search_newest 500_seconds,0.4958,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,flat30,flat30,lines_compared,5000,lines,
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,flat30,flat30,disagreements,0,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,oneday,oneday,lines_compared,5000,lines,
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,oneday,oneday,disagreements,0,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,uneven,uneven,lines_compared,5000,lines,
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,uneven,uneven,disagreements,0,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,messy,messy,lines_compared,5000,lines,
+2026-09-18T23:22:02+00:00,8895439,00_frontend_agree,messy,messy,disagreements,0,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,templates,130,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_min,93,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_median,1169,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_p90,4134,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_max,4873,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,null_cell_share_pct,0.0,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,columns_widened_to_string,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,mixed_promoted_groups,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,template_count_min,130,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,template_count_max,130,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,template_count_spread,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,moved_share_pct_max,0.0,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,search_rows_scanned,74093,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,NONE,search_scan_amplification,1.0,ratio,rows scanned divided by rows that match
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,templates,19,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_min,8256,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_median,12296,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_p90,12606,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_max,12615,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,columns_widened_to_string,41,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,mixed_promoted_groups,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,template_count_min,19,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,template_count_max,19,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,template_count_spread,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,moved_share_pct_max,0.0,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,search_rows_scanned,208427,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J70,search_scan_amplification,2.813,ratio,rows scanned divided by rows that match
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,templates,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_min,1702,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_median,6102,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_p90,8343,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_max,12615,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,null_cell_share_pct,14.7406,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,columns_widened_to_string,52,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,mixed_promoted_groups,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,template_count_min,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,template_count_max,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,template_count_spread,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,moved_share_pct_max,15.1175,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,moved_share_pct_mean,13.6214,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,search_rows_scanned,204153,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80,search_scan_amplification,2.7554,ratio,rows scanned divided by rows that match
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,templates,66,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_min,225,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_median,2899,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_p90,5207,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_max,6960,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,null_cell_share_pct,7.992,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,columns_widened_to_string,47,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,mixed_promoted_groups,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,template_count_min,66,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,template_count_max,66,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,template_count_spread,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,moved_share_pct_max,9.203,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,moved_share_pct_mean,7.3246,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,search_rows_scanned,127552,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J90,search_scan_amplification,1.7215,ratio,rows scanned divided by rows that match
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,templates,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_min,3678,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_median,5655,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_p90,8315,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_max,12615,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,null_cell_share_pct,10.7708,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,columns_widened_to_string,52,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,mixed_promoted_groups,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_min,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_max,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_spread,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,moved_share_pct_max,0.11,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,moved_share_pct_mean,0.0935,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,search_rows_scanned,160306,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_GROWN,search_scan_amplification,2.1636,ratio,rows scanned divided by rows that match
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,templates,2,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_min,80368,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_median,119632,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_p90,119632,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_max,119632,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,columns_widened_to_string,12,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,mixed_promoted_groups,2,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_in_mixed_promoted_group,200000,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_min,2,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_max,2,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_spread,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,moved_share_pct_max,21.42,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,moved_share_pct_mean,14.383,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,search_rows_scanned,4000000,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80_SPEC,search_scan_amplification,53.9862,ratio,rows scanned divided by rows that match
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,templates,19,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_min,8256,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_median,12296,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_p90,12606,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_max,12615,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,columns_widened_to_string,41,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,mixed_promoted_groups,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_min,19,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_max,19,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_spread,0,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,moved_share_pct_max,0.0,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,search_rows_scanned,208427,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,PER_EVENT,search_scan_amplification,2.813,ratio,rows scanned divided by rows that match
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,all,keys_with_more_than_one_type,7,count,"the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,templates,8,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,rows_scanned_event_search,200000,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,templates,2,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,rows_scanned_event_search,200000,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event/NONE,templates,130,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event/J80,templates,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,templates,130,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,rows_scanned_service_search,25125,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,templates,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,rows_scanned_service_search,25125,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,templates,130,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=binary/J80,templates,33,count,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=binary/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,promote=binary/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80 cap=100,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80 cap=500,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,J80 cap=2000,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:25:24+00:00,8895439,04_merge_rules,messy,verdict,best_two_rules,J90 J80_GROWN,name,written to lab/out/04/best_rules.json for script 02 to pick up
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,templates,130,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_min,93,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_median,1169,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_p90,4134,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_max,4873,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,null_cell_share_pct,0.0,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,columns_widened_to_string,806,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,mixed_promoted_groups,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,template_count_min,130,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,template_count_max,130,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,template_count_spread,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,moved_share_pct_max,0.0,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,search_rows_scanned,74093,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,NONE,search_scan_amplification,1.0,ratio,rows scanned divided by rows that match
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,templates,19,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_min,8256,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_median,12296,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_p90,12606,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_max,12615,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,columns_widened_to_string,152,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,mixed_promoted_groups,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,template_count_min,19,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,template_count_max,19,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,template_count_spread,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,moved_share_pct_max,0.0,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,search_rows_scanned,208427,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J70,search_scan_amplification,2.813,ratio,rows scanned divided by rows that match
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,templates,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_min,1702,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_median,6102,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_p90,8343,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_max,12615,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,null_cell_share_pct,14.7406,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,columns_widened_to_string,258,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,mixed_promoted_groups,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,template_count_min,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,template_count_max,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,template_count_spread,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,moved_share_pct_max,15.1175,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,moved_share_pct_mean,13.6214,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,search_rows_scanned,204153,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80,search_scan_amplification,2.7554,ratio,rows scanned divided by rows that match
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,templates,66,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_min,225,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_median,2899,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_p90,5207,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_max,6960,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,null_cell_share_pct,7.992,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,columns_widened_to_string,470,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,mixed_promoted_groups,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,template_count_min,66,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,template_count_max,66,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,template_count_spread,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,moved_share_pct_max,9.203,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,moved_share_pct_mean,7.3246,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,search_rows_scanned,127552,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J90,search_scan_amplification,1.7215,ratio,rows scanned divided by rows that match
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,templates,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_min,3678,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_median,5655,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_p90,8315,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_max,12615,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,null_cell_share_pct,10.7708,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,columns_widened_to_string,250,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,mixed_promoted_groups,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_min,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_max,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_spread,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,moved_share_pct_max,0.11,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,moved_share_pct_mean,0.0935,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,search_rows_scanned,160306,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_GROWN,search_scan_amplification,2.1636,ratio,rows scanned divided by rows that match
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,templates,2,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_min,80368,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_median,119632,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_p90,119632,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_max,119632,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,columns_widened_to_string,16,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,mixed_promoted_groups,2,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_in_mixed_promoted_group,200000,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_min,2,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_max,2,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_spread,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,moved_share_pct_max,21.42,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,moved_share_pct_mean,14.383,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,search_rows_scanned,4000000,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80_SPEC,search_scan_amplification,53.9862,ratio,rows scanned divided by rows that match
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,templates,19,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_min,8256,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_median,12296,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_p90,12606,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_max,12615,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,columns_widened_to_string,152,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,mixed_promoted_groups,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_min,19,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_max,19,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_spread,0,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,moved_share_pct_max,0.0,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,search_rows_scanned,208427,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,PER_EVENT,search_scan_amplification,2.813,ratio,rows scanned divided by rows that match
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,all,keys_with_more_than_one_type,7,count,"the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,templates,8,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,rows_scanned_event_search,200000,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,templates,2,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,rows_scanned_event_search,200000,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event/NONE,templates,130,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event/J80,templates,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,templates,130,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,rows_scanned_service_search,25125,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,templates,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,rows_scanned_service_search,25125,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,templates,130,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=binary/J80,templates,33,count,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=binary/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,promote=binary/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80 cap=100,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80 cap=500,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,J80 cap=2000,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:29:50+00:00,8895439,04_merge_rules,messy,verdict,best_two_rules,J90 J80_GROWN,name,written to lab/out/04/best_rules.json for script 02 to pick up
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,templates,130,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_min,93,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_median,1169,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_p90,4134,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,rows_per_template_max,4873,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,null_cell_share_pct,0.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,columns_widened_to_string,806,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,columns_widened_share_pct,44.0437,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,distinct_keys_widened,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,rows_under_a_widened_column,1205077,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,mixed_promoted_groups,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,template_count_min,130,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,template_count_max,130,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,template_count_spread,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,moved_share_pct_max,0.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,search_rows_scanned,74093,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,NONE,search_scan_amplification,1.0,ratio,rows scanned divided by rows that match
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,templates,19,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_min,8256,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_median,12296,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_p90,12606,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,rows_per_template_max,12615,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,columns_widened_to_string,152,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,columns_widened_share_pct,50.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,distinct_keys_widened,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,rows_under_a_widened_column,1600000,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,mixed_promoted_groups,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,template_count_min,19,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,template_count_max,19,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,template_count_spread,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,moved_share_pct_max,0.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,search_rows_scanned,208427,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J70,search_scan_amplification,2.813,ratio,rows scanned divided by rows that match
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,templates,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_min,1702,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_median,6102,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_p90,8343,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,rows_per_template_max,12615,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,null_cell_share_pct,14.7406,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,columns_widened_to_string,258,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,columns_widened_share_pct,49.6154,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,distinct_keys_widened,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,rows_under_a_widened_column,1577732,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,mixed_promoted_groups,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,template_count_min,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,template_count_max,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,template_count_spread,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,moved_share_pct_max,15.1175,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,moved_share_pct_mean,13.6214,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,search_rows_scanned,204153,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80,search_scan_amplification,2.7554,ratio,rows scanned divided by rows that match
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,templates,66,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_min,225,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_median,2899,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_p90,5207,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,rows_per_template_max,6960,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,null_cell_share_pct,7.992,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,columns_widened_to_string,470,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,columns_widened_share_pct,48.5036,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,distinct_keys_widened,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,rows_under_a_widened_column,1443179,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,mixed_promoted_groups,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,template_count_min,66,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,template_count_max,66,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,template_count_spread,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,moved_share_pct_max,9.203,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,moved_share_pct_mean,7.3246,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,search_rows_scanned,127552,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J90,search_scan_amplification,1.7215,ratio,rows scanned divided by rows that match
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,templates,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_min,3678,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_median,5655,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_p90,8315,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_per_template_max,12615,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,null_cell_share_pct,10.7708,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,columns_widened_to_string,250,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,columns_widened_share_pct,50.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,distinct_keys_widened,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_under_a_widened_column,1515225,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,mixed_promoted_groups,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_min,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_max,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,template_count_spread,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,moved_share_pct_max,0.11,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,moved_share_pct_mean,0.0935,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,search_rows_scanned,160306,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_GROWN,search_scan_amplification,2.1636,ratio,rows scanned divided by rows that match
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,templates,2,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_min,80368,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_median,119632,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_p90,119632,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_per_template_max,119632,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,columns_widened_to_string,16,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,columns_widened_share_pct,50.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,distinct_keys_widened,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_under_a_widened_column,1600000,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,mixed_promoted_groups,2,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,rows_in_mixed_promoted_group,200000,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_min,2,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_max,2,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,template_count_spread,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,moved_share_pct_max,21.42,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,moved_share_pct_mean,14.383,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,search_rows_scanned,4000000,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80_SPEC,search_scan_amplification,53.9862,ratio,rows scanned divided by rows that match
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,templates,19,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_min,8256,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_median,12296,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_p90,12606,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_per_template_max,12615,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,null_cell_share_pct,15.4986,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,columns_widened_to_string,152,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,columns_widened_share_pct,50.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,distinct_keys_widened,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_under_a_widened_column,1600000,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,mixed_promoted_groups,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_min,19,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_max,19,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,template_count_spread,0,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,moved_share_pct_max,0.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,search_rows_scanned,208427,rows,"20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,PER_EVENT,search_scan_amplification,2.813,ratio,rows scanned divided by rows that match
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,all,keys_with_more_than_one_type,7,count,"the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,templates,8,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,rows_scanned_event_search,200000,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=nothing/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,templates,2,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,rows_scanned_event_search,200000,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=nothing/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event/NONE,templates,130,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event/J80,templates,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,templates,130,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event+service/NONE,rows_scanned_service_search,25125,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,templates,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=event+service/J80,rows_scanned_service_search,25125,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,templates,130,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=binary/NONE,rows_scanned_service_search,200000,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=binary/J80,templates,33,count,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=binary/J80,rows_scanned_event_search,12615,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,promote=binary/J80,rows_scanned_service_search,200000,rows,
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80 cap=100,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80 cap=500,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,J80 cap=2000,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:33:54+00:00,8895439,04_merge_rules,messy,verdict,best_two_rules,J90 J80_GROWN,name,written to lab/out/04/best_rules.json for script 02 to pick up
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,rows,200000,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,rows,200000,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,rows,200000,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,rows,200000,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,raw bytes,46591991,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,raw bytes,46591991,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,raw bytes,44759683,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,raw bytes,62959826,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,templates,870,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,templates,870,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,templates,4931,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,templates,130,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,rows/template min,3,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,rows/template min,3,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,rows/template min,4,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,rows/template min,93,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,rows/template median,69,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,rows/template median,69,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,rows/template median,6,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,rows/template median,1116,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,rows/template p90,545,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,rows/template p90,545,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,rows/template p90,13,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,rows/template p90,4134,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,rows/template max,10711,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,rows/template max,10711,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,rows/template max,54721,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,rows/template max,4873,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,top-10 share of rows %,19.96,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,top-10 share of rows %,19.96,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,top-10 share of rows %,80.05,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,top-10 share of rows %,22.1,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,templates with <100 rows,506,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,templates with <100 rows,506,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,templates with <100 rows,4913,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,templates with <100 rows,2,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,distinct promoted-value sets,7,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,distinct promoted-value sets,7,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,distinct promoted-value sets,7,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,distinct promoted-value sets,19,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,templates in the biggest promoted group,144,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,templates in the biggest promoted group,144,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,templates in the biggest promoted group,813,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,templates in the biggest promoted group,8,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,promoted groups holding one template,0,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,promoted groups holding one template,0,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,promoted groups holding one template,0,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,promoted groups holding one template,0,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,distinct column names,56,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,distinct column names,56,count,"flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,distinct column names,68,count,"generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota"
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,distinct column names,16,count,"HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else."
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,days spanned by `ts`,31,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,days spanned by every Datetime column pooled,65933,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,days spanned by the widest column (order_id),44760,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,templates_with_ts,722,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,templates_no_time_column,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,templates_time_not_named_ts,148,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,unskippable_templates,148,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,unskippable_rows,83250,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,unskippable_row_share,41.625,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,unskippable_bytes,18150462,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,flat30,unskippable_byte_share,38.9562,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,days spanned by `ts`,1,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,days spanned by every Datetime column pooled,65933,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,days spanned by the widest column (order_id),44760,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,templates_with_ts,722,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,templates_no_time_column,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,templates_time_not_named_ts,148,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,unskippable_templates,148,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,unskippable_rows,83250,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,unskippable_row_share,41.625,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,unskippable_bytes,18150462,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,oneday,unskippable_byte_share,38.9562,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,days spanned by `ts`,1,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,days spanned by every Datetime column pooled,37443,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,days spanned by the widest column (order_id),14848,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,templates_with_ts,4159,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,templates_no_time_column,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,templates_time_not_named_ts,772,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,unskippable_templates,772,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,unskippable_rows,17855,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,unskippable_row_share,8.9275,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,unskippable_bytes,3965017,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,uneven,unskippable_byte_share,8.8585,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,days spanned by `ts`,1,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,days spanned by every Datetime column pooled,49780,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,days spanned by the widest column (order_id),49780,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,templates_with_ts,130,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,templates_no_time_column,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,templates_time_not_named_ts,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,unskippable_templates,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,unskippable_rows,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,unskippable_row_share,0.0,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,unskippable_bytes,0,count,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,messy,unskippable_byte_share,0.0,percent,a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:ts,raw_bytes,2335000,bytes,type=Datetime distinct=114166 distinct/rows=0.9779 avg_len=20.0 null_wide=41.62% null_json=0.00% templates=722
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:event,raw_bytes,1916913,bytes,type=String distinct=6 distinct/rows=0.0000 avg_len=11.5 null_wide=16.62% null_json=0.00% templates=864
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:ext1.label,raw_bytes,1433340,bytes,type=String distinct=8 distinct/rows=0.0001 avg_len=21.5 null_wide=66.72% null_json=0.00% templates=528
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:request_id,raw_bytes,1205100,bytes,type=Uuid distinct=33475 distinct/rows=1.0000 avg_len=36.0 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:customer.id,raw_bytes,1188648,bytes,type=Uuid distinct=33018 distinct/rows=1.0000 avg_len=36.0 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:client.ip,raw_bytes,887582,bytes,type=Ip distinct=67085 distinct/rows=1.0000 avg_len=13.2 null_wide=66.46% null_json=0.00% templates=648
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:user.email,raw_bytes,833237,bytes,type=String distinct=32367 distinct/rows=0.9669 avg_len=24.9 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:ts_unix,raw_bytes,831150,bytes,type=Datetime distinct=81822 distinct/rows=0.9844 avg_len=10.0 null_wide=58.44% null_json=0.00% templates=652
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:customer.email,raw_bytes,821478,bytes,type=String distinct=31966 distinct/rows=0.9681 avg_len=24.9 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:http.path,raw_bytes,722398,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=21.5 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:user.profile.locale.tag,raw_bytes,718208,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=21.5 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:currency,raw_bytes,708912,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=21.5 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:reason,raw_bytes,691978,bytes,type=String distinct=5 distinct/rows=0.0001 avg_len=13.8 null_wide=74.95% null_json=0.00% templates=324
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:order_id,raw_bytes,664930,bytes,type=Datetime distinct=66493 distinct/rows=1.0000 avg_len=10.0 null_wide=66.75% null_json=0.00% templates=648
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:err.trace_id,raw_bytes,598392,bytes,type=Uuid distinct=16622 distinct/rows=1.0000 avg_len=36.0 null_wide=91.69% null_json=0.00% templates=4
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:tags,raw_bytes,524005,bytes,type=String distinct=400 distinct/rows=0.0099 avg_len=13.0 null_wide=79.89% null_json=0.00% templates=600
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:level,raw_bytes,459797,bytes,type=String distinct=5 distinct/rows=0.0001 avg_len=4.6 null_wide=50.03% null_json=0.00% templates=654
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:ts_ms,raw_bytes,436930,bytes,type=Datetime distinct=33610 distinct/rows=1.0000 avg_len=13.0 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:device.owner.email,raw_bytes,414784,bytes,type=String distinct=16425 distinct/rows=0.9860 avg_len=24.9 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:ext1.ref_id,raw_bytes,401200,bytes,type=Datetime distinct=40120 distinct/rows=1.0000 avg_len=10.0 null_wide=79.94% null_json=0.00% templates=264
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:service,raw_bytes,398791,bytes,type=String distinct=5 distinct/rows=0.0001 avg_len=6.0 null_wide=66.77% null_json=0.00% templates=78
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:cache.key,raw_bytes,360261,bytes,type=String distinct=8 distinct/rows=0.0005 avg_len=21.5 null_wide=91.61% null_json=0.00% templates=48
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:device.owner.nickname,raw_bytes,253040,bytes,type=String distinct=8 distinct/rows=0.0007 avg_len=21.6 null_wide=94.14% null_json=0.00% templates=12
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:amount,raw_bytes,220426,bytes,type=Float64 distinct=31931 distinct/rows=0.9671 avg_len=6.7 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:err.cause.detail,raw_bytes,213585,bytes,type=String distinct=8 distinct/rows=0.0008 avg_len=21.4 null_wide=95.01% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:http.duration_ms,raw_bytes,202311,bytes,type=Float64 distinct=29375 distinct/rows=0.9696 avg_len=6.7 null_wide=84.85% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:cache.origin.host,raw_bytes,200288,bytes,type=Ip distinct=8414 distinct/rows=1.0000 avg_len=23.8 null_wide=95.79% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:client.ipv6,raw_bytes,199501,bytes,type=Ip distinct=8383 distinct/rows=1.0000 avg_len=23.8 null_wide=95.81% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:shard.rows,raw_bytes,197830,bytes,type=Int64 distinct=16616 distinct/rows=1.0000 avg_len=11.9 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:region,raw_bytes,177794,bytes,type=String distinct=3 distinct/rows=0.0002 avg_len=10.7 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:device.serial,raw_bytes,166590,bytes,type=Datetime distinct=16659 distinct/rows=1.0000 avg_len=10.0 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:customer.vat_id,raw_bytes,157885,bytes,type=Int64 distinct=13259 distinct/rows=1.0000 avg_len=11.9 null_wide=93.37% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:shard.checkpoint,raw_bytes,139243,bytes,type=Datetime distinct=10711 distinct/rows=1.0000 avg_len=13.0 null_wide=94.64% null_json=0.00% templates=1
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:http.method,raw_bytes,134749,bytes,type=String distinct=4 distinct/rows=0.0001 avg_len=4.0 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:upstream.latency_ms,raw_bytes,134110,bytes,type=Float64 distinct=19661 distinct/rows=0.9793 avg_len=6.7 null_wide=89.96% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:deleted_at,raw_bytes,133900,bytes,type=Null distinct=1 distinct/rows=0.0000 avg_len=4.0 null_wide=83.26% null_json=100.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:http.status,raw_bytes,130718,bytes,type=Int64 distinct=9640 distinct/rows=0.2868 avg_len=3.9 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:user.id,raw_bytes,130249,bytes,type=Int64 distinct=9656 distinct/rows=0.2885 avg_len=3.9 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:user_id,raw_bytes,129266,bytes,type=Int64 distinct=9627 distinct/rows=0.2897 avg_len=3.9 null_wide=83.39% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:device.fw,raw_bytes,111147,bytes,type=Float64 distinct=16372 distinct/rows=0.9828 avg_len=6.7 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:upstream.trace,raw_bytes,101930,bytes,type=Datetime distinct=10173 distinct/rows=0.9980 avg_len=10.0 null_wide=94.90% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:device.last_seen,raw_bytes,83580,bytes,type=Datetime distinct=8351 distinct/rows=0.9992 avg_len=10.0 null_wide=95.82% null_json=0.00% templates=12
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:cache.hit,raw_bytes,75548,bytes,type=Bool distinct=2 distinct/rows=0.0001 avg_len=4.5 null_wide=91.61% null_json=0.00% templates=48
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:device.online,raw_bytes,74984,bytes,type=Bool distinct=2 distinct/rows=0.0001 avg_len=4.5 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:shard.leader,raw_bytes,74762,bytes,type=Bool distinct=2 distinct/rows=0.0001 avg_len=4.5 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:declined_reason,raw_bytes,72596,bytes,type=Null distinct=1 distinct/rows=0.0001 avg_len=4.0 null_wide=90.93% null_json=100.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:cache.ttl,raw_bytes,65185,bytes,type=Int64 distinct=8132 distinct/rows=0.4848 avg_len=3.9 null_wide=91.61% null_json=0.00% templates=48
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:attempt,raw_bytes,64819,bytes,type=Int64 distinct=8078 distinct/rows=0.4855 avg_len=3.9 null_wide=91.68% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:err.code,raw_bytes,64615,bytes,type=Int64 distinct=8102 distinct/rows=0.4874 avg_len=3.9 null_wide=91.69% null_json=0.00% templates=4
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:shard.id,raw_bytes,64601,bytes,type=Int64 distinct=8096 distinct/rows=0.4872 avg_len=3.9 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:retry_after,raw_bytes,58554,bytes,type=Int64 distinct=7748 distinct/rows=0.5149 avg_len=3.9 null_wide=92.48% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:note,raw_bytes,48354,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=1.4 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:err.cause.code,raw_bytes,38576,bytes,type=Int64 distinct=6321 distinct/rows=0.6362 avg_len=3.9 null_wide=95.03% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:cache.origin.port,raw_bytes,32769,bytes,type=Int64 distinct=5698 distinct/rows=0.6756 avg_len=3.9 null_wide=95.78% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:msg,raw_bytes,23648,bytes,type=String distinct=8 distinct/rows=0.0005 avg_len=1.4 null_wide=91.69% null_json=0.00% templates=4
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,flat30,column:http.referrer,raw_bytes,16971,bytes,type=String distinct=8 distinct/rows=0.0007 avg_len=1.5 null_wide=94.18% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:ts,raw_bytes,2335000,bytes,type=Datetime distinct=64103 distinct/rows=0.5491 avg_len=20.0 null_wide=41.62% null_json=0.00% templates=722
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:event,raw_bytes,1916913,bytes,type=String distinct=6 distinct/rows=0.0000 avg_len=11.5 null_wide=16.62% null_json=0.00% templates=864
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:ext1.label,raw_bytes,1433340,bytes,type=String distinct=8 distinct/rows=0.0001 avg_len=21.5 null_wide=66.72% null_json=0.00% templates=528
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:request_id,raw_bytes,1205100,bytes,type=Uuid distinct=33475 distinct/rows=1.0000 avg_len=36.0 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:customer.id,raw_bytes,1188648,bytes,type=Uuid distinct=33018 distinct/rows=1.0000 avg_len=36.0 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:client.ip,raw_bytes,887582,bytes,type=Ip distinct=67085 distinct/rows=1.0000 avg_len=13.2 null_wide=66.46% null_json=0.00% templates=648
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:user.email,raw_bytes,833237,bytes,type=String distinct=32367 distinct/rows=0.9669 avg_len=24.9 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:ts_unix,raw_bytes,831150,bytes,type=Datetime distinct=53310 distinct/rows=0.6414 avg_len=10.0 null_wide=58.44% null_json=0.00% templates=652
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:customer.email,raw_bytes,821478,bytes,type=String distinct=31966 distinct/rows=0.9681 avg_len=24.9 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:http.path,raw_bytes,722398,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=21.5 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:user.profile.locale.tag,raw_bytes,718208,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=21.5 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:currency,raw_bytes,708912,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=21.5 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:reason,raw_bytes,691978,bytes,type=String distinct=5 distinct/rows=0.0001 avg_len=13.8 null_wide=74.95% null_json=0.00% templates=324
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:order_id,raw_bytes,664930,bytes,type=Datetime distinct=66493 distinct/rows=1.0000 avg_len=10.0 null_wide=66.75% null_json=0.00% templates=648
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:err.trace_id,raw_bytes,598392,bytes,type=Uuid distinct=16622 distinct/rows=1.0000 avg_len=36.0 null_wide=91.69% null_json=0.00% templates=4
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:tags,raw_bytes,524005,bytes,type=String distinct=400 distinct/rows=0.0099 avg_len=13.0 null_wide=79.89% null_json=0.00% templates=600
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:level,raw_bytes,459797,bytes,type=String distinct=5 distinct/rows=0.0001 avg_len=4.6 null_wide=50.03% null_json=0.00% templates=654
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:ts_ms,raw_bytes,436930,bytes,type=Datetime distinct=33607 distinct/rows=0.9999 avg_len=13.0 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:device.owner.email,raw_bytes,414784,bytes,type=String distinct=16425 distinct/rows=0.9860 avg_len=24.9 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:ext1.ref_id,raw_bytes,401200,bytes,type=Datetime distinct=40120 distinct/rows=1.0000 avg_len=10.0 null_wide=79.94% null_json=0.00% templates=264
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:service,raw_bytes,398791,bytes,type=String distinct=5 distinct/rows=0.0001 avg_len=6.0 null_wide=66.77% null_json=0.00% templates=78
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:cache.key,raw_bytes,360261,bytes,type=String distinct=8 distinct/rows=0.0005 avg_len=21.5 null_wide=91.61% null_json=0.00% templates=48
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:device.owner.nickname,raw_bytes,253040,bytes,type=String distinct=8 distinct/rows=0.0007 avg_len=21.6 null_wide=94.14% null_json=0.00% templates=12
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:amount,raw_bytes,220426,bytes,type=Float64 distinct=31931 distinct/rows=0.9671 avg_len=6.7 null_wide=83.49% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:err.cause.detail,raw_bytes,213585,bytes,type=String distinct=8 distinct/rows=0.0008 avg_len=21.4 null_wide=95.01% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:http.duration_ms,raw_bytes,202311,bytes,type=Float64 distinct=29375 distinct/rows=0.9696 avg_len=6.7 null_wide=84.85% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:cache.origin.host,raw_bytes,200288,bytes,type=Ip distinct=8414 distinct/rows=1.0000 avg_len=23.8 null_wide=95.79% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:client.ipv6,raw_bytes,199501,bytes,type=Ip distinct=8383 distinct/rows=1.0000 avg_len=23.8 null_wide=95.81% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:shard.rows,raw_bytes,197830,bytes,type=Int64 distinct=16616 distinct/rows=1.0000 avg_len=11.9 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:region,raw_bytes,177794,bytes,type=String distinct=3 distinct/rows=0.0002 avg_len=10.7 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:device.serial,raw_bytes,166590,bytes,type=Datetime distinct=16659 distinct/rows=1.0000 avg_len=10.0 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:customer.vat_id,raw_bytes,157885,bytes,type=Int64 distinct=13259 distinct/rows=1.0000 avg_len=11.9 null_wide=93.37% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:shard.checkpoint,raw_bytes,139243,bytes,type=Datetime distinct=10711 distinct/rows=1.0000 avg_len=13.0 null_wide=94.64% null_json=0.00% templates=1
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:http.method,raw_bytes,134749,bytes,type=String distinct=4 distinct/rows=0.0001 avg_len=4.0 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:upstream.latency_ms,raw_bytes,134110,bytes,type=Float64 distinct=19661 distinct/rows=0.9793 avg_len=6.7 null_wide=89.96% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:deleted_at,raw_bytes,133900,bytes,type=Null distinct=1 distinct/rows=0.0000 avg_len=4.0 null_wide=83.26% null_json=100.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:http.status,raw_bytes,130718,bytes,type=Int64 distinct=9640 distinct/rows=0.2868 avg_len=3.9 null_wide=83.19% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:user.id,raw_bytes,130249,bytes,type=Int64 distinct=9656 distinct/rows=0.2885 avg_len=3.9 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:user_id,raw_bytes,129266,bytes,type=Int64 distinct=9627 distinct/rows=0.2897 avg_len=3.9 null_wide=83.39% null_json=0.00% templates=72
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:device.fw,raw_bytes,111147,bytes,type=Float64 distinct=16372 distinct/rows=0.9828 avg_len=6.7 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:upstream.trace,raw_bytes,101930,bytes,type=Datetime distinct=10173 distinct/rows=0.9980 avg_len=10.0 null_wide=94.90% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:device.last_seen,raw_bytes,83580,bytes,type=Datetime distinct=8351 distinct/rows=0.9992 avg_len=10.0 null_wide=95.82% null_json=0.00% templates=12
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:cache.hit,raw_bytes,75548,bytes,type=Bool distinct=2 distinct/rows=0.0001 avg_len=4.5 null_wide=91.61% null_json=0.00% templates=48
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:device.online,raw_bytes,74984,bytes,type=Bool distinct=2 distinct/rows=0.0001 avg_len=4.5 null_wide=91.67% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:shard.leader,raw_bytes,74762,bytes,type=Bool distinct=2 distinct/rows=0.0001 avg_len=4.5 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:declined_reason,raw_bytes,72596,bytes,type=Null distinct=1 distinct/rows=0.0001 avg_len=4.0 null_wide=90.93% null_json=100.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:cache.ttl,raw_bytes,65185,bytes,type=Int64 distinct=8132 distinct/rows=0.4848 avg_len=3.9 null_wide=91.61% null_json=0.00% templates=48
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:attempt,raw_bytes,64819,bytes,type=Int64 distinct=8078 distinct/rows=0.4855 avg_len=3.9 null_wide=91.68% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:err.code,raw_bytes,64615,bytes,type=Int64 distinct=8102 distinct/rows=0.4874 avg_len=3.9 null_wide=91.69% null_json=0.00% templates=4
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:shard.id,raw_bytes,64601,bytes,type=Int64 distinct=8096 distinct/rows=0.4872 avg_len=3.9 null_wide=91.69% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:retry_after,raw_bytes,58554,bytes,type=Int64 distinct=7748 distinct/rows=0.5149 avg_len=3.9 null_wide=92.48% null_json=0.00% templates=288
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:note,raw_bytes,48354,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=1.4 null_wide=83.26% null_json=0.00% templates=576
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:err.cause.code,raw_bytes,38576,bytes,type=Int64 distinct=6321 distinct/rows=0.6362 avg_len=3.9 null_wide=95.03% null_json=0.00% templates=2
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:cache.origin.port,raw_bytes,32769,bytes,type=Int64 distinct=5698 distinct/rows=0.6756 avg_len=3.9 null_wide=95.78% null_json=0.00% templates=24
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:msg,raw_bytes,23648,bytes,type=String distinct=8 distinct/rows=0.0005 avg_len=1.4 null_wide=91.69% null_json=0.00% templates=4
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,oneday,column:http.referrer,raw_bytes,16971,bytes,type=String distinct=8 distinct/rows=0.0007 avg_len=1.5 null_wide=94.18% null_json=0.00% templates=36
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ts,raw_bytes,3642900,bytes,type=Datetime distinct=35725 distinct/rows=0.1961 avg_len=20.0 null_wide=8.93% null_json=0.00% templates=4159
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:shard.checkpoint,raw_bytes,1925651,bytes,type=Datetime distinct=17201 distinct/rows=0.1161 avg_len=13.0 null_wide=25.94% null_json=0.00% templates=13
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:shard.rows,raw_bytes,1845571,bytes,type=Int64 distinct=19693 distinct/rows=0.1271 avg_len=11.9 null_wide=22.51% null_json=0.00% templates=26
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:region,raw_bytes,1650300,bytes,type=String distinct=3 distinct/rows=0.0000 avg_len=10.6 null_wide=22.51% null_json=0.00% templates=26
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:service,raw_bytes,1012180,bytes,type=String distinct=5 distinct/rows=0.0000 avg_len=6.0 null_wide=15.63% null_json=0.00% templates=438
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:level,raw_bytes,843187,bytes,type=String distinct=5 distinct/rows=0.0000 avg_len=4.6 null_wide=8.42% null_json=0.00% templates=3275
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext3.label,raw_bytes,706791,bytes,type=String distinct=8 distinct/rows=0.0002 avg_len=21.6 null_wide=83.61% null_json=0.00% templates=677
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:shard.leader,raw_bytes,698482,bytes,type=Bool distinct=2 distinct/rows=0.0000 avg_len=4.5 null_wide=22.51% null_json=0.00% templates=26
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:shard.id,raw_bytes,602471,bytes,type=Int64 distinct=8661 distinct/rows=0.0559 avg_len=3.9 null_wide=22.51% null_json=0.00% templates=26
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:request_id,raw_bytes,518976,bytes,type=Uuid distinct=13577 distinct/rows=0.9418 avg_len=36.0 null_wide=92.79% null_json=0.00% templates=2837
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext4.label,raw_bytes,513695,bytes,type=String distinct=8 distinct/rows=0.0003 avg_len=21.6 null_wide=88.13% null_json=0.00% templates=679
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext5.label,raw_bytes,467816,bytes,type=String distinct=8 distinct/rows=0.0004 avg_len=21.6 null_wide=89.17% null_json=0.00% templates=678
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext6.label,raw_bytes,412911,bytes,type=String distinct=8 distinct/rows=0.0004 avg_len=21.7 null_wide=90.47% null_json=0.00% templates=679
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:event,raw_bytes,409465,bytes,type=String distinct=6 distinct/rows=0.0002 avg_len=11.5 null_wide=82.20% null_json=0.00% templates=4853
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:user.email,raw_bytes,358774,bytes,type=String distinct=13383 distinct/rows=0.9283 avg_len=24.9 null_wide=92.79% null_json=0.00% templates=2837
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:err.trace_id,raw_bytes,339192,bytes,type=Uuid distinct=4425 distinct/rows=0.4696 avg_len=36.0 null_wide=95.29% null_json=0.00% templates=52
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext2.label,raw_bytes,313061,bytes,type=String distinct=8 distinct/rows=0.0006 avg_len=21.6 null_wide=92.74% null_json=0.00% templates=678
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:user.profile.locale.tag,raw_bytes,311405,bytes,type=String distinct=8 distinct/rows=0.0006 avg_len=21.6 null_wide=92.79% null_json=0.00% templates=2837
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext3.ref_id,raw_bytes,302360,bytes,type=Datetime distinct=4859 distinct/rows=0.1607 avg_len=10.0 null_wide=84.88% null_json=0.00% templates=341
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext1.label,raw_bytes,282052,bytes,type=String distinct=8 distinct/rows=0.0006 avg_len=21.3 null_wide=93.38% null_json=0.00% templates=674
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ts_unix,raw_bytes,279030,bytes,type=Datetime distinct=19452 distinct/rows=0.6971 avg_len=10.0 null_wide=86.05% null_json=0.00% templates=3249
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:client.ip,raw_bytes,248627,bytes,type=Ip distinct=17945 distinct/rows=0.9553 avg_len=13.2 null_wide=90.61% null_json=0.00% templates=3197
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:tags,raw_bytes,215118,bytes,type=String distinct=400 distinct/rows=0.0241 avg_len=13.0 null_wide=91.70% null_json=0.00% templates=3149
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext4.ref_id,raw_bytes,210940,bytes,type=Datetime distinct=4798 distinct/rows=0.2275 avg_len=10.0 null_wide=89.45% null_json=0.00% templates=341
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:order_id,raw_bytes,184810,bytes,type=Datetime distinct=17642 distinct/rows=0.9546 avg_len=10.0 null_wide=90.76% null_json=0.00% templates=3197
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:err.cause.detail,raw_bytes,175835,bytes,type=String distinct=8 distinct/rows=0.0010 avg_len=21.3 null_wide=95.87% null_json=0.00% templates=26
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext6.ref_id,raw_bytes,165670,bytes,type=Datetime distinct=4806 distinct/rows=0.2901 avg_len=10.0 null_wide=91.72% null_json=0.00% templates=340
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:client.ipv6,raw_bytes,152115,bytes,type=Ip distinct=5622 distinct/rows=0.8797 avg_len=23.8 null_wide=96.80% null_json=0.00% templates=1399
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:reason,raw_bytes,151047,bytes,type=String distinct=5 distinct/rows=0.0005 avg_len=13.8 null_wide=94.53% null_json=0.00% templates=1619
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:customer.id,raw_bytes,146340,bytes,type=Uuid distinct=4065 distinct/rows=1.0000 avg_len=36.0 null_wide=97.97% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext5.ref_id,raw_bytes,138450,bytes,type=Datetime distinct=4812 distinct/rows=0.3476 avg_len=10.0 null_wide=93.08% null_json=0.00% templates=341
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext2.ref_id,raw_bytes,120010,bytes,type=Datetime distinct=4772 distinct/rows=0.3976 avg_len=10.0 null_wide=94.00% null_json=0.00% templates=340
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext1.ref_id,raw_bytes,107170,bytes,type=Datetime distinct=4784 distinct/rows=0.4464 avg_len=10.0 null_wide=94.64% null_json=0.00% templates=338
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:cache.key,raw_bytes,103729,bytes,type=String distinct=8 distinct/rows=0.0017 avg_len=21.6 null_wide=97.60% null_json=0.00% templates=624
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:customer.email,raw_bytes,101089,bytes,type=String distinct=4054 distinct/rows=0.9973 avg_len=24.9 null_wide=97.97% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:http.path,raw_bytes,94456,bytes,type=String distinct=8 distinct/rows=0.0018 avg_len=21.6 null_wide=97.82% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:device.owner.email,raw_bytes,89902,bytes,type=String distinct=3598 distinct/rows=0.9964 avg_len=24.9 null_wide=98.19% null_json=0.00% templates=312
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:currency,raw_bytes,87748,bytes,type=String distinct=8 distinct/rows=0.0020 avg_len=21.6 null_wide=97.97% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext7.label,raw_bytes,76232,bytes,type=String distinct=8 distinct/rows=0.0023 avg_len=21.5 null_wide=98.23% null_json=0.00% templates=524
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:upstream.trace,raw_bytes,65480,bytes,type=Datetime distinct=5846 distinct/rows=0.8928 avg_len=10.0 null_wide=96.73% null_json=0.00% templates=1402
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:deleted_at,raw_bytes,57664,bytes,type=Null distinct=1 distinct/rows=0.0001 avg_len=4.0 null_wide=92.79% null_json=100.00% templates=2837
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:cache.origin.host,raw_bytes,57420,bytes,type=Ip distinct=2412 distinct/rows=1.0000 avg_len=23.8 null_wide=98.79% null_json=0.00% templates=312
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ts_ms,raw_bytes,56784,bytes,type=Datetime distinct=4368 distinct/rows=1.0000 avg_len=13.0 null_wide=97.82% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:user.id,raw_bytes,55964,bytes,type=Int64 distinct=7438 distinct/rows=0.5160 avg_len=3.9 null_wide=92.79% null_json=0.00% templates=2837
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:upstream.latency_ms,raw_bytes,50183,bytes,type=Float64 distinct=7176 distinct/rows=0.9546 avg_len=6.7 null_wide=96.24% null_json=0.00% templates=1421
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:device.owner.nickname,raw_bytes,49272,bytes,type=String distinct=8 distinct/rows=0.0035 avg_len=21.5 null_wide=98.85% null_json=0.00% templates=156
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:err.code,raw_bytes,36737,bytes,type=Int64 distinct=3582 distinct/rows=0.3802 avg_len=3.9 null_wide=95.29% null_json=0.00% templates=52
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:device.serial,raw_bytes,36110,bytes,type=Datetime distinct=3611 distinct/rows=1.0000 avg_len=10.0 null_wide=98.19% null_json=0.00% templates=312
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:err.cause.code,raw_bytes,32320,bytes,type=Int64 distinct=2841 distinct/rows=0.3415 avg_len=3.9 null_wide=95.84% null_json=0.00% templates=26
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:retry_after,raw_bytes,27467,bytes,type=Int64 distinct=4817 distinct/rows=0.6827 avg_len=3.9 null_wide=96.47% null_json=0.00% templates=1414
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:amount,raw_bytes,27158,bytes,type=Float64 distinct=4051 distinct/rows=0.9966 avg_len=6.7 null_wide=97.97% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:device.fw,raw_bytes,24117,bytes,type=Float64 distinct=3601 distinct/rows=0.9972 avg_len=6.7 null_wide=98.19% null_json=0.00% templates=312
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:http.duration_ms,raw_bytes,22299,bytes,type=Float64 distinct=3333 distinct/rows=0.9973 avg_len=6.7 null_wide=98.33% null_json=0.00% templates=180
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:cache.hit,raw_bytes,21629,bytes,type=Bool distinct=2 distinct/rows=0.0004 avg_len=4.5 null_wide=97.60% null_json=0.00% templates=624
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:note,raw_bytes,21488,bytes,type=String distinct=8 distinct/rows=0.0006 avg_len=1.5 null_wide=92.79% null_json=0.00% templates=2837
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:customer.vat_id,raw_bytes,20973,bytes,type=Int64 distinct=1760 distinct/rows=1.0000 avg_len=11.9 null_wide=99.12% null_json=0.00% templates=180
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:ext7.ref_id,raw_bytes,19320,bytes,type=Datetime distinct=1881 distinct/rows=0.9736 avg_len=10.0 null_wide=99.03% null_json=0.00% templates=263
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:cache.ttl,raw_bytes,18649,bytes,type=Int64 distinct=3854 distinct/rows=0.8022 avg_len=3.9 null_wide=97.60% null_json=0.00% templates=624
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:device.last_seen,raw_bytes,18170,bytes,type=Datetime distinct=1815 distinct/rows=0.9989 avg_len=10.0 null_wide=99.09% null_json=0.00% templates=156
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:http.method,raw_bytes,17462,bytes,type=String distinct=4 distinct/rows=0.0009 avg_len=4.0 null_wide=97.82% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:http.status,raw_bytes,16989,bytes,type=Int64 distinct=3531 distinct/rows=0.8084 avg_len=3.9 null_wide=97.82% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:user_id,raw_bytes,16864,bytes,type=Int64 distinct=3543 distinct/rows=0.8165 avg_len=3.9 null_wide=97.83% null_json=0.00% templates=360
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:device.online,raw_bytes,16281,bytes,type=Bool distinct=2 distinct/rows=0.0006 avg_len=4.5 null_wide=98.19% null_json=0.00% templates=312
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:msg,raw_bytes,13225,bytes,type=String distinct=8 distinct/rows=0.0008 avg_len=1.4 null_wide=95.29% null_json=0.00% templates=52
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:cache.origin.port,raw_bytes,9401,bytes,type=Int64 distinct=2134 distinct/rows=0.8840 avg_len=3.9 null_wide=98.79% null_json=0.00% templates=312
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:declined_reason,raw_bytes,8628,bytes,type=Null distinct=1 distinct/rows=0.0005 avg_len=4.0 null_wide=98.92% null_json=100.00% templates=180
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:attempt,raw_bytes,8422,bytes,type=Int64 distinct=1963 distinct/rows=0.9063 avg_len=3.9 null_wide=98.92% null_json=0.00% templates=180
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,uneven,column:http.referrer,raw_bytes,2344,bytes,type=String distinct=8 distinct/rows=0.0048 avg_len=1.4 null_wide=99.17% null_json=0.00% templates=180
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:trace_id,raw_bytes,7143876,bytes,type=String distinct=198442 distinct/rows=0.9922 avg_len=35.7 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:ts,raw_bytes,3900980,bytes,type=Datetime distinct=86235 distinct/rows=0.4312 avg_len=19.5 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:tags,raw_bytes,3530972,bytes,type=String distinct=88 distinct/rows=0.0004 avg_len=17.7 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:client.ip,raw_bytes,2640226,bytes,type=String distinct=198861 distinct/rows=0.9943 avg_len=13.2 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:event,raw_bytes,1966289,bytes,type=String distinct=19 distinct/rows=0.0001 avg_len=9.8 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:region,raw_bytes,1866800,bytes,type=String distinct=3 distinct/rows=0.0000 avg_len=9.3 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:duration_ms,raw_bytes,1324581,bytes,type=String distinct=162736 distinct/rows=0.8137 avg_len=6.6 null_wide=0.00% null_json=0.38% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:service,raw_bytes,1275148,bytes,type=String distinct=8 distinct/rows=0.0000 avg_len=6.4 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:user_id,raw_bytes,1182592,bytes,type=String distinct=181704 distinct/rows=0.9085 avg_len=5.9 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:bytes_sent,raw_bytes,990016,bytes,type=Float64 distinct=91765 distinct/rows=0.4588 avg_len=5.0 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:retry,raw_bytes,958507,bytes,type=String distinct=4 distinct/rows=0.0000 avg_len=4.8 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:level,raw_bytes,866413,bytes,type=String distinct=4 distinct/rows=0.0000 avg_len=4.3 null_wide=0.00% null_json=0.00% templates=130
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:order_id,raw_bytes,777950,bytes,type=String distinct=77948 distinct/rows=0.9999 avg_len=10.0 null_wide=61.02% null_json=0.00% templates=70
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:http.method,raw_bytes,358628,bytes,type=String distinct=4 distinct/rows=0.0000 avg_len=4.0 null_wide=55.10% null_json=0.00% templates=65
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:http.status,raw_bytes,268041,bytes,type=String distinct=6 distinct/rows=0.0001 avg_len=3.0 null_wide=55.10% null_json=0.00% templates=65
+2026-09-18T23:35:21+00:00,8895439,01_profile_logs,messy,column:error.code,raw_bytes,145101,bytes,type=String distinct=203 distinct/rows=0.0044 avg_len=3.1 null_wide=76.76% null_json=0.00% templates=70
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,templates,4931,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,rows_per_template_min,4,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,rows_per_template_median,6,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,rows_per_template_p90,13,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,rows_per_template_max,54721,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,null_cell_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,columns_widened_to_string,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,distinct_keys_widened,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,rows_under_a_widened_column,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,mixed_promoted_groups,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,template_count_min,4931,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,template_count_max,4931,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,template_count_spread,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,moved_share_pct_max,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,search_rows_scanned,54159,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,NONE,search_scan_amplification,1.0,ratio,rows scanned divided by rows that match
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,templates,277,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,rows_per_template_min,30,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,rows_per_template_median,79,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,rows_per_template_p90,333,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,rows_per_template_max,70149,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,null_cell_share_pct,22.5548,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,columns_widened_to_string,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,distinct_keys_widened,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,rows_under_a_widened_column,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,mixed_promoted_groups,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,template_count_min,268,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,template_count_max,278,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,template_count_spread,10,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,moved_share_pct_max,47.54,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,moved_share_pct_mean,26.6931,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,search_rows_scanned,76651,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J70,search_scan_amplification,1.4153,ratio,rows scanned divided by rows that match
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,templates,700,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,rows_per_template_min,5,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,rows_per_template_median,42,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,rows_per_template_p90,141,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,rows_per_template_max,71200,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,null_cell_share_pct,14.6132,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,columns_widened_to_string,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,distinct_keys_widened,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,rows_under_a_widened_column,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,mixed_promoted_groups,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,template_count_min,674,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,template_count_max,690,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,template_count_spread,16,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,moved_share_pct_max,45.571,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,moved_share_pct_mean,37.7944,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,search_rows_scanned,118477,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80,search_scan_amplification,2.1876,ratio,rows scanned divided by rows that match
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,templates,2522,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,rows_per_template_min,4,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,rows_per_template_median,10,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,rows_per_template_p90,34,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,rows_per_template_max,54721,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,null_cell_share_pct,1.9433,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,columns_widened_to_string,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,distinct_keys_widened,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,rows_under_a_widened_column,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,mixed_promoted_groups,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,template_count_min,2487,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,template_count_max,2562,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,template_count_spread,75,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,moved_share_pct_max,4.7475,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,moved_share_pct_mean,4.6914,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,search_rows_scanned,60728,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J90,search_scan_amplification,1.1213,ratio,rows scanned divided by rows that match
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,templates,982,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,rows_per_template_min,1,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,rows_per_template_median,26,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,rows_per_template_p90,75,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,rows_per_template_max,60730,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,null_cell_share_pct,3.6124,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,columns_widened_to_string,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,distinct_keys_widened,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,rows_under_a_widened_column,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,mixed_promoted_groups,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,template_count_min,958,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,template_count_max,989,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,template_count_spread,31,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,moved_share_pct_max,10.2865,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,moved_share_pct_mean,8.023,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,search_rows_scanned,61864,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_GROWN,search_scan_amplification,1.1423,ratio,rows scanned divided by rows that match
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,templates,135,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,rows_per_template_min,30,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,rows_per_template_median,265,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,rows_per_template_p90,881,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,rows_per_template_max,71200,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,null_cell_share_pct,14.2608,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,columns_widened_to_string,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,distinct_keys_widened,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,rows_under_a_widened_column,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,mixed_promoted_groups,116,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,rows_in_mixed_promoted_group,35603,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,template_count_min,125,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,template_count_max,136,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,template_count_spread,11,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,moved_share_pct_max,45.8685,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,moved_share_pct_mean,37.8885,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,search_rows_scanned,260443,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80_SPEC,search_scan_amplification,4.8089,ratio,rows scanned divided by rows that match
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,templates,7,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,rows_per_template_min,5912,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,rows_per_template_median,5938,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,rows_per_template_p90,164397,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,rows_per_template_max,164397,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,null_cell_share_pct,69.853,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,columns_widened_to_string,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,distinct_keys_widened,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,rows_under_a_widened_column,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,mixed_promoted_groups,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,template_count_min,7,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,template_count_max,7,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,template_count_spread,0,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,moved_share_pct_max,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,search_rows_scanned,435603,rows,"20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,PER_EVENT,search_scan_amplification,8.043,ratio,rows scanned divided by rows that match
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,all,keys_with_more_than_one_type,0,count,"the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=nothing/NONE,templates,894,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=nothing/NONE,rows_scanned_event_search,35603,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=nothing/NONE,rows_scanned_service_search,168736,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=nothing/J80,templates,135,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=nothing/J80,rows_scanned_event_search,35603,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=nothing/J80,rows_scanned_service_search,168736,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event/NONE,templates,4931,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event/NONE,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event/NONE,rows_scanned_service_search,168736,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event/J80,templates,700,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event/J80,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event/J80,rows_scanned_service_search,168736,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event+service/NONE,templates,6459,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event+service/NONE,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event+service/NONE,rows_scanned_service_search,33932,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event+service/J80,templates,1306,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event+service/J80,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=event+service/J80,rows_scanned_service_search,33932,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=binary/NONE,templates,4931,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=binary/NONE,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=binary/NONE,rows_scanned_service_search,168736,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=binary/J80,templates,700,count,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=binary/J80,rows_scanned_event_search,5957,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,promote=binary/J80,rows_scanned_service_search,168736,rows,
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=100,leftover_rows,22427,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=100,leftover_row_share_pct,11.213,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=100,leftover_columns,63,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=100,leftover_null_cell_share_pct,84.178,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=500,leftover_rows,2156,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=500,leftover_row_share_pct,1.078,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=500,leftover_columns,58,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=500,leftover_null_cell_share_pct,85.915,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,J80 cap=2000,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:39:22+00:00,8895439,04_merge_rules,uneven,verdict,best_two_rules,J70 J80_GROWN,name,written to lab/out/04/best_rules.json for script 02 to pick up
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,templates,870,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,rows_per_template_min,3,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,rows_per_template_median,69,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,rows_per_template_p90,545,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,rows_per_template_max,10711,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,null_cell_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,columns_widened_to_string,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,distinct_keys_widened,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,rows_under_a_widened_column,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,mixed_promoted_groups,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,template_count_min,870,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,template_count_max,870,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,template_count_spread,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,moved_share_pct_max,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,search_rows_scanned,137439,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,NONE,search_scan_amplification,1.0,ratio,rows scanned divided by rows that match
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,templates,68,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,rows_per_template_min,743,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,rows_per_template_median,2668,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,rows_per_template_p90,4353,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,rows_per_template_max,16622,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,null_cell_share_pct,16.5551,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,columns_widened_to_string,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,distinct_keys_widened,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,rows_under_a_widened_column,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,mixed_promoted_groups,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,template_count_min,67,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,template_count_max,67,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,template_count_spread,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,moved_share_pct_max,19.3165,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,moved_share_pct_mean,19.0281,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,search_rows_scanned,181058,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J70,search_scan_amplification,1.3174,ratio,rows scanned divided by rows that match
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,templates,125,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,rows_per_template_min,42,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,rows_per_template_median,1256,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,rows_per_template_p90,2903,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,rows_per_template_max,16616,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,null_cell_share_pct,13.9615,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,columns_widened_to_string,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,distinct_keys_widened,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,rows_under_a_widened_column,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,mixed_promoted_groups,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,template_count_min,133,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,template_count_max,137,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,template_count_spread,4,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,moved_share_pct_max,25.2315,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,moved_share_pct_mean,23.7915,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,search_rows_scanned,163246,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80,search_scan_amplification,1.1878,ratio,rows scanned divided by rows that match
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,templates,440,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,rows_per_template_min,5,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,rows_per_template_median,281,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,rows_per_template_p90,982,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,rows_per_template_max,10711,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,null_cell_share_pct,4.0317,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,columns_widened_to_string,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,distinct_keys_widened,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,rows_under_a_widened_column,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,mixed_promoted_groups,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,template_count_min,439,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,template_count_max,457,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,template_count_spread,18,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,moved_share_pct_max,9.572,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,moved_share_pct_mean,9.0222,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,search_rows_scanned,143332,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J90,search_scan_amplification,1.0429,ratio,rows scanned divided by rows that match
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,templates,199,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,rows_per_template_min,38,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,rows_per_template_median,535,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,rows_per_template_p90,2393,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,rows_per_template_max,16616,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,null_cell_share_pct,7.4041,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,columns_widened_to_string,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,distinct_keys_widened,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,rows_under_a_widened_column,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,mixed_promoted_groups,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,template_count_min,181,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,template_count_max,194,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,template_count_spread,13,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,moved_share_pct_max,19.948,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,moved_share_pct_mean,18.5263,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,search_rows_scanned,151465,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_GROWN,search_scan_amplification,1.1021,ratio,rows scanned divided by rows that match
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,templates,24,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,rows_per_template_min,252,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,rows_per_template_median,9096,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,rows_per_template_p90,16616,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,rows_per_template_max,23299,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,null_cell_share_pct,14.1131,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,columns_widened_to_string,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,distinct_keys_widened,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,rows_under_a_widened_column,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,mixed_promoted_groups,21,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,rows_in_mixed_promoted_group,166762,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,template_count_min,24,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,template_count_max,28,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,template_count_spread,4,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,moved_share_pct_max,28.001,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,moved_share_pct_mean,21.9002,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,search_rows_scanned,883214,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80_SPEC,search_scan_amplification,6.4262,ratio,rows scanned divided by rows that match
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,templates,7,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,rows_per_template_min,27694,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,rows_per_template_median,27812,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,rows_per_template_p90,33238,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,rows_per_template_max,33238,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,null_cell_share_pct,77.7703,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,columns_widened_to_string,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,columns_widened_share_pct,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,distinct_keys_widened,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,rows_under_a_widened_column,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,mixed_promoted_groups,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,rows_in_mixed_promoted_group,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,template_count_min,7,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,template_count_max,7,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,template_count_spread,0,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,moved_share_pct_max,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,moved_share_pct_mean,0.0,percent,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,search_rows_scanned,566762,rows,"20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,PER_EVENT,search_scan_amplification,4.1237,ratio,rows scanned divided by rows that match
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,all,keys_with_more_than_one_type,0,count,"the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=nothing/NONE,templates,150,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=nothing/NONE,rows_scanned_event_search,166762,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=nothing/NONE,rows_scanned_service_search,66464,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=nothing/J80,templates,24,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=nothing/J80,rows_scanned_event_search,166762,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=nothing/J80,rows_scanned_service_search,66464,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event/NONE,templates,870,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event/NONE,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event/NONE,rows_scanned_service_search,66464,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event/J80,templates,125,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event/J80,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event/J80,rows_scanned_service_search,66464,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event+service/NONE,templates,1182,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event+service/NONE,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event+service/NONE,rows_scanned_service_search,13447,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event+service/J80,templates,259,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event+service/J80,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=event+service/J80,rows_scanned_service_search,13447,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=binary/NONE,templates,870,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=binary/NONE,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=binary/NONE,rows_scanned_service_search,66464,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=binary/J80,templates,125,count,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=binary/J80,rows_scanned_event_search,27892,rows,"one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,promote=binary/J80,rows_scanned_service_search,66464,rows,
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80 cap=100,leftover_rows,5053,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80 cap=100,leftover_row_share_pct,2.526,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80 cap=100,leftover_columns,38,count,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80 cap=100,leftover_null_cell_share_pct,69.533,percent,"lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target"
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80 cap=500,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,J80 cap=2000,leftover_rows,0,rows,the cap was never reached
+2026-09-18T23:41:44+00:00,8895439,04_merge_rules,flat30,verdict,best_two_rules,J70 J80,name,written to lab/out/04/best_rules.json for script 02 to pick up

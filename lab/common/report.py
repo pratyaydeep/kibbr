@@ -275,6 +275,31 @@ def findings(kept: dict) -> list:
                 "payloads, so their ratios are flattered by that much."
             )
 
+    # Type widening, which only a dataset carrying two types per key can answer.
+    for ds in sorted({r["dataset"] for r in kept.get("04_merge_rules", [])}):
+        multi = _pick(kept, "04_merge_rules", ds, "all", "keys_with_more_than_one_type")
+        if not multi or float(multi["value"]) == 0:
+            continue
+        none_share = _pick(kept, "04_merge_rules", ds, "NONE",
+                           "columns_widened_share_pct")
+        none_keys = _pick(kept, "04_merge_rules", ds, "NONE", "distinct_keys_widened")
+        worst = None
+        for rule in ("J70", "J80", "J90", "J80_GROWN", "PER_EVENT"):
+            r = _pick(kept, "04_merge_rules", ds, rule, "columns_widened_share_pct")
+            if r and (worst is None or float(r["value"]) > worst[1]):
+                worst = (rule, float(r["value"]))
+        if none_share and worst:
+            out.append(
+                f"- **Type widening is a ladder cost, not a merging cost** (`{ds}`, "
+                f"{int(float(multi['value']))} keys carrying two types): "
+                f"{float(none_share['value']):.1f}% of columns are already String by "
+                f"widening with NO merging at all, across "
+                f"{int(float(none_keys['value'])) if none_keys else '?'} distinct keys. "
+                f"The worst merge rule ({worst[0]}) takes that to {worst[1]:.1f}% and "
+                "adds no new keys. Section 3.2's monotonic join does the damage inside a "
+                "single template; merging contributes a few points on top."
+            )
+
     sl = _pick(kept, "09_template_lookup", "synthetic", "verdict", "scan_superlinearity")
     if sl:
         out.append(

@@ -196,6 +196,8 @@ def main() -> int:
                 st["rows_per_template_max"],
                 round(st["null_cell_share_pct"], 2),
                 st["columns_widened_to_string"],
+                round(st["columns_widened_share_pct"], 2),
+                st["distinct_keys_widened"],
                 od["template_count_spread"],
                 round(od["moved_share_pct_max"], 2),
                 scanned,
@@ -218,22 +220,29 @@ def main() -> int:
         body,
         headers=[
             "rule", "templates", "min", "median", "p90", "max", "null cell %",
-            "cols->String", "count spread", "moved % max", "rows scanned", "x floor",
+            "cols->String", "of cols %", "keys", "count spread", "moved % max",
+            "rows scanned", "x floor",
         ],
         title=f"{ds.name}: merge rules (order dependence over {N_SHUFFLES} shuffles)",
     )
 
-    multi = sum(
-        1
-        for k, v in _types_per_key(P).items()
-        if len(v) > 1
-    )
-    print(
-        f"\n  `cols->String` is 0 for every rule because no key in `{ds.name}` ever "
-        f"carries two types ({multi} such keys). The type join has nothing to widen "
-        "here; that is a fact about the generator, not a verdict on merging. A real "
-        "`N/A` in a numeric field is what would move this column, so it needs `real`."
-    )
+    multi = sum(1 for k, v in _types_per_key(P).items() if len(v) > 1)
+    none_widened = results["NONE"].stats(P.n_rows)["columns_widened_to_string"]
+    if multi == 0:
+        print(
+            f"\n  `cols->String` is 0 for every rule because no key in `{ds.name}` ever "
+            "carries two types. The type join has nothing to widen here; that is a fact "
+            "about the dataset, not a verdict on merging. One `N/A` in a numeric field is "
+            "what would move this column - `messy` or a real log file is what shows it."
+        )
+    else:
+        print(
+            f"\n  {multi} keys in `{ds.name}` carry more than one type, so the type join "
+            f"has something to do. NONE already widens {none_widened} columns to String "
+            "before any merging - that is section 3.2's monotonic join acting inside a "
+            "single template, and no merge rule can undo it. The `cols->String` column "
+            "above is what each rule adds on top by putting two templates in one leaf."
+        )
     res.add("all", "keys_with_more_than_one_type", multi, "count",
             "the type join can only widen a column where one key carries two types; at "
             "zero, every columns->String figure above is vacuous")

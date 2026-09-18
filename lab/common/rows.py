@@ -39,6 +39,10 @@ class Template:
     tid: int
     keys: list = field(default_factory=list)  # sorted; promoted keys included
     types: dict = field(default_factory=dict)  # key -> folded ColumnType or None
+    # key -> the set of row-level types the ladder produced, before the join. The folded
+    # type alone cannot say whether a String column was always strings or was widened
+    # into one, and that difference is the whole question script 04 asks about merging.
+    evidence: dict = field(default_factory=dict)
     promoted: tuple = ()
     fingerprint: str = ""
     rows: list = field(default_factory=list)  # RowRef indices into Dataset.rows
@@ -114,6 +118,7 @@ def load(ds, rule=DEFAULT_RULE, limit: int | None = None) -> Parsed:
     out = Parsed(ds.name, ds.note)
     # Pass 1: key sets and the type join, per template.
     type_acc: dict = defaultdict(lambda: defaultdict(lambda: None))
+    ev_acc: dict = defaultdict(lambda: defaultdict(set))
     seen: dict = {}
     parsed_cache = []
     for n, (lab_id, raw) in enumerate(datasets.iter_payloads(ds.path)):
@@ -130,12 +135,16 @@ def load(ds, rule=DEFAULT_RULE, limit: int | None = None) -> Parsed:
                 fingerprint=p.fingerprint,
             )
         acc = type_acc[tid]
+        ev = ev_acc[tid]
         for key in p.keys:
-            acc[key] = _join(acc[key], p.column_type(key))
+            ty = p.column_type(key)
+            acc[key] = _join(acc[key], ty)
+            ev[key].add(ty)
         parsed_cache.append((lab_id, p))
 
     for tid, tmpl in seen.items():
         tmpl.types = {k: type_acc[tid][k] for k in tmpl.keys}
+        tmpl.evidence = {k: set(ev_acc[tid][k]) for k in tmpl.keys}
     out.templates = seen
 
     # Pass 2: lay the rows out in each template's key order.

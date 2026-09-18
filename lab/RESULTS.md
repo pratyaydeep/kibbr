@@ -23,7 +23,7 @@ python       3.12.2
 
 ## Findings so far
 
-- **The Python frontend agrees with the binary**: 0 disagreements over 3 datasets. Every template id and inferred type below is the one TrieDB would assign.
+- **The Python frontend agrees with the binary**: 0 disagreements over 4 datasets. Every template id and inferred type below is the one TrieDB would assign.
 - **The byte model is calibrated on `flat30`**: it predicts +0.00% of the segment bytes the real binary wrote (bound: 10%).
 - **The byte model is calibrated on `uneven`**: it predicts +0.00% of the segment bytes the real binary wrote (bound: 10%).
 - **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.33x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
@@ -41,6 +41,7 @@ python       3.12.2
 - **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; TrieDB's best measured layout is WIDE rg=122,880 at 0.086x.
 - **clp-s stores these logs smaller than TrieDB does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
 - **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
+- **Type widening is a ladder cost, not a merging cost** (`messy`, 7 keys carrying two types): 44.0% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (J70) takes that to 50.0% and adds no new keys. Section 3.2's monotonic join does the damage inside a single template; merging contributes a few points on top.
 - **Scanning every template for an unpromoted key bends the wrong way**: 100x the templates costs 2.4x more than linear, not the same. A key-to-templates map is flat.
 
 ## Comparison systems (script 07)
@@ -68,7 +69,7 @@ Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`:
 
 _Frontend agreement - the Python port against the binary_
 
-Run 2026-09-18T21:51:12+00:00, git `b405451`, 6 rows.
+Run 2026-09-18T23:22:02+00:00, git `8895439`, 8 rows.
 
 ### `00_frontend_agree` / dataset `flat30`
 
@@ -76,6 +77,13 @@ Run 2026-09-18T21:51:12+00:00, git `b405451`, 6 rows.
 |-----------|----------------|---------|--------|
 | flat30    | lines_compared |   5,000 | lines  |
 | flat30    | disagreements  |       0 | count  |
+
+### `00_frontend_agree` / dataset `messy`
+
+| variant   | metric         |   value | unit   |
+|-----------|----------------|---------|--------|
+| messy     | lines_compared |   5,000 | lines  |
+| messy     | disagreements  |       0 | count  |
 
 ### `00_frontend_agree` / dataset `oneday`
 
@@ -94,6 +102,7 @@ Run 2026-09-18T21:51:12+00:00, git `b405451`, 6 rows.
 **Notes**
 
 - triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
+- HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else.
 - flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else
 - generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota
 
@@ -101,7 +110,7 @@ Run 2026-09-18T21:51:12+00:00, git `b405451`, 6 rows.
 
 _What the logs look like_
 
-Run 2026-09-18T21:51:58+00:00, git `b405451`, 252 rows.
+Run 2026-09-18T23:35:21+00:00, git `8895439`, 292 rows.
 
 ### `01_profile_logs` / dataset `flat30`
 
@@ -187,6 +196,51 @@ Run 2026-09-18T21:51:58+00:00, git `b405451`, 252 rows.
 | column:cache.origin.port       | raw_bytes                                    |  32769           | bytes   |
 | column:msg                     | raw_bytes                                    |  23648           | bytes   |
 | column:http.referrer           | raw_bytes                                    |  16971           | bytes   |
+
+### `01_profile_logs` / dataset `messy`
+
+| variant            | metric                                       |            value | unit    |
+|--------------------|----------------------------------------------|------------------|---------|
+| messy              | rows                                         | 200000           | count   |
+| messy              | raw bytes                                    |      6.29598e+07 | count   |
+| messy              | templates                                    |    130           | count   |
+| messy              | rows/template min                            |     93           | count   |
+| messy              | rows/template median                         |   1116           | count   |
+| messy              | rows/template p90                            |   4134           | count   |
+| messy              | rows/template max                            |   4873           | count   |
+| messy              | top-10 share of rows %                       |     22.1         | count   |
+| messy              | templates with <100 rows                     |      2           | count   |
+| messy              | distinct promoted-value sets                 |     19           | count   |
+| messy              | templates in the biggest promoted group      |      8           | count   |
+| messy              | promoted groups holding one template         |      0           | count   |
+| messy              | distinct column names                        |     16           | count   |
+| messy              | days spanned by `ts`                         |      1           | count   |
+| messy              | days spanned by every Datetime column pooled |  49780           | count   |
+| messy              | days spanned by the widest column (order_id) |  49780           | count   |
+| messy              | templates_with_ts                            |    130           | count   |
+| messy              | templates_no_time_column                     |      0           | count   |
+| messy              | templates_time_not_named_ts                  |      0           | count   |
+| messy              | unskippable_templates                        |      0           | count   |
+| messy              | unskippable_rows                             |      0           | count   |
+| messy              | unskippable_row_share                        |      0           | percent |
+| messy              | unskippable_bytes                            |      0           | count   |
+| messy              | unskippable_byte_share                       |      0           | percent |
+| column:trace_id    | raw_bytes                                    |      7.14388e+06 | bytes   |
+| column:ts          | raw_bytes                                    |      3.90098e+06 | bytes   |
+| column:tags        | raw_bytes                                    |      3.53097e+06 | bytes   |
+| column:client.ip   | raw_bytes                                    |      2.64023e+06 | bytes   |
+| column:event       | raw_bytes                                    |      1.96629e+06 | bytes   |
+| column:region      | raw_bytes                                    |      1.8668e+06  | bytes   |
+| column:duration_ms | raw_bytes                                    |      1.32458e+06 | bytes   |
+| column:service     | raw_bytes                                    |      1.27515e+06 | bytes   |
+| column:user_id     | raw_bytes                                    |      1.18259e+06 | bytes   |
+| column:bytes_sent  | raw_bytes                                    | 990016           | bytes   |
+| column:retry       | raw_bytes                                    | 958507           | bytes   |
+| column:level       | raw_bytes                                    | 866413           | bytes   |
+| column:order_id    | raw_bytes                                    | 777950           | bytes   |
+| column:http.method | raw_bytes                                    | 358628           | bytes   |
+| column:http.status | raw_bytes                                    | 268041           | bytes   |
+| column:error.code  | raw_bytes                                    | 145101           | bytes   |
 
 ### `01_profile_logs` / dataset `oneday`
 
@@ -430,6 +484,23 @@ Run 2026-09-18T21:51:58+00:00, git `b405451`, 252 rows.
 - type=Int64 distinct=5698 distinct/rows=0.6756 avg_len=3.9 null_wide=95.78% null_json=0.00% templates=24
 - type=String distinct=8 distinct/rows=0.0005 avg_len=1.4 null_wide=91.69% null_json=0.00% templates=4
 - type=String distinct=8 distinct/rows=0.0007 avg_len=1.5 null_wide=94.18% null_json=0.00% templates=36
+- HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else.
+- type=String distinct=198442 distinct/rows=0.9922 avg_len=35.7 null_wide=0.00% null_json=0.00% templates=130
+- type=Datetime distinct=86235 distinct/rows=0.4312 avg_len=19.5 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=88 distinct/rows=0.0004 avg_len=17.7 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=198861 distinct/rows=0.9943 avg_len=13.2 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=19 distinct/rows=0.0001 avg_len=9.8 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=3 distinct/rows=0.0000 avg_len=9.3 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=162736 distinct/rows=0.8137 avg_len=6.6 null_wide=0.00% null_json=0.38% templates=130
+- type=String distinct=8 distinct/rows=0.0000 avg_len=6.4 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=181704 distinct/rows=0.9085 avg_len=5.9 null_wide=0.00% null_json=0.00% templates=130
+- type=Float64 distinct=91765 distinct/rows=0.4588 avg_len=5.0 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=4 distinct/rows=0.0000 avg_len=4.8 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=4 distinct/rows=0.0000 avg_len=4.3 null_wide=0.00% null_json=0.00% templates=130
+- type=String distinct=77948 distinct/rows=0.9999 avg_len=10.0 null_wide=61.02% null_json=0.00% templates=70
+- type=String distinct=4 distinct/rows=0.0000 avg_len=4.0 null_wide=55.10% null_json=0.00% templates=65
+- type=String distinct=6 distinct/rows=0.0001 avg_len=3.0 null_wide=55.10% null_json=0.00% templates=65
+- type=String distinct=203 distinct/rows=0.0044 avg_len=3.1 null_wide=76.76% null_json=0.00% templates=70
 - flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else
 - type=Datetime distinct=64103 distinct/rows=0.5491 avg_len=20.0 null_wide=41.62% null_json=0.00% templates=722
 - type=Datetime distinct=53310 distinct/rows=0.6414 avg_len=10.0 null_wide=58.44% null_json=0.00% templates=652
@@ -1402,7 +1473,7 @@ Run 2026-09-18T22:07:49+00:00, git `b405451`, 451 rows.
 
 _Which merging rule_
 
-Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
+Run 2026-09-18T23:41:44+00:00, git `8895439`, 495 rows.
 
 ### `04_merge_rules` / dataset `flat30`
 
@@ -1415,6 +1486,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | NONE                       | rows_per_template_max        | 10,711  | count   |
 | NONE                       | null_cell_share_pct          | 0       | percent |
 | NONE                       | columns_widened_to_string    | 0       | count   |
+| NONE                       | columns_widened_share_pct    | 0       | percent |
+| NONE                       | distinct_keys_widened        | 0       | count   |
+| NONE                       | rows_under_a_widened_column  | 0       | count   |
 | NONE                       | mixed_promoted_groups        | 0       | count   |
 | NONE                       | rows_in_mixed_promoted_group | 0       | count   |
 | NONE                       | template_count_min           | 870     | count   |
@@ -1431,6 +1505,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J70                        | rows_per_template_max        | 16,622  | count   |
 | J70                        | null_cell_share_pct          | 16.56   | percent |
 | J70                        | columns_widened_to_string    | 0       | count   |
+| J70                        | columns_widened_share_pct    | 0       | percent |
+| J70                        | distinct_keys_widened        | 0       | count   |
+| J70                        | rows_under_a_widened_column  | 0       | count   |
 | J70                        | mixed_promoted_groups        | 0       | count   |
 | J70                        | rows_in_mixed_promoted_group | 0       | count   |
 | J70                        | template_count_min           | 67      | count   |
@@ -1447,6 +1524,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J80                        | rows_per_template_max        | 16,616  | count   |
 | J80                        | null_cell_share_pct          | 13.96   | percent |
 | J80                        | columns_widened_to_string    | 0       | count   |
+| J80                        | columns_widened_share_pct    | 0       | percent |
+| J80                        | distinct_keys_widened        | 0       | count   |
+| J80                        | rows_under_a_widened_column  | 0       | count   |
 | J80                        | mixed_promoted_groups        | 0       | count   |
 | J80                        | rows_in_mixed_promoted_group | 0       | count   |
 | J80                        | template_count_min           | 133     | count   |
@@ -1463,6 +1543,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J90                        | rows_per_template_max        | 10,711  | count   |
 | J90                        | null_cell_share_pct          | 4.032   | percent |
 | J90                        | columns_widened_to_string    | 0       | count   |
+| J90                        | columns_widened_share_pct    | 0       | percent |
+| J90                        | distinct_keys_widened        | 0       | count   |
+| J90                        | rows_under_a_widened_column  | 0       | count   |
 | J90                        | mixed_promoted_groups        | 0       | count   |
 | J90                        | rows_in_mixed_promoted_group | 0       | count   |
 | J90                        | template_count_min           | 439     | count   |
@@ -1479,6 +1562,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J80_GROWN                  | rows_per_template_max        | 16,616  | count   |
 | J80_GROWN                  | null_cell_share_pct          | 7.404   | percent |
 | J80_GROWN                  | columns_widened_to_string    | 0       | count   |
+| J80_GROWN                  | columns_widened_share_pct    | 0       | percent |
+| J80_GROWN                  | distinct_keys_widened        | 0       | count   |
+| J80_GROWN                  | rows_under_a_widened_column  | 0       | count   |
 | J80_GROWN                  | mixed_promoted_groups        | 0       | count   |
 | J80_GROWN                  | rows_in_mixed_promoted_group | 0       | count   |
 | J80_GROWN                  | template_count_min           | 181     | count   |
@@ -1495,6 +1581,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J80_SPEC                   | rows_per_template_max        | 23,299  | count   |
 | J80_SPEC                   | null_cell_share_pct          | 14.11   | percent |
 | J80_SPEC                   | columns_widened_to_string    | 0       | count   |
+| J80_SPEC                   | columns_widened_share_pct    | 0       | percent |
+| J80_SPEC                   | distinct_keys_widened        | 0       | count   |
+| J80_SPEC                   | rows_under_a_widened_column  | 0       | count   |
 | J80_SPEC                   | mixed_promoted_groups        | 21      | count   |
 | J80_SPEC                   | rows_in_mixed_promoted_group | 166,762 | count   |
 | J80_SPEC                   | template_count_min           | 24      | count   |
@@ -1511,6 +1600,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | PER_EVENT                  | rows_per_template_max        | 33,238  | count   |
 | PER_EVENT                  | null_cell_share_pct          | 77.77   | percent |
 | PER_EVENT                  | columns_widened_to_string    | 0       | count   |
+| PER_EVENT                  | columns_widened_share_pct    | 0       | percent |
+| PER_EVENT                  | distinct_keys_widened        | 0       | count   |
+| PER_EVENT                  | rows_under_a_widened_column  | 0       | count   |
 | PER_EVENT                  | mixed_promoted_groups        | 0       | count   |
 | PER_EVENT                  | rows_in_mixed_promoted_group | 0       | count   |
 | PER_EVENT                  | template_count_min           | 7       | count   |
@@ -1553,6 +1645,173 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J80 cap=2000               | leftover_rows                | 0       | rows    |
 | verdict                    | best_two_rules               | J70 J80 | name    |
 
+### `04_merge_rules` / dataset `messy`
+
+| variant                    | metric                       | value         | unit    |
+|----------------------------|------------------------------|---------------|---------|
+| NONE                       | templates                    | 130           | count   |
+| NONE                       | rows_per_template_min        | 93            | count   |
+| NONE                       | rows_per_template_median     | 1,169         | count   |
+| NONE                       | rows_per_template_p90        | 4,134         | count   |
+| NONE                       | rows_per_template_max        | 4,873         | count   |
+| NONE                       | null_cell_share_pct          | 0             | percent |
+| NONE                       | columns_widened_to_string    | 806           | count   |
+| NONE                       | columns_widened_share_pct    | 44.04         | percent |
+| NONE                       | distinct_keys_widened        | 8             | count   |
+| NONE                       | rows_under_a_widened_column  | 1,205,077     | count   |
+| NONE                       | mixed_promoted_groups        | 0             | count   |
+| NONE                       | rows_in_mixed_promoted_group | 0             | count   |
+| NONE                       | template_count_min           | 130           | count   |
+| NONE                       | template_count_max           | 130           | count   |
+| NONE                       | template_count_spread        | 0             | count   |
+| NONE                       | moved_share_pct_max          | 0             | percent |
+| NONE                       | moved_share_pct_mean         | 0             | percent |
+| NONE                       | search_rows_scanned          | 74,093        | rows    |
+| NONE                       | search_scan_amplification    | 1             | ratio   |
+| J70                        | templates                    | 19            | count   |
+| J70                        | rows_per_template_min        | 8,256         | count   |
+| J70                        | rows_per_template_median     | 12,296        | count   |
+| J70                        | rows_per_template_p90        | 12,606        | count   |
+| J70                        | rows_per_template_max        | 12,615        | count   |
+| J70                        | null_cell_share_pct          | 15.5          | percent |
+| J70                        | columns_widened_to_string    | 152           | count   |
+| J70                        | columns_widened_share_pct    | 50            | percent |
+| J70                        | distinct_keys_widened        | 8             | count   |
+| J70                        | rows_under_a_widened_column  | 1,600,000     | count   |
+| J70                        | mixed_promoted_groups        | 0             | count   |
+| J70                        | rows_in_mixed_promoted_group | 0             | count   |
+| J70                        | template_count_min           | 19            | count   |
+| J70                        | template_count_max           | 19            | count   |
+| J70                        | template_count_spread        | 0             | count   |
+| J70                        | moved_share_pct_max          | 0             | percent |
+| J70                        | moved_share_pct_mean         | 0             | percent |
+| J70                        | search_rows_scanned          | 208,427       | rows    |
+| J70                        | search_scan_amplification    | 2.813         | ratio   |
+| J80                        | templates                    | 33            | count   |
+| J80                        | rows_per_template_min        | 1,702         | count   |
+| J80                        | rows_per_template_median     | 6,102         | count   |
+| J80                        | rows_per_template_p90        | 8,343         | count   |
+| J80                        | rows_per_template_max        | 12,615        | count   |
+| J80                        | null_cell_share_pct          | 14.74         | percent |
+| J80                        | columns_widened_to_string    | 258           | count   |
+| J80                        | columns_widened_share_pct    | 49.62         | percent |
+| J80                        | distinct_keys_widened        | 8             | count   |
+| J80                        | rows_under_a_widened_column  | 1,577,732     | count   |
+| J80                        | mixed_promoted_groups        | 0             | count   |
+| J80                        | rows_in_mixed_promoted_group | 0             | count   |
+| J80                        | template_count_min           | 33            | count   |
+| J80                        | template_count_max           | 33            | count   |
+| J80                        | template_count_spread        | 0             | count   |
+| J80                        | moved_share_pct_max          | 15.12         | percent |
+| J80                        | moved_share_pct_mean         | 13.62         | percent |
+| J80                        | search_rows_scanned          | 204,153       | rows    |
+| J80                        | search_scan_amplification    | 2.755         | ratio   |
+| J90                        | templates                    | 66            | count   |
+| J90                        | rows_per_template_min        | 225           | count   |
+| J90                        | rows_per_template_median     | 2,899         | count   |
+| J90                        | rows_per_template_p90        | 5,207         | count   |
+| J90                        | rows_per_template_max        | 6,960         | count   |
+| J90                        | null_cell_share_pct          | 7.992         | percent |
+| J90                        | columns_widened_to_string    | 470           | count   |
+| J90                        | columns_widened_share_pct    | 48.5          | percent |
+| J90                        | distinct_keys_widened        | 8             | count   |
+| J90                        | rows_under_a_widened_column  | 1,443,179     | count   |
+| J90                        | mixed_promoted_groups        | 0             | count   |
+| J90                        | rows_in_mixed_promoted_group | 0             | count   |
+| J90                        | template_count_min           | 66            | count   |
+| J90                        | template_count_max           | 66            | count   |
+| J90                        | template_count_spread        | 0             | count   |
+| J90                        | moved_share_pct_max          | 9.203         | percent |
+| J90                        | moved_share_pct_mean         | 7.325         | percent |
+| J90                        | search_rows_scanned          | 127,552       | rows    |
+| J90                        | search_scan_amplification    | 1.722         | ratio   |
+| J80_GROWN                  | templates                    | 33            | count   |
+| J80_GROWN                  | rows_per_template_min        | 3,678         | count   |
+| J80_GROWN                  | rows_per_template_median     | 5,655         | count   |
+| J80_GROWN                  | rows_per_template_p90        | 8,315         | count   |
+| J80_GROWN                  | rows_per_template_max        | 12,615        | count   |
+| J80_GROWN                  | null_cell_share_pct          | 10.77         | percent |
+| J80_GROWN                  | columns_widened_to_string    | 250           | count   |
+| J80_GROWN                  | columns_widened_share_pct    | 50            | percent |
+| J80_GROWN                  | distinct_keys_widened        | 8             | count   |
+| J80_GROWN                  | rows_under_a_widened_column  | 1,515,225     | count   |
+| J80_GROWN                  | mixed_promoted_groups        | 0             | count   |
+| J80_GROWN                  | rows_in_mixed_promoted_group | 0             | count   |
+| J80_GROWN                  | template_count_min           | 33            | count   |
+| J80_GROWN                  | template_count_max           | 33            | count   |
+| J80_GROWN                  | template_count_spread        | 0             | count   |
+| J80_GROWN                  | moved_share_pct_max          | 0.11          | percent |
+| J80_GROWN                  | moved_share_pct_mean         | 0.0935        | percent |
+| J80_GROWN                  | search_rows_scanned          | 160,306       | rows    |
+| J80_GROWN                  | search_scan_amplification    | 2.164         | ratio   |
+| J80_SPEC                   | templates                    | 2             | count   |
+| J80_SPEC                   | rows_per_template_min        | 80,368        | count   |
+| J80_SPEC                   | rows_per_template_median     | 119,632       | count   |
+| J80_SPEC                   | rows_per_template_p90        | 119,632       | count   |
+| J80_SPEC                   | rows_per_template_max        | 119,632       | count   |
+| J80_SPEC                   | null_cell_share_pct          | 15.5          | percent |
+| J80_SPEC                   | columns_widened_to_string    | 16            | count   |
+| J80_SPEC                   | columns_widened_share_pct    | 50            | percent |
+| J80_SPEC                   | distinct_keys_widened        | 8             | count   |
+| J80_SPEC                   | rows_under_a_widened_column  | 1,600,000     | count   |
+| J80_SPEC                   | mixed_promoted_groups        | 2             | count   |
+| J80_SPEC                   | rows_in_mixed_promoted_group | 200,000       | count   |
+| J80_SPEC                   | template_count_min           | 2             | count   |
+| J80_SPEC                   | template_count_max           | 2             | count   |
+| J80_SPEC                   | template_count_spread        | 0             | count   |
+| J80_SPEC                   | moved_share_pct_max          | 21.42         | percent |
+| J80_SPEC                   | moved_share_pct_mean         | 14.38         | percent |
+| J80_SPEC                   | search_rows_scanned          | 4,000,000     | rows    |
+| J80_SPEC                   | search_scan_amplification    | 53.99         | ratio   |
+| PER_EVENT                  | templates                    | 19            | count   |
+| PER_EVENT                  | rows_per_template_min        | 8,256         | count   |
+| PER_EVENT                  | rows_per_template_median     | 12,296        | count   |
+| PER_EVENT                  | rows_per_template_p90        | 12,606        | count   |
+| PER_EVENT                  | rows_per_template_max        | 12,615        | count   |
+| PER_EVENT                  | null_cell_share_pct          | 15.5          | percent |
+| PER_EVENT                  | columns_widened_to_string    | 152           | count   |
+| PER_EVENT                  | columns_widened_share_pct    | 50            | percent |
+| PER_EVENT                  | distinct_keys_widened        | 8             | count   |
+| PER_EVENT                  | rows_under_a_widened_column  | 1,600,000     | count   |
+| PER_EVENT                  | mixed_promoted_groups        | 0             | count   |
+| PER_EVENT                  | rows_in_mixed_promoted_group | 0             | count   |
+| PER_EVENT                  | template_count_min           | 19            | count   |
+| PER_EVENT                  | template_count_max           | 19            | count   |
+| PER_EVENT                  | template_count_spread        | 0             | count   |
+| PER_EVENT                  | moved_share_pct_max          | 0             | percent |
+| PER_EVENT                  | moved_share_pct_mean         | 0             | percent |
+| PER_EVENT                  | search_rows_scanned          | 208,427       | rows    |
+| PER_EVENT                  | search_scan_amplification    | 2.813         | ratio   |
+| all                        | keys_with_more_than_one_type | 7             | count   |
+| promote=nothing/NONE       | templates                    | 8             | count   |
+| promote=nothing/NONE       | rows_scanned_event_search    | 200,000       | rows    |
+| promote=nothing/NONE       | rows_scanned_service_search  | 200,000       | rows    |
+| promote=nothing/J80        | templates                    | 2             | count   |
+| promote=nothing/J80        | rows_scanned_event_search    | 200,000       | rows    |
+| promote=nothing/J80        | rows_scanned_service_search  | 200,000       | rows    |
+| promote=event/NONE         | templates                    | 130           | count   |
+| promote=event/NONE         | rows_scanned_event_search    | 12,615        | rows    |
+| promote=event/NONE         | rows_scanned_service_search  | 200,000       | rows    |
+| promote=event/J80          | templates                    | 33            | count   |
+| promote=event/J80          | rows_scanned_event_search    | 12,615        | rows    |
+| promote=event/J80          | rows_scanned_service_search  | 200,000       | rows    |
+| promote=event+service/NONE | templates                    | 130           | count   |
+| promote=event+service/NONE | rows_scanned_event_search    | 12,615        | rows    |
+| promote=event+service/NONE | rows_scanned_service_search  | 25,125        | rows    |
+| promote=event+service/J80  | templates                    | 33            | count   |
+| promote=event+service/J80  | rows_scanned_event_search    | 12,615        | rows    |
+| promote=event+service/J80  | rows_scanned_service_search  | 25,125        | rows    |
+| promote=binary/NONE        | templates                    | 130           | count   |
+| promote=binary/NONE        | rows_scanned_event_search    | 12,615        | rows    |
+| promote=binary/NONE        | rows_scanned_service_search  | 200,000       | rows    |
+| promote=binary/J80         | templates                    | 33            | count   |
+| promote=binary/J80         | rows_scanned_event_search    | 12,615        | rows    |
+| promote=binary/J80         | rows_scanned_service_search  | 200,000       | rows    |
+| J80 cap=100                | leftover_rows                | 0             | rows    |
+| J80 cap=500                | leftover_rows                | 0             | rows    |
+| J80 cap=2000               | leftover_rows                | 0             | rows    |
+| verdict                    | best_two_rules               | J90 J80_GROWN | name    |
+
 ### `04_merge_rules` / dataset `uneven`
 
 | variant                    | metric                       | value         | unit    |
@@ -1564,6 +1823,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | NONE                       | rows_per_template_max        | 54,721        | count   |
 | NONE                       | null_cell_share_pct          | 0             | percent |
 | NONE                       | columns_widened_to_string    | 0             | count   |
+| NONE                       | columns_widened_share_pct    | 0             | percent |
+| NONE                       | distinct_keys_widened        | 0             | count   |
+| NONE                       | rows_under_a_widened_column  | 0             | count   |
 | NONE                       | mixed_promoted_groups        | 0             | count   |
 | NONE                       | rows_in_mixed_promoted_group | 0             | count   |
 | NONE                       | template_count_min           | 4,931         | count   |
@@ -1580,6 +1842,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J70                        | rows_per_template_max        | 70,149        | count   |
 | J70                        | null_cell_share_pct          | 22.55         | percent |
 | J70                        | columns_widened_to_string    | 0             | count   |
+| J70                        | columns_widened_share_pct    | 0             | percent |
+| J70                        | distinct_keys_widened        | 0             | count   |
+| J70                        | rows_under_a_widened_column  | 0             | count   |
 | J70                        | mixed_promoted_groups        | 0             | count   |
 | J70                        | rows_in_mixed_promoted_group | 0             | count   |
 | J70                        | template_count_min           | 268           | count   |
@@ -1596,6 +1861,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J80                        | rows_per_template_max        | 71,200        | count   |
 | J80                        | null_cell_share_pct          | 14.61         | percent |
 | J80                        | columns_widened_to_string    | 0             | count   |
+| J80                        | columns_widened_share_pct    | 0             | percent |
+| J80                        | distinct_keys_widened        | 0             | count   |
+| J80                        | rows_under_a_widened_column  | 0             | count   |
 | J80                        | mixed_promoted_groups        | 0             | count   |
 | J80                        | rows_in_mixed_promoted_group | 0             | count   |
 | J80                        | template_count_min           | 674           | count   |
@@ -1612,6 +1880,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J90                        | rows_per_template_max        | 54,721        | count   |
 | J90                        | null_cell_share_pct          | 1.943         | percent |
 | J90                        | columns_widened_to_string    | 0             | count   |
+| J90                        | columns_widened_share_pct    | 0             | percent |
+| J90                        | distinct_keys_widened        | 0             | count   |
+| J90                        | rows_under_a_widened_column  | 0             | count   |
 | J90                        | mixed_promoted_groups        | 0             | count   |
 | J90                        | rows_in_mixed_promoted_group | 0             | count   |
 | J90                        | template_count_min           | 2,487         | count   |
@@ -1628,6 +1899,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J80_GROWN                  | rows_per_template_max        | 60,730        | count   |
 | J80_GROWN                  | null_cell_share_pct          | 3.612         | percent |
 | J80_GROWN                  | columns_widened_to_string    | 0             | count   |
+| J80_GROWN                  | columns_widened_share_pct    | 0             | percent |
+| J80_GROWN                  | distinct_keys_widened        | 0             | count   |
+| J80_GROWN                  | rows_under_a_widened_column  | 0             | count   |
 | J80_GROWN                  | mixed_promoted_groups        | 0             | count   |
 | J80_GROWN                  | rows_in_mixed_promoted_group | 0             | count   |
 | J80_GROWN                  | template_count_min           | 958           | count   |
@@ -1644,6 +1918,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | J80_SPEC                   | rows_per_template_max        | 71,200        | count   |
 | J80_SPEC                   | null_cell_share_pct          | 14.26         | percent |
 | J80_SPEC                   | columns_widened_to_string    | 0             | count   |
+| J80_SPEC                   | columns_widened_share_pct    | 0             | percent |
+| J80_SPEC                   | distinct_keys_widened        | 0             | count   |
+| J80_SPEC                   | rows_under_a_widened_column  | 0             | count   |
 | J80_SPEC                   | mixed_promoted_groups        | 116           | count   |
 | J80_SPEC                   | rows_in_mixed_promoted_group | 35,603        | count   |
 | J80_SPEC                   | template_count_min           | 125           | count   |
@@ -1660,6 +1937,9 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 | PER_EVENT                  | rows_per_template_max        | 164,397       | count   |
 | PER_EVENT                  | null_cell_share_pct          | 69.85         | percent |
 | PER_EVENT                  | columns_widened_to_string    | 0             | count   |
+| PER_EVENT                  | columns_widened_share_pct    | 0             | percent |
+| PER_EVENT                  | distinct_keys_widened        | 0             | count   |
+| PER_EVENT                  | rows_under_a_widened_column  | 0             | count   |
 | PER_EVENT                  | mixed_promoted_groups        | 0             | count   |
 | PER_EVENT                  | rows_in_mixed_promoted_group | 0             | count   |
 | PER_EVENT                  | template_count_min           | 7             | count   |
@@ -1714,6 +1994,7 @@ Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 - lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target
 - the cap was never reached
 - written to lab/out/04/best_rules.json for script 02 to pick up
+- 20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost
 - 20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost
 
 ## 05_encodings

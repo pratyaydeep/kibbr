@@ -32,11 +32,11 @@ PY = LAB / ".venv" / "bin" / "python"
 PLAN = [
     ("00_frontend_agree", ["uneven"]),
     ("01_profile_logs", ["uneven"]),
-    ("04_merge_rules", ["uneven", "flat30"]),
+    ("04_merge_rules", ["uneven", "flat30", "messy"]),
     ("08_io_shapes", ["uneven"]),
-    ("02_split_vs_wide", ["uneven", "flat30", "oneday"]),
+    ("02_split_vs_wide", ["uneven", "flat30", "oneday", "messy"]),
     ("03_layout_model", ["uneven", "flat30"]),
-    ("05_encodings", ["uneven", "flat30"]),
+    ("05_encodings", ["uneven", "flat30", "messy"]),
     ("06_bloom", ["uneven", "flat30"]),
     ("09_template_lookup", [None]),
 ]

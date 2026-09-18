@@ -37,7 +37,10 @@ class Group:
     promoted: tuple  # the promoted (key, value) pairs of its creator
     promoted_seen: set = field(default_factory=set)
     rows: list = field(default_factory=list)
-    widened: set = field(default_factory=set)  # keys that saw a non-String type
+    # Every row-level type this column has seen, unioned across the templates merged in.
+    # Judging widening on the folded type instead misses a column that widened inside a
+    # single template - by then the folded type is already String and the evidence is gone.
+    evidence: dict = field(default_factory=dict)
     n_cells_present: int = 0
     is_leftover: bool = False
 
@@ -57,13 +60,21 @@ class Result:
         cells = 0
         present = 0
         widened = 0
+        columns = 0
+        widened_keys: set = set()
+        widened_rows = 0
         for g in self.groups.values():
             k = len(g.grown_keys)
             cells += g.n * k
+            columns += k
             present += g.n_cells_present
-            widened += sum(
-                1 for key in g.grown_keys if g.types.get(key) == STRING and key in g.widened
-            )
+            for key in g.grown_keys:
+                if g.types.get(key) != STRING:
+                    continue
+                if any(t is not None and t != STRING for t in g.evidence.get(key, ())):
+                    widened += 1
+                    widened_keys.add(key)
+                    widened_rows += g.n
         counts = sorted(g.n for g in self.groups.values())
         return {
             "templates": len(self.groups),
@@ -74,7 +85,14 @@ class Result:
             else 0,
             "rows_per_template_max": counts[-1] if counts else 0,
             "null_cell_share_pct": 100.0 * (cells - present) / cells if cells else 0.0,
+            # The raw count is (template, column) pairs, so it falls as merging cuts the
+            # template count - which reads as merging *helping*, when the join is
+            # monotonic and a merge can only ever widen more. The three below are what
+            # can actually be compared across rules.
             "columns_widened_to_string": widened,
+            "columns_widened_share_pct": 100.0 * widened / columns if columns else 0.0,
+            "distinct_keys_widened": len(widened_keys),
+            "rows_under_a_widened_column": widened_rows,
             "mixed_promoted_groups": sum(
                 1 for g in self.groups.values() if len(g.promoted_seen) > 1
             ),
@@ -233,7 +251,7 @@ def _absorb(g: Group, P, t, r: int) -> None:
         if key not in g.grown_keys:
             g.grown_keys.add(key)
         g.types[key] = join_types(g.types.get(key), ty)
-        if ty is not None and ty != STRING:
-            g.widened.add(key)
+        slot = g.evidence.setdefault(key, set())
+        slot |= t.evidence.get(key, {ty})
         if P.raws[r][i] is not None:
             g.n_cells_present += 1
