@@ -84,13 +84,23 @@ const INGEST_CONCURRENCY_ENV: &str = "TRIEDB__API__INGEST_CONCURRENCY";
 const BASE_PATH_ENV: &str = "TRIEDB__STORAGE__BASE_PATH";
 const TRIE_FILE_ENV: &str = "TRIEDB__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "TRIEDB__INGESTOR__FLUSH_INTERVAL_MS";
+const ROW_GROUP_TIMEOUT_ENV: &str = "TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS";
 
-/// How often the buffer is written out.
+/// How often the thresholds that close a row group are checked.
 ///
-/// This is a **visibility** interval, not a durability one: a row is in every answer the
-/// moment it is appended, and the flush is what puts it somewhere a restart can find it.
-/// With no write-ahead log yet, it is also exactly what a `kill -9` costs.
+/// Not a durability interval, and it stopped being one with the segment format: a tick
+/// closes a row group only where a threshold has fired, so a busy leaf is written on the
+/// first tick after 8,192 rows and a quiet one waits for `DEFAULT_ROW_GROUP_TIMEOUT_MS`.
+/// What the tick bounds is how late either can be noticed.
 pub const DEFAULT_FLUSH_INTERVAL_MS: usize = 500;
+
+/// How long a row group may stay open with rows in it.
+///
+/// **Until the write-ahead log lands this is also what a `kill -9` costs**, which is why
+/// it is a setting and not a constant: an operator who would rather pay in file count than
+/// in rows can turn it down. It cannot go below the flush interval - the tick is what
+/// notices it has expired.
+pub const DEFAULT_ROW_GROUP_TIMEOUT_MS: usize = 60_000;
 
 /// Where `serve` keeps day partitions when nothing says otherwise.
 ///
@@ -144,6 +154,8 @@ pub struct Storage {
     /// `None` exactly when `base_path` is.
     pub trie_file: Option<PathBuf>,
     pub flush_interval: Duration,
+    /// What a row group closes on, when no size threshold got there first.
+    pub row_group_timeout: Duration,
 }
 
 impl Default for Storage {
@@ -152,6 +164,7 @@ impl Default for Storage {
             base_path: None,
             trie_file: None,
             flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
+            row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
         }
     }
 }
@@ -167,18 +180,30 @@ impl Storage {
         data_dir: Option<PathBuf>,
         trie_file: Option<PathBuf>,
         flush_ms: Option<usize>,
+        row_group_ms: Option<usize>,
     ) -> Result<Self, ConfigError> {
         let flush_ms = resolve(flush_ms, FLUSH_INTERVAL_ENV, DEFAULT_FLUSH_INTERVAL_MS)?;
         if flush_ms == 0 {
             return Err(ConfigError::NoFlushInterval);
         }
         let flush_interval = Duration::from_millis(flush_ms as u64);
+        // Floored at the flush interval rather than refused below it: the tick is what
+        // asks whether the timeout has expired, so a shorter one cannot be honoured and
+        // pretending otherwise would put a number in `/stats` that nothing implements.
+        let row_group_ms = resolve(
+            row_group_ms,
+            ROW_GROUP_TIMEOUT_ENV,
+            DEFAULT_ROW_GROUP_TIMEOUT_MS,
+        )?
+        .max(flush_ms);
+        let row_group_timeout = Duration::from_millis(row_group_ms as u64);
 
         if !durable {
             return Ok(Self {
                 base_path: None,
                 trie_file: None,
                 flush_interval,
+                row_group_timeout,
             });
         }
 
@@ -201,11 +226,21 @@ impl Storage {
             base_path: Some(base),
             trie_file: Some(trie_file),
             flush_interval,
+            row_group_timeout,
         })
     }
 
     pub fn is_durable(&self) -> bool {
         self.base_path.is_some()
+    }
+
+    /// The row group thresholds these settings imply. Only the timeout is configurable;
+    /// the two size thresholds are not worth a knob.
+    pub fn row_group_limits(&self) -> crate::store::RowGroupLimits {
+        crate::store::RowGroupLimits {
+            age: self.row_group_timeout,
+            ..crate::store::RowGroupLimits::default()
+        }
     }
 
     /// What a freshly-stamped `LeafMeta` records as its storage path. Documentation

@@ -7,12 +7,14 @@
 //!
 //! It has no partitions, so `Visitor::wants_partition` is never consulted, and its
 //! `flush()` is the honest no-op rather than an error - "written" and "never needed
-//! writing" are the same state here.
+//! writing" are the same state here. It has no row groups either, so the three counters
+//! the disk store fills stay zero: reporting work it did not do would make the two
+//! implementations agree about the wrong thing.
 
 use std::path::Path;
 
 use super::{
-    in_window, value_bytes, DtForms, Durability, Flushed, LeafStore, Predicate, Row, Scan,
+    in_window, value_bytes, DtForms, FlushKind, Flushed, LeafStore, Predicate, Row, Scan,
     ScanOptions, Store, StoreError, Visitor, DEFAULT_TS_COLUMN,
 };
 
@@ -72,7 +74,7 @@ impl LeafStore for MemoryLeaf {
         seq
     }
 
-    fn flush(&mut self, _durability: Durability) -> Result<Flushed, StoreError> {
+    fn flush(&mut self, _kind: FlushKind) -> Result<Flushed, StoreError> {
         Ok(Flushed::default())
     }
 

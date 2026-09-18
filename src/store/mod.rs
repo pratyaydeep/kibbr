@@ -21,15 +21,17 @@
 //! a manager and a trait over it would be the guess the rule forbids. The two things that
 //! genuinely have two implementations are the two that became traits.
 
-// Part of this interface still has no caller. `ScanOptions::columns` and `scan` are the
-// projection half of the scan contract, and nothing projects: a `Predicate` is an opaque
-// `Box<dyn Fn(&Row)>`, so nothing can know which columns one reads, and predicates run
-// before a projection could drop any. Pushing a projection down needs predicates that
-// carry their key, which is the Parquet milestone's interface change and not this one's.
-// `NotOpen` is what `get` returns and the engine goes through `lookup`; `template_id` and
-// `iter` are the shape `/templates` will read a leaf through once it reports more than a
-// row count. Kept because the contract is what the two implementations were written
-// against, and scoped so the allow cannot spread past this module.
+// Part of this interface still has no caller. `scan` is `visit` with a `Vec` under it and
+// every caller wants the `Visitor`; `NotOpen` is what `get` returns and the engine goes
+// through `lookup`; `template_id` and `iter` are the shape `/templates` will read a leaf
+// through once it reports more than a row count. Kept because the contract is what the two
+// implementations were written against, and scoped so the allow cannot spread past this
+// module.
+//
+// `ScanOptions::columns` is no longer among them. It was unreachable for a stated reason -
+// a `Predicate` is an opaque `Box<dyn Fn(&Row)>`, so nothing could know which columns one
+// reads - and the way past it needed no interface change: the engine builds every
+// predicate from a `Match` that still has its key. See `engine::execute`.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -40,10 +42,9 @@ use thiserror::Error;
 
 use crate::types::{ColValue, DtForm};
 
-pub mod col;
 pub mod disk;
-pub mod manifest;
 pub mod memory;
+pub mod segment;
 
 pub use disk::DiskStore;
 pub use memory::MemoryStore;
@@ -67,6 +68,11 @@ pub const DEFAULT_TS_COLUMN: &str = "ts";
 #[derive(Debug, Default, Clone)]
 pub struct ScanOptions {
     /// Empty = every column.
+    ///
+    /// **A read hint, not a projection guarantee.** A store may return only these, and a
+    /// caller must not depend on anything else being present - which is what lets the disk
+    /// store read two chunks out of eight. The in-memory store ignores it: its rows are
+    /// already rows, and slicing them would cost an allocation to save nothing.
     pub columns: Vec<String>,
     /// 0 = unlimited.
     pub limit: usize,
@@ -86,7 +92,16 @@ pub enum StoreError {
         source: std::io::Error,
     },
     #[error(transparent)]
-    Col(#[from] col::ColError),
+    Segment(#[from] segment::SegError),
+    /// One file per (template, day, column), which this build does not read. There is no
+    /// upgrade path and no migration: the path is named and the process exits non-zero,
+    /// rather than reading bytes it would have to guess the meaning of.
+    #[error(
+        "{path}: this data directory was written by the per-column layout, which this \
+         build cannot read. There is no migration - point --data-dir somewhere else, or \
+         remove it and re-ingest."
+    )]
+    LegacyLayout { path: std::path::PathBuf },
 }
 
 /// What one scan produced and what it cost.
@@ -97,6 +112,17 @@ pub enum StoreError {
 #[derive(Debug, Default)]
 pub struct Scan {
     pub rows: Vec<Row>,
+    /// Row groups whose chunks were read.
+    ///
+    /// With `row_groups_pruned` beside it, this is what the segment format buys a query: a
+    /// window covering one row group of fifty reads one. On every answer's `meta`, because
+    /// a prune nobody can see is a prune nobody notices stopping.
+    pub row_groups_read: u64,
+    /// Row groups dropped on their footer timestamps, before any column data was read.
+    pub row_groups_pruned: u64,
+    /// Bytes of column chunk read off disk. Column pruning shows up here and nowhere
+    /// else: naming two columns of eight reads two chunks.
+    pub bytes_read: u64,
     /// Rows examined, including those the time window and the predicates rejected.
     ///
     /// A partition the disk store skipped unread contributes nothing, which is the honest
@@ -107,30 +133,50 @@ pub struct Scan {
     pub matched: u64,
 }
 
-/// How hard a flush tries to be on disk before it returns.
+/// What a flush is being asked to do.
 ///
-/// **This is the whole of what a flush interval costs, and it is why the tick does not
-/// fsync.** An `fsync` per column file is tens of milliseconds on a normal machine, and a
-/// leaf with eight columns across a few days is tens of files - so a half-second tick over
-/// a few hundred templates spends minutes in the kernel and never catches up.
+/// **Closing a row group and sealing a segment are two different events**: this is the
+/// difference between "close whatever a threshold fired on" and "close everything, seal".
 ///
-/// What it would buy is durability against an *unclean* exit, which this milestone does
-/// not claim: there is no write-ahead log, and the banner says in as many words that a
-/// `kill -9` loses up to one interval. What it *does* claim is that a clean shutdown loses
-/// nothing, and that needs the fsync exactly once - on the final flush.
-///
-/// So: `Deferred` on the tick, which hands the bytes to the operating system and lets it
-/// schedule them; `Fsync` on the way out. Making the unclean case safe is the write-ahead
-/// log's job, and it will do it without paying this cost per partition.
+/// Not a durability switch, and that changed with the format. The per-column layout could
+/// not afford an fsync per tick - one per column file is tens of milliseconds, and a
+/// half-second tick over a few hundred templates spent minutes in the kernel and never
+/// caught up. A row group is one fsync for up to 8,192 rows of every column at once, so
+/// closing always fsyncs and the only question left is whether it is time to close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Durability {
-    Deferred,
-    Fsync,
+pub enum FlushKind {
+    /// The interval. Closes a row group only where a threshold says so.
+    Tick,
+    /// Graceful shutdown. Closes every buffer and seals every open segment.
+    Final,
 }
 
-impl Durability {
-    pub fn is_fsync(self) -> bool {
-        self == Durability::Fsync
+impl FlushKind {
+    pub fn is_final(self) -> bool {
+        self == FlushKind::Final
+    }
+}
+
+/// When a row group closes.
+///
+/// The size thresholds keep chunks large enough to be worth encoding and to amortise the
+/// row group header. The timeout is for low-traffic leaves that would never reach one -
+/// and until the write-ahead log lands, it is also the longest a row can be queryable
+/// without being on disk.
+#[derive(Debug, Clone, Copy)]
+pub struct RowGroupLimits {
+    pub rows: usize,
+    pub bytes: usize,
+    pub age: std::time::Duration,
+}
+
+impl Default for RowGroupLimits {
+    fn default() -> Self {
+        Self {
+            rows: 8_192,
+            bytes: 8 * 1024 * 1024,
+            age: std::time::Duration::from_secs(60),
+        }
     }
 }
 
@@ -203,7 +249,7 @@ pub trait LeafStore: Send + Sync {
     fn append(&mut self, row: Row, forms: &DtForms) -> u64;
 
     /// Write the buffer out. Synchronous, and called by whoever owns the clock.
-    fn flush(&mut self, durability: Durability) -> Result<Flushed, StoreError>;
+    fn flush(&mut self, kind: FlushKind) -> Result<Flushed, StoreError>;
 
     /// Hand every surviving row to `v`. The one place filtering happens, so the count,
     /// fetch and group-by paths cannot drift.
@@ -285,8 +331,8 @@ impl StoreManager {
         Self::new(Box::new(MemoryStore::new()))
     }
 
-    pub fn disk(base: std::path::PathBuf) -> Result<Self, StoreError> {
-        Ok(Self::new(Box::new(DiskStore::new(base)?)))
+    pub fn disk(base: std::path::PathBuf, limits: RowGroupLimits) -> Result<Self, StoreError> {
+        Ok(Self::new(Box::new(DiskStore::new(base, limits)?)))
     }
 
     /// Open the store on first write, then buffer the row.
@@ -360,11 +406,11 @@ impl StoreManager {
     ///
     /// Never returns `Err`: one leaf failing is collected into the summary and the rest
     /// are still written.
-    pub fn flush_all(&mut self, durability: Durability) -> FlushSummary {
+    pub fn flush_all(&mut self, kind: FlushKind) -> FlushSummary {
         let mut summary = FlushSummary::default();
         let mut failures = Vec::new();
         for (id, store) in &mut self.stores {
-            match store.flush(durability) {
+            match store.flush(kind) {
                 Ok(done) => {
                     summary.rows += done.rows;
                     summary.partitions += done.partitions;

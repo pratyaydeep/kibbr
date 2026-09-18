@@ -50,7 +50,7 @@ use crate::engine;
 use crate::error::{self, CliError, DetectorError, ServeError};
 use crate::fmt::{commas, rfc3339_at};
 use crate::query;
-use crate::store::{Durability, StoreManager};
+use crate::store::{FlushKind, StoreManager};
 use crate::trie::Trie;
 
 /// The default port this server listens on.
@@ -211,9 +211,17 @@ impl Server {
                         commas(orphans as u64)
                     ));
                 }
-                let mut stores = StoreManager::disk(base).map_err(|e| ServeError::Storage {
-                    detail: error::chain(&e),
-                })?;
+                let mut stores =
+                    StoreManager::disk(base, storage.row_group_limits()).map_err(|e| match e {
+                        // The old layout is not a disk that failed; it is a disk holding
+                        // something this build must not read. Named and fatal.
+                        crate::store::StoreError::LegacyLayout { path } => {
+                            ServeError::LegacyLayout { path }
+                        }
+                        e => ServeError::Storage {
+                            detail: error::chain(&e),
+                        },
+                    })?;
                 for leaf in trie.all_leaves() {
                     let id = leaf
                         .leaf_meta
@@ -258,10 +266,21 @@ impl Server {
     /// refusing every later request would turn one bad line into a dead server. This is
     /// `PoisonError::into_inner`, not `.unwrap()`: nothing here can end the
     /// process.
+    /// **The invariant this lock carries, and it is not the obvious one.**
+    ///
+    /// A query reads a leaf's segments *and* its unwritten buffer - a row group closes on
+    /// size now, so a quiet leaf's rows would otherwise be invisible for up to the row
+    /// group timeout. Double counting is impossible by construction rather than by
+    /// deduplicating: **a row leaves the buffer only after the row group holding it is
+    /// fsynced, and that swap happens under this same lock.** Write the rows, release the
+    /// lock, then drain, and a row is briefly in both - a count occasionally too high,
+    /// which nothing reports and nobody reproduces.
     fn read_stores(&self) -> RwLockReadGuard<'_, StoreManager> {
         self.stores.read().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The other side of the invariant at `read_stores`: the flush that moves rows out of
+    /// a buffer and into a row group holds this for the whole of both steps.
     fn write_stores(&self) -> RwLockWriteGuard<'_, StoreManager> {
         self.stores.write().unwrap_or_else(|e| e.into_inner())
     }
@@ -764,7 +783,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "kind": stores.kind(),
             "durable": server.storage.is_durable(),
             "note": if server.storage.is_durable() {
-                "day partitions on disk; no write-ahead log yet, so an unclean exit loses up to one flush interval"
+                "day partitions of segments on disk; a row group closes at 8,192 rows, 8MB or the row group timeout, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
@@ -775,12 +794,15 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
                 .as_ref()
                 .map(|p| p.display().to_string()),
             "flush_interval_ms": server.storage.flush_interval.as_millis() as u64,
+            // How long a row group may stay open, which is also what an unclean exit
+            // costs until the write-ahead log lands.
+            "row_group_timeout_ms": server.storage.row_group_timeout.as_millis() as u64,
             "stores_open": stores.open(),
             "rows": stores.rows(),
             "buffered_rows": stores.buffered(),
             "write_failures": stores.write_failures(),
             "last_write_error": stores.last_write_error(),
-            // On disk this is the column files' bytes as of the last flush, plus what the
+            // On disk this is the segments' bytes as of the last row group closed, plus what the
             // buffer would add. In memory it is payload bytes - key text, string values,
             // and a scalar's fixed width - and the resident size is larger, because
             // allocator slack and the hash tables are not in it. Estimated either way.
@@ -943,7 +965,13 @@ async fn serve(
     Ok(())
 }
 
-/// Write every store's buffer, every interval, until the token is cancelled.
+/// Ask every store whether a row group is due, every interval, until the token is
+/// cancelled.
+///
+/// **The tick no longer writes on its own account.** A row group closes at 8,192 rows,
+/// 8MB or the row group timeout, and the tick is what notices - so most ticks on a quiet
+/// server do nothing, and on a busy one the first tick after the 8,192nd row writes them
+/// all in a single fsync.
 ///
 /// Two details that are not decoration:
 ///
@@ -968,9 +996,8 @@ async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
             _ = tick.tick() => {}
         }
         let held = Arc::clone(&server);
-        let flushed = tokio::task::spawn_blocking(move || {
-            held.write_stores().flush_all(Durability::Deferred)
-        });
+        let flushed =
+            tokio::task::spawn_blocking(move || held.write_stores().flush_all(FlushKind::Tick));
         match flushed.await {
             Ok(summary) if summary.failed > 0 => log(&format!(
                 "WARN flush - {} leaf/leaves could not be written; their rows stay buffered \
@@ -1033,7 +1060,7 @@ fn shutdown_sequence(server: &Server) {
     log("in-flight requests complete");
 
     if server.storage.is_durable() {
-        let summary = server.write_stores().flush_all(Durability::Fsync);
+        let summary = server.write_stores().flush_all(FlushKind::Final);
         log(&format!(
             "final flush - {} row(s) into {} partition(s), {} byte(s){}",
             commas(summary.rows),
@@ -1104,16 +1131,21 @@ fn banner(addr: SocketAddr, server: &Server) {
             (Some(base), trie_file) => format!(
                 "  storage     {}\n\
                  \x20             trie      {}\n\
-                 \x20             flush     every {}ms - a row is queryable at once and on\n\
-                 \x20                       disk within this; SIGTERM flushes before exiting\n\
+                 \x20             segments  a row is queryable the moment it is ingested; it\n\
+                 \x20                       reaches disk when its row group closes - 8,192\n\
+                 \x20                       rows, 8MB, or {}ms, whichever comes first. The\n\
+                 \x20                       thresholds are checked every {}ms. SIGTERM closes\n\
+                 \x20                       and seals everything before exiting.\n\
                  \x20             NO WRITE-AHEAD LOG YET. A clean exit loses nothing. A\n\
-                 \x20             kill -9 or a power cut loses up to one flush interval of\n\
-                 \x20             rows, and the trie snapshot with them.",
+                 \x20             kill -9 or a power cut loses up to one row group of rows -\n\
+                 \x20             at most {}ms of them - and the trie snapshot with them.",
                 base.display(),
                 trie_file
                     .as_ref()
                     .map_or_else(|| "none".to_string(), |p| p.display().to_string()),
+                server.storage.row_group_timeout.as_millis(),
                 server.storage.flush_interval.as_millis(),
+                server.storage.row_group_timeout.as_millis(),
             ),
             (None, _) => {
                 "  STORAGE IS IN MEMORY. Everything ingested is lost when this process exits.\n\

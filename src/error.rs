@@ -215,6 +215,16 @@ pub enum ServeError {
     /// shipper has been told its lines were accepted.
     #[error("opening storage: {detail}")]
     Storage { detail: String },
+
+    /// The data directory was written by the per-column layout. There is no migration -
+    /// see `store::StoreError::LegacyLayout` - so this is fatal at startup rather than a
+    /// warning, and it names the path so an operator can act on it without reading source.
+    #[error(
+        "{path}: this data directory was written by the per-column layout (one file per \
+         template, day and column), which this build cannot read. There is no migration: \
+         point --data-dir at a new directory, or remove this one and re-ingest."
+    )]
+    LegacyLayout { path: std::path::PathBuf },
 }
 
 /// Errors surfaced by the CLI itself.

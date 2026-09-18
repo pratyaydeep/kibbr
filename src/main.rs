@@ -128,11 +128,18 @@ enum Command {
         /// Overrides `TRIEDB__STORAGE__TRIE_FILE`.
         #[arg(long, value_name = "PATH")]
         trie_file: Option<PathBuf>,
-        /// How often the row buffer is written out, in milliseconds. This is when a row
-        /// reaches the disk, not when it becomes queryable - it is queryable at once.
+        /// How often the row group thresholds are checked, in milliseconds. This is not
+        /// when a row reaches the disk - see --row-group-timeout-ms - and not when it
+        /// becomes queryable, which is at once.
         /// Overrides `TRIEDB__INGESTOR__FLUSH_INTERVAL_MS`.
         #[arg(long, value_name = "MS")]
         flush_interval_ms: Option<usize>,
+        /// How long a row group may stay open with rows in it, in milliseconds, when
+        /// neither 8,192 rows nor 8MB got there first. Until there is a write-ahead log
+        /// this is also what a kill -9 costs. Floored at the flush interval.
+        /// Overrides `TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS`.
+        #[arg(long, value_name = "MS")]
+        row_group_timeout_ms: Option<usize>,
     },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
@@ -290,6 +297,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             data_dir,
             trie_file,
             flush_interval_ms,
+            row_group_timeout_ms,
         } => serve::run(
             &host,
             port,
@@ -300,6 +308,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 data_dir,
                 trie_file,
                 flush_interval_ms,
+                row_group_timeout_ms,
             )?,
         ),
         Command::Explain {
