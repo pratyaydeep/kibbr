@@ -9506,3 +9506,39 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T23:10:24+00:00,3b5b8b0,07_vs_others,uneven,clp-s,search_level = ERROR_seconds,0.2045,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
 2026-09-18T23:10:24+00:00,3b5b8b0,07_vs_others,uneven,clp-s,search_one id_seconds,0.1716,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
 2026-09-18T23:10:24+00:00,3b5b8b0,07_vs_others,uneven,clp-s,search_newest 500_seconds,0.585,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,elasticsearch,version,docker.elastic.co/elasticsearch/elasticsearch:8.19.20,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clickhouse,version,clickhouse/clickhouse-server:26.8.7.19,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,version,"y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published)",tag,pinned in lab/others/docker-compose.yml
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,raw NDJSON,bytes,46591991,bytes,the denominator for every ratio
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,all,at_timestamp_added,1,flag,`@timestamp` is added to every document on the way into Elasticsearch and ClickHouse - logsdb mode requires one and the dataset has `ts`/`ts_unix`/`ts_ms` instead. Those bytes are not in the raw NDJSON denominator.
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch,heap,1g,setting,"-Xms1g -Xmx1g, not an Elasticsearch default: the Docker VM here holds under 4 GB and 07 runs one system at a time"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch standard,bytes_on_disk,58215037,bytes,after _forcemerge to one segment and _flush
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch standard,ratio_to_raw,1.24946,ratio,after _forcemerge to one segment and _flush
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch standard,load_seconds,12.35,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch standard,search_event value_seconds,0.0818,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch standard,search_level = ERROR_seconds,0.0105,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch standard,search_one id_seconds,0.0053,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch standard,search_newest 500_seconds,0.1061,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch logsdb,bytes_on_disk,45742451,bytes,after _forcemerge to one segment and _flush
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch logsdb,ratio_to_raw,0.98177,ratio,after _forcemerge to one segment and _flush
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch logsdb,load_seconds,10.76,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch logsdb,search_event value_seconds,0.0154,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch logsdb,search_level = ERROR_seconds,0.0036,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch logsdb,search_one id_seconds,0.0029,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,Elasticsearch logsdb,search_newest 500_seconds,0.0261,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,ClickHouse,bytes_on_disk,17578014,bytes,sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,ClickHouse,ratio_to_raw,0.37728,ratio,sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,ClickHouse,load_seconds,7.12,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,ClickHouse,search_event value_seconds,0.0121,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,ClickHouse,search_level = ERROR_seconds,0.0181,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,ClickHouse,search_one id_seconds,0.0072,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,ClickHouse,search_newest 500_seconds,0.05,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,roundtrip_lines,200000,lines,"archive decompressed and counted; 200,000 went in. A ratio is this script's headline number, so the archive is expanded rather than trusted."
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,roundtrip_ok,1,flag,
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,bytes_on_disk,8482536,bytes,"archive directory size, round-trip verified; clp-s is fed the raw payloads with no @timestamp added, unlike Elasticsearch and ClickHouse"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,ratio_to_raw,0.18206,ratio,"archive directory size, round-trip verified; clp-s is fed the raw payloads with no @timestamp added, unlike Elasticsearch and ClickHouse"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,load_seconds,0.83,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,search_event value_seconds,0.2154,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,search_level = ERROR_seconds,0.1915,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,search_one id_seconds,0.1797,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T23:17:24+00:00,b5e9634,07_vs_others,flat30,clp-s,search_newest 500_seconds,0.4958,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"

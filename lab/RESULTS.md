@@ -35,6 +35,9 @@ python       3.12.2
 - **Which durability call matters as much as batching**: a per-record `fsync(2)` reaches 39,898 records/sec on this platform, the same loop with `F_FULLFSYNC` reaches 360 - Darwin's `fsync` stops at the drive cache. Shape only.
 - **WAL batching pays twice**: zstd 3 over batches of 500 lines compresses to 0.114 of raw, against 0.864 at one line per batch.
 - **Grouping a template's row groups together** turns 51 separate byte ranges into 1 for a one-template search - on S3 at 15 ms a range, the difference between a second and nothing.
+- **Against other systems on `flat30`**: Elasticsearch standard 1.249x of raw, Elasticsearch logsdb 0.982x of raw, ClickHouse 0.377x of raw, clp-s 0.182x of raw; TrieDB's best measured layout is BEST_PER_CHUNK sorted at 0.144x.
+- **TrieDB's best layout is smaller than clp-s**: 0.144x of raw against 0.182x. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression.
+- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
 - **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; TrieDB's best measured layout is WIDE rg=122,880 at 0.086x.
 - **clp-s stores these logs smaller than TrieDB does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
 - **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
@@ -2859,7 +2862,48 @@ Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
 
 _The same logs in other systems_
 
-Run 2026-09-18T23:10:24+00:00, git `3b5b8b0`, 36 rows.
+Run 2026-09-18T23:17:24+00:00, git `3b5b8b0`, 72 rows.
+
+### `07_vs_others` / dataset `flat30`
+
+| variant                | metric                       | value                                                                                                             | unit    |
+|------------------------|------------------------------|-------------------------------------------------------------------------------------------------------------------|---------|
+| elasticsearch          | version                      | docker.elastic.co/elasticsearch/elasticsearch:8.19.20                                                             | tag     |
+| clickhouse             | version                      | clickhouse/clickhouse-server:26.8.7.19                                                                            | tag     |
+| clp-s                  | version                      | y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published) | tag     |
+| raw NDJSON             | bytes                        | 46,591,991                                                                                                        | bytes   |
+| all                    | at_timestamp_added           | 1                                                                                                                 | flag    |
+| Elasticsearch          | heap                         | 1g                                                                                                                | setting |
+| Elasticsearch standard | bytes_on_disk                | 58,215,037                                                                                                        | bytes   |
+| Elasticsearch standard | ratio_to_raw                 | 1.249                                                                                                             | ratio   |
+| Elasticsearch standard | load_seconds                 | 12.35                                                                                                             | s       |
+| Elasticsearch standard | search_event value_seconds   | 0.0818                                                                                                            | s       |
+| Elasticsearch standard | search_level = ERROR_seconds | 0.0105                                                                                                            | s       |
+| Elasticsearch standard | search_one id_seconds        | 0.0053                                                                                                            | s       |
+| Elasticsearch standard | search_newest 500_seconds    | 0.1061                                                                                                            | s       |
+| Elasticsearch logsdb   | bytes_on_disk                | 45,742,451                                                                                                        | bytes   |
+| Elasticsearch logsdb   | ratio_to_raw                 | 0.9818                                                                                                            | ratio   |
+| Elasticsearch logsdb   | load_seconds                 | 10.76                                                                                                             | s       |
+| Elasticsearch logsdb   | search_event value_seconds   | 0.0154                                                                                                            | s       |
+| Elasticsearch logsdb   | search_level = ERROR_seconds | 0.0036                                                                                                            | s       |
+| Elasticsearch logsdb   | search_one id_seconds        | 0.0029                                                                                                            | s       |
+| Elasticsearch logsdb   | search_newest 500_seconds    | 0.0261                                                                                                            | s       |
+| ClickHouse             | bytes_on_disk                | 17,578,014                                                                                                        | bytes   |
+| ClickHouse             | ratio_to_raw                 | 0.3773                                                                                                            | ratio   |
+| ClickHouse             | load_seconds                 | 7.12                                                                                                              | s       |
+| ClickHouse             | search_event value_seconds   | 0.0121                                                                                                            | s       |
+| ClickHouse             | search_level = ERROR_seconds | 0.0181                                                                                                            | s       |
+| ClickHouse             | search_one id_seconds        | 0.0072                                                                                                            | s       |
+| ClickHouse             | search_newest 500_seconds    | 0.05                                                                                                              | s       |
+| clp-s                  | roundtrip_lines              | 200,000                                                                                                           | lines   |
+| clp-s                  | roundtrip_ok                 | 1                                                                                                                 | flag    |
+| clp-s                  | bytes_on_disk                | 8,482,536                                                                                                         | bytes   |
+| clp-s                  | ratio_to_raw                 | 0.1821                                                                                                            | ratio   |
+| clp-s                  | load_seconds                 | 0.83                                                                                                              | s       |
+| clp-s                  | search_event value_seconds   | 0.2154                                                                                                            | s       |
+| clp-s                  | search_level = ERROR_seconds | 0.1915                                                                                                            | s       |
+| clp-s                  | search_one id_seconds        | 0.1797                                                                                                            | s       |
+| clp-s                  | search_newest 500_seconds    | 0.4958                                                                                                            | s       |
 
 ### `07_vs_others` / dataset `uneven`
 
