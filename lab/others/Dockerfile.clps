@@ -1,20 +1,49 @@
-# y-scope/clp publishes release tarballs rather than an image whose tag can be pinned
-# here, so the tarball is what gets pinned. v0.13.0, released 2026-07-22; the `clp-json`
-# package is the one holding clp-s, which is the JSON half of CLP and the half that
-# compares to TrieDB at all.
+# clp-s, built from source.
 #
-# The tarball is x86_64 only. On Apple Silicon this image runs under emulation, which is
-# fine for a size measurement and is why 07 labels its timings "rough".
-FROM --platform=linux/amd64 ubuntu:24.04
+# y-scope/clp publishes no prebuilt clp-s binary and no container image holding one. The
+# `clp-json` release tarball is a *deployment* package: config, shell wrappers, and a
+# docker-compose that wants mariadb, mongo, rabbitmq, redis and a locally-built
+# `clp-package` image. That is a cluster, not a compressor, and measuring an archive's
+# size does not need one. So the binary is built here instead.
+#
+# Built for the host's own architecture on purpose. The release tarballs are x86_64 and
+# would run under emulation on Apple Silicon; compiling from source natively is both
+# faster to run and honest about what is being measured.
+#
+# Pinned to the v0.13.0 tag, the same release the tarball would have come from.
+FROM ubuntu:22.04
 
 ARG CLP_VERSION=v0.13.0
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Deliberately NOT apt's cmake: jammy ships 3.22.1 and CLP's install script requires
+# 3.23 <= version < 4, so the apt one fails the gate. The pip wheel lands in
+# /usr/local/bin, which precedes /usr/bin on PATH.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates git curl \
+      python3 python3-pip \
  && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL -o /tmp/clp.tar.gz \
-      "https://github.com/y-scope/clp/releases/download/${CLP_VERSION}/clp-json-x86_64-${CLP_VERSION}.tar.gz" \
- && mkdir -p /opt/clp \
- && tar -xzf /tmp/clp.tar.gz -C /opt/clp --strip-components=1 \
- && rm /tmp/clp.tar.gz
-ENV PATH="/opt/clp/bin:/opt/clp/sbin:${PATH}"
+RUN python3 -m pip install --no-cache-dir "cmake>=3.23,<4" \
+ && cmake --version
+
+# pipx puts go-task in /root/.local/bin and then tells you to open a new terminal.
+# There is no new terminal in a build, so the next line of CLP's own install script
+# cannot find `task`. Putting it on PATH up front is the whole fix.
+ENV PATH="/root/.local/bin:${PATH}"
+
+RUN git clone --depth 1 --branch "${CLP_VERSION}" https://github.com/y-scope/clp.git /src
+
+# CLP's own dependency scripts, rather than a hand-copied package list that drifts from
+# them. `install-all.sh` runs the prebuilt-apt half and the build-from-source half.
+RUN cd /src/components/core \
+ && ./tools/scripts/lib_install/ubuntu-jammy/install-all.sh \
+ && rm -rf /var/lib/apt/lists/*
+
+# `clp-s` is the target named in components/core/src/clp_s/CMakeLists.txt.
+RUN cd /src/components/core \
+ && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build --parallel "$(nproc)" --target clp-s \
+ && install -m 0755 build/clp-s /usr/local/bin/clp-s \
+ && clp-s --help >/dev/null 2>&1 || true
+
 WORKDIR /work

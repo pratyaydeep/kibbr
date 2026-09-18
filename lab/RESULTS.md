@@ -39,10 +39,10 @@ python       3.12.2
 
 ## Comparison systems (script 07)
 
-Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`. Script 07 has **not** been run here - it needs a reachable Docker daemon - so no comparison numbers appear below.
+Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`:
 
 - `docker.elastic.co/elasticsearch/elasticsearch:8.19.20`
-- `clickhouse/clickhouse-server:26.8.2.7-lts`
+- `clickhouse/clickhouse-server:26.8.7.19`
 - `y-scope/clp v0.13.0 (clp-json-x86_64 release tarball)`
 
 ## Contents
@@ -54,6 +54,7 @@ Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`. Scri
 - [04_merge_rules - Which merging rule](#04-merge-rules)
 - [05_encodings - What each encoding saves](#05-encodings)
 - [06_bloom - Is a bloom filter per row group worth its bytes](#06-bloom)
+- [07_vs_others - The same logs in other systems](#07-vs-others)
 - [08_io_shapes - Disk-dominated shapes](#08-io-shapes)
 - [09_template_lookup - Searches on keys that are not promoted](#09-template-lookup)
 
@@ -2850,6 +2851,41 @@ Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
 - 680 row groups, 17 distinct words
 - 681 row groups, 17 distinct words
 - 679 row groups, 17 distinct words
+
+## 07_vs_others
+
+_The same logs in other systems_
+
+Run 2026-09-18T22:28:25+00:00, git `da367f9`, 14 rows.
+
+### `07_vs_others` / dataset `uneven`
+
+| variant       | metric                       | value                                                                                                             | unit    |
+|---------------|------------------------------|-------------------------------------------------------------------------------------------------------------------|---------|
+| elasticsearch | version                      | docker.elastic.co/elasticsearch/elasticsearch:8.19.20                                                             | tag     |
+| clickhouse    | version                      | clickhouse/clickhouse-server:26.8.7.19                                                                            | tag     |
+| clp-s         | version                      | y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published) | tag     |
+| raw NDJSON    | bytes                        | 44,759,683                                                                                                        | bytes   |
+| all           | at_timestamp_added           | 1                                                                                                                 | flag    |
+| Elasticsearch | heap                         | 1g                                                                                                                | setting |
+| ClickHouse    | bytes_on_disk                | 7,055,540                                                                                                         | bytes   |
+| ClickHouse    | ratio_to_raw                 | 0.1576                                                                                                            | ratio   |
+| ClickHouse    | load_seconds                 | 7.02                                                                                                              | s       |
+| ClickHouse    | search_event value_seconds   | 0.0085                                                                                                            | s       |
+| ClickHouse    | search_level = ERROR_seconds | 0.0086                                                                                                            | s       |
+| ClickHouse    | search_one id_seconds        | 0.0054                                                                                                            | s       |
+| ClickHouse    | search_newest 500_seconds    | 0.0331                                                                                                            | s       |
+| clp-s         | status                       | failed                                                                                                            | text    |
+
+**Notes**
+
+- pinned in lab/others/docker-compose.yml
+- the denominator for every ratio
+- `@timestamp` is added to every document on the way into Elasticsearch and ClickHouse - logsdb mode requires one and the dataset has `ts`/`ts_unix`/`ts_ms` instead. Those bytes are not in the raw NDJSON denominator.
+- -Xms1g -Xmx1g, not an Elasticsearch default: the Docker VM here holds under 4 GB and 07 runs one system at a time
+- sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
+- rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk
+- not in --systems, skipped
 
 ## 08_io_shapes
 

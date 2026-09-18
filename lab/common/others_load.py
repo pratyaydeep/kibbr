@@ -25,6 +25,9 @@ from . import datasets
 
 ES = "http://127.0.0.1:9201"
 CH = "http://127.0.0.1:8124"
+# Matches docker-compose.yml. ClickHouse 26.x answers 401 without them.
+CH_USER = "lab"
+CH_PASSWORD = "lab"
 BULK_DOCS = 5_000
 
 
@@ -34,6 +37,11 @@ def _req(url: str, data=None, method="GET", ctype="application/json", timeout=60
         req.add_header("Content-Type", ctype)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
+
+
+def ch_ping() -> str:
+    """ClickHouse's /ping needs no credentials, so readiness and auth stay separate."""
+    return f"{CH}/ping"
 
 
 def wait_for(url: str, tries: int = 120) -> bool:
@@ -153,7 +161,10 @@ def es_searches(index: str, event: str, ident_field: str, ident: str) -> dict:
 
 
 def ch_sql(sql: str, body: bytes | None = None, timeout=3600) -> bytes:
-    url = f"{CH}/?query={urllib.parse.quote(sql)}"
+    url = (
+        f"{CH}/?user={CH_USER}&password={CH_PASSWORD}"
+        f"&query={urllib.parse.quote(sql)}"
+    )
     return _req(url, data=body if body is not None else b"", method="POST", timeout=timeout)
 
 

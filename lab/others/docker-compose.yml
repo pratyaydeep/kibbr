@@ -14,7 +14,10 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - xpack.security.http.ssl.enabled=false
-      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      # 1g, not a default: this machine gives the Docker VM 3.84 GB total and
+      # 07 brings one system up at a time. Recorded in results.csv, because a
+      # heap size is exactly the kind of thing a "default settings" label hides.
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
       - cluster.routing.allocation.disk.threshold_enabled=false
     ports:
       - "9201:9200"
@@ -24,9 +27,18 @@ services:
       timeout: 5s
       retries: 60
 
+  # 26.8.7.19 is the current stable patch of the 26.8 line, taken from Docker Hub's tag
+  # list. There is no `-lts` tag published for it - that suffix belongs to older lines.
   clickhouse:
-    image: clickhouse/clickhouse-server:26.8.2.7-lts
+    image: clickhouse/clickhouse-server:26.8.7.19
     container_name: lab_ch
+    environment:
+      # ClickHouse 26.x refuses the default user with no password - the HTTP interface
+      # answers 401. Credentials are set explicitly rather than using
+      # CLICKHOUSE_SKIP_USER_SETUP, so what the lab connects as is written down.
+      - CLICKHOUSE_USER=lab
+      - CLICKHOUSE_PASSWORD=lab
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
     ports:
       - "8124:8123"
     ulimits:

@@ -18,11 +18,15 @@ PY="$LAB_DIR/.venv/bin/python"
 COMPOSE_FILE="$LAB_DIR/others/docker-compose.yml"
 DATASET="${DATASET:-uneven}"
 SIZE="${SIZE:-small}"
+# Comma-separated: es, clickhouse, clps. Each is started, measured and stopped on its
+# own, so one can be re-run without paying for the others.
+SYSTEMS="${SYSTEMS:-es,clickhouse,clps}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dataset) DATASET="$2"; shift 2 ;;
     --size)    SIZE="$2";    shift 2 ;;
+    --systems) SYSTEMS="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -38,8 +42,11 @@ command -v docker >/dev/null 2>&1 || skip "no docker binary on PATH"
 docker info >/dev/null 2>&1 || skip "the Docker daemon is not reachable (start Docker Desktop and retry)"
 [[ -x "$PY" ]] || skip "lab/.venv is missing; create it first"
 
-echo "07_vs_others: bringing up Elasticsearch, ClickHouse and clp-s"
-docker compose -f "$COMPOSE_FILE" up -d --build || skip "docker compose up failed"
+# One system at a time, not all three: the Docker VM on this machine holds under 4 GB,
+# and three JVM/columnar servers sharing it would measure the OOM killer. Each system is
+# started, measured and stopped by the Python block below.
+echo "07_vs_others: building the clp-s image (x86_64 under emulation; this is slow)"
+docker compose -f "$COMPOSE_FILE" build clps || echo "  clp-s image build failed; it will be recorded as a failure"
 
 cleanup() {
   echo "07_vs_others: tearing down"
@@ -47,13 +54,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Match the `image:` line, not the service-name line. `/elasticsearch:/` also matches
+# the key `  elasticsearch:` two lines above, whose last field is the key itself - which
+# is how "elasticsearch:" with no version ended up recorded as the version.
 ES_VER=$(docker compose -f "$COMPOSE_FILE" config 2>/dev/null \
-          | awk '/elasticsearch:/{print $NF; exit}')
+          | awk '/image:.*elasticsearch/{print $NF; exit}' | tr -d '"')
 CH_VER=$(docker compose -f "$COMPOSE_FILE" config 2>/dev/null \
-          | awk '/clickhouse-server:/{print $NF; exit}')
+          | awk '/image:.*clickhouse-server/{print $NF; exit}' | tr -d '"')
 
 cd "$REPO_DIR"
 ES_IMAGE="$ES_VER" CH_IMAGE="$CH_VER" DATASET="$DATASET" SIZE="$SIZE" \
+  SYSTEMS="$SYSTEMS" \
   "$PY" - <<'PYEOF'
 import os
 import sys
@@ -64,12 +75,35 @@ sys.path.insert(0, str(Path.cwd()))
 
 from lab.common import datasets, measure, others_load as O
 
+COMPOSE = ["docker", "compose", "-f", str(Path("lab/others/docker-compose.yml"))]
+
+
+def compose_up(svc: str) -> bool:
+    import subprocess
+
+    print(f"\n  starting {svc} ...", flush=True)
+    r = subprocess.run(COMPOSE + ["up", "-d", svc], capture_output=True)
+    if r.returncode != 0:
+        print(f"  {svc}: up failed - {r.stderr.decode()[:300]}")
+        return False
+    return True
+
+
+def compose_stop(svc: str) -> None:
+    import subprocess
+
+    subprocess.run(COMPOSE + ["stop", "-t", "30", svc], capture_output=True)
+    subprocess.run(COMPOSE + ["rm", "-f", "-v", svc], capture_output=True)
+    print(f"  stopped {svc}, memory returned to the VM")
+
+
 dataset = os.environ["DATASET"]
 size = os.environ["SIZE"]
+wanted = {w.strip() for w in os.environ.get("SYSTEMS", "es,clickhouse,clps").split(",")}
 versions = {
     "elasticsearch": os.environ.get("ES_IMAGE", "?"),
     "clickhouse": os.environ.get("CH_IMAGE", "?"),
-    "clp-s": "y-scope/clp v0.13.0 (clp-json-x86_64 release tarball)",
+    "clp-s": "y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published)",
 }
 ROUGH = ("rough, one machine, default settings - one laptop, no tuning of any system, "
          "containers sharing one disk")
@@ -107,7 +141,12 @@ def record(system, size_bytes, load_s, searches, note=""):
 
 
 # -- Elasticsearch ---------------------------------------------------------------
-if O.wait_for(f"{O.ES}/_cluster/health"):
+res.add("Elasticsearch", "heap", "1g", "setting",
+        "-Xms1g -Xmx1g, not an Elasticsearch default: the Docker VM here holds under "
+        "4 GB and 07 runs one system at a time")
+if "es" not in wanted:
+    print("\n  elasticsearch: not in --systems, skipped")
+elif compose_up("elasticsearch") and O.wait_for(f"{O.ES}/_cluster/health"):
     for index, logsdb in (("triedb_standard", False), ("triedb_logsdb", True)):
         label = f"Elasticsearch {'logsdb' if logsdb else 'standard'}"
         try:
@@ -123,9 +162,13 @@ if O.wait_for(f"{O.ES}/_cluster/health"):
 else:
     print("  Elasticsearch never became healthy; skipped")
     res.add("Elasticsearch", "status", "unreachable", "text", "")
+if "es" in wanted:
+    compose_stop("elasticsearch")
 
 # -- ClickHouse -------------------------------------------------------------------
-if O.wait_for(f"{O.CH}/ping"):
+if "clickhouse" not in wanted:
+    print("\n  clickhouse: not in --systems, skipped")
+elif compose_up("clickhouse") and O.wait_for(f"{O.CH}/ping"):
     try:
         took = O.ch_load(objs)
         size_b = O.ch_size()
@@ -138,9 +181,15 @@ if O.wait_for(f"{O.CH}/ping"):
 else:
     print("  ClickHouse never became healthy; skipped")
     res.add("ClickHouse", "status", "unreachable", "text", "")
+if "clickhouse" in wanted:
+    compose_stop("clickhouse")
 
 # -- clp-s --------------------------------------------------------------------------
 try:
+    if "clps" not in wanted:
+        raise RuntimeError("not in --systems, skipped")
+    if not compose_up("clps"):
+        raise RuntimeError("clp-s container would not start")
     payload_file = measure.OUT / "07" / "input.ndjson"
     payload_file.parent.mkdir(parents=True, exist_ok=True)
     with open(payload_file, "wb") as fh:
@@ -154,6 +203,9 @@ try:
 except Exception as e:
     print(f"  clp-s: FAILED - {e}")
     res.add("clp-s", "status", "failed", "text", str(e)[:200])
+finally:
+    if "clps" in wanted:
+        compose_stop("clps")
 
 # -- TrieDB's own best, from scripts 02 and 05 --------------------------------------
 import csv

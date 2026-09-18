@@ -9399,3 +9399,61 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T22:10:27+00:00,b405451,09_template_lookup,synthetic,100000 templates,rows_of_answer,1114995,count,"shape only - growth against the 1,000-template case, not an absolute time"
 2026-09-18T22:10:27+00:00,b405451,09_template_lookup,synthetic,100000 templates,index_build_ms,46.553,ms,"shape only - growth against the 1,000-template case, not an absolute time"
 2026-09-18T22:10:27+00:00,b405451,09_template_lookup,synthetic,verdict,scan_superlinearity,2.357,ratio,"scan growth 235.7x against the linear 100x expected from 1,000 to 100,000 templates"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,elasticsearch,version,elasticsearch:,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,clickhouse,version,clickhouse/clickhouse-server:26.8.2.7-lts,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,clp-s,version,y-scope/clp v0.13.0 (clp-json-x86_64 release tarball),tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,raw NDJSON,bytes,44759683,bytes,the denominator for every ratio
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,all,at_timestamp_added,1,flag,`@timestamp` is added to every document on the way into Elasticsearch and ClickHouse - logsdb mode requires one and the dataset has `ts`/`ts_unix`/`ts_ms` instead. Those bytes are not in the raw NDJSON denominator.
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch,heap,1g,setting,"-Xms1g -Xmx1g, not an Elasticsearch default: the Docker VM here holds under 4 GB and 07 runs one system at a time"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,bytes_on_disk,31097502,bytes,after _forcemerge to one segment and _flush
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,ratio_to_raw,0.69477,ratio,after _forcemerge to one segment and _flush
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,load_seconds,9.98,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_event value_seconds,0.0557,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_level = ERROR_seconds,0.0053,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_one id_seconds,0.0096,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_newest 500_seconds,0.0773,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,bytes_on_disk,24154790,bytes,after _forcemerge to one segment and _flush
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,ratio_to_raw,0.53966,ratio,after _forcemerge to one segment and _flush
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,load_seconds,10.04,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_event value_seconds,0.01,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_level = ERROR_seconds,0.0041,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_one id_seconds,0.0081,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_newest 500_seconds,0.0502,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,ClickHouse,status,unreachable,text,
+2026-09-18T22:21:39+00:00,da367f9,07_vs_others,uneven,clp-s,status,failed,text,
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,elasticsearch,version,docker.elastic.co/elasticsearch/elasticsearch:8.19.20,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,clickhouse,version,clickhouse/clickhouse-server:26.8.7.19,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,clp-s,version,y-scope/clp v0.13.0 (clp-json-x86_64 release tarball),tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,raw NDJSON,bytes,44759683,bytes,the denominator for every ratio
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,all,at_timestamp_added,1,flag,`@timestamp` is added to every document on the way into Elasticsearch and ClickHouse - logsdb mode requires one and the dataset has `ts`/`ts_unix`/`ts_ms` instead. Those bytes are not in the raw NDJSON denominator.
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch,heap,1g,setting,"-Xms1g -Xmx1g, not an Elasticsearch default: the Docker VM here holds under 4 GB and 07 runs one system at a time"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,bytes_on_disk,31157568,bytes,after _forcemerge to one segment and _flush
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,ratio_to_raw,0.69611,ratio,after _forcemerge to one segment and _flush
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,load_seconds,10.6,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_event value_seconds,0.0585,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_level = ERROR_seconds,0.0055,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_one id_seconds,0.0097,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch standard,search_newest 500_seconds,0.0938,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,bytes_on_disk,24154260,bytes,after _forcemerge to one segment and _flush
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,ratio_to_raw,0.53964,ratio,after _forcemerge to one segment and _flush
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,load_seconds,12.09,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_event value_seconds,0.0065,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_level = ERROR_seconds,0.0028,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_one id_seconds,0.0087,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,Elasticsearch logsdb,search_newest 500_seconds,0.0299,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,ClickHouse,status,failed,text,HTTP Error 401: Unauthorized
+2026-09-18T22:26:33+00:00,da367f9,07_vs_others,uneven,clp-s,status,failed,text,"not in --systems, skipped"
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,elasticsearch,version,docker.elastic.co/elasticsearch/elasticsearch:8.19.20,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,clickhouse,version,clickhouse/clickhouse-server:26.8.7.19,tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,clp-s,version,"y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published)",tag,pinned in lab/others/docker-compose.yml
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,raw NDJSON,bytes,44759683,bytes,the denominator for every ratio
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,all,at_timestamp_added,1,flag,`@timestamp` is added to every document on the way into Elasticsearch and ClickHouse - logsdb mode requires one and the dataset has `ts`/`ts_unix`/`ts_ms` instead. Those bytes are not in the raw NDJSON denominator.
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,Elasticsearch,heap,1g,setting,"-Xms1g -Xmx1g, not an Elasticsearch default: the Docker VM here holds under 4 GB and 07 runs one system at a time"
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,ClickHouse,bytes_on_disk,7055540,bytes,sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,ClickHouse,ratio_to_raw,0.15763,ratio,sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,ClickHouse,load_seconds,7.02,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,ClickHouse,search_event value_seconds,0.0085,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,ClickHouse,search_level = ERROR_seconds,0.0086,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,ClickHouse,search_one id_seconds,0.0054,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,ClickHouse,search_newest 500_seconds,0.0331,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-18T22:28:25+00:00,da367f9,07_vs_others,uneven,clp-s,status,failed,text,"not in --systems, skipped"
