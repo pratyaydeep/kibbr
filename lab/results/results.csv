@@ -1064,3 +1064,836 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,verdict,per_template_vs_gzip9_bytes,1.1562,ratio,below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.3079 over 870 files
 2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,verdict,smallest_by_bytes,8059807,bytes,zstd -19
 2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,verdict,smallest_by_blocks,8441856,bytes,zstd -19
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,closes_wait,51458,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,closes_shutdown,112,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,row_groups,51570,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,rows_per_rg_median,2,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,rows_per_rg_p90,8,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,backlog_max_lines,720,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,backlog_median_lines,450,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,closes_wait,21177,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,closes_shutdown,135,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,row_groups,21312,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,rows_per_rg_p90,23,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,backlog_max_lines,3597,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,backlog_median_lines,1905,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,closes_wait,17565,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,closes_shutdown,146,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,row_groups,17711,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,rows_per_rg_p90,23,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,backlog_max_lines,10798,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,backlog_median_lines,8537,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,closes_wait,18105,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,closes_shutdown,140,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,row_groups,18245,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,rows_per_rg_p90,26,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,backlog_max_lines,7198,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,backlog_median_lines,5035,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,closes_wait,16842,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,closes_shutdown,148,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,row_groups,16990,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,rows_per_rg_p90,18,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,backlog_max_lines,35999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,backlog_median_lines,33598,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,closes_wait,13134,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,closes_shutdown,3560,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,row_groups,16694,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,rows_per_rg_p90,16,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,backlog_max_lines,107999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,backlog_median_lines,99911,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,closes_wait,16694,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,closes_shutdown,148,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,row_groups,16842,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,rows_per_rg_p90,17,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,backlog_max_lines,71999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,backlog_median_lines,69579,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,closes_shutdown,16694,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,row_groups,16694,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,rows_per_rg_p90,16,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,backlog_median_lines,99911,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,closes_shutdown,16694,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,row_groups,16694,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,rows_per_rg_p90,16,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,backlog_median_lines,99911,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,closes_tick,192516,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,closes_shutdown,2,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,row_groups,192518,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,rows_per_rg_p90,1,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,closes_tick,150794,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,closes_shutdown,17,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,row_groups,150811,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,backlog_median_lines,30,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,closes_tick,67984,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,closes_shutdown,87,count,close reason
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,row_groups,68071,count,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_median,2,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,bytes,37877987,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,overhead_bytes,12569884,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,overhead_share_pct,33.185,percent,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,disk_blocks,81305600,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,ratio_to_raw,1.74506,ratio,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_files,148,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_index_bytes,418052,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_ranges,148,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,files,32,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,row_groups,21312,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,bytes,52232495,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_index_bytes,1026155,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,26943396,bytes,"54,763 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,files,32,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,row_groups,21312,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,bytes,52232495,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_index_bytes,1026155,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,107775060,bytes,"219,055 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,files,32,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,row_groups,21312,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,bytes,52232495,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_index_bytes,1026155,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,215550120,bytes,"438,110 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,files,128,count,"4 files per day, by template mod 4"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,row_groups,21312,count,"4 files per day, by template mod 4"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,bytes,49887310,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,overhead_bytes,24579207,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,overhead_share_pct,49.269,percent,"4 files per day, by template mod 4"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,disk_blocks,50126848,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,ratio_to_raw,1.07587,ratio,"4 files per day, by template mod 4"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_files,4,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_index_bytes,952281,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_ranges,4,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=4,byte_spread_largest_over_average,1.2651,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,files,256,count,"8 files per day, by template mod 8"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,row_groups,21312,count,"8 files per day, by template mod 8"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,bytes,47628112,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,overhead_bytes,22320009,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,overhead_share_pct,46.863,percent,"8 files per day, by template mod 8"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,disk_blocks,48168960,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,ratio_to_raw,1.03385,ratio,"8 files per day, by template mod 8"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_files,8,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_index_bytes,883296,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_ranges,8,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,mod_n n=8,byte_spread_largest_over_average,1.5282,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,files,128,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,row_groups,21312,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,bytes,51171769,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,overhead_bytes,25863666,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,overhead_share_pct,50.543,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,disk_blocks,51433472,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,ratio_to_raw,1.10391,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_files,4,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_index_bytes,1027268,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_ranges,4,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=4,byte_spread_largest_over_average,1.0532,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,files,256,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,row_groups,21312,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,bytes,50193611,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,overhead_bytes,24885508,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,overhead_share_pct,49.579,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,disk_blocks,50692096,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,ratio_to_raw,1.088,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_files,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_index_bytes,0,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_ranges,0,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_files,8,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_index_bytes,1028752,bytes,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_ranges,8,count,one day (undated); the one-template search is template 1055466456870197778
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,least_full n=8,byte_spread_largest_over_average,1.0955,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,closes_wait,51458,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,closes_shutdown,112,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,row_groups,51570,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,rows_per_rg_median,2,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,rows_per_rg_p90,8,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,backlog_max_lines,720,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,backlog_median_lines,450,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,closes_wait,21177,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,closes_shutdown,135,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,row_groups,21312,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,rows_per_rg_p90,23,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,backlog_max_lines,3597,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,backlog_median_lines,1905,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,closes_wait,17565,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,closes_shutdown,146,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,row_groups,17711,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,rows_per_rg_p90,23,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,backlog_max_lines,10798,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,backlog_median_lines,8537,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,closes_wait,18105,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,closes_shutdown,140,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,row_groups,18245,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,rows_per_rg_p90,26,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,backlog_max_lines,7198,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,backlog_median_lines,5035,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,closes_wait,16842,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,closes_shutdown,148,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,row_groups,16990,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,rows_per_rg_p90,18,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,backlog_max_lines,35999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,backlog_median_lines,33598,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,closes_wait,13134,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,closes_shutdown,3560,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,row_groups,16694,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,rows_per_rg_p90,16,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,backlog_max_lines,107999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,backlog_median_lines,99911,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,closes_wait,16694,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,closes_shutdown,148,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,row_groups,16842,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,rows_per_rg_p90,17,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,backlog_max_lines,71999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,backlog_median_lines,69579,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,closes_shutdown,16694,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,row_groups,16694,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,rows_per_rg_p90,16,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,backlog_median_lines,99911,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,closes_shutdown,16694,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,row_groups,16694,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,rows_per_rg_p90,16,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,backlog_median_lines,99911,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,closes_tick,192516,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,closes_shutdown,2,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,row_groups,192518,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,rows_per_rg_p90,1,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,closes_tick,150794,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,closes_shutdown,17,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,row_groups,150811,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,backlog_median_lines,30,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,closes_tick,67984,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,closes_shutdown,87,count,close reason
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,row_groups,68071,count,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_median,2,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,bytes,37877987,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,overhead_bytes,12569884,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,overhead_share_pct,33.185,percent,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,disk_blocks,81305600,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,ratio_to_raw,1.74506,ratio,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_index_bytes,360,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_files,550,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_index_bytes,221250,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_ranges,550,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,files,32,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,row_groups,21312,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,bytes,52232495,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,26943396,bytes,"54,763 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,files,32,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,row_groups,21312,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,bytes,52232495,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,107775060,bytes,"219,055 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,files,32,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,row_groups,21312,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,bytes,52232495,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,215550120,bytes,"438,110 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,files,128,count,"4 files per day, by template mod 4"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,row_groups,21312,count,"4 files per day, by template mod 4"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,bytes,49887310,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,overhead_bytes,24579207,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,overhead_share_pct,49.269,percent,"4 files per day, by template mod 4"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,disk_blocks,50126848,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,ratio_to_raw,1.07587,ratio,"4 files per day, by template mod 4"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_index_bytes,79800,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_files,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_index_bytes,279636,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_ranges,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=4,byte_spread_largest_over_average,1.2651,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,files,256,count,"8 files per day, by template mod 8"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,row_groups,21312,count,"8 files per day, by template mod 8"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,bytes,47628112,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,overhead_bytes,22320009,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,overhead_share_pct,46.863,percent,"8 files per day, by template mod 8"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,disk_blocks,48168960,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,ratio_to_raw,1.03385,ratio,"8 files per day, by template mod 8"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_index_bytes,29874,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_files,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_index_bytes,258100,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_ranges,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,mod_n n=8,byte_spread_largest_over_average,1.5282,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,files,128,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,row_groups,21312,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,bytes,51171769,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,overhead_bytes,25863666,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,overhead_share_pct,50.543,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,disk_blocks,51433472,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,ratio_to_raw,1.10391,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_files,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_index_bytes,148284,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_files,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_index_bytes,295576,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_ranges,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=4,byte_spread_largest_over_average,1.0532,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,files,256,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,row_groups,21312,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,bytes,50193611,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,overhead_bytes,24885508,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,overhead_share_pct,49.579,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,disk_blocks,50692096,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,ratio_to_raw,1.088,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_index_bytes,32076,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_files,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_index_bytes,280458,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_ranges,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,least_full n=8,byte_spread_largest_over_average,1.0955,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,closes_wait,51458,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,closes_shutdown,112,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,row_groups,51570,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,rows_per_rg_median,2,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,rows_per_rg_p90,8,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,backlog_max_lines,720,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,backlog_median_lines,450,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,closes_wait,21177,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,closes_shutdown,135,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,row_groups,21312,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,rows_per_rg_p90,23,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,backlog_max_lines,3597,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,backlog_median_lines,1905,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,closes_wait,17565,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,closes_shutdown,146,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,row_groups,17711,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,rows_per_rg_p90,23,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,backlog_max_lines,10798,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,backlog_median_lines,8537,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,closes_wait,18105,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,closes_shutdown,140,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,row_groups,18245,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,rows_per_rg_p90,26,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,backlog_max_lines,7198,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,backlog_median_lines,5035,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,closes_wait,16842,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,closes_shutdown,148,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,row_groups,16990,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,rows_per_rg_p90,18,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,backlog_max_lines,35999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,backlog_median_lines,33598,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,closes_wait,13134,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,closes_shutdown,3560,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,row_groups,16694,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,rows_per_rg_p90,16,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,backlog_max_lines,107999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,backlog_median_lines,99911,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,closes_wait,16694,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,closes_shutdown,148,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,row_groups,16842,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,rows_per_rg_p90,17,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,backlog_max_lines,71999,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,backlog_median_lines,69579,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,closes_shutdown,16694,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,row_groups,16694,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,rows_per_rg_p90,16,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,backlog_median_lines,99911,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,closes_shutdown,16694,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,row_groups,16694,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,rows_per_rg_median,3,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,rows_per_rg_p90,16,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,backlog_median_lines,99911,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,closes_tick,192516,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,closes_shutdown,2,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,row_groups,192518,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,rows_per_rg_p90,1,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,closes_tick,150794,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,closes_shutdown,17,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,row_groups,150811,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900 tick,backlog_median_lines,30,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,closes_tick,67984,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,closes_shutdown,87,count,close reason
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,row_groups,68071,count,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_median,2,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,bytes,37877987,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,overhead_bytes,12569884,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,overhead_share_pct,33.185,percent,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,disk_blocks,81305600,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,ratio_to_raw,1.74506,ratio,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_index_bytes,360,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,one_template_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_files,550,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_index_bytes,221250,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,all_templates_ranges,550,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,files,32,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,row_groups,21312,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,bytes,52232495,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,26943396,bytes,"54,763 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,files,32,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,row_groups,21312,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,bytes,52232495,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,107775060,bytes,"219,055 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,files,32,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,row_groups,21312,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,bytes,52232495,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,overhead_bytes,26924392,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,overhead_share_pct,51.547,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,disk_blocks,52297728,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,ratio_to_raw,1.12246,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_index_bytes,305628,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,215550120,bytes,"438,110 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,files,128,count,"4 files per day, by template mod 4"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,row_groups,21312,count,"4 files per day, by template mod 4"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,bytes,49887310,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,overhead_bytes,24579207,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,overhead_share_pct,49.269,percent,"4 files per day, by template mod 4"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,disk_blocks,50126848,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,ratio_to_raw,1.07587,ratio,"4 files per day, by template mod 4"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_index_bytes,79800,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_files,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_index_bytes,279636,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,all_templates_ranges,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=4,byte_spread_largest_over_average,1.2651,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,files,256,count,"8 files per day, by template mod 8"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,row_groups,21312,count,"8 files per day, by template mod 8"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,bytes,47628112,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,overhead_bytes,22320009,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,overhead_share_pct,46.863,percent,"8 files per day, by template mod 8"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,disk_blocks,48168960,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,ratio_to_raw,1.03385,ratio,"8 files per day, by template mod 8"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_index_bytes,29874,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_files,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_index_bytes,258100,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,all_templates_ranges,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,mod_n n=8,byte_spread_largest_over_average,1.5282,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,files,128,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,row_groups,21312,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,bytes,51171769,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,overhead_bytes,25863666,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,overhead_share_pct,50.543,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,disk_blocks,51433472,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,ratio_to_raw,1.10391,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_files,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_index_bytes,148284,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_files,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_index_bytes,295576,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,all_templates_ranges,4,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=4,byte_spread_largest_over_average,1.0532,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,files,256,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,row_groups,21312,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,bytes,50193611,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,overhead_bytes,24885508,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,overhead_share_pct,49.579,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,disk_blocks,50692096,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,ratio_to_raw,1.088,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_files,1,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_index_bytes,32076,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,one_template_ranges,2,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_files,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_index_bytes,280458,bytes,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,all_templates_ranges,8,count,one day (2024-01-19); the one-template search is template 1055466456870197778
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,least_full n=8,byte_spread_largest_over_average,1.0955,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,real_col_bytes,36037755,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,real_col_files,16694,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,real_col_blocks,79818752,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,real_meta_bytes,2528300,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,real_meta_blocks,5836800,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,real_meta_files,871,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,model_col_bytes,36435980,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,model_col_files,16694,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,model_col_blocks,80023552,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,calibration,model_minus_real_pct,1.105,percent,the model's per-template-per-day bytes against the binary's
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,closes_wait,34898,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,closes_shutdown,277,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,row_groups,35175,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,rows_per_rg_median,1,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,rows_per_rg_p90,2,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,backlog_max_lines,712,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,backlog_median_lines,443,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,closes_wait,26329,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,closes_shutdown,561,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,row_groups,26890,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,rows_per_rg_median,1,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,rows_per_rg_p90,3,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,backlog_max_lines,3590,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,backlog_median_lines,2054,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,closes_wait,19981,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,closes_shutdown,718,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,row_groups,20699,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,rows_per_rg_median,1,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,rows_per_rg_p90,3,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,backlog_max_lines,10790,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,backlog_median_lines,5797,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,closes_wait,22418,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,closes_shutdown,612,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,row_groups,23030,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,rows_per_rg_median,1,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,rows_per_rg_p90,3,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,backlog_max_lines,7200,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,backlog_median_lines,3901,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,closes_rows,6,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,closes_wait,11016,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,closes_shutdown,1897,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,row_groups,12919,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,rows_per_rg_median,2,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,rows_per_rg_p90,5,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,backlog_max_lines,31801,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,backlog_median_lines,17868,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,closes_rows,11,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,closes_wait,3959,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,closes_shutdown,3880,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,row_groups,7850,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,rows_per_rg_median,4,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,rows_per_rg_p90,9,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,backlog_max_lines,67002,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,backlog_median_lines,35075,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,closes_rows,9,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,closes_wait,6333,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,closes_shutdown,2868,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,row_groups,9210,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,rows_per_rg_median,3,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,rows_per_rg_p90,8,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,backlog_max_lines,47399,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,backlog_median_lines,27796,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,closes_rows,14,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,closes_shutdown,4931,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,row_groups,4945,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,rows_per_rg_median,6,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,rows_per_rg_p90,13,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,backlog_max_lines,85230,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,backlog_median_lines,52267,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,closes_rows,14,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,closes_shutdown,4931,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,row_groups,4945,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,rows_per_rg_median,6,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,rows_per_rg_p90,13,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,backlog_max_lines,85230,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,backlog_median_lines,52267,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900 tick,closes_tick,80470,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900 tick,closes_shutdown,1,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900 tick,row_groups,80471,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900 tick,rows_per_rg_p90,6,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900 tick,closes_tick,53278,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900 tick,closes_shutdown,14,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900 tick,row_groups,53292,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900 tick,rows_per_rg_p90,11,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900 tick,backlog_median_lines,30,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,closes_tick,38022,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,closes_shutdown,111,count,close reason
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,row_groups,38133,count,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,files,4931,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,row_groups,26890,count,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,bytes,33046269,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,overhead_bytes,12334701,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,overhead_share_pct,37.326,percent,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,disk_blocks,42442752,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,ratio_to_raw,0.94824,ratio,what TrieDB does today: one segment per leaf per day
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,one_template_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,one_template_index_bytes,6240,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,one_template_ranges,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,all_templates_files,4159,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,all_templates_index_bytes,5051344,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,all_templates_ranges,4159,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,files,2,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,row_groups,26890,count,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,bytes,66003588,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,overhead_bytes,45292020,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,overhead_share_pct,68.621,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,disk_blocks,66007040,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,ratio_to_raw,1.4747,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,one_template_index_bytes,15275574,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,one_template_ranges,51,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,all_templates_index_bytes,15275574,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,30183360,bytes,"54,680 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,files,2,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,row_groups,26890,count,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,bytes,66003588,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,overhead_bytes,45292020,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,overhead_share_pct,68.621,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,disk_blocks,66007040,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,ratio_to_raw,1.4747,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,one_template_index_bytes,15275574,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,one_template_ranges,51,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,all_templates_index_bytes,15275574,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,120734544,bytes,"218,722 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,files,2,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,row_groups,26890,count,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,bytes,66003588,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,overhead_bytes,45292020,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,overhead_share_pct,68.621,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,disk_blocks,66007040,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,ratio_to_raw,1.4747,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,one_template_index_bytes,15275574,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,one_template_ranges,51,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,all_templates_index_bytes,15275574,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,241469088,bytes,"437,444 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,files,8,count,"4 files per day, by template mod 4"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,row_groups,26890,count,"4 files per day, by template mod 4"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,bytes,66007557,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,overhead_bytes,45295989,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,overhead_share_pct,68.622,percent,"4 files per day, by template mod 4"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,disk_blocks,66023424,bytes,"4 files per day, by template mod 4"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,ratio_to_raw,1.47506,ratio,"4 files per day, by template mod 4"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,one_template_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,one_template_index_bytes,3968766,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,one_template_ranges,51,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,all_templates_index_bytes,15277860,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=4,byte_spread_largest_over_average,1.4025,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,files,16,count,"8 files per day, by template mod 8"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,row_groups,26890,count,"8 files per day, by template mod 8"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,bytes,65907721,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,overhead_bytes,45196153,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,overhead_share_pct,68.575,percent,"8 files per day, by template mod 8"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,disk_blocks,65941504,bytes,"8 files per day, by template mod 8"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,ratio_to_raw,1.47323,ratio,"8 files per day, by template mod 8"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,one_template_files,1,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,one_template_index_bytes,1827354,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,one_template_ranges,51,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,all_templates_index_bytes,15247696,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,mod_n n=8,byte_spread_largest_over_average,1.8428,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,files,8,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,row_groups,26890,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,bytes,66007557,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,overhead_bytes,45295989,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,overhead_share_pct,68.622,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,disk_blocks,66027520,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,ratio_to_raw,1.47516,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,one_template_files,4,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,one_template_index_bytes,15277860,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,one_template_ranges,51,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,all_templates_index_bytes,15277860,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=4,byte_spread_largest_over_average,1.0331,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,files,16,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,row_groups,26890,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,bytes,66012849,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,overhead_bytes,45301281,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,overhead_share_pct,68.625,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,disk_blocks,66048000,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,ratio_to_raw,1.47561,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,one_template_files,8,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,one_template_index_bytes,15280908,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,one_template_ranges,51,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,all_templates_index_bytes,15280908,bytes,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 1055466456870197778
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,least_full n=8,byte_spread_largest_over_average,1.1474,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,real_col_bytes,23803088,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,real_col_files,4931,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,real_col_blocks,37036032,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,real_meta_bytes,13753794,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,real_meta_blocks,32518144,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,real_meta_files,4932,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,model_col_bytes,23932452,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,model_col_files,4931,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,model_col_blocks,34557952,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,calibration,model_minus_real_pct,0.543,percent,the model's per-template-per-day bytes against the binary's
