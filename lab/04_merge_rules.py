@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab.common import datasets, measure, merge, rows as rowlib
-from lab.common.frontend import promoted_keys_rule, STRING
+from lab.common.frontend import promoted_keys_rule
 
 RULES = [
     ("NONE", {}),

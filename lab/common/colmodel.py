@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import math
 
-from .frontend import BOOL, DATETIME, FLOAT64, INT64, IP, STRING, UUID
+from .frontend import BOOL, DATETIME, FLOAT64, INT64
 
 FILE_HEADER = 8
 RG_FRAME = 4 + 4  # payload_len + crc

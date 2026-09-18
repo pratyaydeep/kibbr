@@ -17,11 +17,11 @@ script only counts what they produced.
 
 from __future__ import annotations
 
-import gzip as gzlib
 import io
 import json
 import struct
 import subprocess
+import zlib
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -126,7 +126,7 @@ def table_for(P: rowlib.Parsed, g: Group, idxs: list) -> pa.Table:
 
 
 def _cast(raw, val, ty):
-    from lab.common.frontend import FLOAT64, INT64, IP, STRING, UUID
+    from lab.common.frontend import FLOAT64, IP, STRING, UUID
 
     # `val` is None exactly where the type ladder was never run: the key is absent on
     # this row, or its JSON value was null. Both are Null in a column. Falling through
@@ -236,7 +236,12 @@ def layout_shared_day(
                 buf = io.BytesIO()
                 _write_parquet(table_for(P, g, idxs), buf, rg)
                 blob = buf.getvalue()
-                entries.append((hash(g.name) & 0xFFFFFFFFFFFFFFFF, fh.tell(), len(blob)))
+                # Not `hash()`: Python randomises string hashing per process, and
+                # this lab's rule is that the same input gives the same output. The
+                # footer entry is eight bytes either way, so only reproducibility is at
+                # stake - which is reason enough.
+                ident = zlib.crc32(g.name.encode()) & 0xFFFFFFFFFFFFFFFF
+                entries.append((ident, fh.tell(), len(blob)))
                 fh.write(blob)
             for tid, off, length in entries:
                 fh.write(struct.pack("<QQQ", tid, off, length))

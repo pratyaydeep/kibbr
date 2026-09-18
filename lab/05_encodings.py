@@ -20,13 +20,13 @@ import gzip as gzlib
 import statistics
 import sys
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab.common import datasets, encodings as enc, measure, rows as rowlib
-from lab.common.frontend import BOOL, DATETIME, FLOAT64, INT64, IP, STRING, UUID
+from lab.common.frontend import FLOAT64, IP, STRING, UUID
 
 CHUNK = 8_192
 ZSTD_LEVELS = [1, 3, 9, 19]
@@ -269,7 +269,6 @@ def main() -> int:
     for key, plain in text_cols:
         best = min(per_column[key].values())
         clp_total = 0
-        ok = True
         for t in P.templates.values():
             if key not in t.types:
                 continue

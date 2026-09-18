@@ -21,7 +21,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import datasets, measure
+from . import datasets
 
 ES = "http://127.0.0.1:9201"
 CH = "http://127.0.0.1:8124"

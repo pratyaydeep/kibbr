@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab.common import bloom, datasets, measure, rows as rowlib
-from lab.common.frontend import STRING, UUID
+from lab.common.frontend import STRING
 
 CHUNK = 8_192
 BITS = [8, 10, 16]
@@ -166,7 +166,6 @@ def measure_column(P: rowlib.Parsed, key: str, present_values: set, bits: int, r
         bloom_survive = np.zeros(len(probes), dtype=np.int64)
         stat_survive = np.zeros(len(probes), dtype=np.int64)
         truly_in = np.zeros(len(probes), dtype=np.int64)
-        lo_hi = [(g[1], g[2]) for g in groups]
         for gi, (filt, lo, hi, exact) in enumerate(groups):
             bloom_survive += filt.probe_many(h1, h2)
             for pi, p in enumerate(probes):
@@ -215,7 +214,6 @@ def main() -> int:
     print(f"\ndataset {ds.name}: {ds.lines:,} lines")
 
     P = rowlib.load(ds)
-    rng = random.Random(SEED)
     best05 = best_total_from_05(ds.name)
     if best05 is None:
         print("  script 05 has not run for this dataset: filter bytes are given "

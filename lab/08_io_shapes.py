@@ -25,7 +25,6 @@ import shutil
 import statistics
 import sys
 import time
-from collections import defaultdict
 from pathlib import Path
 
 import zstandard as zstd

@@ -25,7 +25,6 @@ from .frontend import (
     STRING,
     UUID,
     DEFAULT_RULE,
-    fold_types,
     parse_line,
 )
 

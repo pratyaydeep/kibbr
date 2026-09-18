@@ -42,7 +42,22 @@ RESULT_FIELDS = [
 
 @dataclass
 class DiskUse:
-    """What a set of files costs, counted both ways."""
+    """What a set of files costs, counted both ways.
+
+    `bytes` is reproducible: the same input gives the same `st_size`, every run.
+
+    `blocks` is not, quite. On APFS a small file charges `ceil(size / 4096)` reliably, but
+    a multi-megabyte one can come back holding more blocks than its size accounts for, and
+    not by the same amount twice - two runs of script 02 over identical input produced
+    identical bytes (25,831,591) and different blocks (26,755,072 and 26,431,488) for the
+    same two container files. Script 03's calibration pins the effect down to the largest
+    files only and does not claim a cause.
+
+    So: byte figures are exact, and block figures are the right order of magnitude with a
+    percent or two of slop on any layout whose files run to megabytes. The finding block
+    figures exist for - that thousands of tiny files cost multiples of their bytes - is far
+    larger than that slop, which is why they are still worth reporting.
+    """
 
     bytes: int
     blocks: int  # st_blocks * 512, the charge the filesystem actually makes

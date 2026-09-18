@@ -270,12 +270,12 @@ def _uneven_weights(n_templates: int, total: int) -> list:
     head = [1.0 / (i + 1) for i in range(top)]
     head = [0.80 * total * w / sum(head) for w in head]
     tail_n = n_templates - top
+    # With ten or fewer templates there is no tail; the head already holds every one
+    # of them, and the rounding below puts the remaining 20% back on the busiest.
+    tail = []
     if tail_n:
         tail = [1.0 / (i + 1) ** 0.5 for i in range(tail_n)]
         tail = [0.20 * total * w / sum(tail) for w in tail]
-    else:
-        tail = []
-        head = [0.80 * total * w / sum(1.0 / (i + 1) for i in range(top)) for w in head]
     counts = [max(1, int(round(w))) for w in head + tail]
     # Settle the rounding on the busiest template, so the total is exact.
     counts[0] += total - sum(counts)
@@ -328,7 +328,7 @@ def _build_uneven(size: str, name: str = "uneven", total: int | None = None) -> 
     dup_pct = 100.0 * reused / total
     return _write(
         name,
-        [_dump(o) for o, in ((o,) for _, o in keyed)],
+        [_dump(o) for _, o in keyed],
         f"generator cannot skew template shares, so built by sampling: pool of "
         f"{pool_lines:,} lines at --templates 60 --seed 7, grouped by the binary's "
         f"template_id, {len(order)} templates drawn to a Zipf profile where the top 10 "

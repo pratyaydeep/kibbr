@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import heapq
 import json
-import math
 import os
 import signal
 import statistics
@@ -511,6 +510,12 @@ def _measure_datadir(d: Path) -> dict:
         "meta_blocks": 0,
         "meta_files": 0,
         "dirs": 0,
+        # Segments holding more blocks than `ceil(size / 4096)` accounts for. Counted
+        # rather than assumed: the model rounds every file up to a 4 KiB block, and this
+        # says how often the filesystem disagrees, and by how much.
+        "col_over_ceil_files": 0,
+        "col_over_ceil_bytes": 0,
+        "col_over_ceil_largest": 0,
     }
     for root, dirs, names in os.walk(d):
         out["dirs"] += len(dirs)
@@ -520,6 +525,14 @@ def _measure_datadir(d: Path) -> dict:
             out[f"{kind}_bytes"] += st.st_size
             out[f"{kind}_blocks"] += st.st_blocks * 512
             out[f"{kind}_files"] += 1
+            if kind == "col":
+                over = st.st_blocks * 512 - colmodel.blocks(st.st_size)
+                if over > 0:
+                    out["col_over_ceil_files"] += 1
+                    out["col_over_ceil_bytes"] += over
+                    out["col_over_ceil_largest"] = max(
+                        out["col_over_ceil_largest"], st.st_size
+                    )
     return out
 
 
@@ -804,6 +817,8 @@ def main() -> int:
             ("real_meta_bytes", r["meta_bytes"]),
             ("real_meta_blocks", r["meta_blocks"]),
             ("real_meta_files", r["meta_files"]),
+            ("real_segments_over_ceil", r["col_over_ceil_files"]),
+            ("real_bytes_over_ceil", r["col_over_ceil_bytes"]),
             ("model_col_bytes", m.total),
             ("model_col_files", m.files),
             ("model_col_blocks", m.blocks),
@@ -825,6 +840,23 @@ def main() -> int:
                 f"  real {r['col_bytes']:,} bytes in {r['col_files']:,} files; "
                 f"model {m.total:,} bytes in {m.files:,} files.\n"
                 "  Nothing downstream of the model is trusted until this is explained."
+            )
+        if r["col_over_ceil_files"]:
+            print(
+                f"\n  Bytes match exactly; disk blocks do not, by "
+                f"{cal['blocks_diff_pct']:+.2f}%. The whole of that difference is "
+                f"{r['col_over_ceil_files']} of {r['col_files']:,} segments holding "
+                f"{measure.human(r['col_over_ceil_bytes'])} more than "
+                f"`ceil(size / 4096)` accounts for - the largest ones, up to "
+                f"{measure.human(r['col_over_ceil_largest'])}. Every other segment "
+                "matches the model's rounding to the byte."
+            )
+            print(
+                "  The cause is NOT established. Writing a file of that exact size on "
+                "this filesystem - in one call, or appended in 8 KiB pieces with an "
+                "fsync after each - reproduces `ceil` exactly, so neither the size nor "
+                "the append pattern explains it alone. Until it is explained, read "
+                "every disk-blocks figure the model reports as a floor, not an estimate."
             )
         print(
             f"\n  The binary also wrote {r['meta_files']:,} metadata files "
