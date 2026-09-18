@@ -749,3 +749,318 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:08:35+00:00,7f71815,01_profile_logs,uneven,column:declined_reason,raw_bytes,8628,bytes,type=Null distinct=1 distinct/rows=0.0005 avg_len=4.0 null_wide=98.92% null_json=100.00% templates=180
 2026-09-18T20:08:35+00:00,7f71815,01_profile_logs,uneven,column:attempt,raw_bytes,8422,bytes,type=Int64 distinct=1963 distinct/rows=0.9063 avg_len=3.9 null_wide=98.92% null_json=0.00% templates=180
 2026-09-18T20:08:35+00:00,7f71815,01_profile_logs,uneven,column:http.referrer,raw_bytes,2344,bytes,type=String distinct=8 distinct/rows=0.0048 avg_len=1.4 null_wide=99.17% null_json=0.00% templates=180
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,raw NDJSON,bytes,44959683,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,raw NDJSON,disk_blocks,44961792,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,raw NDJSON,files,1,count,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,raw NDJSON,ratio_to_raw_bytes,1.0,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,raw NDJSON,ratio_to_raw_blocks,1.00005,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,raw NDJSON,ratio_to_gzip9,11.06733,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,gzip -9,bytes,4062380,bytes,"C zlib, level 9"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,gzip -9,disk_blocks,4063232,bytes,"C zlib, level 9"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,gzip -9,files,1,count,"C zlib, level 9"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,gzip -9,ratio_to_raw_bytes,0.09036,ratio,"C zlib, level 9"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,gzip -9,ratio_to_raw_blocks,0.09038,ratio,"C zlib, level 9"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,gzip -9,ratio_to_gzip9,1.0,ratio,"C zlib, level 9"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,zstd -19,bytes,2896966,bytes,"C zstd, level 19"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,zstd -19,disk_blocks,3203072,bytes,"C zstd, level 19"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,zstd -19,files,1,count,"C zstd, level 19"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,zstd -19,ratio_to_raw_bytes,0.06443,ratio,"C zstd, level 19"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,zstd -19,ratio_to_raw_blocks,0.07124,ratio,"C zstd, level 19"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,zstd -19,ratio_to_gzip9,0.71312,ratio,"C zstd, level 19"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=1,000",bytes,7777410,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=1,000",disk_blocks,7778304,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=1,000",files,1,count,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=1,000",ratio_to_raw_bytes,0.17299,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=1,000",ratio_to_raw_blocks,0.17301,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=1,000",ratio_to_gzip9,1.9145,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=8,192",bytes,4200957,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=8,192",disk_blocks,4202496,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=8,192",files,1,count,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=8,192",ratio_to_raw_bytes,0.09344,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=8,192",ratio_to_raw_blocks,0.09347,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=8,192",ratio_to_gzip9,1.03411,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=122,880",bytes,3864844,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=122,880",disk_blocks,3866624,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=122,880",files,1,count,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=122,880",ratio_to_raw_bytes,0.08596,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=122,880",ratio_to_raw_blocks,0.086,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"WIDE rg=122,880",ratio_to_gzip9,0.95137,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",bytes,26102869,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",disk_blocks,34848768,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",files,4931,count,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",ratio_to_raw_bytes,0.58058,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",ratio_to_raw_blocks,0.77511,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=1,000",ratio_to_gzip9,6.42551,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",bytes,25833908,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",disk_blocks,34570240,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",files,4931,count,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",ratio_to_raw_bytes,0.5746,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",ratio_to_raw_blocks,0.76892,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=8,192",ratio_to_gzip9,6.3593,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",bytes,25800510,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",disk_blocks,34533376,bytes,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",files,4931,count,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",ratio_to_raw_bytes,0.57386,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",ratio_to_raw_blocks,0.7681,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE rg=122,880",ratio_to_gzip9,6.35108,ratio,
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",bytes,25833908,bytes,what TrieDB does today
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",disk_blocks,34570240,bytes,what TrieDB does today
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",files,4931,count,what TrieDB does today
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_bytes,0.5746,ratio,what TrieDB does today
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_blocks,0.76892,ratio,what TrieDB does today
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"PER_TEMPLATE_DAY rg=8,192",ratio_to_gzip9,6.3593,ratio,what TrieDB does today
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",bytes,26221253,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",disk_blocks,26660864,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",ratio_to_raw_bytes,0.58322,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",ratio_to_raw_blocks,0.59299,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=1,000",ratio_to_gzip9,6.45465,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",bytes,25952292,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",disk_blocks,26750976,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",ratio_to_raw_bytes,0.57723,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",ratio_to_raw_blocks,0.595,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=8,192",ratio_to_gzip9,6.38845,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",bytes,25918894,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",disk_blocks,26914816,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",ratio_to_raw_bytes,0.57649,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",ratio_to_raw_blocks,0.59864,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,"SHARED_DAY rg=122,880",ratio_to_gzip9,6.38022,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,rows,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,row_groups,55,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,file_bytes,179672,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,bytes_read,3368,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,read_share_pct,1.8745,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,matching_rows,201,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=1000,rows_scanned,1000,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,rows,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,row_groups,7,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,file_bytes,123372,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,bytes_read,18979,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,read_share_pct,15.3836,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,matching_rows,201,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=8192,rows_scanned,8192,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,rows,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,row_groups,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,file_bytes,116525,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,bytes_read,116525,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,read_share_pct,100.0,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,matching_rows,201,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,window rg=122880,rows_scanned,54721,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,verdict,per_template_vs_gzip9_bytes,6.3593,ratio,"below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 8.5081 over 4,931 files"
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,verdict,smallest_by_bytes,2896966,bytes,zstd -19
+2026-09-18T20:13:07+00:00,365bb93,02_split_vs_wide,uneven,verdict,smallest_by_blocks,3203072,bytes,zstd -19
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,raw NDJSON,bytes,46791991,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,raw NDJSON,disk_blocks,46792704,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,raw NDJSON,files,1,count,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,raw NDJSON,ratio_to_raw_bytes,1.0,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,raw NDJSON,ratio_to_raw_blocks,1.00002,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,raw NDJSON,ratio_to_gzip9,4.32098,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,gzip -9,bytes,10829031,bytes,"C zlib, level 9"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,gzip -9,disk_blocks,11665408,bytes,"C zlib, level 9"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,gzip -9,files,1,count,"C zlib, level 9"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,gzip -9,ratio_to_raw_bytes,0.23143,ratio,"C zlib, level 9"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,gzip -9,ratio_to_raw_blocks,0.2493,ratio,"C zlib, level 9"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,gzip -9,ratio_to_gzip9,1.0,ratio,"C zlib, level 9"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,zstd -19,bytes,8282006,bytes,"C zstd, level 19"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,zstd -19,disk_blocks,8396800,bytes,"C zstd, level 19"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,zstd -19,files,1,count,"C zstd, level 19"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,zstd -19,ratio_to_raw_bytes,0.177,ratio,"C zstd, level 19"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,zstd -19,ratio_to_raw_blocks,0.17945,ratio,"C zstd, level 19"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,zstd -19,ratio_to_gzip9,0.7648,ratio,"C zstd, level 19"
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=1,000",bytes,12571609,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=1,000",disk_blocks,12574720,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=1,000",files,1,count,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=1,000",ratio_to_raw_bytes,0.26867,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=1,000",ratio_to_raw_blocks,0.26874,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=1,000",ratio_to_gzip9,1.16092,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=8,192",bytes,9694060,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=8,192",disk_blocks,9695232,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=8,192",files,1,count,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=8,192",ratio_to_raw_bytes,0.20717,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=8,192",ratio_to_raw_blocks,0.2072,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=8,192",ratio_to_gzip9,0.89519,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=122,880",bytes,9377098,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=122,880",disk_blocks,9379840,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=122,880",files,1,count,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=122,880",ratio_to_raw_bytes,0.2004,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=122,880",ratio_to_raw_blocks,0.20046,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"WIDE rg=122,880",ratio_to_gzip9,0.86592,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",bytes,12393351,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",disk_blocks,14098432,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",files,870,count,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",ratio_to_raw_bytes,0.26486,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",ratio_to_raw_blocks,0.3013,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=1,000",ratio_to_gzip9,1.14446,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",bytes,12355553,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",disk_blocks,14061568,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",files,870,count,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",ratio_to_raw_bytes,0.26405,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",ratio_to_raw_blocks,0.30051,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=8,192",ratio_to_gzip9,1.14097,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",bytes,12355563,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",disk_blocks,14061568,bytes,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",files,870,count,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",ratio_to_raw_bytes,0.26405,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",ratio_to_raw_blocks,0.30051,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE rg=122,880",ratio_to_gzip9,1.14097,ratio,
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",bytes,85201823,bytes,what TrieDB does today
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",disk_blocks,122359808,bytes,what TrieDB does today
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",files,16694,count,what TrieDB does today
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_bytes,1.82086,ratio,what TrieDB does today
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_blocks,2.61497,ratio,what TrieDB does today
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"PER_TEMPLATE_DAY rg=8,192",ratio_to_gzip9,7.86791,ratio,what TrieDB does today
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",bytes,85608536,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",disk_blocks,85680128,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",files,32,count,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",ratio_to_raw_bytes,1.82956,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",ratio_to_raw_blocks,1.83109,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=1,000",ratio_to_gzip9,7.90547,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",bytes,85603119,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",disk_blocks,85676032,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",files,32,count,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",ratio_to_raw_bytes,1.82944,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",ratio_to_raw_blocks,1.831,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=8,192",ratio_to_gzip9,7.90497,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",bytes,85603119,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",disk_blocks,85676032,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",files,32,count,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",ratio_to_raw_bytes,1.82944,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",ratio_to_raw_blocks,1.831,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,"SHARED_DAY rg=122,880",ratio_to_gzip9,7.90497,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,row_groups,11,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,file_bytes,292304,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,bytes_read,27337,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,read_share_pct,9.3522,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,matching_rows,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=1000,rows_scanned,1000,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,row_groups,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,file_bytes,297726,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,bytes_read,224124,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,read_share_pct,75.2786,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,matching_rows,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=8192,rows_scanned,8192,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,row_groups,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,file_bytes,295031,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,bytes_read,295031,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,read_share_pct,100.0,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,matching_rows,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,window rg=122880,rows_scanned,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,verdict,per_template_vs_gzip9_bytes,1.141,ratio,below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2054 over 870 files
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,verdict,smallest_by_bytes,8282006,bytes,zstd -19
+2026-09-18T20:14:48+00:00,365bb93,02_split_vs_wide,flat30,verdict,smallest_by_blocks,8396800,bytes,zstd -19
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,raw NDJSON,bytes,46791991,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,raw NDJSON,disk_blocks,46792704,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,raw NDJSON,files,1,count,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,raw NDJSON,ratio_to_raw_bytes,1.0,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,raw NDJSON,ratio_to_raw_blocks,1.00002,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,raw NDJSON,ratio_to_gzip9,4.44265,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,gzip -9,bytes,10532456,bytes,"C zlib, level 9"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,gzip -9,disk_blocks,10616832,bytes,"C zlib, level 9"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,gzip -9,files,1,count,"C zlib, level 9"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,gzip -9,ratio_to_raw_bytes,0.22509,ratio,"C zlib, level 9"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,gzip -9,ratio_to_raw_blocks,0.22689,ratio,"C zlib, level 9"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,gzip -9,ratio_to_gzip9,1.0,ratio,"C zlib, level 9"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,zstd -19,bytes,8059807,bytes,"C zstd, level 19"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,zstd -19,disk_blocks,8441856,bytes,"C zstd, level 19"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,zstd -19,files,1,count,"C zstd, level 19"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,zstd -19,ratio_to_raw_bytes,0.17225,ratio,"C zstd, level 19"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,zstd -19,ratio_to_raw_blocks,0.18041,ratio,"C zstd, level 19"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,zstd -19,ratio_to_gzip9,0.76524,ratio,"C zstd, level 19"
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=1,000",bytes,12357618,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=1,000",disk_blocks,12357632,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=1,000",files,1,count,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=1,000",ratio_to_raw_bytes,0.2641,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=1,000",ratio_to_raw_blocks,0.2641,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=1,000",ratio_to_gzip9,1.17329,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=8,192",bytes,9541641,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=8,192",disk_blocks,9543680,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=8,192",files,1,count,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=8,192",ratio_to_raw_bytes,0.20392,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=8,192",ratio_to_raw_blocks,0.20396,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=8,192",ratio_to_gzip9,0.90593,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=122,880",bytes,8906673,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=122,880",disk_blocks,8908800,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=122,880",files,1,count,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=122,880",ratio_to_raw_bytes,0.19035,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=122,880",ratio_to_raw_blocks,0.19039,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"WIDE rg=122,880",ratio_to_gzip9,0.84564,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=1,000",bytes,12204405,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=1,000",disk_blocks,13926400,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=1,000",files,870,count,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=1,000",ratio_to_raw_bytes,0.26082,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=1,000",ratio_to_raw_blocks,0.29762,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=1,000",ratio_to_gzip9,1.15874,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=8,192",bytes,12177576,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=8,192",disk_blocks,13885440,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=8,192",files,870,count,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=8,192",ratio_to_raw_bytes,0.26025,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=8,192",ratio_to_raw_blocks,0.29675,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=8,192",ratio_to_gzip9,1.1562,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=122,880",bytes,12175641,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=122,880",disk_blocks,13885440,bytes,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=122,880",files,870,count,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=122,880",ratio_to_raw_bytes,0.26021,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=122,880",ratio_to_raw_blocks,0.29675,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE rg=122,880",ratio_to_gzip9,1.15601,ratio,
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE_DAY rg=8,192",bytes,12177576,bytes,what TrieDB does today
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE_DAY rg=8,192",disk_blocks,13885440,bytes,what TrieDB does today
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE_DAY rg=8,192",files,870,count,what TrieDB does today
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_bytes,0.26025,ratio,what TrieDB does today
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE_DAY rg=8,192",ratio_to_raw_blocks,0.29675,ratio,what TrieDB does today
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"PER_TEMPLATE_DAY rg=8,192",ratio_to_gzip9,1.1562,ratio,what TrieDB does today
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=1,000",bytes,12225325,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=1,000",disk_blocks,12230656,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=1,000",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=1,000",ratio_to_raw_bytes,0.26127,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=1,000",ratio_to_raw_blocks,0.26138,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=1,000",ratio_to_gzip9,1.16073,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=8,192",bytes,12198496,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=8,192",disk_blocks,12201984,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=8,192",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=8,192",ratio_to_raw_bytes,0.2607,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=8,192",ratio_to_raw_blocks,0.26077,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=8,192",ratio_to_gzip9,1.15818,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=122,880",bytes,12196561,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=122,880",disk_blocks,12201984,bytes,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=122,880",files,2,count,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=122,880",ratio_to_raw_bytes,0.26065,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=122,880",ratio_to_raw_blocks,0.26077,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,"SHARED_DAY rg=122,880",ratio_to_gzip9,1.158,ratio,per-template bytes without per-file block rounding
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,row_groups,11,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,file_bytes,281198,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,bytes_read,26244,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,read_share_pct,9.3329,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,matching_rows,44,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=1000,rows_scanned,1000,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,row_groups,2,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,file_bytes,280099,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,bytes_read,213683,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,read_share_pct,76.2884,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,matching_rows,44,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=8192,rows_scanned,8192,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,rows,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,row_groups,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,groups_touched,1,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,file_bytes,280947,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,bytes_read,280947,bytes,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,read_share_pct,100.0,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,matching_rows,44,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,window rg=122880,rows_scanned,10711,count,5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,verdict,per_template_vs_gzip9_bytes,1.1562,ratio,below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.3079 over 870 files
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,verdict,smallest_by_bytes,8059807,bytes,zstd -19
+2026-09-18T20:15:52+00:00,365bb93,02_split_vs_wide,oneday,verdict,smallest_by_blocks,8441856,bytes,zstd -19

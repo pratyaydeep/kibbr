@@ -54,14 +54,20 @@ def load() -> list:
 
 
 def newest_per_script(rows: list) -> dict:
+    """Newest run per (script, dataset), not per script.
+
+    A script run twice with `--dataset flat30` and `--dataset uneven` produces two runs
+    that answer different questions; keying on the script alone would let the second
+    erase the first.
+    """
     latest: dict = {}
     for r in rows:
-        script = r["script"]
-        if script not in latest or r["when"] > latest[script]:
-            latest[script] = r["when"]
+        k = (r["script"], r["dataset"])
+        if k not in latest or r["when"] > latest[k]:
+            latest[k] = r["when"]
     kept = defaultdict(list)
     for r in rows:
-        if r["when"] == latest[r["script"]]:
+        if r["when"] == latest[(r["script"], r["dataset"])]:
             kept[r["script"]].append(r)
     return kept
 
@@ -113,7 +119,7 @@ def render() -> str:
 
     for script in ordered:
         srows = kept[script]
-        when = srows[0]["when"]
+        when = max(r["when"] for r in srows)
         sha = srows[0]["git_sha"]
         parts.append(f"## {script}")
         parts.append("")
