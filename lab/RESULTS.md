@@ -29,6 +29,13 @@ python       3.12.2
 - **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.33x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
 - **`flat30`**: the smallest layout is zstd -19 at 8,282,006 bytes. Per-template Parquet loses to gzip -9 by 1.14x on bytes; what TrieDB does today (one Parquet per template per day) costs 1.81x of raw NDJSON.
 - **`oneday`**: the smallest layout is zstd -19 at 8,059,807 bytes. Per-template Parquet loses to gzip -9 by 1.15x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.26x of raw NDJSON.
+- **Encodings on `flat30`**: picking the smallest encoding per chunk reaches 0.144x of raw NDJSON and 0.618x of gzip -9; sorting rows inside each chunk is worth a further 2.52%.
+- **Encodings on `uneven`**: picking the smallest encoding per chunk reaches 0.096x of raw NDJSON and 1.052x of gzip -9; sorting rows inside each chunk is worth a further 0.68%.
+- **Bloom filters earn their bytes**: at 10 bits per value they skip 98.1% of row groups for an id that is not there, against 19.4% for min/max statistics alone, and cost 0.87% of the best encoded total.
+- **Which durability call matters as much as batching**: a per-record `fsync(2)` reaches 39,898 records/sec on this platform, the same loop with `F_FULLFSYNC` reaches 360 - Darwin's `fsync` stops at the drive cache. Shape only.
+- **WAL batching pays twice**: zstd 3 over batches of 500 lines compresses to 0.114 of raw, against 0.864 at one line per batch.
+- **Grouping a template's row groups together** turns 51 separate byte ranges into 1 for a one-template search - on S3 at 15 ms a range, the difference between a second and nothing.
+- **Scanning every template for an unpromoted key bends the wrong way**: 100x the templates costs 2.4x more than linear, not the same. A key-to-templates map is flat.
 
 ## Comparison systems (script 07)
 
@@ -54,7 +61,7 @@ Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`. Scri
 
 _Frontend agreement - the Python port against the binary_
 
-Run 2026-09-18T21:21:06+00:00, git `eff5a39`, 6 rows.
+Run 2026-09-18T21:51:12+00:00, git `b405451`, 6 rows.
 
 ### `00_frontend_agree` / dataset `flat30`
 
@@ -87,7 +94,7 @@ Run 2026-09-18T21:21:06+00:00, git `eff5a39`, 6 rows.
 
 _What the logs look like_
 
-Run 2026-09-18T21:21:51+00:00, git `eff5a39`, 252 rows.
+Run 2026-09-18T21:51:58+00:00, git `b405451`, 252 rows.
 
 ### `01_profile_logs` / dataset `flat30`
 
@@ -494,7 +501,7 @@ Run 2026-09-18T21:21:51+00:00, git `eff5a39`, 252 rows.
 
 _Splitting by template: does it help or hurt compression_
 
-Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
+Run 2026-09-18T22:03:05+00:00, git `b405451`, 363 rows.
 
 ### `02_split_vs_wide` / dataset `flat30`
 
@@ -507,16 +514,16 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | raw NDJSON                 | ratio_to_raw_blocks         |      1           | ratio  |
 | raw NDJSON                 | ratio_to_gzip9              |      4.321       | ratio  |
 | gzip -9                    | bytes                       |      1.0829e+07  | bytes  |
-| gzip -9                    | disk_blocks                 |      1.13377e+07 | bytes  |
+| gzip -9                    | disk_blocks                 |      1.12067e+07 | bytes  |
 | gzip -9                    | files                       |      1           | count  |
 | gzip -9                    | ratio_to_raw_bytes          |      0.2314      | ratio  |
-| gzip -9                    | ratio_to_raw_blocks         |      0.2423      | ratio  |
+| gzip -9                    | ratio_to_raw_blocks         |      0.2395      | ratio  |
 | gzip -9                    | ratio_to_gzip9              |      1           | ratio  |
 | zstd -19                   | bytes                       |      8.28201e+06 | bytes  |
-| zstd -19                   | disk_blocks                 |      8.3927e+06  | bytes  |
+| zstd -19                   | disk_blocks                 |      8.43366e+06 | bytes  |
 | zstd -19                   | files                       |      1           | count  |
 | zstd -19                   | ratio_to_raw_bytes          |      0.177       | ratio  |
-| zstd -19                   | ratio_to_raw_blocks         |      0.1794      | ratio  |
+| zstd -19                   | ratio_to_raw_blocks         |      0.1802      | ratio  |
 | zstd -19                   | ratio_to_gzip9              |      0.7648      | ratio  |
 | WIDE rg=1,000              | bytes                       |      1.25008e+07 | bytes  |
 | WIDE rg=1,000              | disk_blocks                 |      1.2501e+07  | bytes  |
@@ -573,10 +580,10 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | SHARED_DAY rg=8,192        | ratio_to_raw_blocks         |      1.821       | ratio  |
 | SHARED_DAY rg=8,192        | ratio_to_gzip9              |      7.86        | ratio  |
 | SHARED_DAY rg=122,880      | bytes                       |      8.51202e+07 | bytes  |
-| SHARED_DAY rg=122,880      | disk_blocks                 |      8.56433e+07 | bytes  |
+| SHARED_DAY rg=122,880      | disk_blocks                 |      8.51886e+07 | bytes  |
 | SHARED_DAY rg=122,880      | files                       |     32           | count  |
 | SHARED_DAY rg=122,880      | ratio_to_raw_bytes          |      1.819       | ratio  |
-| SHARED_DAY rg=122,880      | ratio_to_raw_blocks         |      1.83        | ratio  |
+| SHARED_DAY rg=122,880      | ratio_to_raw_blocks         |      1.821       | ratio  |
 | SHARED_DAY rg=122,880      | ratio_to_gzip9              |      7.86        | ratio  |
 | PER_TEMPLATE[J70] rg=8,192 | bytes                       |      8.44564e+06 | bytes  |
 | PER_TEMPLATE[J70] rg=8,192 | disk_blocks                 |      8.55245e+06 | bytes  |
@@ -628,7 +635,7 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | window rg=122880           | rows_scanned                |  10711           | count  |
 | verdict                    | per_template_vs_gzip9_bytes |      1.139       | ratio  |
 | verdict                    | smallest_by_bytes           |      8.28201e+06 | bytes  |
-| verdict                    | smallest_by_blocks          |      8.3927e+06  | bytes  |
+| verdict                    | smallest_by_blocks          |      8.43366e+06 | bytes  |
 
 ### `02_split_vs_wide` / dataset `oneday`
 
@@ -641,10 +648,10 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | raw NDJSON                | ratio_to_raw_blocks         |      1           | ratio  |
 | raw NDJSON                | ratio_to_gzip9              |      4.443       | ratio  |
 | gzip -9                   | bytes                       |      1.05325e+07 | bytes  |
-| gzip -9                   | disk_blocks                 |      1.05513e+07 | bytes  |
+| gzip -9                   | disk_blocks                 |      1.15343e+07 | bytes  |
 | gzip -9                   | files                       |      1           | count  |
 | gzip -9                   | ratio_to_raw_bytes          |      0.2251      | ratio  |
-| gzip -9                   | ratio_to_raw_blocks         |      0.2255      | ratio  |
+| gzip -9                   | ratio_to_raw_blocks         |      0.2465      | ratio  |
 | gzip -9                   | ratio_to_gzip9              |      1           | ratio  |
 | zstd -19                  | bytes                       |      8.05981e+06 | bytes  |
 | zstd -19                  | disk_blocks                 |      8.41728e+06 | bytes  |
@@ -695,22 +702,22 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | PER_TEMPLATE_DAY rg=8,192 | ratio_to_raw_blocks         |      0.2963      | ratio  |
 | PER_TEMPLATE_DAY rg=8,192 | ratio_to_gzip9              |      1.154       | ratio  |
 | SHARED_DAY rg=1,000       | bytes                       |      1.22005e+07 | bytes  |
-| SHARED_DAY rg=1,000       | disk_blocks                 |      1.2501e+07  | bytes  |
+| SHARED_DAY rg=1,000       | disk_blocks                 |      1.2202e+07  | bytes  |
 | SHARED_DAY rg=1,000       | files                       |      2           | count  |
 | SHARED_DAY rg=1,000       | ratio_to_raw_bytes          |      0.2607      | ratio  |
-| SHARED_DAY rg=1,000       | ratio_to_raw_blocks         |      0.2672      | ratio  |
+| SHARED_DAY rg=1,000       | ratio_to_raw_blocks         |      0.2608      | ratio  |
 | SHARED_DAY rg=1,000       | ratio_to_gzip9              |      1.158       | ratio  |
 | SHARED_DAY rg=8,192       | bytes                       |      1.21737e+07 | bytes  |
-| SHARED_DAY rg=8,192       | disk_blocks                 |      1.31973e+07 | bytes  |
+| SHARED_DAY rg=8,192       | disk_blocks                 |      1.21774e+07 | bytes  |
 | SHARED_DAY rg=8,192       | files                       |      2           | count  |
 | SHARED_DAY rg=8,192       | ratio_to_raw_bytes          |      0.2602      | ratio  |
-| SHARED_DAY rg=8,192       | ratio_to_raw_blocks         |      0.282       | ratio  |
+| SHARED_DAY rg=8,192       | ratio_to_raw_blocks         |      0.2602      | ratio  |
 | SHARED_DAY rg=8,192       | ratio_to_gzip9              |      1.156       | ratio  |
 | SHARED_DAY rg=122,880     | bytes                       |      1.21718e+07 | bytes  |
-| SHARED_DAY rg=122,880     | disk_blocks                 |      1.26321e+07 | bytes  |
+| SHARED_DAY rg=122,880     | disk_blocks                 |      1.21733e+07 | bytes  |
 | SHARED_DAY rg=122,880     | files                       |      2           | count  |
 | SHARED_DAY rg=122,880     | ratio_to_raw_bytes          |      0.2601      | ratio  |
-| SHARED_DAY rg=122,880     | ratio_to_raw_blocks         |      0.27        | ratio  |
+| SHARED_DAY rg=122,880     | ratio_to_raw_blocks         |      0.2602      | ratio  |
 | SHARED_DAY rg=122,880     | ratio_to_gzip9              |      1.156       | ratio  |
 | window rg=1000            | rows                        |  10711           | count  |
 | window rg=1000            | row_groups                  |     11           | count  |
@@ -757,10 +764,10 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | gzip -9                          | ratio_to_raw_blocks         |      0.09038     | ratio  |
 | gzip -9                          | ratio_to_gzip9              |      1           | ratio  |
 | zstd -19                         | bytes                       |      2.89697e+06 | bytes  |
-| zstd -19                         | disk_blocks                 |      3.1703e+06  | bytes  |
+| zstd -19                         | disk_blocks                 |      3.20717e+06 | bytes  |
 | zstd -19                         | files                       |      1           | count  |
 | zstd -19                         | ratio_to_raw_bytes          |      0.06443     | ratio  |
-| zstd -19                         | ratio_to_raw_blocks         |      0.07051     | ratio  |
+| zstd -19                         | ratio_to_raw_blocks         |      0.07133     | ratio  |
 | zstd -19                         | ratio_to_gzip9              |      0.7131      | ratio  |
 | WIDE rg=1,000                    | bytes                       |      7.73446e+06 | bytes  |
 | WIDE rg=1,000                    | disk_blocks                 |      7.73734e+06 | bytes  |
@@ -805,22 +812,22 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | PER_TEMPLATE_DAY rg=8,192        | ratio_to_raw_blocks         |      0.7679      | ratio  |
 | PER_TEMPLATE_DAY rg=8,192        | ratio_to_gzip9              |      6.33        | ratio  |
 | SHARED_DAY rg=1,000              | bytes                       |      2.61006e+07 | bytes  |
-| SHARED_DAY rg=1,000              | disk_blocks                 |      2.68206e+07 | bytes  |
+| SHARED_DAY rg=1,000              | disk_blocks                 |      2.6366e+07  | bytes  |
 | SHARED_DAY rg=1,000              | files                       |      2           | count  |
 | SHARED_DAY rg=1,000              | ratio_to_raw_bytes          |      0.5805      | ratio  |
-| SHARED_DAY rg=1,000              | ratio_to_raw_blocks         |      0.5966      | ratio  |
+| SHARED_DAY rg=1,000              | ratio_to_raw_blocks         |      0.5864      | ratio  |
 | SHARED_DAY rg=1,000              | ratio_to_gzip9              |      6.425       | ratio  |
 | SHARED_DAY rg=8,192              | bytes                       |      2.58316e+07 | bytes  |
-| SHARED_DAY rg=8,192              | disk_blocks                 |      2.64315e+07 | bytes  |
+| SHARED_DAY rg=8,192              | disk_blocks                 |      2.59604e+07 | bytes  |
 | SHARED_DAY rg=8,192              | files                       |      2           | count  |
 | SHARED_DAY rg=8,192              | ratio_to_raw_bytes          |      0.5746      | ratio  |
-| SHARED_DAY rg=8,192              | ratio_to_raw_blocks         |      0.5879      | ratio  |
+| SHARED_DAY rg=8,192              | ratio_to_raw_blocks         |      0.5774      | ratio  |
 | SHARED_DAY rg=8,192              | ratio_to_gzip9              |      6.359       | ratio  |
 | SHARED_DAY rg=122,880            | bytes                       |      2.57982e+07 | bytes  |
-| SHARED_DAY rg=122,880            | disk_blocks                 |      2.66322e+07 | bytes  |
+| SHARED_DAY rg=122,880            | disk_blocks                 |      2.67796e+07 | bytes  |
 | SHARED_DAY rg=122,880            | files                       |      2           | count  |
 | SHARED_DAY rg=122,880            | ratio_to_raw_bytes          |      0.5738      | ratio  |
-| SHARED_DAY rg=122,880            | ratio_to_raw_blocks         |      0.5924      | ratio  |
+| SHARED_DAY rg=122,880            | ratio_to_raw_blocks         |      0.5956      | ratio  |
 | SHARED_DAY rg=122,880            | ratio_to_gzip9              |      6.351       | ratio  |
 | PER_TEMPLATE[J70] rg=8,192       | bytes                       |      4.36132e+06 | bytes  |
 | PER_TEMPLATE[J70] rg=8,192       | disk_blocks                 |      5.0176e+06  | bytes  |
@@ -829,10 +836,10 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | PER_TEMPLATE[J70] rg=8,192       | ratio_to_raw_blocks         |      0.1116      | ratio  |
 | PER_TEMPLATE[J70] rg=8,192       | ratio_to_gzip9              |      1.074       | ratio  |
 | SHARED_DAY[J70] rg=8,192         | bytes                       |      4.36801e+06 | bytes  |
-| SHARED_DAY[J70] rg=8,192         | disk_blocks                 |      4.56294e+06 | bytes  |
+| SHARED_DAY[J70] rg=8,192         | disk_blocks                 |      5.03808e+06 | bytes  |
 | SHARED_DAY[J70] rg=8,192         | files                       |      2           | count  |
 | SHARED_DAY[J70] rg=8,192         | ratio_to_raw_bytes          |      0.09715     | ratio  |
-| SHARED_DAY[J70] rg=8,192         | ratio_to_raw_blocks         |      0.1015      | ratio  |
+| SHARED_DAY[J70] rg=8,192         | ratio_to_raw_blocks         |      0.1121      | ratio  |
 | SHARED_DAY[J70] rg=8,192         | ratio_to_gzip9              |      1.075       | ratio  |
 | PER_TEMPLATE[J80_GROWN] rg=8,192 | bytes                       |      7.16069e+06 | bytes  |
 | PER_TEMPLATE[J80_GROWN] rg=8,192 | disk_blocks                 |      8.99482e+06 | bytes  |
@@ -841,10 +848,10 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_raw_blocks         |      0.2001      | ratio  |
 | PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_gzip9              |      1.763       | ratio  |
 | SHARED_DAY[J80_GROWN] rg=8,192   | bytes                       |      7.1843e+06  | bytes  |
-| SHARED_DAY[J80_GROWN] rg=8,192   | disk_blocks                 |      8.17562e+06 | bytes  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | disk_blocks                 |      8.13056e+06 | bytes  |
 | SHARED_DAY[J80_GROWN] rg=8,192   | files                       |      2           | count  |
 | SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_raw_bytes          |      0.1598      | ratio  |
-| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_raw_blocks         |      0.1818      | ratio  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_raw_blocks         |      0.1808      | ratio  |
 | SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_gzip9              |      1.768       | ratio  |
 | window rg=1000                   | rows                        |  54721           | count  |
 | window rg=1000                   | row_groups                  |     55           | count  |
@@ -872,7 +879,7 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 | window rg=122880                 | rows_scanned                |  54721           | count  |
 | verdict                          | per_template_vs_gzip9_bytes |      6.33        | ratio  |
 | verdict                          | smallest_by_bytes           |      2.89697e+06 | bytes  |
-| verdict                          | smallest_by_blocks          |      3.1703e+06  | bytes  |
+| verdict                          | smallest_by_blocks          |      3.20717e+06 | bytes  |
 
 **Notes**
 
@@ -883,9 +890,9 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 - 68 merged templates, from script 04
 - 125 merged templates, from script 04
 - 5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
-- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2384 over 870 files
+- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2529 over 870 files
 - zstd -19
-- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.3141 over 870 files
+- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2021 over 870 files
 - 277 merged templates, from script 04
 - 982 merged templates, from script 04
 - below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 8.4970 over 4,931 files
@@ -894,7 +901,7 @@ Run 2026-09-18T21:46:01+00:00, git `eff5a39`, 363 rows.
 
 _Files, row groups and overhead per layout_
 
-Run 2026-09-18T21:50:47+00:00, git `eff5a39`, 449 rows.
+Run 2026-09-18T22:07:49+00:00, git `b405451`, 451 rows.
 
 ### `03_layout_model` / dataset `flat30`
 
@@ -1117,6 +1124,8 @@ Run 2026-09-18T21:50:47+00:00, git `eff5a39`, 449 rows.
 | calibration                    | real_meta_bytes                  |      2.5283e+06  | bytes   |
 | calibration                    | real_meta_blocks                 |      5.8368e+06  | bytes   |
 | calibration                    | real_meta_files                  |    871           | count   |
+| calibration                    | real_segments_over_ceil          |      0           | count   |
+| calibration                    | real_bytes_over_ceil             |      0           | bytes   |
 | calibration                    | model_col_bytes                  |      3.60378e+07 | bytes   |
 | calibration                    | model_col_files                  |  16694           | count   |
 | calibration                    | model_col_blocks                 |      7.98392e+07 | bytes   |
@@ -1386,7 +1395,7 @@ Run 2026-09-18T21:50:47+00:00, git `eff5a39`, 449 rows.
 
 _Which merging rule_
 
-Run 2026-09-18T21:27:42+00:00, git `eff5a39`, 291 rows.
+Run 2026-09-18T21:58:14+00:00, git `b405451`, 291 rows.
 
 ### `04_merge_rules` / dataset `flat30`
 
@@ -1704,7 +1713,7 @@ Run 2026-09-18T21:27:42+00:00, git `eff5a39`, 291 rows.
 
 _What each encoding saves_
 
-Run 2026-09-18T21:39:27+00:00, git `eff5a39`, 614 rows.
+Run 2026-09-18T22:09:14+00:00, git `b405451`, 614 rows.
 
 ### `05_encodings` / dataset `flat30`
 
@@ -1975,13 +1984,13 @@ Run 2026-09-18T21:39:27+00:00, git `eff5a39`, 614 rows.
 | coverage/uuid16        | applies_to_pct_of_plain_bytes | 13.35              | percent |
 | coverage/ip_bin        | applies_to_pct_of_plain_bytes | 6.52               | percent |
 | zstd level 1           | bytes                         | 8,819,429          | bytes   |
-| zstd level 1           | compress_MBps                 | 685.9              | MB/s    |
+| zstd level 1           | compress_MBps                 | 661.5              | MB/s    |
 | zstd level 3           | bytes                         | 8,163,020          | bytes   |
-| zstd level 3           | compress_MBps                 | 385.1              | MB/s    |
+| zstd level 3           | compress_MBps                 | 389.1              | MB/s    |
 | zstd level 9           | bytes                         | 7,609,358          | bytes   |
-| zstd level 9           | compress_MBps                 | 82.83              | MB/s    |
+| zstd level 9           | compress_MBps                 | 83.11              | MB/s    |
 | zstd level 19          | bytes                         | 7,114,711          | bytes   |
-| zstd level 19          | compress_MBps                 | 3.61               | MB/s    |
+| zstd level 19          | compress_MBps                 | 3.55               | MB/s    |
 | wordlist per_chunk     | bytes                         | 15,227,549         | bytes   |
 | wordlist per_file      | bytes                         | 15,217,492         | bytes   |
 | column:event           | plain_bytes                   | 2,583,961          | bytes   |
@@ -2287,13 +2296,13 @@ Run 2026-09-18T21:39:27+00:00, git `eff5a39`, 614 rows.
 | coverage/uuid16         | applies_to_pct_of_plain_bytes | 5.42               | percent |
 | coverage/ip_bin         | applies_to_pct_of_plain_bytes | 2.76               | percent |
 | zstd level 1            | bytes                         | 3,253,334          | bytes   |
-| zstd level 1            | compress_MBps                 | 1,068              | MB/s    |
+| zstd level 1            | compress_MBps                 | 1,014              | MB/s    |
 | zstd level 3            | bytes                         | 3,136,257          | bytes   |
-| zstd level 3            | compress_MBps                 | 755.4              | MB/s    |
+| zstd level 3            | compress_MBps                 | 729.5              | MB/s    |
 | zstd level 9            | bytes                         | 2,814,740          | bytes   |
-| zstd level 9            | compress_MBps                 | 144.9              | MB/s    |
+| zstd level 9            | compress_MBps                 | 127.9              | MB/s    |
 | zstd level 19           | bytes                         | 2,586,595          | bytes   |
-| zstd level 19           | compress_MBps                 | 5.16               | MB/s    |
+| zstd level 19           | compress_MBps                 | 6.19               | MB/s    |
 | wordlist per_chunk      | bytes                         | 8,217,999          | bytes   |
 | wordlist per_file       | bytes                         | 8,234,095          | bytes   |
 | column:region           | plain_bytes                   | 2,270,200          | bytes   |
@@ -2379,7 +2388,7 @@ Run 2026-09-18T21:39:27+00:00, git `eff5a39`, 614 rows.
 
 _Is a bloom filter per row group worth its bytes_
 
-Run 2026-09-18T21:40:35+00:00, git `eff5a39`, 428 rows.
+Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
 
 ### `06_bloom` / dataset `flat30`
 
@@ -2606,11 +2615,11 @@ Run 2026-09-18T21:40:35+00:00, git `eff5a39`, 428 rows.
 | words:ext1.label     | never_skipped_pct            |     98.88   | percent |
 | words:ext1.label     | filter_bytes                 |  10814      | bytes   |
 | words:user.email     | common_skipped_pct           |     98.28   | percent |
-| words:user.email     | rare_skipped_pct             |     98.53   | percent |
+| words:user.email     | rare_skipped_pct             |     98.54   | percent |
 | words:user.email     | never_skipped_pct            |     98.76   | percent |
 | words:user.email     | filter_bytes                 |  42054      | bytes   |
-| words:customer.email | common_skipped_pct           |     96.17   | percent |
-| words:customer.email | rare_skipped_pct             |     97.66   | percent |
+| words:customer.email | common_skipped_pct           |     96.19   | percent |
+| words:customer.email | rare_skipped_pct             |     97.7    | percent |
 | words:customer.email | never_skipped_pct            |     99.12   | percent |
 | words:customer.email | filter_bytes                 |  41280      | bytes   |
 | words:http.path      | common_skipped_pct           |      0      | percent |
@@ -2802,7 +2811,7 @@ Run 2026-09-18T21:40:35+00:00, git `eff5a39`, 428 rows.
 | order_id@16bits   | absent_minmax_skipped_pct    |     35.9    | percent |
 | order_id@16bits   | absent_ideal_skipped_pct     |    100      | percent |
 | order_id@16bits   | share_of_best_total_pct      |      0.8588 | percent |
-| words:ext3.label  | common_skipped_pct           |     40.33   | percent |
+| words:ext3.label  | common_skipped_pct           |     40.22   | percent |
 | words:ext3.label  | rare_skipped_pct             |     44.28   | percent |
 | words:ext3.label  | never_skipped_pct            |     97.75   | percent |
 | words:ext3.label  | filter_bytes                 |   8418      | bytes   |
@@ -2814,8 +2823,8 @@ Run 2026-09-18T21:40:35+00:00, git `eff5a39`, 428 rows.
 | words:ext5.label  | rare_skipped_pct             |     43.06   | percent |
 | words:ext5.label  | never_skipped_pct            |     97.86   | percent |
 | words:ext5.label  | filter_bytes                 |   8476      | bytes   |
-| words:ext6.label  | common_skipped_pct           |     41.95   | percent |
-| words:ext6.label  | rare_skipped_pct             |     43.86   | percent |
+| words:ext6.label  | common_skipped_pct           |     40.57   | percent |
+| words:ext6.label  | rare_skipped_pct             |     43.9    | percent |
 | words:ext6.label  | never_skipped_pct            |     97.77   | percent |
 | words:ext6.label  | filter_bytes                 |   8426      | bytes   |
 
@@ -2846,45 +2855,45 @@ Run 2026-09-18T21:40:35+00:00, git `eff5a39`, 428 rows.
 
 _Disk-dominated shapes_
 
-Run 2026-09-18T21:28:40+00:00, git `eff5a39`, 40 rows.
+Run 2026-09-18T21:59:12+00:00, git `b405451`, 40 rows.
 
 ### `08_io_shapes` / dataset `uneven`
 
 | variant               | metric                 |            value | unit      |
 |-----------------------|------------------------|------------------|-----------|
-| fsync batch=1         | records_per_sec        |  45165           | records/s |
-| fsync batch=1         | total_ms               |     66.42        | ms        |
-| fsync batch=10        | records_per_sec        | 346819           | records/s |
-| fsync batch=10        | total_ms               |      8.65        | ms        |
-| fsync batch=100       | records_per_sec        |      1.44887e+06 | records/s |
-| fsync batch=100       | total_ms               |      2.07        | ms        |
-| fsync batch=500       | records_per_sec        |      2.574e+06   | records/s |
-| fsync batch=500       | total_ms               |      1.17        | ms        |
-| F_FULLFSYNC batch=1   | records_per_sec        |    361           | records/s |
-| F_FULLFSYNC batch=1   | total_ms               |   8305           | ms        |
-| F_FULLFSYNC batch=10  | records_per_sec        |   3617           | records/s |
-| F_FULLFSYNC batch=10  | total_ms               |    829.4         | ms        |
-| F_FULLFSYNC batch=100 | records_per_sec        |  34709           | records/s |
-| F_FULLFSYNC batch=100 | total_ms               |     86.43        | ms        |
-| F_FULLFSYNC batch=500 | records_per_sec        | 116842           | records/s |
-| F_FULLFSYNC batch=500 | total_ms               |     25.68        | ms        |
+| fsync batch=1         | records_per_sec        |  39898           | records/s |
+| fsync batch=1         | total_ms               |     75.19        | ms        |
+| fsync batch=10        | records_per_sec        | 341711           | records/s |
+| fsync batch=10        | total_ms               |      8.78        | ms        |
+| fsync batch=100       | records_per_sec        |      1.43178e+06 | records/s |
+| fsync batch=100       | total_ms               |      2.1         | ms        |
+| fsync batch=500       | records_per_sec        |      1.65153e+06 | records/s |
+| fsync batch=500       | total_ms               |      1.82        | ms        |
+| F_FULLFSYNC batch=1   | records_per_sec        |    360           | records/s |
+| F_FULLFSYNC batch=1   | total_ms               |   8320           | ms        |
+| F_FULLFSYNC batch=10  | records_per_sec        |   3514           | records/s |
+| F_FULLFSYNC batch=10  | total_ms               |    853.6         | ms        |
+| F_FULLFSYNC batch=100 | records_per_sec        |  27832           | records/s |
+| F_FULLFSYNC batch=100 | total_ms               |    107.8         | ms        |
+| F_FULLFSYNC batch=500 | records_per_sec        | 125652           | records/s |
+| F_FULLFSYNC batch=500 | total_ms               |     23.88        | ms        |
 | wal batch=1           | compression_ratio      |      0.8638      | ratio     |
-| wal batch=1           | zstd_MBps              |     56.1         | MB/s      |
+| wal batch=1           | zstd_MBps              |     54.8         | MB/s      |
 | wal batch=10          | compression_ratio      |      0.2667      | ratio     |
-| wal batch=10          | zstd_MBps              |    298.4         | MB/s      |
+| wal batch=10          | zstd_MBps              |    293.5         | MB/s      |
 | wal batch=100         | compression_ratio      |      0.1421      | ratio     |
-| wal batch=100         | zstd_MBps              |    720.5         | MB/s      |
+| wal batch=100         | zstd_MBps              |    709.9         | MB/s      |
 | wal batch=500         | compression_ratio      |      0.1141      | ratio     |
-| wal batch=500         | zstd_MBps              |    861.7         | MB/s      |
-| 1000 files            | listdir_ms             |      0.391       | ms        |
-| 1000 files            | manifest_read_ms       |      0.042       | ms        |
-| 1000 files            | listdir_over_manifest  |      9.3         | ratio     |
-| 10000 files           | listdir_ms             |      4.071       | ms        |
-| 10000 files           | manifest_read_ms       |      0.263       | ms        |
-| 10000 files           | listdir_over_manifest  |     15.5         | ratio     |
-| 100000 files          | listdir_ms             |     43.25        | ms        |
-| 100000 files          | manifest_read_ms       |      2.813       | ms        |
-| 100000 files          | listdir_over_manifest  |     15.4         | ratio     |
+| wal batch=500         | zstd_MBps              |    832.3         | MB/s      |
+| 1000 files            | listdir_ms             |      0.453       | ms        |
+| 1000 files            | manifest_read_ms       |      0.046       | ms        |
+| 1000 files            | listdir_over_manifest  |      9.9         | ratio     |
+| 10000 files           | listdir_ms             |      3.936       | ms        |
+| 10000 files           | manifest_read_ms       |      0.222       | ms        |
+| 10000 files           | listdir_over_manifest  |     17.7         | ratio     |
+| 100000 files          | listdir_ms             |     43.9         | ms        |
+| 100000 files          | manifest_read_ms       |      3.376       | ms        |
+| 100000 files          | listdir_over_manifest  |     13           | ratio     |
 | scattered vs grouped  | row_groups_of_template |     51           | count     |
 | scattered vs grouped  | ranges_before          |     51           | count     |
 | scattered vs grouped  | ranges_after           |      1           | count     |
@@ -2898,10 +2907,10 @@ Run 2026-09-18T21:28:40+00:00, git `eff5a39`, 40 rows.
 - shape only - one laptop, Python around the call; not a TrieDB throughput; the disk does this work. fsync(2) on Darwin returns at the drive's write cache, not the platter
 - shape only - one laptop, Python around the call; not a TrieDB throughput
 - shape only - one laptop, Python around the call; not a TrieDB throughput; the disk does this work. F_FULLFSYNC is Darwin's real barrier to the platter
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 56.1
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 298.4
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 720.5
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 861.7
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 54.8
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 293.5
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 709.9
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 832.3
 - shape only - one laptop, Python around the call; not a TrieDB throughput; the filesystem does this
 - shape only - one laptop, Python around the call; not a TrieDB throughput; a range count multiplied by a per-seek constant, not a timed read. Day 2024-01-15, template 1055466456870197778
 
@@ -2909,7 +2918,7 @@ Run 2026-09-18T21:28:40+00:00, git `eff5a39`, 40 rows.
 
 _Searches on keys that are not promoted_
 
-Run 2026-09-18T21:40:49+00:00, git `eff5a39`, 22 rows.
+Run 2026-09-18T22:10:27+00:00, git `b405451`, 22 rows.
 
 ### `09_template_lookup` / dataset `synthetic`
 
@@ -2918,28 +2927,28 @@ Run 2026-09-18T21:40:49+00:00, git `eff5a39`, 22 rows.
 | 1000 templates   | scan_comparisons     | 200000          | count  |
 | 1000 templates   | scan_growth_vs_1000  |      1          | ratio  |
 | 1000 templates   | index_growth_vs_1000 |      1          | ratio  |
-| 1000 templates   | scan_over_index      |   1128          | ratio  |
+| 1000 templates   | scan_over_index      |   1173          | ratio  |
 | 1000 templates   | index_entries        |  12259          | count  |
 | 1000 templates   | rows_of_answer       |  10954          | count  |
-| 1000 templates   | index_build_ms       |      0.497      | ms     |
+| 1000 templates   | index_build_ms       |      0.482      | ms     |
 | 10000 templates  | scan_comparisons     |      2e+06      | count  |
-| 10000 templates  | scan_growth_vs_1000  |     10.13       | ratio  |
-| 10000 templates  | index_growth_vs_1000 |      0.9778     | ratio  |
-| 10000 templates  | scan_over_index      |  11690          | ratio  |
+| 10000 templates  | scan_growth_vs_1000  |     10.63       | ratio  |
+| 10000 templates  | index_growth_vs_1000 |      1          | ratio  |
+| 10000 templates  | scan_over_index      |  12470          | ratio  |
 | 10000 templates  | index_entries        | 124938          | count  |
 | 10000 templates  | rows_of_answer       | 111338          | count  |
-| 10000 templates  | index_build_ms       |      4.619      | ms     |
+| 10000 templates  | index_build_ms       |      4.828      | ms     |
 | 100000 templates | scan_comparisons     |      2e+07      | count  |
-| 100000 templates | scan_growth_vs_1000  |    288.8        | ratio  |
-| 100000 templates | index_growth_vs_1000 |      1.008      | ratio  |
-| 100000 templates | scan_over_index      | 323500          | ratio  |
+| 100000 templates | scan_growth_vs_1000  |    235.7        | ratio  |
+| 100000 templates | index_growth_vs_1000 |      0.9842     | ratio  |
+| 100000 templates | scan_over_index      | 280900          | ratio  |
 | 100000 templates | index_entries        |      1.2508e+06 | count  |
 | 100000 templates | rows_of_answer       |      1.115e+06  | count  |
-| 100000 templates | index_build_ms       |     54.34       | ms     |
-| verdict          | scan_superlinearity  |      2.888      | ratio  |
+| 100000 templates | index_build_ms       |     46.55       | ms     |
+| verdict          | scan_superlinearity  |      2.357      | ratio  |
 
 **Notes**
 
 - shape only - growth against the 1,000-template case, not an absolute time
-- scan growth 288.8x against the linear 100x expected from 1,000 to 100,000 templates
+- scan growth 235.7x against the linear 100x expected from 1,000 to 100,000 templates
 

@@ -142,6 +142,84 @@ def findings(kept: dict) -> list:
                 )
             out.append(line + ".")
 
+    for ds in ("flat30", "uneven"):
+        b = _pick(kept, "05_encodings", ds, "BEST_PER_CHUNK sorted", "ratio_to_gzip9")
+        raw = _pick(kept, "05_encodings", ds, "BEST_PER_CHUNK sorted", "ratio_to_raw")
+        sort = _pick(kept, "05_encodings", ds, "verdict", "sort_saving_pct")
+        if b and raw:
+            line = (
+                f"- **Encodings on `{ds}`**: picking the smallest encoding per chunk "
+                f"reaches {float(raw['value']):.3f}x of raw NDJSON and "
+                f"{float(b['value']):.3f}x of gzip -9"
+            )
+            if sort:
+                line += (
+                    f"; sorting rows inside each chunk is worth a further "
+                    f"{float(sort['value']):.2f}%"
+                )
+            out.append(line + ".")
+
+    bloom = [
+        r for r in kept.get("06_bloom", [])
+        if r["metric"] == "absent_bloom_skipped_pct" and "@10bits" in r["variant"]
+    ]
+    minmax = [
+        r for r in kept.get("06_bloom", [])
+        if r["metric"] == "absent_minmax_skipped_pct" and "@10bits" in r["variant"]
+    ]
+    share = [
+        r for r in kept.get("06_bloom", [])
+        if r["metric"] == "share_of_best_total_pct" and "@10bits" in r["variant"]
+    ]
+    if bloom and minmax:
+        b = sum(float(r["value"]) for r in bloom) / len(bloom)
+        m = sum(float(r["value"]) for r in minmax) / len(minmax)
+        s_ = sum(float(r["value"]) for r in share) / len(share) if share else None
+        line = (
+            f"- **Bloom filters earn their bytes**: at 10 bits per value they skip "
+            f"{b:.1f}% of row groups for an id that is not there, against {m:.1f}% for "
+            "min/max statistics alone"
+        )
+        if s_ is not None:
+            line += f", and cost {s_:.2f}% of the best encoded total"
+        out.append(line + ".")
+
+    f1 = _pick(kept, "08_io_shapes", "uneven", "fsync batch=1", "records_per_sec")
+    ff1 = _pick(kept, "08_io_shapes", "uneven", "F_FULLFSYNC batch=1", "records_per_sec")
+    w = _pick(kept, "08_io_shapes", "uneven", "wal batch=500", "compression_ratio")
+    if f1 and ff1:
+        out.append(
+            f"- **Which durability call matters as much as batching**: a per-record "
+            f"`fsync(2)` reaches {int(float(f1['value'])):,} records/sec on this "
+            f"platform, the same loop with `F_FULLFSYNC` reaches "
+            f"{int(float(ff1['value'])):,} - Darwin's `fsync` stops at the drive cache. "
+            "Shape only."
+        )
+    if w:
+        out.append(
+            f"- **WAL batching pays twice**: zstd 3 over batches of 500 lines "
+            f"compresses to {float(w['value']):.3f} of raw, against 0.864 at one line "
+            "per batch."
+        )
+
+    sg = _pick(kept, "08_io_shapes", "uneven", "scattered vs grouped", "ranges_before")
+    sga = _pick(kept, "08_io_shapes", "uneven", "scattered vs grouped", "ranges_after")
+    if sg and sga:
+        out.append(
+            f"- **Grouping a template's row groups together** turns "
+            f"{int(float(sg['value']))} separate byte ranges into "
+            f"{int(float(sga['value']))} for a one-template search - on S3 at 15 ms a "
+            "range, the difference between a second and nothing."
+        )
+
+    sl = _pick(kept, "09_template_lookup", "synthetic", "verdict", "scan_superlinearity")
+    if sl:
+        out.append(
+            f"- **Scanning every template for an unpromoted key bends the wrong way**: "
+            f"100x the templates costs {float(sl['value']):.1f}x more than linear, not "
+            "the same. A key-to-templates map is flat."
+        )
+
     return out
 
 
