@@ -128,14 +128,15 @@ def table_for(P: rowlib.Parsed, g: Group, idxs: list) -> pa.Table:
 def _cast(raw, val, ty):
     from lab.common.frontend import FLOAT64, INT64, IP, STRING, UUID
 
-    if raw is None:
+    # `val` is None exactly where the type ladder was never run: the key is absent on
+    # this row, or its JSON value was null. Both are Null in a column. Falling through
+    # to `raw` would write the four-character string "null" as a value.
+    if raw is None or val is None:
         return None
     if ty in (STRING, UUID, IP) or ty is None:
         return raw
     if ty == FLOAT64:
-        return None if val is None else float(val)
-    if ty == INT64 and not isinstance(val, int):
-        return None
+        return float(val)
     return val
 
 

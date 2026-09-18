@@ -82,7 +82,10 @@ class Parsed:
         for r in rows:
             raw = self.raws[r][i]
             val = self.vals[r][i]
-            if val is None and raw is None:
+            # `vals` is None exactly where the ladder was never run - the key was absent,
+            # or its JSON value was null. Both are `ColValue::Null` in a column, and
+            # falling back to `raws` here would store the literal text "null" instead.
+            if val is None:
                 out.append(None)
             elif ty == STRING or ty in (UUID, IP):
                 out.append(raw)

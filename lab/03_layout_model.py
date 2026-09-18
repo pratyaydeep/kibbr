@@ -81,9 +81,16 @@ def build_costs(P: rowlib.Parsed) -> dict:
             present = [0]
             d = p = 0
             for r in ordered:
-                raw = P.raws[r][i]
-                d += colmodel.value_bytes(ty, raw)
-                p += 0 if raw is None else 1
+                # Null is `vals is None`: the key was absent, or its JSON value was
+                # null. Section 6.2 spends a bitmap bit on such a row and no data bytes;
+                # charging it the four characters of `raws` would price a null as a
+                # string.
+                if P.vals[r][i] is None:
+                    data.append(d)
+                    present.append(p)
+                    continue
+                d += colmodel.value_bytes(ty, P.raws[r][i])
+                p += 1
                 data.append(d)
                 present.append(p)
             cols[key] = ColCost(key, ty, data, present)
