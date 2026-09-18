@@ -30,6 +30,14 @@ python       3.12.2
 - **`flat30`**: the smallest layout is zstd -19 at 8,282,006 bytes. Per-template Parquet loses to gzip -9 by 1.14x on bytes; what TrieDB does today (one Parquet per template per day) costs 1.82x of raw NDJSON.
 - **`oneday`**: the smallest layout is zstd -19 at 8,059,807 bytes. Per-template Parquet loses to gzip -9 by 1.16x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.26x of raw NDJSON.
 
+## Comparison systems (script 07)
+
+Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`. Script 07 has **not** been run here - it needs a reachable Docker daemon - so no comparison numbers appear below.
+
+- `docker.elastic.co/elasticsearch/elasticsearch:8.19.20`
+- `clickhouse/clickhouse-server:26.8.2.7-lts`
+- `y-scope/clp v0.13.0 (clp-json-x86_64 release tarball)`
+
 ## Contents
 
 - [00_frontend_agree - Frontend agreement - the Python port against the binary](#00-frontend-agree)
@@ -39,6 +47,8 @@ python       3.12.2
 - [04_merge_rules - Which merging rule](#04-merge-rules)
 - [05_encodings - What each encoding saves](#05-encodings)
 - [06_bloom - Is a bloom filter per row group worth its bytes](#06-bloom)
+- [08_io_shapes - Disk-dominated shapes](#08-io-shapes)
+- [09_template_lookup - Searches on keys that are not promoted](#09-template-lookup)
 
 ## 00_frontend_agree
 
@@ -2487,4 +2497,105 @@ Run 2026-09-18T21:11:01+00:00, git `5a9cb59`, 196 rows.
 - 680 row groups, 17 distinct words
 - 681 row groups, 17 distinct words
 - 679 row groups, 17 distinct words
+
+## 08_io_shapes
+
+_Disk-dominated shapes_
+
+Run 2026-09-18T21:14:24+00:00, git `addf812`, 40 rows.
+
+### `08_io_shapes` / dataset `uneven`
+
+| variant               | metric                 |            value | unit      |
+|-----------------------|------------------------|------------------|-----------|
+| fsync batch=1         | records_per_sec        |  41473           | records/s |
+| fsync batch=1         | total_ms               |     72.34        | ms        |
+| fsync batch=10        | records_per_sec        | 331905           | records/s |
+| fsync batch=10        | total_ms               |      9.04        | ms        |
+| fsync batch=100       | records_per_sec        | 941102           | records/s |
+| fsync batch=100       | total_ms               |      3.19        | ms        |
+| fsync batch=500       | records_per_sec        |      1.86616e+06 | records/s |
+| fsync batch=500       | total_ms               |      1.61        | ms        |
+| F_FULLFSYNC batch=1   | records_per_sec        |    432           | records/s |
+| F_FULLFSYNC batch=1   | total_ms               |   6942           | ms        |
+| F_FULLFSYNC batch=10  | records_per_sec        |   2800           | records/s |
+| F_FULLFSYNC batch=10  | total_ms               |   1071           | ms        |
+| F_FULLFSYNC batch=100 | records_per_sec        |  27554           | records/s |
+| F_FULLFSYNC batch=100 | total_ms               |    108.9         | ms        |
+| F_FULLFSYNC batch=500 | records_per_sec        |  36450           | records/s |
+| F_FULLFSYNC batch=500 | total_ms               |     82.3         | ms        |
+| wal batch=1           | compression_ratio      |      0.8638      | ratio     |
+| wal batch=1           | zstd_MBps              |     52.5         | MB/s      |
+| wal batch=10          | compression_ratio      |      0.2667      | ratio     |
+| wal batch=10          | zstd_MBps              |    283.3         | MB/s      |
+| wal batch=100         | compression_ratio      |      0.1421      | ratio     |
+| wal batch=100         | zstd_MBps              |    708.2         | MB/s      |
+| wal batch=500         | compression_ratio      |      0.1141      | ratio     |
+| wal batch=500         | zstd_MBps              |    820.9         | MB/s      |
+| 1000 files            | listdir_ms             |      0.434       | ms        |
+| 1000 files            | manifest_read_ms       |      0.043       | ms        |
+| 1000 files            | listdir_over_manifest  |     10           | ratio     |
+| 10000 files           | listdir_ms             |      4.54        | ms        |
+| 10000 files           | manifest_read_ms       |      0.304       | ms        |
+| 10000 files           | listdir_over_manifest  |     14.9         | ratio     |
+| 100000 files          | listdir_ms             |     44.48        | ms        |
+| 100000 files          | manifest_read_ms       |      2.762       | ms        |
+| 100000 files          | listdir_over_manifest  |     16.1         | ratio     |
+| scattered vs grouped  | row_groups_of_template |     51           | count     |
+| scattered vs grouped  | ranges_before          |     51           | count     |
+| scattered vs grouped  | ranges_after           |      1           | count     |
+| scattered vs grouped  | ssd_ms_before          |      5.1         | ms        |
+| scattered vs grouped  | ssd_ms_after           |      0.1         | ms        |
+| scattered vs grouped  | s3_ms_before           |    765           | ms        |
+| scattered vs grouped  | s3_ms_after            |     15           | ms        |
+
+**Notes**
+
+- shape only - one laptop, Python around the call; not a TrieDB throughput; the disk does this work. fsync(2) on Darwin returns at the drive's write cache, not the platter
+- shape only - one laptop, Python around the call; not a TrieDB throughput
+- shape only - one laptop, Python around the call; not a TrieDB throughput; the disk does this work. F_FULLFSYNC is Darwin's real barrier to the platter
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 52.5
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 283.3
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 708.2
+- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 820.9
+- shape only - one laptop, Python around the call; not a TrieDB throughput; the filesystem does this
+- shape only - one laptop, Python around the call; not a TrieDB throughput; a range count multiplied by a per-seek constant, not a timed read. Day 2024-01-15, template 1055466456870197778
+
+## 09_template_lookup
+
+_Searches on keys that are not promoted_
+
+Run 2026-09-18T21:15:45+00:00, git `8830253`, 22 rows.
+
+### `09_template_lookup` / dataset `synthetic`
+
+| variant          | metric               |           value | unit   |
+|------------------|----------------------|-----------------|--------|
+| 1000 templates   | scan_comparisons     | 200000          | count  |
+| 1000 templates   | scan_growth_vs_1000  |      1          | ratio  |
+| 1000 templates   | index_growth_vs_1000 |      1          | ratio  |
+| 1000 templates   | scan_over_index      |   1211          | ratio  |
+| 1000 templates   | index_entries        |  12259          | count  |
+| 1000 templates   | rows_of_answer       |  10954          | count  |
+| 1000 templates   | index_build_ms       |      0.511      | ms     |
+| 10000 templates  | scan_comparisons     |      2e+06      | count  |
+| 10000 templates  | scan_growth_vs_1000  |      9.931      | ratio  |
+| 10000 templates  | index_growth_vs_1000 |      0.9473     | ratio  |
+| 10000 templates  | scan_over_index      |  12690          | ratio  |
+| 10000 templates  | index_entries        | 124938          | count  |
+| 10000 templates  | rows_of_answer       | 111338          | count  |
+| 10000 templates  | index_build_ms       |      5.074      | ms     |
+| 100000 templates | scan_comparisons     |      2e+07      | count  |
+| 100000 templates | scan_growth_vs_1000  |    236.7        | ratio  |
+| 100000 templates | index_growth_vs_1000 |      0.9699     | ratio  |
+| 100000 templates | scan_over_index      | 295500          | ratio  |
+| 100000 templates | index_entries        |      1.2508e+06 | count  |
+| 100000 templates | rows_of_answer       |      1.115e+06  | count  |
+| 100000 templates | index_build_ms       |     46.45       | ms     |
+| verdict          | scan_superlinearity  |      2.367      | ratio  |
+
+**Notes**
+
+- shape only - growth against the 1,000-template case, not an absolute time
+- scan growth 236.7x against the linear 100x expected from 1,000 to 100,000 templates
 

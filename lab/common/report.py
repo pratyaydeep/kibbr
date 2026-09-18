@@ -145,6 +145,29 @@ def findings(kept: dict) -> list:
     return out
 
 
+def pinned_versions() -> list:
+    """The image tags script 07 would measure, read from the compose file itself.
+
+    Printed whether or not 07 has run: the prompt for a comparison is answered by saying
+    which versions it is against, and an unrun comparison that does not name its
+    versions is worse than no comparison.
+    """
+    out = []
+    compose = LAB / "others" / "docker-compose.yml"
+    if compose.exists():
+        for line in compose.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("image:") and "lab_clps" not in line:
+                out.append(line.split("image:", 1)[1].strip())
+    dockerfile = LAB / "others" / "Dockerfile.clps"
+    if dockerfile.exists():
+        for line in dockerfile.read_text().splitlines():
+            if line.strip().startswith("ARG CLP_VERSION="):
+                v = line.split("=", 1)[1].strip()
+                out.append(f"y-scope/clp {v} (clp-json-x86_64 release tarball)")
+    return out
+
+
 def render() -> str:
     rows = load()
     kept = newest_per_script(rows)
@@ -172,6 +195,23 @@ def render() -> str:
         parts.append("## Findings so far")
         parts.append("")
         parts.extend(found)
+        parts.append("")
+
+    versions = pinned_versions()
+    if versions:
+        parts.append("## Comparison systems (script 07)")
+        parts.append("")
+        ran = "07_vs_others" in kept
+        parts.append(
+            "Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`:"
+            if ran
+            else "Pinned in `lab/others/docker-compose.yml` and "
+            "`lab/others/Dockerfile.clps`. Script 07 has **not** been run here - it "
+            "needs a reachable Docker daemon - so no comparison numbers appear below."
+        )
+        parts.append("")
+        for v in versions:
+            parts.append(f"- `{v}`")
         parts.append("")
 
     if not kept:

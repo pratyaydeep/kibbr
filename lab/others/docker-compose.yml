@@ -1,0 +1,48 @@
+# Pinned, because a comparison against "latest" is a comparison against nothing. The
+# versions here are also written into results.csv by 07_vs_others.sh, so RESULTS.md says
+# what it measured.
+#
+# Elasticsearch stays on the 8.x line: TRIEDB.md section 10.2 targets "enough of ES 8.11
+# that Kibana Discover works", so 8.x is the line the compatibility surface is aimed at.
+# 8.19.20 is the current 8.x maintenance release; 9.5.2 is the current major and would be
+# a different question.
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.20
+    container_name: lab_es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      - cluster.routing.allocation.disk.threshold_enabled=false
+    ports:
+      - "9201:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.2.7-lts
+    container_name: lab_ch
+    ports:
+      - "8124:8123"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  clps:
+    build:
+      context: .
+      dockerfile: Dockerfile.clps
+    image: lab_clps:v0.13.0
+    container_name: lab_clps
+    command: ["sleep", "infinity"]
