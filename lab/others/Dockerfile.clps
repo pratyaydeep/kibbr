@@ -1,49 +1,73 @@
-# clp-s, built from source.
+# clp-s, built from source at the v0.13.0 tag.
 #
-# y-scope/clp publishes no prebuilt clp-s binary and no container image holding one. The
-# `clp-json` release tarball is a *deployment* package: config, shell wrappers, and a
-# docker-compose that wants mariadb, mongo, rabbitmq, redis and a locally-built
-# `clp-package` image. That is a cluster, not a compressor, and measuring an archive's
-# size does not need one. So the binary is built here instead.
+# y-scope publishes no prebuilt clp-s binary and no container image holding one - the
+# `clp-json` release tarball is a *deployment* package (config, shell wrappers, and a
+# compose file wanting mariadb, mongo, rabbitmq, redis and a locally-built `clp-package`
+# image). That is a cluster, not a compressor, and measuring an archive's size does not
+# need one. So the binary is compiled here.
 #
 # Built for the host's own architecture on purpose. The release tarballs are x86_64 and
-# would run under emulation on Apple Silicon; compiling from source natively is both
-# faster to run and honest about what is being measured.
+# would run under emulation on Apple Silicon; compiling natively is faster to run and
+# honest about what is being measured.
 #
-# Pinned to the v0.13.0 tag, the same release the tarball would have come from.
+# Four things this file exists to get right, each of which cost a failed build:
+#   - apt's cmake on jammy is 3.22.1 and CLP's install script requires >= 3.23, so cmake
+#     comes from pip.
+#   - pipx installs go-task into /root/.local/bin and then says to open a new terminal.
+#     There is no new terminal in a build, so that path goes on PATH up front.
+#   - tools/yscope-dev-utils is a git submodule and every taskfile includes it, so the
+#     clone must recurse. A --depth 1 clone without it configures and then fails.
+#   - dependencies come from `task deps:core`, which fetches and builds absl, boost,
+#     antlr, mongocxx and a dozen more. Raw `cmake` without it stops at
+#     "Could not find a package configuration file provided by absl".
 FROM ubuntu:22.04
 
 ARG CLP_VERSION=v0.13.0
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/root/.local/bin:${PATH}"
 
-# Deliberately NOT apt's cmake: jammy ships 3.22.1 and CLP's install script requires
-# 3.23 <= version < 4, so the apt one fails the gate. The pip wheel lands in
-# /usr/local/bin, which precedes /usr/bin on PATH.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git curl \
-      python3 python3-pip \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git python3 python3-pip \
  && rm -rf /var/lib/apt/lists/*
+
 RUN python3 -m pip install --no-cache-dir "cmake>=3.23,<4" \
  && cmake --version
 
-# pipx puts go-task in /root/.local/bin and then tells you to open a new terminal.
-# There is no new terminal in a build, so the next line of CLP's own install script
-# cannot find `task`. Putting it on PATH up front is the whole fix.
-ENV PATH="/root/.local/bin:${PATH}"
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+      --branch "${CLP_VERSION}" https://github.com/y-scope/clp.git /src
 
-RUN git clone --depth 1 --branch "${CLP_VERSION}" https://github.com/y-scope/clp.git /src
-
-# CLP's own dependency scripts, rather than a hand-copied package list that drifts from
-# them. `install-all.sh` runs the prebuilt-apt half and the build-from-source half.
+# CLP's own dependency scripts rather than a hand-copied package list that drifts.
 RUN cd /src/components/core \
  && ./tools/scripts/lib_install/ubuntu-jammy/install-all.sh \
  && rm -rf /var/lib/apt/lists/*
 
-# `clp-s` is the target named in components/core/src/clp_s/CMakeLists.txt.
-RUN cd /src/components/core \
- && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
- && cmake --build build --parallel "$(nproc)" --target clp-s \
- && install -m 0755 build/clp-s /usr/local/bin/clp-s \
- && clp-s --help >/dev/null 2>&1 || true
+# The C++ dependency tree. Long, and the reason this image is built once and reused.
+RUN cd /src && task deps:core
+
+# `clp-s` is the target named in components/core/src/clp_s/CMakeLists.txt. Only that one
+# is built - clg, clo, clp, indexer and the rest are not what this lab measures.
+#
+# RelWithDebInfo, not Release, and only two jobs. Two deviations, both forced by this
+# machine and both worth stating rather than hiding:
+#   - CMakeLists.txt turns on CMAKE_INTERPROCEDURAL_OPTIMIZATION for any build type
+#     matching "Release", as a plain `set()` that a -D on the command line cannot
+#     override. LTO plus four parallel g++ processes gets the compile killed at 90% in a
+#     3.84 GB Docker VM. "RelWithDebInfo" does not match that regex, so it skips the
+#     block. Optimisation stays at -O2; only the link-time pass is gone.
+#   - --parallel 2 rather than $(nproc), for the same memory reason.
+# Neither changes an archive's size, which is what this image is here to measure. Both
+# could make clp-s a little slower, which is one more reason 07 labels its timings rough.
+#
+# And NO `||` on the end of this chain. Two earlier versions of this file ended with
+# `|| true` and with `|| clp-s --help | head -3`; both returned success and produced an
+# image with no binary in it. A masked failure here is worse than a failed build, because
+# it is discovered three steps later by a script that cannot say why.
+RUN cd /src \
+ && task codegen:clp-s-generate-parsers \
+ && cmake -S components/core -B /build/core -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+ && cmake --build /build/core --parallel 2 --target clp-s \
+ && install -m 0755 /build/core/clp-s /usr/local/bin/clp-s \
+ && test -x /usr/local/bin/clp-s
 
 WORKDIR /work

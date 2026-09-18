@@ -65,7 +65,7 @@ CH_VER=$(docker compose -f "$COMPOSE_FILE" config 2>/dev/null \
 cd "$REPO_DIR"
 ES_IMAGE="$ES_VER" CH_IMAGE="$CH_VER" DATASET="$DATASET" SIZE="$SIZE" \
   SYSTEMS="$SYSTEMS" \
-  "$PY" - <<'PYEOF'
+  "$PY" -u - <<'PYEOF'
 import os
 import sys
 import json
@@ -197,9 +197,22 @@ try:
             fh.write(p + b"\n")
     took = O.clps_load(payload_file)
     size_b = O.clps_size()
+    vlines, vbytes, vok = O.clps_verify(len(objs))
+    print(f"  clp-s round-trip: {vlines:,} lines, {vbytes:,} bytes back "
+          f"({'matches the input' if vok else 'DOES NOT MATCH THE INPUT'})")
+    res.add("clp-s", "roundtrip_lines", vlines, "lines",
+            f"archive decompressed and counted; {len(objs):,} went in. A ratio is this "
+            "script's headline number, so the archive is expanded rather than trusted.")
+    res.add("clp-s", "roundtrip_ok", 1 if vok else 0, "flag", "")
+    if not vok:
+        raise RuntimeError(
+            f"clp-s archive holds {vlines:,} lines, not {len(objs):,} - its size is not "
+            "comparable and is not recorded"
+        )
     searches = O.clps_searches(event, ident)
     record("clp-s", size_b, took, searches,
-           "archive directory size; clp-s is fed the raw payloads with no @timestamp added")
+           "archive directory size, round-trip verified; clp-s is fed the raw payloads "
+           "with no @timestamp added, unlike Elasticsearch and ClickHouse")
 except Exception as e:
     print(f"  clp-s: FAILED - {e}")
     res.add("clp-s", "status", "failed", "text", str(e)[:200])

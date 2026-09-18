@@ -246,6 +246,30 @@ def clps_size() -> int:
     return int(r.stdout.split()[0]) if r.returncode == 0 else 0
 
 
+def clps_verify(expected_lines: int) -> tuple:
+    """Decompress the archive and count what comes back.
+
+    A compressor that quietly stopped early would report a wonderful ratio, and a ratio
+    is the headline number of this whole script. So the archive is expanded and counted:
+    `(lines, bytes, ok)`. Without this the only evidence that 2.99 MB holds 200,000 lines
+    is that clp-s exited zero.
+    """
+    clps_run(["rm", "-rf", "/work/verify"])
+    clps_run(["mkdir", "-p", "/work/verify"])
+    r = clps_run(["clp-s", "x", "/work/archive", "/work/verify"], timeout=1800)
+    if r.returncode != 0:
+        return 0, 0, False
+    out = clps_run(
+        ["sh", "-c", "cat /work/verify/* | wc -l; cat /work/verify/* | wc -c"]
+    )
+    try:
+        lines, nbytes = (int(x) for x in out.stdout.split())
+    except Exception:
+        return 0, 0, False
+    clps_run(["rm", "-rf", "/work/verify"])
+    return lines, nbytes, lines == expected_lines
+
+
 def clps_searches(event: str, ident: str) -> dict:
     qs = {
         "event value": f'event: "{event}"',

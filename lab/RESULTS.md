@@ -2856,26 +2856,48 @@ Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
 
 _The same logs in other systems_
 
-Run 2026-09-18T22:28:25+00:00, git `da367f9`, 14 rows.
+Run 2026-09-18T23:10:24+00:00, git `3b5b8b0`, 36 rows.
 
 ### `07_vs_others` / dataset `uneven`
 
-| variant       | metric                       | value                                                                                                             | unit    |
-|---------------|------------------------------|-------------------------------------------------------------------------------------------------------------------|---------|
-| elasticsearch | version                      | docker.elastic.co/elasticsearch/elasticsearch:8.19.20                                                             | tag     |
-| clickhouse    | version                      | clickhouse/clickhouse-server:26.8.7.19                                                                            | tag     |
-| clp-s         | version                      | y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published) | tag     |
-| raw NDJSON    | bytes                        | 44,759,683                                                                                                        | bytes   |
-| all           | at_timestamp_added           | 1                                                                                                                 | flag    |
-| Elasticsearch | heap                         | 1g                                                                                                                | setting |
-| ClickHouse    | bytes_on_disk                | 7,055,540                                                                                                         | bytes   |
-| ClickHouse    | ratio_to_raw                 | 0.1576                                                                                                            | ratio   |
-| ClickHouse    | load_seconds                 | 7.02                                                                                                              | s       |
-| ClickHouse    | search_event value_seconds   | 0.0085                                                                                                            | s       |
-| ClickHouse    | search_level = ERROR_seconds | 0.0086                                                                                                            | s       |
-| ClickHouse    | search_one id_seconds        | 0.0054                                                                                                            | s       |
-| ClickHouse    | search_newest 500_seconds    | 0.0331                                                                                                            | s       |
-| clp-s         | status                       | failed                                                                                                            | text    |
+| variant                | metric                       | value                                                                                                             | unit    |
+|------------------------|------------------------------|-------------------------------------------------------------------------------------------------------------------|---------|
+| elasticsearch          | version                      | docker.elastic.co/elasticsearch/elasticsearch:8.19.20                                                             | tag     |
+| clickhouse             | version                      | clickhouse/clickhouse-server:26.8.7.19                                                                            | tag     |
+| clp-s                  | version                      | y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published) | tag     |
+| raw NDJSON             | bytes                        | 44,759,683                                                                                                        | bytes   |
+| all                    | at_timestamp_added           | 1                                                                                                                 | flag    |
+| Elasticsearch          | heap                         | 1g                                                                                                                | setting |
+| Elasticsearch standard | bytes_on_disk                | 31,115,869                                                                                                        | bytes   |
+| Elasticsearch standard | ratio_to_raw                 | 0.6952                                                                                                            | ratio   |
+| Elasticsearch standard | load_seconds                 | 11.09                                                                                                             | s       |
+| Elasticsearch standard | search_event value_seconds   | 0.1127                                                                                                            | s       |
+| Elasticsearch standard | search_level = ERROR_seconds | 0.0062                                                                                                            | s       |
+| Elasticsearch standard | search_one id_seconds        | 0.0178                                                                                                            | s       |
+| Elasticsearch standard | search_newest 500_seconds    | 0.158                                                                                                             | s       |
+| Elasticsearch logsdb   | bytes_on_disk                | 24,149,646                                                                                                        | bytes   |
+| Elasticsearch logsdb   | ratio_to_raw                 | 0.5395                                                                                                            | ratio   |
+| Elasticsearch logsdb   | load_seconds                 | 9.92                                                                                                              | s       |
+| Elasticsearch logsdb   | search_event value_seconds   | 0.0353                                                                                                            | s       |
+| Elasticsearch logsdb   | search_level = ERROR_seconds | 0.0105                                                                                                            | s       |
+| Elasticsearch logsdb   | search_one id_seconds        | 0.0054                                                                                                            | s       |
+| Elasticsearch logsdb   | search_newest 500_seconds    | 0.0223                                                                                                            | s       |
+| ClickHouse             | bytes_on_disk                | 7,055,540                                                                                                         | bytes   |
+| ClickHouse             | ratio_to_raw                 | 0.1576                                                                                                            | ratio   |
+| ClickHouse             | load_seconds                 | 7.56                                                                                                              | s       |
+| ClickHouse             | search_event value_seconds   | 0.0123                                                                                                            | s       |
+| ClickHouse             | search_level = ERROR_seconds | 0.0156                                                                                                            | s       |
+| ClickHouse             | search_one id_seconds        | 0.0089                                                                                                            | s       |
+| ClickHouse             | search_newest 500_seconds    | 0.0446                                                                                                            | s       |
+| clp-s                  | roundtrip_lines              | 200,000                                                                                                           | lines   |
+| clp-s                  | roundtrip_ok                 | 1                                                                                                                 | flag    |
+| clp-s                  | bytes_on_disk                | 2,989,862                                                                                                         | bytes   |
+| clp-s                  | ratio_to_raw                 | 0.0668                                                                                                            | ratio   |
+| clp-s                  | load_seconds                 | 0.65                                                                                                              | s       |
+| clp-s                  | search_event value_seconds   | 0.1614                                                                                                            | s       |
+| clp-s                  | search_level = ERROR_seconds | 0.2045                                                                                                            | s       |
+| clp-s                  | search_one id_seconds        | 0.1716                                                                                                            | s       |
+| clp-s                  | search_newest 500_seconds    | 0.585                                                                                                             | s       |
 
 **Notes**
 
@@ -2883,9 +2905,11 @@ Run 2026-09-18T22:28:25+00:00, git `da367f9`, 14 rows.
 - the denominator for every ratio
 - `@timestamp` is added to every document on the way into Elasticsearch and ClickHouse - logsdb mode requires one and the dataset has `ts`/`ts_unix`/`ts_ms` instead. Those bytes are not in the raw NDJSON denominator.
 - -Xms1g -Xmx1g, not an Elasticsearch default: the Docker VM here holds under 4 GB and 07 runs one system at a time
-- sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
+- after _forcemerge to one segment and _flush
 - rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk
-- not in --systems, skipped
+- sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
+- archive decompressed and counted; 200,000 went in. A ratio is this script's headline number, so the archive is expanded rather than trusted.
+- archive directory size, round-trip verified; clp-s is fed the raw payloads with no @timestamp added, unlike Elasticsearch and ClickHouse
 
 ## 08_io_shapes
 
