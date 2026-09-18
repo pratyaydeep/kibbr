@@ -82,6 +82,69 @@ def _fmt(v: str) -> str:
     return f"{f:,.4g}"
 
 
+def _pick(kept, script, dataset, variant=None, metric=None):
+    """One value out of the newest run, or None. Findings are read from the CSV, never
+    written by hand - a headline that can drift from the table under it is worse than no
+    headline at all."""
+    for r in kept.get(script, []):
+        if r["dataset"] != dataset:
+            continue
+        if variant is not None and r["variant"] != variant:
+            continue
+        if metric is not None and r["metric"] != metric:
+            continue
+        return r
+    return None
+
+
+def findings(kept: dict) -> list:
+    """The headline, derived from the rows below it."""
+    out: list = []
+
+    agree = [r for r in kept.get("00_frontend_agree", []) if r["metric"] == "disagreements"]
+    if agree:
+        bad = sum(int(float(r["value"])) for r in agree)
+        out.append(
+            f"- **The Python frontend agrees with the binary**: {bad} disagreements over "
+            f"{len(agree)} datasets. Every template id and inferred type below is the one "
+            "TrieDB would assign."
+            if bad == 0
+            else f"- **The Python frontend DISAGREES with the binary on {bad} points.** "
+            "Nothing below is trusted."
+        )
+
+    for ds in ("flat30", "uneven"):
+        r = _pick(kept, "03_layout_model", ds, "calibration", "model_minus_real_pct")
+        if r:
+            out.append(
+                f"- **The byte model is calibrated on `{ds}`**: it predicts "
+                f"{float(r['value']):+.2f}% of the segment bytes the real binary wrote "
+                "(bound: 10%)."
+            )
+
+    for ds in ("uneven", "flat30", "oneday"):
+        small = _pick(kept, "02_split_vs_wide", ds, "verdict", "smallest_by_bytes")
+        vs = _pick(kept, "02_split_vs_wide", ds, "verdict", "per_template_vs_gzip9_bytes")
+        ptd = _pick(kept, "02_split_vs_wide", ds, "PER_TEMPLATE_DAY rg=8,192",
+                    "ratio_to_raw_bytes")
+        if small and vs:
+            ratio = float(vs["value"])
+            verb = "beats" if ratio < 1 else "loses to"
+            line = (
+                f"- **`{ds}`**: the smallest layout is {small['note']} at "
+                f"{int(float(small['value'])):,} bytes. Per-template Parquet {verb} "
+                f"gzip -9 by {ratio:.2f}x on bytes"
+            )
+            if ptd:
+                line += (
+                    f"; what TrieDB does today (one Parquet per template per day) costs "
+                    f"{float(ptd['value']):.2f}x of raw NDJSON"
+                )
+            out.append(line + ".")
+
+    return out
+
+
 def render() -> str:
     rows = load()
     kept = newest_per_script(rows)
@@ -103,6 +166,13 @@ def render() -> str:
     info = machine_info()
     parts.append(tabulate(sorted(info.items()), headers=["", ""], tablefmt="simple"))
     parts.append("")
+
+    found = findings(kept)
+    if found:
+        parts.append("## Findings so far")
+        parts.append("")
+        parts.extend(found)
+        parts.append("")
 
     if not kept:
         parts.append("_No results yet._")

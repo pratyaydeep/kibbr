@@ -21,6 +21,15 @@ memory       8.0GB
 platform     Darwin 23.3.0 (arm64)
 python       3.12.2
 
+## Findings so far
+
+- **The Python frontend agrees with the binary**: 0 disagreements over 3 datasets. Every template id and inferred type below is the one TrieDB would assign.
+- **The byte model is calibrated on `flat30`**: it predicts +1.10% of the segment bytes the real binary wrote (bound: 10%).
+- **The byte model is calibrated on `uneven`**: it predicts +0.54% of the segment bytes the real binary wrote (bound: 10%).
+- **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.36x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
+- **`flat30`**: the smallest layout is zstd -19 at 8,282,006 bytes. Per-template Parquet loses to gzip -9 by 1.14x on bytes; what TrieDB does today (one Parquet per template per day) costs 1.82x of raw NDJSON.
+- **`oneday`**: the smallest layout is zstd -19 at 8,059,807 bytes. Per-template Parquet loses to gzip -9 by 1.16x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.26x of raw NDJSON.
+
 ## Contents
 
 - [00_frontend_agree - Frontend agreement - the Python port against the binary](#00-frontend-agree)
