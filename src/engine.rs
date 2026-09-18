@@ -110,6 +110,13 @@ pub struct QueryMeta {
     pub templates_matched: usize,
     pub template_ids: Vec<u64>,
     pub files_opened: usize,
+    /// Row groups whose chunks were read, and row groups dropped on their footer
+    /// timestamps before any column data was. Together they are what the segment format
+    /// buys: `SINCE 1h` over fifty row groups reads one.
+    pub row_groups_read: u64,
+    pub row_groups_pruned: u64,
+    /// Bytes of column chunk read off disk - where column pruning shows up.
+    pub bytes_read: u64,
     pub rows_scanned: u64,
     pub rows_returned: u64,
     /// The limit dropped rows that matched. `count` is the total that matched and
@@ -1110,7 +1117,7 @@ impl Newest {
     /// unlimited query, which has to read everything by definition.
     fn worst(&self) -> Option<Rank> {
         let keep = self.keep?;
-        if self.heap.len() >= keep + 1 {
+        if self.heap.len() > keep {
             self.heap.peek().map(|ranked| ranked.rank)
         } else {
             None
@@ -1259,6 +1266,24 @@ pub fn execute(
         result.meta.files_opened += 1;
         let preds: Vec<Predicate> = leaf.residual.iter().map(predicate).collect();
 
+        // **Column pruning**, without touching `Predicate`: every predicate here was
+        // built from a `Match` two lines up, so its key is known even though a
+        // `Box<dyn Fn(&Row)>` cannot be asked. Those keys, the group keys and the
+        // timestamp column are all any mode but `Fetch` reads, so a store may skip the
+        // rest. `Fetch` returns whole rows and names nothing - empty is every column.
+        opts.columns = match &query.mode {
+            QueryMode::Fetch => Vec::new(),
+            _ => {
+                let mut wanted: Vec<String> =
+                    leaf.residual.iter().map(|term| term.key.clone()).collect();
+                wanted.extend(columns.iter().cloned());
+                wanted.push(ts.clone());
+                wanted.sort();
+                wanted.dedup();
+                wanted
+            }
+        };
+
         // The store's own limit stops the read once `limit` rows have matched. Not used
         // for `Fetch`, and a disk store does not change that: rows are in arrival order
         // *within* a partition as much as within a `Vec`, so stopping at the first `limit`
@@ -1301,6 +1326,9 @@ pub fn execute(
         };
 
         result.meta.rows_scanned += scan.scanned;
+        result.meta.row_groups_read += scan.row_groups_read;
+        result.meta.row_groups_pruned += scan.row_groups_pruned;
+        result.meta.bytes_read += scan.bytes_read;
         result.count += scan.matched;
         if exists_only && result.count > 0 {
             break;

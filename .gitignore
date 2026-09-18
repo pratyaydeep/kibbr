@@ -44,3 +44,7 @@ sample.ndjson
 # Vector itself, the configs scripts/vector_check.sh writes and the corpus it ships -
 # scratch. The script re-downloads and rebuilds all of it.
 /testdata/vector/
+
+# The M5.5 before/after file-count measurements - scratch, and `gen-logs --seed 42`
+# plus a server on a scratch --data-dir rebuild them.
+/testdata/m55/

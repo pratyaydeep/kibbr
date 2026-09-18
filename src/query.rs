@@ -711,6 +711,13 @@ pub fn result_json(query: &Query, result: &QueryResult) -> Value {
             "templates_matched": meta.templates_matched,
             "template_ids": meta.template_ids,
             "files_opened": meta.files_opened,
+            // What the segment format buys, per answer: row groups read against row
+            // groups dropped on their timestamps, and the bytes of column chunk that
+            // reading them cost. A prune nobody can see is a prune nobody notices
+            // stopping.
+            "row_groups_read": meta.row_groups_read,
+            "row_groups_pruned": meta.row_groups_pruned,
+            "bytes_read": meta.bytes_read,
             "rows_scanned": meta.rows_scanned,
             "rows_returned": meta.rows_returned,
             "truncated": meta.truncated,
