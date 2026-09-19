@@ -1,0 +1,23 @@
+[package]
+name = "triedb-lab-rs"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Stand-alone: an empty workspace table stops cargo from folding this crate into the
+# repo root's build. The root `cargo build` must not know this directory exists.
+[workspace]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+rayon = "1"
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+zstd = "0.13"
+rand = "0.8"
+rand_distr = "0.4"
+hdrhistogram = "7"
+serde_json = "1"
+
+[profile.release]
+debug = 1

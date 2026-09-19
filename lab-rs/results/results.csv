@@ -1,0 +1,68 @@
+when,git_sha,bench,variant,metric,value,unit,note
+2026-09-19T10:52:32Z,8920fb2,machine,cpu,model,0,text,Apple M2
+2026-09-19T10:52:32Z,8920fb2,machine,cores,count,8,cores,logical; 8 physical
+2026-09-19T10:52:32Z,8920fb2,machine,ram,bytes,8589934592,bytes,
+2026-09-19T10:52:32Z,8920fb2,machine,filesystem,name,0,text,APFS
+2026-09-19T10:52:32Z,8920fb2,machine,disk,type,0,text,SSD 
+2026-09-19T10:52:32Z,8920fb2,machine,kernel,version,0,text,Darwin 23.3.0
+2026-09-19T10:52:32Z,8920fb2,machine,rustc,version,0,text,rustc 1.96.1 (31fca3adb 2026-06-26)
+2026-09-19T10:52:32Z,8920fb2,machine,python,version,0,text,Python 3.12.2
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,corpus_1M,status,0,absent,"1M lines do not drain: ~27k template-day segments each hold an open fd; kern.maxfilesperproc=10240 on this Mac; server logged EMFILE, 433 leaves stayed buffered after 25 min. Corpus is 300k lines instead"
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,corpus_300k,shutdown_flush_seconds,137,s,"SIGTERM with ~290k rows still buffered: the final flush writes every leaf, one partition at a time"
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S1,server_duration_ms,50.9370,ms,"COUNT LOG {""event"":""login_ok""}"
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S1,server_duration_ms_spread,26.7,pct_of_median,runs: 64.222 50.937 50.625
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S1,client_ms,69.4190,ms,wall time seen by the HTTP client
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S1,rows_scanned,41656,rows,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S1,files_opened,144,files,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S1,row_groups_read,3061,row_groups,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S1,count,41656,rows,matching rows (S4: total rows the LIMIT paged over)
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S2,server_duration_ms,649.2990,ms,"COUNT LOG {""level"":""error""}"
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S2,server_duration_ms_spread,10.1,pct_of_median,runs: 649.299 669.47 603.719
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S2,client_ms,668.6920,ms,wall time seen by the HTTP client
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S2,rows_scanned,150053,rows,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S2,files_opened,654,files,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S2,row_groups_read,16028,row_groups,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S2,count,29967,rows,matching rows (S4: total rows the LIMIT paged over)
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S3,server_duration_ms,47.1630,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}"
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S3,server_duration_ms_spread,11.1,pct_of_median,runs: 51.435 46.179 47.163
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S3,client_ms,67.4190,ms,wall time seen by the HTTP client
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S3,rows_scanned,24930,rows,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S3,files_opened,4,files,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S3,row_groups_read,5,row_groups,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S3,count,1,rows,matching rows (S4: total rows the LIMIT paged over)
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,server_duration_ms,29.0370,ms,MATCH LOG {} LIMIT 500
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,server_duration_ms_spread,73.0,pct_of_median,runs: 49.899 29.037 28.713
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,client_ms,54.6450,ms,wall time seen by the HTTP client
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,rows_scanned,3920,rows,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,files_opened,870,files,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,row_groups_read,300,row_groups,
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,count,300000,rows,matching rows (S4: total rows the LIMIT paged over)
+2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4_via_9200,status,0,absent,no :9200 _search surface; S4 uses TrieQL LIMIT 500 on :7700
+2026-09-19T11:34:44Z,8920fb2,A4_baseline_searches,corpus_300k,emfile_lines_in_log,0,count,periodic flush ticks that hit kern.maxfilesperproc before the shutdown (none in the 12 s before SIGTERM)
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_table,lines_per_sec,35630.3000,lines_per_sec,"triedb parse table output > /dev/null, 1M lines"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_table,lines_per_sec_spread,1.2,pct_of_median,max-min over 3 runs: 35706.6 35630.3 35289.6
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_json,lines_per_sec,19071.6000,lines_per_sec,"triedb parse json output > /dev/null, 1M lines"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_json,lines_per_sec_spread,7.4,pct_of_median,max-min over 3 runs: 19071.6 19439.0 18030.0
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_ingest,status,0,absent,no 'triedb ingest' subcommand; measured 'query FILE --count' (parse + trie + in-memory store) instead
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_query_count_load,lines_per_sec,29547.3000,lines_per_sec,query 1m.ndjson --count: every line parsed into trie + memory store
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_query_count_load,lines_per_sec_spread,4.5,pct_of_median,max-min over 3 runs: 29575.3 29547.3 28249.4
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_query_count_load,seconds_per_1M_lines,33.8440,s,"estimate of crash replay time per 1,000,000 lines of WAL backlog"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_query_count_load,seconds_per_1M_lines_spread,4.7,pct_of_median,max-min over 3 runs: 33.812 33.844 35.399
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_1_senders,lines_per_sec,29664.1000,lines_per_sec,"300k lines, batches of 2000 lines, 1 concurrent senders, --storage disk; rate at which /ingest answered 200"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_1_senders,lines_per_sec_spread,1.3,pct_of_median,max-min over 3 runs: 29682.8 29664.1 29293.8
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_2_senders,lines_per_sec,30056.9000,lines_per_sec,"300k lines, batches of 2000 lines, 2 concurrent senders, --storage disk; rate at which /ingest answered 200"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_2_senders,lines_per_sec_spread,1.9,pct_of_median,max-min over 3 runs: 30056.9 30359.1 29799.8
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_4_senders,lines_per_sec,30530.4000,lines_per_sec,"300k lines, batches of 2000 lines, 4 concurrent senders, --storage disk; rate at which /ingest answered 200"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_4_senders,lines_per_sec_spread,1.1,pct_of_median,max-min over 3 runs: 30672.0 30350.4 30530.4
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_8_senders,lines_per_sec,30259.3000,lines_per_sec,"300k lines, batches of 2000 lines, 8 concurrent senders, --storage disk; rate at which /ingest answered 200"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_disk_8_senders,lines_per_sec_spread,1.0,pct_of_median,max-min over 3 runs: 30156.1 30472.2 30259.3
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_memory_4_senders,lines_per_sec,33558.4000,lines_per_sec,"300k lines, batches of 2000 lines, 4 concurrent senders, --storage memory; rate at which /ingest answered 200"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,http_memory_4_senders,lines_per_sec_spread,0.5,pct_of_median,max-min over 3 runs: 33391.6 33558.4 33559.0
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_100k,status,0,absent,"100k seed-42 lines touch >10,240 template-day segments; each open segment holds a descriptor; the tick flush logs EMFILE forever. 20k lines (6.9k segments) measured instead"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,seconds,98.6700,s,"20k lines accepted, then time until /stats buffered_rows==0"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,seconds_spread,1.7,pct_of_median,max-min over 3 runs: 99.99 98.67 98.29
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,segment_files,6068.0000,files,one segment file per template per day
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,segment_files_spread,0.0,pct_of_median,max-min over 3 runs: 6068 6068 6068
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,files_per_sec,61.5000,files_per_sec,"the disk flush rate, in files"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,files_per_sec_spread,1.6,pct_of_median,max-min over 3 runs: 60.7 61.5 61.7
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,perf_profile,status,0,absent,macOS: no perf(1); CARGO_PROFILE_RELEASE_DEBUG profile not taken
