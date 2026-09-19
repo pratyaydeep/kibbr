@@ -15,6 +15,7 @@
 //!
 //! Simplifies: one template, a synthetic 12-column row, searches that only snapshot.
 //! Decides whether the close must hold the lock end to end or can publish in one step.
+//! `sync_all` on Darwin is `F_FULLFSYNC` (~3 ms), so a close costs at least that.
 
 use parking_lot::RwLock;
 use std::fs::OpenOptions;

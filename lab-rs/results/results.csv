@@ -66,3 +66,526 @@ when,git_sha,bench,variant,metric,value,unit,note
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,files_per_sec,61.5000,files_per_sec,"the disk flush rate, in files"
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,drain_20k,files_per_sec_spread,1.6,pct_of_median,max-min over 3 runs: 60.7 61.5 61.7
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,perf_profile,status,0,absent,macOS: no perf(1); CARGO_PROFILE_RELEASE_DEBUG profile not taken
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,peak_rss_kb,98944.0000,kB,ps-sampled every 0.2s during ingest+flush; gen-logs --lines 20000 --templates 100 --seed 42; 4 senders
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,peak_rss_kb_spread,6.7,pct_of_median,max-min over 3 runs: 94592 98944 101248
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,time_l_max_rss_bytes,103743488.0000,bytes,/usr/bin/time -l maximum resident set size (whole life incl. shutdown flush)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,time_l_max_rss_bytes_spread,4.1,pct_of_median,max-min over 3 runs: 105807872 101564416 103743488
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,idle_rss_kb,70464.0000,kB,after buffered_rows==0
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,idle_rss_kb_spread,0.4,pct_of_median,max-min over 3 runs: 70464 70720 70464
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,files_on_disk,16548.0000,files,find -type f in the data dir
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,files_on_disk_spread,0.0,pct_of_median,max-min over 3 runs: 16548 16548 16548
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,drain_seconds,119.5000,s,"seconds from last /ingest answer until buffered_rows==0, capped at 180"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,drain_seconds_spread,3.3,pct_of_median,max-min over 3 runs: 119.4 123.4 119.5
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,rows_still_buffered_at_cap,-1.0000,rows,buffered_rows when the drain wait ended (0 = drained)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,rows_still_buffered_at_cap_spread,-165400.0,pct_of_median,max-min over 3 runs: 1653 -1 -1
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,write_failures,-1.0000,count,/stats write_failures (EMFILE flush ticks)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,write_failures_spread,-91200.0,pct_of_median,max-min over 3 runs: 911 -1 -1
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,shutdown_seconds,28.0000,s,SIGTERM until exit: the final flush writes every leaf
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,shutdown_seconds_spread,7.1,pct_of_median,max-min over 3 runs: 28 30 28
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,top_stderr_line,0,text,"most frequent server stderr line, run 3: 8940 triedb: SEG: File exists (os error 17)"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,rows_after_restart,18356.0000,rows,COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,rows_after_restart_spread,0.2,pct_of_median,max-min over 3 runs: 18354 18396 18356
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,cold_start_seconds,8.4730,s,"spawn until /health answers, on the data dir just written"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,cold_start_seconds_spread,3.5,pct_of_median,max-min over 3 runs: 8.720 8.473 8.423
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,peak_rss_kb,195424.0000,kB,ps-sampled every 0.2s during ingest+flush; gen-logs --lines 20000 --templates 1000 --seed 42; 4 senders
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,peak_rss_kb_spread,6.6,pct_of_median,max-min over 3 runs: 193056 205872 195424
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,time_l_max_rss_bytes,231604224.0000,bytes,/usr/bin/time -l maximum resident set size (whole life incl. shutdown flush)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,time_l_max_rss_bytes_spread,12.2,pct_of_median,max-min over 3 runs: 231604224 218103808 246333440
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,idle_rss_kb,101488.0000,kB,after buffered_rows==0
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,idle_rss_kb_spread,31.5,pct_of_median,max-min over 3 runs: 99904 101488 131824
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,files_on_disk,27650.0000,files,find -type f in the data dir
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,files_on_disk_spread,10.4,pct_of_median,max-min over 3 runs: 27650 27646 30514
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,drain_seconds,127.6000,s,"seconds from last /ingest answer until buffered_rows==0, capped at 180"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,drain_seconds_spread,0.3,pct_of_median,max-min over 3 runs: 127.9 127.6 127.5
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,rows_still_buffered_at_cap,-1.0000,rows,buffered_rows when the drain wait ended (0 = drained)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,rows_still_buffered_at_cap_spread,-0.0,pct_of_median,max-min over 3 runs: -1 -1 -1
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,write_failures,-1.0000,count,/stats write_failures (EMFILE flush ticks)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,write_failures_spread,-0.0,pct_of_median,max-min over 3 runs: -1 -1 -1
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,shutdown_seconds,36.0000,s,SIGTERM until exit: the final flush writes every leaf
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,shutdown_seconds_spread,19.4,pct_of_median,max-min over 3 runs: 36 37 30
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,top_stderr_line,0,text,"most frequent server stderr line, run 3: 61209 triedb: SEG: File exists (os error 17)"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,rows_after_restart,12940.0000,rows,COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,rows_after_restart_spread,0.0,pct_of_median,max-min over 3 runs: 12940 12942 12939
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,cold_start_seconds,27.8890,s,"spawn until /health answers, on the data dir just written"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,cold_start_seconds_spread,5.4,pct_of_median,max-min over 3 runs: 27.636 27.889 29.143
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,peak_rss_kb,265424.0000,kB,ps-sampled every 0.2s during ingest+flush; gen-logs --lines 20000 --templates 10000 --seed 42; 4 senders
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,peak_rss_kb_spread,11.9,pct_of_median,max-min over 3 runs: 265424 236512 268208
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,time_l_max_rss_bytes,288636928.0000,bytes,/usr/bin/time -l maximum resident set size (whole life incl. shutdown flush)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,time_l_max_rss_bytes_spread,4.7,pct_of_median,max-min over 3 runs: 287817728 301383680 288636928
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,idle_rss_kb,174544.0000,kB,after buffered_rows==0
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,idle_rss_kb_spread,45.0,pct_of_median,max-min over 3 runs: 98704 174544 177264
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,files_on_disk,38243.0000,files,find -type f in the data dir
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,files_on_disk_spread,15.5,pct_of_median,max-min over 3 runs: 32299 38243 38243
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,drain_seconds,126.2000,s,"seconds from last /ingest answer until buffered_rows==0, capped at 180"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,drain_seconds_spread,0.1,pct_of_median,max-min over 3 runs: 126.2 126.2 126.3
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,rows_still_buffered_at_cap,9375.0000,rows,buffered_rows when the drain wait ended (0 = drained)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,rows_still_buffered_at_cap_spread,100.0,pct_of_median,max-min over 3 runs: -1 9375 9375
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,write_failures,72744.0000,count,/stats write_failures (EMFILE flush ticks)
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,write_failures_spread,100.0,pct_of_median,max-min over 3 runs: -1 72746 72744
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,shutdown_seconds,32.0000,s,SIGTERM until exit: the final flush writes every leaf
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,shutdown_seconds_spread,59.4,pct_of_median,max-min over 3 runs: 49 30 32
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,top_stderr_line,0,text,"most frequent server stderr line, run 3: 127330 triedb: SEG: File exists (os error 17)"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,rows_after_restart,10625.0000,rows,COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,rows_after_restart_spread,0.0,pct_of_median,max-min over 3 runs: 10626 10625 10625
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,cold_start_seconds,38.7620,s,"spawn until /health answers, on the data dir just written"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,cold_start_seconds_spread,17.4,pct_of_median,max-min over 3 runs: 43.860 37.125 38.762
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,client_p50_ms,33.0530,ms,"COUNT LOG {""event"":""login_ok""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,client_p50_ms_spread,12.8,pct_of_median,max-min over 3 runs: 32.837 33.053 37.081
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,client_p99_ms,196.3260,ms,"COUNT LOG {""event"":""login_ok""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,client_p99_ms_spread,78.3,pct_of_median,max-min over 3 runs: 196.326 55.522 209.236
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,server_p50_ms,32.3900,ms,"COUNT LOG {""event"":""login_ok""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,server_p50_ms_spread,10.1,pct_of_median,max-min over 3 runs: 32.237 32.39 35.505
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,server_p99_ms,177.8460,ms,"COUNT LOG {""event"":""login_ok""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_idle,server_p99_ms_spread,79.9,pct_of_median,max-min over 3 runs: 177.846 40.651 182.736
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,client_p50_ms,1133.3960,ms,"COUNT LOG {""event"":""login_ok""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,client_p50_ms_spread,35.8,pct_of_median,max-min over 3 runs: 965.049 1133.396 1370.345
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,client_p99_ms,1266.5570,ms,"COUNT LOG {""event"":""login_ok""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,client_p99_ms_spread,40.2,pct_of_median,max-min over 3 runs: 1234.903 1266.557 1744.124
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,server_p50_ms,775.6230,ms,"COUNT LOG {""event"":""login_ok""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,server_p50_ms_spread,60.9,pct_of_median,max-min over 3 runs: 775.623 742.956 1215.383
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,server_p99_ms,1050.3680,ms,"COUNT LOG {""event"":""login_ok""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S1_loaded,server_p99_ms_spread,50.2,pct_of_median,max-min over 3 runs: 1050.368 984.107 1511.081
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,client_p50_ms,1022.4260,ms,"COUNT LOG {""level"":""error""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,client_p50_ms_spread,73.3,pct_of_median,max-min over 3 runs: 1022.426 313.033 1062.18
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,client_p99_ms,1361.8850,ms,"COUNT LOG {""level"":""error""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,client_p99_ms_spread,66.9,pct_of_median,max-min over 3 runs: 1361.885 452.845 1364.111
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,server_p50_ms,1012.2390,ms,"COUNT LOG {""level"":""error""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,server_p50_ms_spread,74.0,pct_of_median,max-min over 3 runs: 1012.239 305.041 1054.147
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,server_p99_ms,1345.8720,ms,"COUNT LOG {""level"":""error""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_idle,server_p99_ms_spread,67.8,pct_of_median,max-min over 3 runs: 1352.707 439.751 1345.872
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,client_p50_ms,4823.8970,ms,"COUNT LOG {""level"":""error""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,client_p50_ms_spread,59.8,pct_of_median,max-min over 3 runs: 4823.897 4480.403 7366.74
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,client_p99_ms,5177.6770,ms,"COUNT LOG {""level"":""error""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,client_p99_ms_spread,46.9,pct_of_median,max-min over 3 runs: 4940.554 5177.677 7366.74
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,server_p50_ms,4630.2520,ms,"COUNT LOG {""level"":""error""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,server_p50_ms_spread,63.4,pct_of_median,max-min over 3 runs: 4630.252 4212.821 7150.696
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,server_p99_ms,4712.4170,ms,"COUNT LOG {""level"":""error""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S2_loaded,server_p99_ms_spread,52.7,pct_of_median,max-min over 3 runs: 4712.417 4665.322 7150.696
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,client_p50_ms,29.9800,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,client_p50_ms_spread,13.6,pct_of_median,max-min over 3 runs: 29.98 27.219 31.291
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,client_p99_ms,44.3980,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,client_p99_ms_spread,18.1,pct_of_median,max-min over 3 runs: 44.398 39.929 47.982
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,server_p50_ms,29.1340,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,server_p50_ms_spread,13.5,pct_of_median,max-min over 3 runs: 29.134 26.686 30.612
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,server_p99_ms,32.5070,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; idle = no ingest"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_idle,server_p99_ms_spread,34.0,pct_of_median,max-min over 3 runs: 32.507 30.796 41.847
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,client_p50_ms,416.9900,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,client_p50_ms_spread,22.0,pct_of_median,max-min over 3 runs: 354.159 446.053 416.99
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,client_p99_ms,837.5810,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,client_p99_ms_spread,18.2,pct_of_median,max-min over 3 runs: 837.581 737.618 890.02
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,server_p50_ms,209.2380,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,server_p50_ms_spread,34.0,pct_of_median,max-min over 3 runs: 174.484 245.694 209.238
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,server_p99_ms,321.7690,ms,"MATCH LOG {""err.trace_id"":""aeb53b34-0c10-4971-8a69-db9873af8965""}; loaded = 4 senders ingesting at full speed"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S3_loaded,server_p99_ms_spread,29.0,pct_of_median,max-min over 3 runs: 269.159 321.769 362.45
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,client_p50_ms,22.6430,ms,MATCH LOG {} LIMIT 500; idle = no ingest
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,client_p50_ms_spread,20.6,pct_of_median,max-min over 3 runs: 22.643 21.511 26.17
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,client_p99_ms,68.4060,ms,MATCH LOG {} LIMIT 500; idle = no ingest
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,client_p99_ms_spread,55.7,pct_of_median,max-min over 3 runs: 68.406 44.927 82.999
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,server_p50_ms,18.0200,ms,MATCH LOG {} LIMIT 500; idle = no ingest
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,server_p50_ms_spread,23.5,pct_of_median,max-min over 3 runs: 18.02 17.183 21.414
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,server_p99_ms,51.6630,ms,MATCH LOG {} LIMIT 500; idle = no ingest
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_idle,server_p99_ms_spread,50.4,pct_of_median,max-min over 3 runs: 51.663 28.272 54.316
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,client_p50_ms,4436.8760,ms,MATCH LOG {} LIMIT 500; loaded = 4 senders ingesting at full speed
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,client_p50_ms_spread,68.6,pct_of_median,max-min over 3 runs: 3861.263 4436.876 6905.908
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,client_p99_ms,154013.5240,ms,MATCH LOG {} LIMIT 500; loaded = 4 senders ingesting at full speed
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,client_p99_ms_spread,37.4,pct_of_median,max-min over 3 runs: 139436.612 154013.524 196998.294
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,server_p50_ms,931.4520,ms,MATCH LOG {} LIMIT 500; loaded = 4 senders ingesting at full speed
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,server_p50_ms_spread,65.1,pct_of_median,max-min over 3 runs: 686.019 1292.602 931.452
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,server_p99_ms,4045.1220,ms,MATCH LOG {} LIMIT 500; loaded = 4 senders ingesting at full speed
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,S4_loaded,server_p99_ms_spread,72.4,pct_of_median,max-min over 3 runs: 3665.185 4045.122 6595.109
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,ingest_alone,lines_per_sec,44821.0000,lines_per_sec,"4 senders, 32s, on top of the 300k-row corpus"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,ingest_alone,lines_per_sec_spread,11.8,pct_of_median,max-min over 3 runs: 43698.3 48996.4 44821.0
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,ingest_with_searches,lines_per_sec,1645.4000,lines_per_sec,"4 senders, 32s, on top of the 300k-row corpus"
+2026-09-19T13:22:00Z,7c787eb,A3_search_under_load,ingest_with_searches,lines_per_sec_spread,25.8,pct_of_median,max-min over 3 runs: 1971.6 1645.4 1547.7
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/1_producers,mb_per_sec,404.1096,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/1_producers,mb_per_sec_spread,7.3254,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/1_producers,row_groups_per_sec,290.1752,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/1_producers,row_groups_per_sec_spread,7.3254,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/1_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/2_producers,mb_per_sec,384.1057,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/2_producers,mb_per_sec_spread,17.3277,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/2_producers,row_groups_per_sec,275.8112,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/2_producers,row_groups_per_sec_spread,17.3277,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/2_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/4_producers,mb_per_sec,392.6873,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/4_producers,mb_per_sec_spread,30.3296,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/4_producers,row_groups_per_sec,281.9733,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/4_producers,row_groups_per_sec_spread,30.3296,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/4_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/8_producers,mb_per_sec,390.7169,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/8_producers,mb_per_sec_spread,15.1580,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/8_producers,row_groups_per_sec,280.5585,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/8_producers,row_groups_per_sec_spread,15.1580,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_shared_file/8_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/1_producers,mb_per_sec,410.8177,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/1_producers,mb_per_sec_spread,7.3657,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/1_producers,row_groups_per_sec,294.9920,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/1_producers,row_groups_per_sec_spread,7.3657,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/1_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/2_producers,mb_per_sec,435.7891,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/2_producers,mb_per_sec_spread,1.4243,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/2_producers,row_groups_per_sec,312.9230,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/2_producers,row_groups_per_sec_spread,1.4243,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/2_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/4_producers,mb_per_sec,462.9667,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/4_producers,mb_per_sec_spread,32.4433,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/4_producers,row_groups_per_sec,332.4382,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/4_producers,row_groups_per_sec_spread,32.4433,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/4_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/8_producers,mb_per_sec,472.8173,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/8_producers,mb_per_sec_spread,1.0399,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/8_producers,row_groups_per_sec,339.5115,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/8_producers,row_groups_per_sec_spread,1.0399,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_4/8_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/1_producers,mb_per_sec,400.0811,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/1_producers,mb_per_sec_spread,8.8311,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/1_producers,row_groups_per_sec,287.2825,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/1_producers,row_groups_per_sec_spread,8.8311,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/1_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/2_producers,mb_per_sec,445.2824,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/2_producers,mb_per_sec_spread,4.1008,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/2_producers,row_groups_per_sec,319.7397,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/2_producers,row_groups_per_sec_spread,4.1008,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/2_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/4_producers,mb_per_sec,477.1388,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/4_producers,mb_per_sec_spread,3.3814,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/4_producers,row_groups_per_sec,342.6146,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/4_producers,row_groups_per_sec_spread,3.3814,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/4_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/8_producers,mb_per_sec,537.5037,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/8_producers,mb_per_sec_spread,25.7016,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/8_producers,row_groups_per_sec,385.9602,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/8_producers,row_groups_per_sec_spread,25.7016,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,template_mod_8/8_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/1_producers,mb_per_sec,221.1849,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/1_producers,mb_per_sec_spread,22.9668,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/1_producers,row_groups_per_sec,158.8242,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/1_producers,row_groups_per_sec_spread,22.9668,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/1_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/2_producers,mb_per_sec,239.5795,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/2_producers,mb_per_sec_spread,1.0958,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/2_producers,row_groups_per_sec,172.0326,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/2_producers,row_groups_per_sec_spread,1.0958,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/2_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/4_producers,mb_per_sec,237.4775,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/4_producers,mb_per_sec_spread,12.1601,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/4_producers,row_groups_per_sec,170.5232,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/4_producers,row_groups_per_sec_spread,12.1601,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/4_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/8_producers,mb_per_sec,241.7449,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/8_producers,mb_per_sec_spread,3.2375,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/8_producers,row_groups_per_sec,173.5875,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/8_producers,row_groups_per_sec_spread,3.2375,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_4/8_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/1_producers,mb_per_sec,223.4752,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/1_producers,mb_per_sec_spread,3.3779,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/1_producers,row_groups_per_sec,160.4687,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/1_producers,row_groups_per_sec_spread,3.3779,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/1_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/2_producers,mb_per_sec,237.5793,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/2_producers,mb_per_sec_spread,1.4169,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/2_producers,row_groups_per_sec,170.5963,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/2_producers,row_groups_per_sec_spread,1.4169,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/2_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/4_producers,mb_per_sec,249.7924,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/4_producers,mb_per_sec_spread,5.0620,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/4_producers,row_groups_per_sec,179.3661,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/4_producers,row_groups_per_sec_spread,5.0620,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/4_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/8_producers,mb_per_sec,266.9267,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/8_producers,mb_per_sec_spread,5.1695,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/8_producers,row_groups_per_sec,191.6696,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/8_producers,row_groups_per_sec_spread,5.1695,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,least_bytes_8/8_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/1_producers,mb_per_sec,222.0887,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/1_producers,mb_per_sec_spread,59.0860,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/1_producers,row_groups_per_sec,159.4732,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/1_producers,row_groups_per_sec_spread,59.0860,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/1_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/2_producers,mb_per_sec,401.5830,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/2_producers,mb_per_sec_spread,17.1382,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/2_producers,row_groups_per_sec,288.3609,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/2_producers,row_groups_per_sec_spread,17.1382,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/2_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/4_producers,mb_per_sec,424.9415,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/4_producers,mb_per_sec_spread,4.6289,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/4_producers,row_groups_per_sec,305.1338,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/4_producers,row_groups_per_sec_spread,4.6289,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/4_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/8_producers,mb_per_sec,539.6426,MB_per_sec,sync_all per row group
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/8_producers,mb_per_sec_spread,8.2267,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/8_producers,row_groups_per_sec,387.4961,rg_per_sec,
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/8_producers,row_groups_per_sec_spread,8.2267,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:07Z,7c787eb,B10_file_layout_writes,one_file_per_template_500/8_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,lines_per_sec,193.5570,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,lines_per_sec_spread,150.5852,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p50,3943,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p50_spread,245.9041,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p99,20447,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p99_spread,127.4808,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,wal_bytes_per_line,252.4932,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,wal_bytes_per_line_spread,0.2907,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,lines_per_sec,383.2968,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,lines_per_sec_spread,4.1595,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p50,5967,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p50_spread,1.0726,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p99,8855,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p99_spread,17.8882,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,wal_bytes_per_line,252.7266,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,wal_bytes_per_line_spread,0.0221,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,lines_per_sec,747.3837,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,lines_per_sec_spread,2.7321,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p50,5955,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p50_spread,0.6717,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p99,9903,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p99_spread,21.9731,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,wal_bytes_per_line,252.5694,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,wal_bytes_per_line_spread,0.0033,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,lines_per_sec,1629.3293,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,lines_per_sec_spread,8.1516,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p50,5407,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p50_spread,12.5023,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p99,7575,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p99_spread,23.3927,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,wal_bytes_per_line,252.7681,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,wal_bytes_per_line_spread,0.0157,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,lines_per_sec,255.7252,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,lines_per_sec_spread,4.1390,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p50,3995,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p50_spread,0.1001,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p99,5515,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p99_spread,68.3228,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,wal_bytes_per_line,252.6570,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,wal_bytes_per_line_spread,0.0186,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,lines_per_sec,507.8641,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,lines_per_sec_spread,2.7014,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p50,3999,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p50_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p99,5983,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p99_spread,1.9388,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,wal_bytes_per_line,252.7251,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,wal_bytes_per_line_spread,0.0118,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,lines_per_sec,1006.6622,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,lines_per_sec_spread,1.9990,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p50,3995,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p50_spread,0.4005,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p99,7075,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p99_spread,33.0742,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,wal_bytes_per_line,252.6240,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,wal_bytes_per_line_spread,0.0045,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,lines_per_sec,1990.9560,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,lines_per_sec_spread,6.1416,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p50,4017,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p50_spread,1.2945,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p99,8059,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p99_spread,37.3744,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,wal_bytes_per_line,252.7424,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,wal_bytes_per_line_spread,0.0236,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,lines_per_sec,110.9189,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,lines_per_sec_spread,1.8543,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p50,8983,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p50_spread,0.2672,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p99,18351,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p99_spread,41.0659,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line,252.1548,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line_spread,0.0013,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,lines_per_sec,224.3197,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,lines_per_sec_spread,0.8132,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p50,8999,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p50_spread,0.0889,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p99,11143,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p99_spread,44.9430,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line,252.6471,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line_spread,0.0064,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,lines_per_sec,434.9031,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,lines_per_sec_spread,2.6221,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p50,9015,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p50_spread,0.0887,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p99,13999,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p99_spread,65.1475,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line,252.7242,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line_spread,0.0152,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,lines_per_sec,857.8858,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,lines_per_sec_spread,2.1886,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p50,9031,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p50_spread,0.5315,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p99,15703,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p99_spread,18.1367,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line,252.5679,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line_spread,0.0095,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,lines_per_sec,37.2577,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,lines_per_sec_spread,3.3132,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p50,26991,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p50_spread,3.4975,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p99,37567,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p99_spread,17.7177,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line,251.5714,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line_spread,0.1716,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,lines_per_sec,73.9960,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,lines_per_sec_spread,1.2365,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p50,27215,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p50_spread,3.5863,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p99,32991,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p99_spread,4.4618,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line,252.1518,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,lines_per_sec,148.0840,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,lines_per_sec_spread,2.9160,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p50,26991,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p50_spread,3.4975,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p99,36191,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p99_spread,6.8967,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line,252.1140,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line_spread,0.0244,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,lines_per_sec,292.0019,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,lines_per_sec_spread,3.3776,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p50,27535,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p50_spread,3.0797,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p99,43999,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p99_spread,29.2370,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line,252.6773,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line_spread,0.0288,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,lines_per_sec,110.9043,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,lines_per_sec_spread,8.4701,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p50,8991,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p50_spread,0.8008,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p99,20047,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p99_spread,129.1764,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,wal_bytes_per_line,252.0765,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,wal_bytes_per_line_spread,0.0292,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,lines_per_sec,224.1549,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,lines_per_sec_spread,0.7929,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p50,8967,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p50_spread,0.4461,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p99,12247,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p99_spread,6.8588,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,wal_bytes_per_line,252.6471,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,wal_bytes_per_line_spread,0.0043,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,lines_per_sec,441.5281,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,lines_per_sec_spread,0.5384,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p50,9007,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p50_spread,0.4441,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p99,13311,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p99_spread,20.9751,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,wal_bytes_per_line,252.7335,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,wal_bytes_per_line_spread,0.0036,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,lines_per_sec,885.6462,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,lines_per_sec_spread,1.8529,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p50,9023,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p50_spread,0.1773,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p99,10903,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p99_spread,53.9301,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,wal_bytes_per_line,252.5762,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,wal_bytes_per_line_spread,0.0135,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,lines_per_sec,111.9696,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,lines_per_sec_spread,3.3413,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p50,8983,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p50_spread,0.3562,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p99,18879,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p99_spread,61.9524,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line,206.2840,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line_spread,0.0395,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,lines_per_sec,222.0884,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,lines_per_sec_spread,1.3748,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p50,8991,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p50_spread,0.2669,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p99,15423,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p99_spread,26.5577,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line,150.4789,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line_spread,0.0277,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,lines_per_sec,443.7323,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,lines_per_sec_spread,0.8099,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p50,9015,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p50_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p99,14399,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p99_spread,25.2795,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line,110.4281,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line_spread,0.2368,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,lines_per_sec,875.8292,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,lines_per_sec_spread,1.8194,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p50,9023,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p50_spread,0.3546,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p99,11559,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p99_spread,30.6601,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line,88.3462,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line_spread,0.2974,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,lines_per_sec,37.1286,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,lines_per_sec_spread,1.0645,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p50,27039,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p50_spread,1.4202,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p99,31327,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p99_spread,124.8763,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line,205.6607,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,lines_per_sec,75.2685,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,lines_per_sec_spread,3.0981,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p50,26863,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p50_spread,4.8245,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p99,30079,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p99_spread,18.5644,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line,150,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line_spread,0.0403,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,lines_per_sec,147.7830,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,lines_per_sec_spread,1.1504,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p50,27071,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p50_spread,0.8866,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p99,34335,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p99_spread,19.9913,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line,110.3884,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line_spread,0.2603,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,lines_per_sec,297.8346,lines_per_sec,closed-loop senders
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,lines_per_sec_spread,1.3565,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p50,26927,us,sender's wait for the ack
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p50_spread,2.7333,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p99,30287,us,worst 1 percent
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p99_spread,31.9081,pct_of_median,max-min over 3 runs
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line,88.1118,bytes,raw line avg 200 B
+2026-09-19T13:35:48Z,7c787eb,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line_spread,0.1870,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,ingest_rows_per_sec,548383.2416,rows_per_sec,
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,ingest_rows_per_sec_spread,1.7104,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p50,1,us,read lock + snapshot
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p50_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p99,9223,us,worst 1 percent
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p99_spread,6.6790,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_max,16863,us,
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_max_spread,16.4146,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,closes,201,count,row groups closed in 3 s
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,closes_spread,1.4925,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,snapshots,59275,count,snapshots taken in 3 s by 4 searchers
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,snapshots_spread,1.0156,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,X_hold_lock_for_whole_close,violations,0,count,snapshots that did not see every row exactly once (max over 3 runs)
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,ingest_rows_per_sec,785861.9832,rows_per_sec,
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,ingest_rows_per_sec_spread,7.1709,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p50,8,us,read lock + snapshot
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p50_spread,12.5000,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p99,165,us,worst 1 percent
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p99_spread,32.7273,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_max,4787,us,
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_max_spread,136.3693,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,closes,284,count,row groups closed in 3 s
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,closes_spread,7.0423,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,snapshots,140253,count,snapshots taken in 3 s by 4 searchers
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,snapshots_spread,7.7374,pct_of_median,max-min over 3 runs
+2026-09-19T13:37:56Z,7c787eb,B3_buffer_lock,Y_move_aside_publish_in_one_step,violations,0,count,snapshots that did not see every row exactly once (max over 3 runs)
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,ramdisk,size_mb,48,MB,"APFS on hdiutil ram://, no root needed"
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_1,lines_accepted_200,90000,lines,lines the sender got a 200 for before/after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_1,rows_reported,90000,rows,/stats rows after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_1,rows_buffered,17082,rows,/stats buffered_rows (never reached disk)
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_1,write_failures,4750,count,/stats write_failures
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_1,server_up,1,bool,/health after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_1,rows_after_restart,0,rows,COUNT LOG {} on the same data dir after SIGTERM + restart
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_1,sender_saw,0,text,"response codes {""200"":; first failure 45}; last_write_error null ""/Volumes/labrs/data/leaf_672/2024-01-28/seg_000001.col: No space left on device (os error 28): No space left on device (os error 28)"""
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_2,lines_accepted_200,80000,lines,lines the sender got a 200 for before/after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_2,rows_reported,79993,rows,/stats rows after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_2,rows_buffered,15323,rows,/stats buffered_rows (never reached disk)
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_2,write_failures,4623,count,/stats write_failures
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_2,server_up,1,bool,/health after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_2,rows_after_restart,0,rows,COUNT LOG {} on the same data dir after SIGTERM + restart
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_2,sender_saw,0,text,"response codes {""200"":; first failure 40}; last_write_error null ""/Volumes/labrs/data/leaf_721/2024-02-08/seg_000001.col: No space left on device (os error 28): No space left on device (os error 28)"""
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,lines_accepted_200,90000,lines,lines the sender got a 200 for before/after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,rows_reported,90000,rows,/stats rows after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,rows_buffered,17546,rows,/stats buffered_rows (never reached disk)
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,write_failures,4763,count,/stats write_failures
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,server_up,1,bool,/health after the disk filled
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,rows_after_restart,0,rows,COUNT LOG {} on the same data dir after SIGTERM + restart
+2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,sender_saw,0,text,"response codes {""200"":; first failure 45}; last_write_error null ""/Volumes/labrs/data/leaf_663/undated/seg_000001.col: No space left on device (os error 28): No space left on device (os error 28)"""

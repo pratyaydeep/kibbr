@@ -5,7 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 BENCH=A5_disk_full
 machine_info; ensure_data
 MB=${A5_MB:-48}
-dev=$(hdiutil attach -nomount ram://$((MB * 2048)) 2>/dev/null | tr -d ' ')
+dev=$(hdiutil attach -nomount ram://$((MB * 2048)) 2>/dev/null | tr -d '[:space:]')
 if [[ -z "$dev" ]]; then
   echo "A5: ABSENT - hdiutil attach ram:// refused (no small filesystem without root)"
   csv_row $BENCH ramdisk status 0 absent "hdiutil attach ram:// refused; no loopback or tmpfs without root on macOS"
@@ -18,6 +18,7 @@ if ! diskutil erasevolume APFS labrs "$dev" >/dev/null 2>&1; then
   exit 0
 fi
 MNT=/Volumes/labrs
+SERVER_LOG_DIR="$OUT/a5"; mkdir -p "$SERVER_LOG_DIR"
 trap 'stop_server; sleep 1; hdiutil detach "$dev" -force >/dev/null 2>&1' EXIT
 echo "A5: ${MB}MB APFS RAM disk at $MNT ($dev)"
 csv_row $BENCH ramdisk size_mb $MB MB "APFS on hdiutil ram://, no root needed"
@@ -77,7 +78,8 @@ PYEOF
   cat "$OUT/a5_run$run.json"
   df -h "$MNT" | tail -1
   stop_server
-  tail -3 "$MNT/data.server.log" 2>/dev/null
+  tail -3 "$SERVER_LOG" 2>/dev/null | cut -c1-200
+  grep -c 'SIGTERM received' "$SERVER_LOG" | xargs echo "  shutdown log lines seen (SIGTERM received):"
   # Restart on the full disk: does it come up, and how many rows read back?
   if start_server 7750 "$MNT/data" --row-group-timeout-ms 1000; then
     after=$(curl -s -XPOST -H 'content-type: application/json' -d '{"q":"COUNT LOG {}"}' http://127.0.0.1:7750/query | $PY -c 'import json,sys; d=json.load(sys.stdin); print(d.get("count", "ERR"))')

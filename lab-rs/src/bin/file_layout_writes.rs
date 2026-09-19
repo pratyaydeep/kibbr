@@ -6,8 +6,9 @@
 //!
 //! Simplifies: the blob is random bytes, nothing is encoded or indexed, and a producer
 //! does nothing between row groups. Decides whether one shared file per day is ever the
-//! write limit. Note that on Darwin `sync_all` is `fsync(2)`, which stops at the drive
-//! cache; the Python lab measured `F_FULLFSYNC` at ~80x slower.
+//! write limit. Note that Rust's `sync_all` on Darwin is `fcntl(F_FULLFSYNC)` - real
+//! durability, ~3 ms per call on this SSD - not the 20 us `fsync(2)` that stops at the
+//! drive cache (the Python lab measured that pair at 30,664/s versus 369/s).
 
 use parking_lot::Mutex;
 use rand::prelude::*;

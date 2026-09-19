@@ -84,24 +84,30 @@ start_server() {
   # The first 1M-row run died with EMFILE at 256 descriptors: a flush tick opens one
   # segment per leaf per day. Raised for every server this lab starts.
   ulimit -n 65536 2>/dev/null
-  "$BIN" serve --port "$port" --data-dir "$dir" "$@" > "$dir.server.log" 2>&1 &
+  # SERVER_LOG_DIR moves the log off the data volume (A5 fills that volume, and a server
+  # whose stderr is on a full disk cannot even report the shutdown).
+  SERVER_LOG="${SERVER_LOG_DIR:+$SERVER_LOG_DIR/$(basename "$dir").server.log}"; SERVER_LOG="${SERVER_LOG:-$dir.server.log}"
+  "$BIN" serve --port "$port" --data-dir "$dir" "$@" > "$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   SERVER_PORT=$port
   for _ in $(seq 1 600); do
     curl -sf "http://127.0.0.1:$port/health" >/dev/null 2>&1 && return 0
-    kill -0 "$SERVER_PID" 2>/dev/null || { echo "server died: $(tail -3 "$dir.server.log")"; return 1; }
+    kill -0 "$SERVER_PID" 2>/dev/null || { echo "server died: $(tail -3 "$SERVER_LOG")"; return 1; }
     sleep 0.05
   done
   echo "server did not answer /health"; return 1
 }
 
-# Seconds from spawn until /health answers, printed. Same as start_server but timed.
+# Same as start_server but timed: seconds from spawn until /health answers, left in
+# COLD_START. Not printed, because a command substitution would run it in a subshell
+# and lose SERVER_PID - which is how one A2 run left a server holding the port.
+COLD_START=""
 start_server_timed() {
   local t0 t1
   t0=$($PY -c 'import time; print(time.time())')
   start_server "$@" || return 1
   t1=$($PY -c 'import time; print(time.time())')
-  $PY -c "print(f'{$t1 - $t0:.3f}')"
+  COLD_START=$($PY -c "print(f'{$t1 - $t0:.3f}')")
 }
 
 # kill_server skips the shutdown flush (minutes for a big buffer) when the data dir is
@@ -122,12 +128,13 @@ stop_server() {
 
 # Waits until /stats reports buffered_rows == 0 (everything reached a segment file).
 wait_flushed() {
-  local port="$1" secs="${2:-1200}"
-  for _ in $(seq 1 $((secs * 10))); do
+  local port="$1" secs="${2:-1200}" start=$SECONDS
+  while (( SECONDS - start < secs )); do
     local b
-    b=$(curl -s "http://127.0.0.1:$port/stats" | $PY -c 'import json,sys; print(json.load(sys.stdin)["storage"]["buffered_rows"])' 2>/dev/null || echo 1)
+    # /stats waits on the store lock, which a flush tick holds; -m bounds that wait.
+    b=$(curl -s -m 10 "http://127.0.0.1:$port/stats" | $PY -c 'import json,sys; print(json.load(sys.stdin)["storage"]["buffered_rows"])' 2>/dev/null || echo 1)
     [[ "$b" == "0" ]] && return 0
-    sleep 0.1
+    sleep 0.2
   done
   echo "  (still buffered after ${secs}s)"
 }

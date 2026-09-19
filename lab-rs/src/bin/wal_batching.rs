@@ -7,7 +7,9 @@
 //!
 //! Simplifies: a WAL record is the raw line with no length prefix or checksum, and a
 //! sender does nothing but send. Decides the group-commit wait and the acknowledgement
-//! mode, and whether batch compression is worth its CPU. `sync_all` is Darwin `fsync`.
+//! mode, and whether batch compression is worth its CPU. Rust's `sync_all` on Darwin is
+//! `fcntl(F_FULLFSYNC)`, ~3-4 ms per call here: that floor is the whole shape of this
+//! table, and it is the honest one (plain `fsync(2)` on a Mac stops at the drive cache).
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::fs::OpenOptions;
