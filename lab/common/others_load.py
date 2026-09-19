@@ -114,24 +114,58 @@ def es_create(index: str, logsdb: bool) -> None:
     _req(f"{ES}/{index}", data=json.dumps(settings).encode(), method="PUT")
 
 
-def es_load(index: str, lines: list) -> float:
+def es_setting(index: str, key: str) -> str:
+    """One resolved index setting, defaults included."""
+    try:
+        d = json.loads(
+            _req(f"{ES}/{index}/_settings?include_defaults=true&flat_settings=true")
+        )[index]
+        return str({**d.get("defaults", {}), **d.get("settings", {})}.get(key, "?"))
+    except Exception:
+        return "?"
+
+
+def es_load(index: str, lines: list) -> tuple:
+    """Load, then say how many documents actually landed.
+
+    Elasticsearch pins a field's type on the first document that carries it, and rejects
+    later documents whose value will not coerce - a `document_parsing_exception` per
+    rejected line, reported inside a 200 OK bulk response. Ignoring that response is how
+    an index holding three quarters of the data reports a wonderful size. So the errors
+    are counted, the reasons tallied, and `_count` is asked at the end.
+
+    Returns `(seconds, indexed, rejected, reasons)`.
+    """
     t0 = time.perf_counter()
     action = json.dumps({"index": {}}).encode()
+    rejected = 0
+    reasons: dict = {}
     for s in range(0, len(lines), BULK_DOCS):
         body = bytearray()
         for obj in lines[s : s + BULK_DOCS]:
             body += action + b"\n" + json.dumps(obj).encode() + b"\n"
-        _req(
-            f"{ES}/{index}/_bulk",
-            data=bytes(body),
-            method="POST",
-            ctype="application/x-ndjson",
+        resp = json.loads(
+            _req(
+                f"{ES}/{index}/_bulk",
+                data=bytes(body),
+                method="POST",
+                ctype="application/x-ndjson",
+            )
         )
+        if resp.get("errors"):
+            for item in resp.get("items", ()):
+                err = next(iter(item.values())).get("error")
+                if err:
+                    rejected += 1
+                    kind = err.get("type", "unknown")
+                    reasons[kind] = reasons.get(kind, 0) + 1
     _req(f"{ES}/{index}/_refresh", method="POST")
     _req(f"{ES}/{index}/_forcemerge?max_num_segments=1", method="POST", timeout=3600)
     _req(f"{ES}/{index}/_refresh", method="POST")
     _req(f"{ES}/{index}/_flush", method="POST")
-    return time.perf_counter() - t0
+    took = time.perf_counter() - t0
+    counted = json.loads(_req(f"{ES}/{index}/_count"))["count"]
+    return took, counted, rejected, reasons
 
 
 def es_size(index: str) -> int:
@@ -166,6 +200,10 @@ def ch_sql(sql: str, body: bytes | None = None, timeout=3600) -> bytes:
         f"&query={urllib.parse.quote(sql)}"
     )
     return _req(url, data=body if body is not None else b"", method="POST", timeout=timeout)
+
+
+def ch_count() -> int:
+    return int(ch_sql("SELECT count() FROM logs").strip() or 0)
 
 
 def ch_load(lines: list) -> float:

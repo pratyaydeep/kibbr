@@ -151,11 +151,35 @@ elif compose_up("elasticsearch") and O.wait_for(f"{O.ES}/_cluster/health"):
         label = f"Elasticsearch {'logsdb' if logsdb else 'standard'}"
         try:
             O.es_create(index, logsdb)
-            took = O.es_load(index, objs)
+            # Read back the setting that decides what happens to a value whose type
+            # conflicts with the mapping. logsdb defaults it to true and standard mode to
+            # false, which is why the same lines that standard rejects outright are
+            # accepted by logsdb - with the offending field stored but not indexed, so it
+            # is silently unsearchable rather than loudly absent.
+            malformed = O.es_setting(index, "index.mapping.ignore_malformed")
+            res.add(label, "ignore_malformed", malformed, "setting",
+                    "resolved from the running index, not assumed. `true` keeps a "
+                    "document whose field will not coerce and drops that field from the "
+                    "index; `false` rejects the whole document.")
+            took, counted, rejected, reasons = O.es_load(index, objs)
             size_b = O.es_size(index)
+            detail = ", ".join(f"{k} {v:,}" for k, v in sorted(reasons.items()))
+            print(f"  {label}: {counted:,} of {len(objs):,} documents indexed"
+                  + (f", {rejected:,} REJECTED ({detail})" if rejected else ""))
+            res.add(label, "documents_indexed", counted, "docs",
+                    f"{len(objs):,} were sent")
+            res.add(label, "documents_rejected", rejected, "docs", detail)
+            if counted < len(objs):
+                print(f"  {label}: size below is for a PARTIAL index and is not "
+                      "comparable to the others")
+                res.add(label, "index_is_partial", 1, "flag",
+                        f"only {counted:,} of {len(objs):,} documents landed, so "
+                        "bytes_on_disk understates what this dataset costs")
             searches = O.es_searches(index, event, ident_field, ident)
             record(label, size_b, took, searches,
-                   "after _forcemerge to one segment and _flush")
+                   "after _forcemerge to one segment and _flush"
+                   + (f"; PARTIAL: {counted:,}/{len(objs):,} docs"
+                      if counted < len(objs) else ""))
         except Exception as e:
             print(f"  {label}: FAILED - {e}")
             res.add(label, "status", "failed", "text", str(e)[:200])
@@ -171,6 +195,9 @@ if "clickhouse" not in wanted:
 elif compose_up("clickhouse") and O.wait_for(f"{O.CH}/ping"):
     try:
         took = O.ch_load(objs)
+        counted = O.ch_count()
+        print(f"  ClickHouse: {counted:,} of {len(objs):,} rows inserted")
+        res.add("ClickHouse", "rows_inserted", counted, "rows", f"{len(objs):,} were sent")
         size_b = O.ch_size()
         searches = O.ch_searches(event, ident_field, ident)
         record("ClickHouse", size_b, took, searches,

@@ -38,6 +38,9 @@ python       3.12.2
 - **Against other systems on `flat30`**: Elasticsearch standard 1.249x of raw, Elasticsearch logsdb 0.982x of raw, ClickHouse 0.377x of raw, clp-s 0.182x of raw; TrieDB's best measured layout is BEST_PER_CHUNK sorted at 0.144x.
 - **TrieDB's best layout is smaller than clp-s**: 0.144x of raw against 0.182x. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression.
 - **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
+- **Against other systems on `messy`**: Elasticsearch standard 1.078x of raw, Elasticsearch logsdb 0.924x of raw, ClickHouse 0.327x of raw, clp-s 0.178x of raw; TrieDB's best measured layout is BEST_PER_CHUNK sorted at 0.153x.
+- **TrieDB's best layout is smaller than clp-s**: 0.153x of raw against 0.178x. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression.
+- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
 - **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; TrieDB's best measured layout is WIDE rg=122,880 at 0.086x.
 - **clp-s stores these logs smaller than TrieDB does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
 - **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
@@ -579,7 +582,7 @@ Run 2026-09-18T23:35:21+00:00, git `8895439`, 292 rows.
 
 _Splitting by template: does it help or hurt compression_
 
-Run 2026-09-18T22:03:05+00:00, git `b405451`, 363 rows.
+Run 2026-09-18T23:56:26+00:00, git `b405451`, 492 rows.
 
 ### `02_split_vs_wide` / dataset `flat30`
 
@@ -714,6 +717,140 @@ Run 2026-09-18T22:03:05+00:00, git `b405451`, 363 rows.
 | verdict                    | per_template_vs_gzip9_bytes |      1.139       | ratio  |
 | verdict                    | smallest_by_bytes           |      8.28201e+06 | bytes  |
 | verdict                    | smallest_by_blocks          |      8.43366e+06 | bytes  |
+
+### `02_split_vs_wide` / dataset `messy`
+
+| variant                          | metric                      |            value | unit   |
+|----------------------------------|-----------------------------|------------------|--------|
+| raw NDJSON                       | bytes                       |      6.31598e+07 | bytes  |
+| raw NDJSON                       | disk_blocks                 |      6.31603e+07 | bytes  |
+| raw NDJSON                       | files                       |      1           | count  |
+| raw NDJSON                       | ratio_to_raw_bytes          |      1           | ratio  |
+| raw NDJSON                       | ratio_to_raw_blocks         |      1           | ratio  |
+| raw NDJSON                       | ratio_to_gzip9              |      4.906       | ratio  |
+| gzip -9                          | bytes                       |      1.28749e+07 | bytes  |
+| gzip -9                          | disk_blocks                 |      1.38936e+07 | bytes  |
+| gzip -9                          | files                       |      1           | count  |
+| gzip -9                          | ratio_to_raw_bytes          |      0.2039      | ratio  |
+| gzip -9                          | ratio_to_raw_blocks         |      0.22        | ratio  |
+| gzip -9                          | ratio_to_gzip9              |      1           | ratio  |
+| zstd -19                         | bytes                       |      1.02297e+07 | bytes  |
+| zstd -19                         | disk_blocks                 |      1.04899e+07 | bytes  |
+| zstd -19                         | files                       |      1           | count  |
+| zstd -19                         | ratio_to_raw_bytes          |      0.162       | ratio  |
+| zstd -19                         | ratio_to_raw_blocks         |      0.1661      | ratio  |
+| zstd -19                         | ratio_to_gzip9              |      0.7945      | ratio  |
+| WIDE rg=1,000                    | bytes                       |      1.23073e+07 | bytes  |
+| WIDE rg=1,000                    | disk_blocks                 |      1.23085e+07 | bytes  |
+| WIDE rg=1,000                    | files                       |      1           | count  |
+| WIDE rg=1,000                    | ratio_to_raw_bytes          |      0.1949      | ratio  |
+| WIDE rg=1,000                    | ratio_to_raw_blocks         |      0.1949      | ratio  |
+| WIDE rg=1,000                    | ratio_to_gzip9              |      0.9559      | ratio  |
+| WIDE rg=8,192                    | bytes                       |      1.20438e+07 | bytes  |
+| WIDE rg=8,192                    | disk_blocks                 |      1.20463e+07 | bytes  |
+| WIDE rg=8,192                    | files                       |      1           | count  |
+| WIDE rg=8,192                    | ratio_to_raw_bytes          |      0.1907      | ratio  |
+| WIDE rg=8,192                    | ratio_to_raw_blocks         |      0.1907      | ratio  |
+| WIDE rg=8,192                    | ratio_to_gzip9              |      0.9355      | ratio  |
+| WIDE rg=122,880                  | bytes                       |      1.1097e+07  | bytes  |
+| WIDE rg=122,880                  | disk_blocks                 |      1.11002e+07 | bytes  |
+| WIDE rg=122,880                  | files                       |      1           | count  |
+| WIDE rg=122,880                  | ratio_to_raw_bytes          |      0.1757      | ratio  |
+| WIDE rg=122,880                  | ratio_to_raw_blocks         |      0.1757      | ratio  |
+| WIDE rg=122,880                  | ratio_to_gzip9              |      0.8619      | ratio  |
+| PER_TEMPLATE rg=1,000            | bytes                       |      1.23036e+07 | bytes  |
+| PER_TEMPLATE rg=1,000            | disk_blocks                 |      1.25583e+07 | bytes  |
+| PER_TEMPLATE rg=1,000            | files                       |    130           | count  |
+| PER_TEMPLATE rg=1,000            | ratio_to_raw_bytes          |      0.1948      | ratio  |
+| PER_TEMPLATE rg=1,000            | ratio_to_raw_blocks         |      0.1988      | ratio  |
+| PER_TEMPLATE rg=1,000            | ratio_to_gzip9              |      0.9556      | ratio  |
+| PER_TEMPLATE rg=8,192            | bytes                       |      1.22314e+07 | bytes  |
+| PER_TEMPLATE rg=8,192            | disk_blocks                 |      1.25051e+07 | bytes  |
+| PER_TEMPLATE rg=8,192            | files                       |    130           | count  |
+| PER_TEMPLATE rg=8,192            | ratio_to_raw_bytes          |      0.1937      | ratio  |
+| PER_TEMPLATE rg=8,192            | ratio_to_raw_blocks         |      0.198       | ratio  |
+| PER_TEMPLATE rg=8,192            | ratio_to_gzip9              |      0.95        | ratio  |
+| PER_TEMPLATE rg=122,880          | bytes                       |      1.22314e+07 | bytes  |
+| PER_TEMPLATE rg=122,880          | disk_blocks                 |      1.25051e+07 | bytes  |
+| PER_TEMPLATE rg=122,880          | files                       |    130           | count  |
+| PER_TEMPLATE rg=122,880          | ratio_to_raw_bytes          |      0.1937      | ratio  |
+| PER_TEMPLATE rg=122,880          | ratio_to_raw_blocks         |      0.198       | ratio  |
+| PER_TEMPLATE rg=122,880          | ratio_to_gzip9              |      0.95        | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | bytes                       |      1.22314e+07 | bytes  |
+| PER_TEMPLATE_DAY rg=8,192        | disk_blocks                 |      1.25051e+07 | bytes  |
+| PER_TEMPLATE_DAY rg=8,192        | files                       |    130           | count  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_raw_bytes          |      0.1937      | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_raw_blocks         |      0.198       | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_gzip9              |      0.95        | ratio  |
+| SHARED_DAY rg=1,000              | bytes                       |      1.23067e+07 | bytes  |
+| SHARED_DAY rg=1,000              | disk_blocks                 |      1.28655e+07 | bytes  |
+| SHARED_DAY rg=1,000              | files                       |      1           | count  |
+| SHARED_DAY rg=1,000              | ratio_to_raw_bytes          |      0.1948      | ratio  |
+| SHARED_DAY rg=1,000              | ratio_to_raw_blocks         |      0.2037      | ratio  |
+| SHARED_DAY rg=1,000              | ratio_to_gzip9              |      0.9559      | ratio  |
+| SHARED_DAY rg=8,192              | bytes                       |      1.22346e+07 | bytes  |
+| SHARED_DAY rg=8,192              | disk_blocks                 |      1.24273e+07 | bytes  |
+| SHARED_DAY rg=8,192              | files                       |      1           | count  |
+| SHARED_DAY rg=8,192              | ratio_to_raw_bytes          |      0.1937      | ratio  |
+| SHARED_DAY rg=8,192              | ratio_to_raw_blocks         |      0.1968      | ratio  |
+| SHARED_DAY rg=8,192              | ratio_to_gzip9              |      0.9503      | ratio  |
+| SHARED_DAY rg=122,880            | bytes                       |      1.22346e+07 | bytes  |
+| SHARED_DAY rg=122,880            | disk_blocks                 |      1.27222e+07 | bytes  |
+| SHARED_DAY rg=122,880            | files                       |      1           | count  |
+| SHARED_DAY rg=122,880            | ratio_to_raw_bytes          |      0.1937      | ratio  |
+| SHARED_DAY rg=122,880            | ratio_to_raw_blocks         |      0.2014      | ratio  |
+| SHARED_DAY rg=122,880            | ratio_to_gzip9              |      0.9503      | ratio  |
+| PER_TEMPLATE[J90] rg=8,192       | bytes                       |      1.20926e+07 | bytes  |
+| PER_TEMPLATE[J90] rg=8,192       | disk_blocks                 |      1.22388e+07 | bytes  |
+| PER_TEMPLATE[J90] rg=8,192       | files                       |     66           | count  |
+| PER_TEMPLATE[J90] rg=8,192       | ratio_to_raw_bytes          |      0.1915      | ratio  |
+| PER_TEMPLATE[J90] rg=8,192       | ratio_to_raw_blocks         |      0.1938      | ratio  |
+| PER_TEMPLATE[J90] rg=8,192       | ratio_to_gzip9              |      0.9392      | ratio  |
+| SHARED_DAY[J90] rg=8,192         | bytes                       |      1.20942e+07 | bytes  |
+| SHARED_DAY[J90] rg=8,192         | disk_blocks                 |      1.24846e+07 | bytes  |
+| SHARED_DAY[J90] rg=8,192         | files                       |      1           | count  |
+| SHARED_DAY[J90] rg=8,192         | ratio_to_raw_bytes          |      0.1915      | ratio  |
+| SHARED_DAY[J90] rg=8,192         | ratio_to_raw_blocks         |      0.1977      | ratio  |
+| SHARED_DAY[J90] rg=8,192         | ratio_to_gzip9              |      0.9394      | ratio  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | bytes                       |      1.20004e+07 | bytes  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | disk_blocks                 |      1.20668e+07 | bytes  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | files                       |     33           | count  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_raw_bytes          |      0.19        | ratio  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_raw_blocks         |      0.191       | ratio  |
+| PER_TEMPLATE[J80_GROWN] rg=8,192 | ratio_to_gzip9              |      0.9321      | ratio  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | bytes                       |      1.20013e+07 | bytes  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | disk_blocks                 |      1.21774e+07 | bytes  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | files                       |      1           | count  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_raw_bytes          |      0.19        | ratio  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_raw_blocks         |      0.1928      | ratio  |
+| SHARED_DAY[J80_GROWN] rg=8,192   | ratio_to_gzip9              |      0.9321      | ratio  |
+| window rg=1000                   | rows                        |   4873           | count  |
+| window rg=1000                   | row_groups                  |      5           | count  |
+| window rg=1000                   | groups_touched              |      1           | count  |
+| window rg=1000                   | file_bytes                  | 264461           | bytes  |
+| window rg=1000                   | bytes_read                  |  54226           | bytes  |
+| window rg=1000                   | read_share_pct              |     20.5         | count  |
+| window rg=1000                   | matching_rows               |     19           | count  |
+| window rg=1000                   | rows_scanned                |   1000           | count  |
+| window rg=8192                   | rows                        |   4873           | count  |
+| window rg=8192                   | row_groups                  |      1           | count  |
+| window rg=8192                   | groups_touched              |      1           | count  |
+| window rg=8192                   | file_bytes                  | 271558           | bytes  |
+| window rg=8192                   | bytes_read                  | 271558           | bytes  |
+| window rg=8192                   | read_share_pct              |    100           | count  |
+| window rg=8192                   | matching_rows               |     19           | count  |
+| window rg=8192                   | rows_scanned                |   4873           | count  |
+| window rg=122880                 | rows                        |   4873           | count  |
+| window rg=122880                 | row_groups                  |      1           | count  |
+| window rg=122880                 | groups_touched              |      1           | count  |
+| window rg=122880                 | file_bytes                  | 271558           | bytes  |
+| window rg=122880                 | bytes_read                  | 271558           | bytes  |
+| window rg=122880                 | read_share_pct              |    100           | count  |
+| window rg=122880                 | matching_rows               |     19           | count  |
+| window rg=122880                 | rows_scanned                |   4873           | count  |
+| verdict                          | per_template_vs_gzip9_bytes |      0.95        | ratio  |
+| verdict                          | smallest_by_bytes           |      1.02297e+07 | bytes  |
+| verdict                          | smallest_by_blocks          |      1.04899e+07 | bytes  |
 
 ### `02_split_vs_wide` / dataset `oneday`
 
@@ -970,6 +1107,10 @@ Run 2026-09-18T22:03:05+00:00, git `b405451`, 363 rows.
 - 5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
 - below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2529 over 870 files
 - zstd -19
+- 66 merged templates, from script 04
+- 33 merged templates, from script 04
+- 5-minute window over the busiest dated template (3977316063236355336); row groups are skipped on their ts statistics
+- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 0.9001 over 130 files
 - below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2021 over 870 files
 - 277 merged templates, from script 04
 - 982 merged templates, from script 04
@@ -2001,7 +2142,7 @@ Run 2026-09-18T23:41:44+00:00, git `8895439`, 495 rows.
 
 _What each encoding saves_
 
-Run 2026-09-18T22:09:14+00:00, git `b405451`, 614 rows.
+Run 2026-09-18T23:57:37+00:00, git `b405451`, 889 rows.
 
 ### `05_encodings` / dataset `flat30`
 
@@ -2314,6 +2455,286 @@ Run 2026-09-18T22:09:14+00:00, git `b405451`, 614 rows.
 | BEST_PER_CHUNK sorted  | ratio_to_gzip9                | 0.6184             | ratio   |
 | plain                  | bytes                         | 24,901,825         | bytes   |
 | verdict                | sort_saving_pct               | 2.525              | percent |
+
+### `05_encodings` / dataset `messy`
+
+| variant                | metric                        | value              | unit    |
+|------------------------|-------------------------------|--------------------|---------|
+| arrival/Bool           | bits                          | 59                 | bytes   |
+| arrival/Bool           | bits+zstd3                    | 86                 | bytes   |
+| arrival/Bool           | const                         | 458                | bytes   |
+| arrival/Bool           | const+zstd3                   | 200                | bytes   |
+| arrival/Bool           | delta_varint                  | 458                | bytes   |
+| arrival/Bool           | delta_varint+zstd3            | 200                | bytes   |
+| arrival/Bool           | dict                          | 479                | bytes   |
+| arrival/Bool           | dict+zstd3                    | 208                | bytes   |
+| arrival/Bool           | ip_bin                        | 458                | bytes   |
+| arrival/Bool           | ip_bin+zstd3                  | 200                | bytes   |
+| arrival/Bool           | plain                         | 458                | bytes   |
+| arrival/Bool           | plain+zstd3                   | 200                | bytes   |
+| arrival/Bool           | uuid16                        | 458                | bytes   |
+| arrival/Bool           | uuid16+zstd3                  | 200                | bytes   |
+| arrival/Bool           | varint                        | 458                | bytes   |
+| arrival/Bool           | varint+zstd3                  | 200                | bytes   |
+| arrival/Datetime       | bits                          | 1,607,936          | bytes   |
+| arrival/Datetime       | bits+zstd3                    | 1,236,573          | bytes   |
+| arrival/Datetime       | const                         | 1,607,936          | bytes   |
+| arrival/Datetime       | const+zstd3                   | 1,236,573          | bytes   |
+| arrival/Datetime       | delta_varint                  | 1,399,083          | bytes   |
+| arrival/Datetime       | delta_varint+zstd3            | 1,228,936          | bytes   |
+| arrival/Datetime       | dict                          | 1,962,502          | bytes   |
+| arrival/Datetime       | dict+zstd3                    | 1,614,161          | bytes   |
+| arrival/Datetime       | ip_bin                        | 1,607,936          | bytes   |
+| arrival/Datetime       | ip_bin+zstd3                  | 1,236,573          | bytes   |
+| arrival/Datetime       | plain                         | 1,607,936          | bytes   |
+| arrival/Datetime       | plain+zstd3                   | 1,236,573          | bytes   |
+| arrival/Datetime       | uuid16                        | 1,607,936          | bytes   |
+| arrival/Datetime       | uuid16+zstd3                  | 1,236,573          | bytes   |
+| arrival/Datetime       | varint                        | 1,809,526          | bytes   |
+| arrival/Datetime       | varint+zstd3                  | 1,189,796          | bytes   |
+| arrival/Float64        | bits                          | 1,609,293          | bytes   |
+| arrival/Float64        | bits+zstd3                    | 604,155            | bytes   |
+| arrival/Float64        | const                         | 1,609,293          | bytes   |
+| arrival/Float64        | const+zstd3                   | 604,155            | bytes   |
+| arrival/Float64        | delta_varint                  | 1,609,293          | bytes   |
+| arrival/Float64        | delta_varint+zstd3            | 604,155            | bytes   |
+| arrival/Float64        | dict                          | 1,970,597          | bytes   |
+| arrival/Float64        | dict+zstd3                    | 948,380            | bytes   |
+| arrival/Float64        | ip_bin                        | 1,609,293          | bytes   |
+| arrival/Float64        | ip_bin+zstd3                  | 604,155            | bytes   |
+| arrival/Float64        | plain                         | 1,609,293          | bytes   |
+| arrival/Float64        | plain+zstd3                   | 604,155            | bytes   |
+| arrival/Float64        | uuid16                        | 1,609,293          | bytes   |
+| arrival/Float64        | uuid16+zstd3                  | 604,155            | bytes   |
+| arrival/Float64        | varint                        | 1,609,293          | bytes   |
+| arrival/Float64        | varint+zstd3                  | 604,155            | bytes   |
+| arrival/Int64          | bits                          | 10,528             | bytes   |
+| arrival/Int64          | bits+zstd3                    | 2,391              | bytes   |
+| arrival/Int64          | const                         | 10,528             | bytes   |
+| arrival/Int64          | const+zstd3                   | 2,391              | bytes   |
+| arrival/Int64          | delta_varint                  | 2,696              | bytes   |
+| arrival/Int64          | delta_varint+zstd3            | 2,149              | bytes   |
+| arrival/Int64          | dict                          | 4,320              | bytes   |
+| arrival/Int64          | dict+zstd3                    | 1,924              | bytes   |
+| arrival/Int64          | ip_bin                        | 10,528             | bytes   |
+| arrival/Int64          | ip_bin+zstd3                  | 2,391              | bytes   |
+| arrival/Int64          | plain                         | 10,528             | bytes   |
+| arrival/Int64          | plain+zstd3                   | 2,391              | bytes   |
+| arrival/Int64          | uuid16                        | 10,528             | bytes   |
+| arrival/Int64          | uuid16+zstd3                  | 2,391              | bytes   |
+| arrival/Int64          | varint                        | 3,027              | bytes   |
+| arrival/Int64          | varint+zstd3                  | 2,047              | bytes   |
+| arrival/Ip             | bits                          | 47,548             | bytes   |
+| arrival/Ip             | bits+zstd3                    | 20,508             | bytes   |
+| arrival/Ip             | const                         | 47,548             | bytes   |
+| arrival/Ip             | const+zstd3                   | 20,508             | bytes   |
+| arrival/Ip             | delta_varint                  | 47,548             | bytes   |
+| arrival/Ip             | delta_varint+zstd3            | 20,508             | bytes   |
+| arrival/Ip             | dict                          | 47,548             | bytes   |
+| arrival/Ip             | dict+zstd3                    | 20,508             | bytes   |
+| arrival/Ip             | ip_bin                        | 13,785             | bytes   |
+| arrival/Ip             | ip_bin+zstd3                  | 12,980             | bytes   |
+| arrival/Ip             | plain                         | 47,548             | bytes   |
+| arrival/Ip             | plain+zstd3                   | 20,508             | bytes   |
+| arrival/Ip             | uuid16                        | 47,548             | bytes   |
+| arrival/Ip             | uuid16+zstd3                  | 20,508             | bytes   |
+| arrival/Ip             | varint                        | 47,548             | bytes   |
+| arrival/Ip             | varint+zstd3                  | 20,508             | bytes   |
+| arrival/String         | bits                          | 33,352,188         | bytes   |
+| arrival/String         | bits+zstd3                    | 8,900,644          | bytes   |
+| arrival/String         | const                         | 28,514,901         | bytes   |
+| arrival/String         | const+zstd3                   | 8,899,389          | bytes   |
+| arrival/String         | delta_varint                  | 33,352,188         | bytes   |
+| arrival/String         | delta_varint+zstd3            | 8,900,644          | bytes   |
+| arrival/String         | dict                          | 19,673,975         | bytes   |
+| arrival/String         | dict+zstd3                    | 9,667,840          | bytes   |
+| arrival/String         | ip_bin                        | 33,352,188         | bytes   |
+| arrival/String         | ip_bin+zstd3                  | 8,900,644          | bytes   |
+| arrival/String         | plain                         | 33,352,188         | bytes   |
+| arrival/String         | plain+zstd3                   | 8,900,644          | bytes   |
+| arrival/String         | uuid16                        | 33,352,188         | bytes   |
+| arrival/String         | uuid16+zstd3                  | 8,900,644          | bytes   |
+| arrival/String         | varint                        | 33,352,188         | bytes   |
+| arrival/String         | varint+zstd3                  | 8,900,644          | bytes   |
+| arrival/Uuid           | bits                          | 99,160             | bytes   |
+| arrival/Uuid           | bits+zstd3                    | 51,040             | bytes   |
+| arrival/Uuid           | const                         | 99,160             | bytes   |
+| arrival/Uuid           | const+zstd3                   | 51,040             | bytes   |
+| arrival/Uuid           | delta_varint                  | 99,160             | bytes   |
+| arrival/Uuid           | delta_varint+zstd3            | 51,040             | bytes   |
+| arrival/Uuid           | dict                          | 99,160             | bytes   |
+| arrival/Uuid           | dict+zstd3                    | 51,040             | bytes   |
+| arrival/Uuid           | ip_bin                        | 99,160             | bytes   |
+| arrival/Uuid           | ip_bin+zstd3                  | 51,040             | bytes   |
+| arrival/Uuid           | plain                         | 99,160             | bytes   |
+| arrival/Uuid           | plain+zstd3                   | 51,040             | bytes   |
+| arrival/Uuid           | uuid16                        | 39,664             | bytes   |
+| arrival/Uuid           | uuid16+zstd3                  | 39,794             | bytes   |
+| arrival/Uuid           | varint                        | 99,160             | bytes   |
+| arrival/Uuid           | varint+zstd3                  | 51,040             | bytes   |
+| sorted/Bool            | bits                          | 59                 | bytes   |
+| sorted/Bool            | bits+zstd3                    | 63                 | bytes   |
+| sorted/Bool            | const                         | 458                | bytes   |
+| sorted/Bool            | const+zstd3                   | 62                 | bytes   |
+| sorted/Bool            | delta_varint                  | 458                | bytes   |
+| sorted/Bool            | delta_varint+zstd3            | 62                 | bytes   |
+| sorted/Bool            | dict                          | 479                | bytes   |
+| sorted/Bool            | dict+zstd3                    | 80                 | bytes   |
+| sorted/Bool            | ip_bin                        | 458                | bytes   |
+| sorted/Bool            | ip_bin+zstd3                  | 62                 | bytes   |
+| sorted/Bool            | plain                         | 458                | bytes   |
+| sorted/Bool            | plain+zstd3                   | 62                 | bytes   |
+| sorted/Bool            | uuid16                        | 458                | bytes   |
+| sorted/Bool            | uuid16+zstd3                  | 62                 | bytes   |
+| sorted/Bool            | varint                        | 458                | bytes   |
+| sorted/Bool            | varint+zstd3                  | 62                 | bytes   |
+| sorted/Datetime        | bits                          | 1,607,936          | bytes   |
+| sorted/Datetime        | bits+zstd3                    | 1,238,494          | bytes   |
+| sorted/Datetime        | const                         | 1,607,936          | bytes   |
+| sorted/Datetime        | const+zstd3                   | 1,238,494          | bytes   |
+| sorted/Datetime        | delta_varint                  | 1,393,188          | bytes   |
+| sorted/Datetime        | delta_varint+zstd3            | 1,219,257          | bytes   |
+| sorted/Datetime        | dict                          | 1,962,502          | bytes   |
+| sorted/Datetime        | dict+zstd3                    | 1,612,493          | bytes   |
+| sorted/Datetime        | ip_bin                        | 1,607,936          | bytes   |
+| sorted/Datetime        | ip_bin+zstd3                  | 1,238,494          | bytes   |
+| sorted/Datetime        | plain                         | 1,607,936          | bytes   |
+| sorted/Datetime        | plain+zstd3                   | 1,238,494          | bytes   |
+| sorted/Datetime        | uuid16                        | 1,607,936          | bytes   |
+| sorted/Datetime        | uuid16+zstd3                  | 1,238,494          | bytes   |
+| sorted/Datetime        | varint                        | 1,809,526          | bytes   |
+| sorted/Datetime        | varint+zstd3                  | 1,189,786          | bytes   |
+| sorted/Float64         | bits                          | 1,609,293          | bytes   |
+| sorted/Float64         | bits+zstd3                    | 604,236            | bytes   |
+| sorted/Float64         | const                         | 1,609,293          | bytes   |
+| sorted/Float64         | const+zstd3                   | 604,236            | bytes   |
+| sorted/Float64         | delta_varint                  | 1,609,293          | bytes   |
+| sorted/Float64         | delta_varint+zstd3            | 604,236            | bytes   |
+| sorted/Float64         | dict                          | 1,970,597          | bytes   |
+| sorted/Float64         | dict+zstd3                    | 948,425            | bytes   |
+| sorted/Float64         | ip_bin                        | 1,609,293          | bytes   |
+| sorted/Float64         | ip_bin+zstd3                  | 604,236            | bytes   |
+| sorted/Float64         | plain                         | 1,609,293          | bytes   |
+| sorted/Float64         | plain+zstd3                   | 604,236            | bytes   |
+| sorted/Float64         | uuid16                        | 1,609,293          | bytes   |
+| sorted/Float64         | uuid16+zstd3                  | 604,236            | bytes   |
+| sorted/Float64         | varint                        | 1,609,293          | bytes   |
+| sorted/Float64         | varint+zstd3                  | 604,236            | bytes   |
+| sorted/Int64           | bits                          | 10,528             | bytes   |
+| sorted/Int64           | bits+zstd3                    | 2,334              | bytes   |
+| sorted/Int64           | const                         | 10,528             | bytes   |
+| sorted/Int64           | const+zstd3                   | 2,334              | bytes   |
+| sorted/Int64           | delta_varint                  | 2,555              | bytes   |
+| sorted/Int64           | delta_varint+zstd3            | 2,023              | bytes   |
+| sorted/Int64           | dict                          | 4,320              | bytes   |
+| sorted/Int64           | dict+zstd3                    | 1,901              | bytes   |
+| sorted/Int64           | ip_bin                        | 10,528             | bytes   |
+| sorted/Int64           | ip_bin+zstd3                  | 2,334              | bytes   |
+| sorted/Int64           | plain                         | 10,528             | bytes   |
+| sorted/Int64           | plain+zstd3                   | 2,334              | bytes   |
+| sorted/Int64           | uuid16                        | 10,528             | bytes   |
+| sorted/Int64           | uuid16+zstd3                  | 2,334              | bytes   |
+| sorted/Int64           | varint                        | 3,027              | bytes   |
+| sorted/Int64           | varint+zstd3                  | 2,014              | bytes   |
+| sorted/Ip              | bits                          | 47,548             | bytes   |
+| sorted/Ip              | bits+zstd3                    | 20,469             | bytes   |
+| sorted/Ip              | const                         | 47,548             | bytes   |
+| sorted/Ip              | const+zstd3                   | 20,469             | bytes   |
+| sorted/Ip              | delta_varint                  | 47,548             | bytes   |
+| sorted/Ip              | delta_varint+zstd3            | 20,469             | bytes   |
+| sorted/Ip              | dict                          | 47,548             | bytes   |
+| sorted/Ip              | dict+zstd3                    | 20,469             | bytes   |
+| sorted/Ip              | ip_bin                        | 13,785             | bytes   |
+| sorted/Ip              | ip_bin+zstd3                  | 12,985             | bytes   |
+| sorted/Ip              | plain                         | 47,548             | bytes   |
+| sorted/Ip              | plain+zstd3                   | 20,469             | bytes   |
+| sorted/Ip              | uuid16                        | 47,548             | bytes   |
+| sorted/Ip              | uuid16+zstd3                  | 20,469             | bytes   |
+| sorted/Ip              | varint                        | 47,548             | bytes   |
+| sorted/Ip              | varint+zstd3                  | 20,469             | bytes   |
+| sorted/String          | bits                          | 33,352,188         | bytes   |
+| sorted/String          | bits+zstd3                    | 8,197,443          | bytes   |
+| sorted/String          | const                         | 28,514,901         | bytes   |
+| sorted/String          | const+zstd3                   | 8,196,188          | bytes   |
+| sorted/String          | delta_varint                  | 33,352,188         | bytes   |
+| sorted/String          | delta_varint+zstd3            | 8,197,443          | bytes   |
+| sorted/String          | dict                          | 19,673,975         | bytes   |
+| sorted/String          | dict+zstd3                    | 9,454,701          | bytes   |
+| sorted/String          | ip_bin                        | 33,352,188         | bytes   |
+| sorted/String          | ip_bin+zstd3                  | 8,197,443          | bytes   |
+| sorted/String          | plain                         | 33,352,188         | bytes   |
+| sorted/String          | plain+zstd3                   | 8,197,443          | bytes   |
+| sorted/String          | uuid16                        | 33,352,188         | bytes   |
+| sorted/String          | uuid16+zstd3                  | 8,197,443          | bytes   |
+| sorted/String          | varint                        | 33,352,188         | bytes   |
+| sorted/String          | varint+zstd3                  | 8,197,443          | bytes   |
+| sorted/Uuid            | bits                          | 99,160             | bytes   |
+| sorted/Uuid            | bits+zstd3                    | 50,997             | bytes   |
+| sorted/Uuid            | const                         | 99,160             | bytes   |
+| sorted/Uuid            | const+zstd3                   | 50,997             | bytes   |
+| sorted/Uuid            | delta_varint                  | 99,160             | bytes   |
+| sorted/Uuid            | delta_varint+zstd3            | 50,997             | bytes   |
+| sorted/Uuid            | dict                          | 99,160             | bytes   |
+| sorted/Uuid            | dict+zstd3                    | 50,997             | bytes   |
+| sorted/Uuid            | ip_bin                        | 99,160             | bytes   |
+| sorted/Uuid            | ip_bin+zstd3                  | 50,997             | bytes   |
+| sorted/Uuid            | plain                         | 99,160             | bytes   |
+| sorted/Uuid            | plain+zstd3                   | 50,997             | bytes   |
+| sorted/Uuid            | uuid16                        | 39,664             | bytes   |
+| sorted/Uuid            | uuid16+zstd3                  | 39,794             | bytes   |
+| sorted/Uuid            | varint                        | 99,160             | bytes   |
+| sorted/Uuid            | varint+zstd3                  | 50,997             | bytes   |
+| coverage/plain         | applies_to_pct_of_plain_bytes | 100                | percent |
+| coverage/const         | applies_to_pct_of_plain_bytes | 13.18              | percent |
+| coverage/dict          | applies_to_pct_of_plain_bytes | 94.7               | percent |
+| coverage/delta_varint  | applies_to_pct_of_plain_bytes | 4.41               | percent |
+| coverage/varint        | applies_to_pct_of_plain_bytes | 4.41               | percent |
+| coverage/bits          | applies_to_pct_of_plain_bytes | 0                  | percent |
+| coverage/uuid16        | applies_to_pct_of_plain_bytes | 0.27               | percent |
+| coverage/ip_bin        | applies_to_pct_of_plain_bytes | 0.13               | percent |
+| zstd level 1           | bytes                         | 11,775,929         | bytes   |
+| zstd level 1           | compress_MBps                 | 581.3              | MB/s    |
+| zstd level 3           | bytes                         | 11,221,503         | bytes   |
+| zstd level 3           | compress_MBps                 | 304.7              | MB/s    |
+| zstd level 9           | bytes                         | 10,609,898         | bytes   |
+| zstd level 9           | compress_MBps                 | 68.2               | MB/s    |
+| zstd level 19          | bytes                         | 9,616,508          | bytes   |
+| zstd level 19          | compress_MBps                 | 3.34               | MB/s    |
+| wordlist per_chunk     | bytes                         | 23,758,581         | bytes   |
+| wordlist per_file      | bytes                         | 23,758,581         | bytes   |
+| column:trace_id        | plain_bytes                   | 7,943,876          | bytes   |
+| column:trace_id        | best_encoding                 | uuid16+zstd3       | name    |
+| column:tags            | plain_bytes                   | 4,330,972          | bytes   |
+| column:tags            | best_encoding                 | dict+zstd3         | name    |
+| column:client.ip       | plain_bytes                   | 3,440,226          | bytes   |
+| column:client.ip       | best_encoding                 | ip_bin+zstd3       | name    |
+| column:event           | plain_bytes                   | 2,766,289          | bytes   |
+| column:event           | best_encoding                 | const              | name    |
+| column:region          | plain_bytes                   | 2,666,800          | bytes   |
+| column:region          | best_encoding                 | dict+zstd3         | name    |
+| column:duration_ms     | plain_bytes                   | 2,139,758          | bytes   |
+| column:duration_ms     | best_encoding                 | plain+zstd3        | name    |
+| column:service         | plain_bytes                   | 2,075,148          | bytes   |
+| column:service         | best_encoding                 | const              | name    |
+| column:user_id         | plain_bytes                   | 1,981,845          | bytes   |
+| column:user_id         | best_encoding                 | delta_varint+zstd3 | name    |
+| column:retry           | plain_bytes                   | 1,754,913          | bytes   |
+| column:retry           | best_encoding                 | dict+zstd3         | name    |
+| column:level           | plain_bytes                   | 1,666,413          | bytes   |
+| column:level           | best_encoding                 | dict+zstd3         | name    |
+| column:trace_id        | clp_split_bytes               | 4,194,918          | bytes   |
+| column:tags            | clp_split_bytes               | 210,958            | bytes   |
+| column:client.ip       | clp_split_bytes               | 1,364,225          | bytes   |
+| column:event           | clp_split_bytes               | 2,316              | bytes   |
+| column:region          | clp_split_bytes               | 67,464             | bytes   |
+| BEST_PER_CHUNK arrival | bytes                         | 9,828,235          | bytes   |
+| BEST_PER_CHUNK arrival | ratio_to_raw                  | 0.1561             | ratio   |
+| BEST_PER_CHUNK arrival | ratio_to_gzip9                | 0.7634             | ratio   |
+| BEST_PER_CHUNK sorted  | bytes                         | 9,612,739          | bytes   |
+| BEST_PER_CHUNK sorted  | ratio_to_raw                  | 0.1527             | ratio   |
+| BEST_PER_CHUNK sorted  | ratio_to_gzip9                | 0.7466             | ratio   |
+| plain                  | bytes                         | 36,727,111         | bytes   |
+| verdict                | sort_saving_pct               | 2.193              | percent |
 
 ### `05_encodings` / dataset `uneven`
 
@@ -2656,6 +3077,17 @@ Run 2026-09-18T22:09:14+00:00, git `b405451`, 614 rows.
 - the smallest applicable encoding for every chunk of every column
 - section 6.2 chunk sizes, no codec
 - BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
+- 4,195,048 bytes, 0.5281 of plain
+- 210,958 bytes, 0.0487 of plain
+- 1,364,235 bytes, 0.3966 of plain
+- 2,316 bytes, 0.0008 of plain
+- 67,464 bytes, 0.0253 of plain
+- type Float64
+- 780,079 bytes, 0.3646 of plain
+- 1,834 bytes, 0.0009 of plain
+- 736,447 bytes, 0.3716 of plain
+- 43,900 bytes, 0.0250 of plain
+- 73,521 bytes, 0.0441 of plain
 - 22,114 bytes, 0.0097 of plain
 - 56,831 bytes, 0.0337 of plain
 - 186,422 bytes, 0.1183 of plain
@@ -3143,7 +3575,7 @@ Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
 
 _The same logs in other systems_
 
-Run 2026-09-18T23:17:24+00:00, git `3b5b8b0`, 72 rows.
+Run 2026-09-18T23:59:58+00:00, git `3b5b8b0`, 116 rows.
 
 ### `07_vs_others` / dataset `flat30`
 
@@ -3185,6 +3617,55 @@ Run 2026-09-18T23:17:24+00:00, git `3b5b8b0`, 72 rows.
 | clp-s                  | search_level = ERROR_seconds | 0.1915                                                                                                            | s       |
 | clp-s                  | search_one id_seconds        | 0.1797                                                                                                            | s       |
 | clp-s                  | search_newest 500_seconds    | 0.4958                                                                                                            | s       |
+
+### `07_vs_others` / dataset `messy`
+
+| variant                | metric                       | value                                                                                                             | unit    |
+|------------------------|------------------------------|-------------------------------------------------------------------------------------------------------------------|---------|
+| elasticsearch          | version                      | docker.elastic.co/elasticsearch/elasticsearch:8.19.20                                                             | tag     |
+| clickhouse             | version                      | clickhouse/clickhouse-server:26.8.7.19                                                                            | tag     |
+| clp-s                  | version                      | y-scope/clp v0.13.0, clp-s built from source for the host architecture (no prebuilt binary or image is published) | tag     |
+| raw NDJSON             | bytes                        | 62,959,826                                                                                                        | bytes   |
+| all                    | at_timestamp_added           | 1                                                                                                                 | flag    |
+| Elasticsearch          | heap                         | 1g                                                                                                                | setting |
+| Elasticsearch standard | ignore_malformed             | false                                                                                                             | setting |
+| Elasticsearch standard | documents_indexed            | 188,968                                                                                                           | docs    |
+| Elasticsearch standard | documents_rejected           | 11,032                                                                                                            | docs    |
+| Elasticsearch standard | index_is_partial             | 1                                                                                                                 | flag    |
+| Elasticsearch standard | bytes_on_disk                | 67,873,791                                                                                                        | bytes   |
+| Elasticsearch standard | ratio_to_raw                 | 1.078                                                                                                             | ratio   |
+| Elasticsearch standard | load_seconds                 | 17.92                                                                                                             | s       |
+| Elasticsearch standard | search_event value_seconds   | 0.022                                                                                                             | s       |
+| Elasticsearch standard | search_level = ERROR_seconds | 0.0038                                                                                                            | s       |
+| Elasticsearch standard | search_one id_seconds        | 0.0113                                                                                                            | s       |
+| Elasticsearch standard | search_newest 500_seconds    | 0.0942                                                                                                            | s       |
+| Elasticsearch logsdb   | ignore_malformed             | true                                                                                                              | setting |
+| Elasticsearch logsdb   | documents_indexed            | 200,000                                                                                                           | docs    |
+| Elasticsearch logsdb   | documents_rejected           | 0                                                                                                                 | docs    |
+| Elasticsearch logsdb   | bytes_on_disk                | 58,154,664                                                                                                        | bytes   |
+| Elasticsearch logsdb   | ratio_to_raw                 | 0.9237                                                                                                            | ratio   |
+| Elasticsearch logsdb   | load_seconds                 | 19.33                                                                                                             | s       |
+| Elasticsearch logsdb   | search_event value_seconds   | 0.0045                                                                                                            | s       |
+| Elasticsearch logsdb   | search_level = ERROR_seconds | 0.0025                                                                                                            | s       |
+| Elasticsearch logsdb   | search_one id_seconds        | 0.0037                                                                                                            | s       |
+| Elasticsearch logsdb   | search_newest 500_seconds    | 0.0224                                                                                                            | s       |
+| ClickHouse             | rows_inserted                | 200,000                                                                                                           | rows    |
+| ClickHouse             | bytes_on_disk                | 20,603,823                                                                                                        | bytes   |
+| ClickHouse             | ratio_to_raw                 | 0.3272                                                                                                            | ratio   |
+| ClickHouse             | load_seconds                 | 6.47                                                                                                              | s       |
+| ClickHouse             | search_event value_seconds   | 0.0101                                                                                                            | s       |
+| ClickHouse             | search_level = ERROR_seconds | 0.0081                                                                                                            | s       |
+| ClickHouse             | search_one id_seconds        | 0.0125                                                                                                            | s       |
+| ClickHouse             | search_newest 500_seconds    | 0.018                                                                                                             | s       |
+| clp-s                  | roundtrip_lines              | 200,000                                                                                                           | lines   |
+| clp-s                  | roundtrip_ok                 | 1                                                                                                                 | flag    |
+| clp-s                  | bytes_on_disk                | 11,227,572                                                                                                        | bytes   |
+| clp-s                  | ratio_to_raw                 | 0.1783                                                                                                            | ratio   |
+| clp-s                  | load_seconds                 | 1.15                                                                                                              | s       |
+| clp-s                  | search_event value_seconds   | 0.2263                                                                                                            | s       |
+| clp-s                  | search_level = ERROR_seconds | 0.2443                                                                                                            | s       |
+| clp-s                  | search_one id_seconds        | 0.2143                                                                                                            | s       |
+| clp-s                  | search_newest 500_seconds    | 0.7202                                                                                                            | s       |
 
 ### `07_vs_others` / dataset `uneven`
 
@@ -3238,6 +3719,11 @@ Run 2026-09-18T23:17:24+00:00, git `3b5b8b0`, 72 rows.
 - sum(bytes_on_disk) over active parts after OPTIMIZE TABLE FINAL
 - archive decompressed and counted; 200,000 went in. A ratio is this script's headline number, so the archive is expanded rather than trusted.
 - archive directory size, round-trip verified; clp-s is fed the raw payloads with no @timestamp added, unlike Elasticsearch and ClickHouse
+- resolved from the running index, not assumed. `true` keeps a document whose field will not coerce and drops that field from the index; `false` rejects the whole document.
+- 200,000 were sent
+- document_parsing_exception 11,032
+- only 188,968 of 200,000 documents landed, so bytes_on_disk understates what this dataset costs
+- after _forcemerge to one segment and _flush; PARTIAL: 188,968/200,000 docs
 
 ## 08_io_shapes
 
