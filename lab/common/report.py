@@ -9,6 +9,7 @@ well defined rather than a per-row guess.
 from __future__ import annotations
 
 import csv
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -46,11 +47,24 @@ TITLES = {
 }
 
 
+# A note field is free text and one bug put 190 KB in it. The reader should report that
+# rather than refuse the whole file, so the limit is raised and oversized values are
+# truncated on the way in.
+csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
+MAX_FIELD = 4_000
+
+
 def load() -> list:
     if not RESULTS_CSV.exists():
         return []
     with RESULTS_CSV.open() as fh:
-        return list(csv.DictReader(fh))
+        rows = []
+        for r in csv.DictReader(fh):
+            for k, v in r.items():
+                if isinstance(v, str) and len(v) > MAX_FIELD:
+                    r[k] = v[:MAX_FIELD] + f"... [truncated from {len(v):,} chars]"
+            rows.append(r)
+        return rows
 
 
 def newest_per_script(rows: list) -> dict:
@@ -355,6 +369,18 @@ def render() -> str:
     info = machine_info()
     parts.append(tabulate(sorted(info.items()), headers=["", ""], tablefmt="simple"))
     parts.append("")
+
+    if (LAB / "CLP_S_NOTES.md").exists():
+        parts.append("## Further reading")
+        parts.append("")
+        parts.append(
+            "[`CLP_S_NOTES.md`](CLP_S_NOTES.md) - how clp-s works, read off its source at "
+            "tag v0.13.0, and what TrieDB could take from it. It is the only comparison "
+            "system in script 07 that shares TrieDB's central idea (one columnar table per "
+            "distinct key set), so where it differs is where the design choices actually "
+            "are."
+        )
+        parts.append("")
 
     found = findings(kept)
     if found:

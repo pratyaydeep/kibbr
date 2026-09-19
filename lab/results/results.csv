@@ -11109,3 +11109,1079 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T23:59:58+00:00,f71e15a,07_vs_others,messy,clp-s,search_level = ERROR_seconds,0.2443,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
 2026-09-18T23:59:58+00:00,f71e15a,07_vs_others,messy,clp-s,search_one id_seconds,0.2143,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
 2026-09-18T23:59:58+00:00,f71e15a,07_vs_others,messy,clp-s,search_newest 500_seconds,0.7202,s,"rough, one machine, default settings - one laptop, no tuning of any system, containers sharing one disk"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,row_groups,130,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,filter_bytes,200000,bytes,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,k,6,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,misses_generated,1000,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,misses_rejected_out_of_range,0,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,present_bloom_skipped_pct,97.0808,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,present_minmax_skipped_pct,0.3908,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,present_ideal_skipped_pct,99.2308,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,absent_bloom_skipped_pct,97.8108,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,absent_minmax_skipped_pct,0.3254,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@8bits,share_of_best_total_pct,2.035,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,row_groups,130,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,filter_bytes,250045,bytes,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,k,7,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,misses_generated,1000,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,misses_rejected_out_of_range,0,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,present_bloom_skipped_pct,98.4454,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,present_minmax_skipped_pct,0.3908,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,present_ideal_skipped_pct,99.2308,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,absent_bloom_skipped_pct,99.1631,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,absent_minmax_skipped_pct,0.3254,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@10bits,share_of_best_total_pct,2.5441,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,row_groups,130,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,filter_bytes,400000,bytes,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,k,11,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,misses_generated,1000,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,misses_rejected_out_of_range,0,count,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,present_bloom_skipped_pct,99.1769,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,present_minmax_skipped_pct,0.3908,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,present_ideal_skipped_pct,99.2308,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,absent_bloom_skipped_pct,99.9446,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,absent_minmax_skipped_pct,0.3254,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,trace_id@16bits,share_of_best_total_pct,4.0699,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,row_groups,130,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,filter_bytes,200000,bytes,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,k,6,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,misses_generated,1000,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,misses_rejected_out_of_range,0,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,present_bloom_skipped_pct,97.1223,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,present_minmax_skipped_pct,0.2285,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,present_ideal_skipped_pct,99.2308,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,absent_bloom_skipped_pct,97.7785,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,absent_minmax_skipped_pct,0.3046,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@8bits,share_of_best_total_pct,2.035,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,row_groups,130,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,filter_bytes,250045,bytes,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,k,7,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,misses_generated,1000,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,misses_rejected_out_of_range,0,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,present_bloom_skipped_pct,98.4115,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,present_minmax_skipped_pct,0.2285,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,present_ideal_skipped_pct,99.2308,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,absent_bloom_skipped_pct,99.1869,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,absent_minmax_skipped_pct,0.3046,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@10bits,share_of_best_total_pct,2.5441,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,row_groups,130,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,filter_bytes,400000,bytes,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,k,11,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,misses_generated,1000,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,misses_rejected_out_of_range,0,count,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,present_bloom_skipped_pct,99.1762,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,present_minmax_skipped_pct,0.2285,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,present_ideal_skipped_pct,99.2308,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,absent_bloom_skipped_pct,99.95,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,absent_minmax_skipped_pct,0.3046,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,client.ip@16bits,share_of_best_total_pct,4.0699,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,row_groups,130,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,filter_bytes,199234,bytes,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,k,6,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,misses_generated,1000,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,misses_rejected_out_of_range,0,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,present_bloom_skipped_pct,97.0038,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,present_minmax_skipped_pct,0.1738,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,present_ideal_skipped_pct,99.0569,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,absent_bloom_skipped_pct,97.9115,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,absent_minmax_skipped_pct,0.1608,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@8bits,share_of_best_total_pct,2.0272,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,row_groups,130,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,filter_bytes,249097,bytes,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,k,7,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,misses_generated,1000,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,misses_rejected_out_of_range,0,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,present_bloom_skipped_pct,98.3123,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,present_minmax_skipped_pct,0.1738,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,present_ideal_skipped_pct,99.0569,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,absent_bloom_skipped_pct,99.23,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,absent_minmax_skipped_pct,0.1608,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@10bits,share_of_best_total_pct,2.5345,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,row_groups,130,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,filter_bytes,398468,bytes,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,k,11,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,misses_generated,1000,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,misses_rejected_out_of_range,0,count,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,present_bloom_skipped_pct,99.0023,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,present_minmax_skipped_pct,0.1738,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,present_ideal_skipped_pct,99.0569,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,absent_bloom_skipped_pct,99.9477,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,absent_minmax_skipped_pct,0.1608,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,duration_ms@16bits,share_of_best_total_pct,4.0543,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,row_groups,130,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,filter_bytes,200000,bytes,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,k,6,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,misses_generated,1000,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,misses_rejected_out_of_range,0,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,present_bloom_skipped_pct,97.0208,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,present_minmax_skipped_pct,0.4715,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,present_ideal_skipped_pct,99.15,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,absent_bloom_skipped_pct,97.8262,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,absent_minmax_skipped_pct,0.4454,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@8bits,share_of_best_total_pct,2.035,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,row_groups,130,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,filter_bytes,250045,bytes,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,k,7,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,misses_generated,1000,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,misses_rejected_out_of_range,0,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,present_bloom_skipped_pct,98.3046,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,present_minmax_skipped_pct,0.4715,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,present_ideal_skipped_pct,99.15,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,absent_bloom_skipped_pct,99.2238,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,absent_minmax_skipped_pct,0.4454,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@10bits,share_of_best_total_pct,2.5441,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,row_groups,130,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,filter_bytes,400000,bytes,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,k,11,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,misses_generated,1000,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,misses_rejected_out_of_range,0,count,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,present_bloom_skipped_pct,99.0885,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,present_minmax_skipped_pct,0.4715,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,present_ideal_skipped_pct,99.15,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,absent_bloom_skipped_pct,99.9431,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,absent_minmax_skipped_pct,0.4454,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,user_id@16bits,share_of_best_total_pct,4.0699,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,row_groups,70,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,filter_bytes,77952,bytes,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,k,6,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,misses_generated,1000,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,misses_rejected_out_of_range,0,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,present_bloom_skipped_pct,96.36,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,present_minmax_skipped_pct,0.3871,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,present_ideal_skipped_pct,98.5714,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,absent_bloom_skipped_pct,97.7014,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,absent_minmax_skipped_pct,0.4457,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@8bits,share_of_best_total_pct,0.7931,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,row_groups,70,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,filter_bytes,97464,bytes,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,k,7,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,misses_generated,1000,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,misses_rejected_out_of_range,0,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,present_bloom_skipped_pct,97.71,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,present_minmax_skipped_pct,0.3871,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,present_ideal_skipped_pct,98.5714,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,absent_bloom_skipped_pct,99.1514,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,absent_minmax_skipped_pct,0.4457,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@10bits,share_of_best_total_pct,0.9917,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,row_groups,70,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,filter_bytes,155904,bytes,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,k,11,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,misses_generated,1000,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,misses_rejected_out_of_range,0,count,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,present_bloom_skipped_pct,98.4886,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,present_minmax_skipped_pct,0.3871,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,present_ideal_skipped_pct,98.5714,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,absent_bloom_skipped_pct,99.9429,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,absent_minmax_skipped_pct,0.4457,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,absent_ideal_skipped_pct,100.0,percent,distinct/rows 1.000; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,order_id@16bits,share_of_best_total_pct,1.5863,percent,"against script 05's BEST_PER_CHUNK (9,828,235 bytes)"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,words:trace_id,common_skipped_pct,98.4154,percent,"10 bits per distinct word, one filter per row group; 200 probe words"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,words:trace_id,rare_skipped_pct,98.4615,percent,"10 bits per distinct word, one filter per row group; 200 probe words"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,words:trace_id,never_skipped_pct,99.1346,percent,"10 bits per distinct word, one filter per row group; 200 probe words"
+2026-09-19T00:02:33+00:00,eb6b34e,06_bloom,messy,words:trace_id,filter_bytes,248100,bytes,"130 row groups, 198,441 distinct words"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_wait,25199,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_shutdown,89,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,row_groups,25288,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_median,7,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_p90,16,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_max_lines,680,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_median_lines,405,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_wait,6419,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_shutdown,115,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,row_groups,6534,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_median,24,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_p90,72,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_max_lines,3590,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_median_lines,1815,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_wait,2252,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_shutdown,126,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,row_groups,2378,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_median,62,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_p90,212,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_max_lines,10768,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_median_lines,5170,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_wait,3334,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_shutdown,124,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,row_groups,3458,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_median,43,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_p90,143,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_max_lines,7179,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_median_lines,3420,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_wait,650,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_shutdown,130,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,row_groups,780,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_median,176,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_p90,665,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_max_lines,35988,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_median_lines,16512,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_wait,130,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,row_groups,260,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_median,558,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_p90,1939,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_max_lines,107962,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_median_lines,49956,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_wait,260,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_shutdown,130,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,row_groups,390,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_median,360,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_p90,1273,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_max_lines,71975,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_median_lines,33216,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,closes_shutdown,130,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,row_groups,130,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_median,1116,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_p90,4134,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_median_lines,99911,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,row_groups,130,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_median,1116,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_p90,4134,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_median_lines,99911,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_tick,193050,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_shutdown,2,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,row_groups,193052,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_p90,1,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_tick,137611,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_shutdown,17,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,row_groups,137628,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_median_lines,30,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_tick,34085,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_shutdown,76,count,close reason
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,row_groups,34161,count,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_median,5,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,13,rows,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,files,130,count,what TrieDB does today: one segment per leaf per day
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,row_groups,6534,count,what TrieDB does today: one segment per leaf per day
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,bytes,39680453,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,overhead_bytes,2977758,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,overhead_share_pct,7.504,percent,what TrieDB does today: one segment per leaf per day
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,disk_blocks,39948288,bytes,what TrieDB does today: one segment per leaf per day
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,ratio_to_raw,0.6345,ratio,what TrieDB does today: one segment per leaf per day
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,one_template_index_bytes,10063,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,one_template_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,all_templates_files,130,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,all_templates_index_bytes,1278556,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,all_templates_ranges,130,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,files,1,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,row_groups,6534,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,bytes,40127287,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_bytes,3424592,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_share_pct,8.534,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,disk_blocks,40128512,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,ratio_to_raw,0.63737,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,4720464,bytes,"21,854 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,files,1,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,row_groups,6534,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,bytes,40127287,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_bytes,3424592,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_share_pct,8.534,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,disk_blocks,40128512,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,ratio_to_raw,0.63737,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,18882504,bytes,"87,419 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,files,1,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,row_groups,6534,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,bytes,40127287,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_bytes,3424592,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_share_pct,8.534,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,disk_blocks,40128512,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,ratio_to_raw,0.63737,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,37765224,bytes,"174,839 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,files,4,count,"4 files per day, by template mod 4"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,row_groups,6534,count,"4 files per day, by template mod 4"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,bytes,40127926,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_bytes,3425231,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_share_pct,8.536,percent,"4 files per day, by template mod 4"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,disk_blocks,40136704,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,ratio_to_raw,0.6375,ratio,"4 files per day, by template mod 4"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_index_bytes,241477,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_index_bytes,1412164,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,byte_spread_largest_over_average,1.225,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,files,8,count,"8 files per day, by template mod 8"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,row_groups,6534,count,"8 files per day, by template mod 8"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,bytes,40128778,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_bytes,3426083,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_share_pct,8.538,percent,"8 files per day, by template mod 8"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,disk_blocks,40148992,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,ratio_to_raw,0.63769,ratio,"8 files per day, by template mod 8"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_index_bytes,76669,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_index_bytes,1412984,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,byte_spread_largest_over_average,1.3678,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,files,4,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,row_groups,6534,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,bytes,40127926,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_bytes,3425231,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_share_pct,8.536,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,disk_blocks,40136704,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,ratio_to_raw,0.6375,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_index_bytes,1412164,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_index_bytes,1412164,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=4,byte_spread_largest_over_average,1.001,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,files,8,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,row_groups,6534,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,bytes,40128778,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_bytes,3426083,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_share_pct,8.538,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,disk_blocks,40144896,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,ratio_to_raw,0.63763,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_index_bytes,1412984,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_index_bytes,1412984,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,least_full n=8,byte_spread_largest_over_average,1.0007,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_bytes,60061910,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_files,34892,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_blocks,152395776,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_bytes,572719,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_blocks,1069056,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_files,131,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_segments_over_ceil,0,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,real_bytes_over_ceil,0,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_bytes,36810221,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_files,130,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_blocks,37060608,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,calibration,model_minus_real_pct,-38.713,percent,the model's per-template-per-day bytes against the binary's
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_wait,25199,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_shutdown,89,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,row_groups,25288,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_median,7,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_p90,16,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_max_lines,680,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_median_lines,405,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_wait,6419,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_shutdown,115,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,row_groups,6534,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_median,24,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_p90,72,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_max_lines,3590,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_median_lines,1815,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_wait,2252,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_shutdown,126,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,row_groups,2378,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_median,62,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_p90,212,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_max_lines,10768,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_median_lines,5170,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_wait,3334,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_shutdown,124,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,row_groups,3458,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_median,43,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_p90,143,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_max_lines,7179,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_median_lines,3420,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_wait,650,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_shutdown,130,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,row_groups,780,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_median,176,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_p90,665,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_max_lines,35988,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_median_lines,16512,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_wait,130,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,row_groups,260,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_median,558,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_p90,1939,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_max_lines,107962,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_median_lines,49956,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_wait,260,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_shutdown,130,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,row_groups,390,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_median,360,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_p90,1273,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_max_lines,71975,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_median_lines,33216,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,closes_shutdown,130,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,row_groups,130,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_median,1116,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_p90,4134,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_median_lines,99911,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,row_groups,130,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_median,1116,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_p90,4134,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_max_lines,199918,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_median_lines,99911,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_tick,193050,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_shutdown,2,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,row_groups,193052,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_p90,1,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_tick,137611,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_shutdown,17,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,row_groups,137628,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_median_lines,30,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_tick,34085,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_shutdown,76,count,close reason
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,row_groups,34161,count,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_median,5,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,13,rows,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,sealing,partitions,130,count,"a (template, day) pair - what the model used to assume was one file"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,files,1,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,row_groups,6534,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,bytes,40127287,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_bytes,3424592,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_share_pct,8.534,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,disk_blocks,40128512,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,ratio_to_raw,0.63737,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,4720464,bytes,"21,854 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,files,1,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,row_groups,6534,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,bytes,40127287,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_bytes,3424592,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_share_pct,8.534,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,disk_blocks,40128512,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,ratio_to_raw,0.63737,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,18882504,bytes,"87,419 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,files,1,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,row_groups,6534,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,bytes,40127287,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_bytes,3424592,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_share_pct,8.534,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,disk_blocks,40128512,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,ratio_to_raw,0.63737,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_index_bytes,1411549,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,37765224,bytes,"174,839 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,files,4,count,"4 files per day, by template mod 4"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,row_groups,6534,count,"4 files per day, by template mod 4"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,bytes,40127926,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_bytes,3425231,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_share_pct,8.536,percent,"4 files per day, by template mod 4"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,disk_blocks,40136704,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,ratio_to_raw,0.6375,ratio,"4 files per day, by template mod 4"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_index_bytes,241477,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_index_bytes,1412164,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,byte_spread_largest_over_average,1.225,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,files,8,count,"8 files per day, by template mod 8"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,row_groups,6534,count,"8 files per day, by template mod 8"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,bytes,40128778,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_bytes,3426083,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_share_pct,8.538,percent,"8 files per day, by template mod 8"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,disk_blocks,40148992,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,ratio_to_raw,0.63769,ratio,"8 files per day, by template mod 8"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_index_bytes,76669,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_index_bytes,1412984,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,byte_spread_largest_over_average,1.3678,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,files,4,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,row_groups,6534,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,bytes,40127926,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_bytes,3425231,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_share_pct,8.536,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,disk_blocks,40136704,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,ratio_to_raw,0.6375,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_index_bytes,1412164,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_index_bytes,1412164,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,byte_spread_largest_over_average,1.001,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,files,8,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,row_groups,6534,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,bytes,40128778,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_bytes,3426083,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_share_pct,8.538,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,disk_blocks,40144896,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,ratio_to_raw,0.63763,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_index_bytes,1412984,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_ranges,55,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_index_bytes,1412984,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,byte_spread_largest_over_average,1.0007,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_bytes,60061910,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_files,34892,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_blocks,152395776,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_bytes,572719,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_blocks,1069056,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_files,131,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_segments_over_ceil,0,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_bytes_over_ceil,0,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_bytes,36810221,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_files,130,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_blocks,37060608,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_minus_real_pct,-38.713,percent,the model's per-template-per-day bytes against the binary's
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,sealing,partitions,130,count,"a (template, day) pair - what the model used to assume was one file"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_seal,32304,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_wait,16830,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_shutdown,97,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,row_groups,49231,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_p90,10,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_max_lines,405,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_median_lines,310,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_seal,34455,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_wait,2085,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_shutdown,121,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,row_groups,36661,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_median,3,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_p90,14,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_max_lines,922,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_median_lines,675,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_seal,34716,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_wait,321,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_shutdown,128,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,row_groups,35165,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_p90,15,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_max_lines,1098,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_median_lines,843,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_seal,34671,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_wait,688,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_shutdown,128,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,row_groups,35487,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_median,3,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_p90,15,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_max_lines,1080,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_median_lines,785,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_seal,34759,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_wait,12,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_shutdown,129,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,row_groups,34900,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_p90,15,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_max_lines,1213,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_median_lines,960,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_seal,34761,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,row_groups,34891,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_p90,15,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_median_lines,978,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_seal,34761,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_shutdown,130,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,row_groups,34891,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_p90,15,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_median_lines,978,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,closes_seal,34761,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,closes_shutdown,130,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,row_groups,34891,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_p90,15,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_median_lines,978,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,closes_seal,34761,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,row_groups,34891,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_p90,15,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_median_lines,978,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_tick,193050,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_seal,1195,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_shutdown,2,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,row_groups,194247,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_p90,1,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_seal,10691,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_tick,137611,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_shutdown,17,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,row_groups,148319,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_median_lines,29,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_seal,28658,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_tick,34085,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_shutdown,76,count,close reason
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,row_groups,62819,count,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_median,2,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,7,rows,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,474,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,227,lines,
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,files,1,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,row_groups,36661,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,bytes,55629413,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_bytes,18926718,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_share_pct,34.023,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,disk_blocks,55631872,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,ratio_to_raw,0.88361,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_ranges,788,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,19105632,bytes,"88,452 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,files,1,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,row_groups,36661,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,bytes,55629413,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_bytes,18926718,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_share_pct,34.023,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,disk_blocks,55631872,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,ratio_to_raw,0.88361,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_ranges,788,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,76422744,bytes,"353,809 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,files,1,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,row_groups,36661,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,bytes,55629413,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_bytes,18926718,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_share_pct,34.023,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,disk_blocks,55631872,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,ratio_to_raw,0.88361,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_ranges,788,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,152845704,bytes,"707,619 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,files,4,count,"4 files per day, by template mod 4"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,row_groups,36661,count,"4 files per day, by template mod 4"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,bytes,55630052,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_bytes,18927357,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_share_pct,34.024,percent,"4 files per day, by template mod 4"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,disk_blocks,55640064,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,ratio_to_raw,0.88374,ratio,"4 files per day, by template mod 4"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_index_bytes,1590397,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_ranges,676,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_index_bytes,7919596,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,byte_spread_largest_over_average,1.2145,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,files,8,count,"8 files per day, by template mod 8"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,row_groups,36661,count,"8 files per day, by template mod 8"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,bytes,55630904,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_bytes,18928209,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_share_pct,34.025,percent,"8 files per day, by template mod 8"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,disk_blocks,55648256,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,ratio_to_raw,0.88387,ratio,"8 files per day, by template mod 8"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_index_bytes,492253,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_ranges,443,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_index_bytes,7920416,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,byte_spread_largest_over_average,1.3713,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,files,4,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,row_groups,36661,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,bytes,55630052,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_bytes,18927357,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_share_pct,34.024,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,disk_blocks,55635968,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,ratio_to_raw,0.88367,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_index_bytes,7919596,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_ranges,802,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_index_bytes,7919596,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=4,byte_spread_largest_over_average,1.0024,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,files,8,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,row_groups,36661,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,bytes,55630904,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_bytes,18928209,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_share_pct,34.025,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,disk_blocks,55652352,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,ratio_to_raw,0.88393,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_index_bytes,7920416,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_ranges,818,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_index_bytes,7920416,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,least_full n=8,byte_spread_largest_over_average,1.0027,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_bytes,60061910,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_files,34892,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_blocks,152395776,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_bytes,572719,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_blocks,1069056,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_files,131,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_segments_over_ceil,0,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,real_bytes_over_ceil,0,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_bytes,58244197,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_files,34891,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_blocks,152371200,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_minus_real_pct,-3.026,percent,the model's per-template-per-day bytes against the binary's
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,sealing,partitions,130,count,"a (template, day) pair - what the model used to assume was one file"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_seal,32304,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_wait,16830,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_shutdown,97,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,row_groups,49231,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,rows_per_rg_p90,10,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_max_lines,405,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,backlog_median_lines,310,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_seal,34455,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_wait,2085,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,closes_shutdown,121,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,row_groups,36661,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_median,3,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,rows_per_rg_p90,14,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_max_lines,922,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,backlog_median_lines,675,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_seal,34716,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_wait,321,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,closes_shutdown,128,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,row_groups,35165,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,rows_per_rg_p90,15,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_max_lines,1098,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,backlog_median_lines,843,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_seal,34671,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_wait,688,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,closes_shutdown,128,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,row_groups,35487,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_median,3,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,rows_per_rg_p90,15,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_max_lines,1080,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,backlog_median_lines,785,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_seal,34759,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_wait,12,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,closes_shutdown,129,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,row_groups,34900,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,rows_per_rg_p90,15,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_max_lines,1213,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,backlog_median_lines,960,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_seal,34761,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,row_groups,34891,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,rows_per_rg_p90,15,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,backlog_median_lines,978,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_seal,34761,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,closes_shutdown,130,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,row_groups,34891,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,rows_per_rg_p90,15,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,backlog_median_lines,978,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,closes_seal,34761,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,closes_shutdown,130,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,row_groups,34891,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,rows_per_rg_p90,15,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,backlog_median_lines,978,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,closes_seal,34761,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,closes_shutdown,130,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,row_groups,34891,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,rows_per_rg_p90,15,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_max_lines,1235,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,backlog_median_lines,978,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_tick,193050,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_seal,1195,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,closes_shutdown,2,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,row_groups,194247,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,rows_per_rg_p90,1,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900 tick,backlog_median_lines,3,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_seal,10691,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_tick,137611,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,closes_shutdown,17,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,row_groups,148319,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_median,1,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,rows_per_rg_p90,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_max_lines,60,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900 tick,backlog_median_lines,29,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_seal,28658,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_tick,34085,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,closes_shutdown,76,count,close reason
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,row_groups,62819,count,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_median,2,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,7,rows,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,474,lines,lines in memory and not yet in a closed row group - what a crash replays
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,227,lines,
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,files,34891,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,row_groups,36661,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,bytes,59070862,bytes,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,overhead_bytes,22368167,bytes,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,overhead_share_pct,37.867,percent,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,disk_blocks,153096192,bytes,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,ratio_to_raw,2.43165,ratio,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,one_template_files,841,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,one_template_index_bytes,288463,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,one_template_ranges,841,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,all_templates_files,34891,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,all_templates_index_bytes,12849133,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,all_templates_ranges,34891,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,files,1,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,row_groups,36661,count,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,bytes,55629413,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_bytes,18926718,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,overhead_share_pct,34.023,percent,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,disk_blocks,55631872,bytes,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,ratio_to_raw,0.88361,ratio,"one shared file per day, rolled at 128.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,one_template_ranges,788,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,open_file_index_memory_bytes,19105632,bytes,"88,452 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,files,1,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,row_groups,36661,count,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,bytes,55629413,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_bytes,18926718,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,overhead_share_pct,34.023,percent,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,disk_blocks,55631872,bytes,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,ratio_to_raw,0.88361,ratio,"one shared file per day, rolled at 512.0MB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,one_template_ranges,788,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=512.0MB,open_file_index_memory_bytes,76422744,bytes,"353,809 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,files,1,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,row_groups,36661,count,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,bytes,55629413,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_bytes,18926718,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,overhead_share_pct,34.023,percent,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,disk_blocks,55631872,bytes,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,ratio_to_raw,0.88361,ratio,"one shared file per day, rolled at 1.0GB"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,one_template_ranges,788,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_index_bytes,7918981,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,all_templates_ranges,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=1.0GB,open_file_index_memory_bytes,152845704,bytes,"707,619 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,files,4,count,"4 files per day, by template mod 4"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,row_groups,36661,count,"4 files per day, by template mod 4"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,bytes,55630052,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_bytes,18927357,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,overhead_share_pct,34.024,percent,"4 files per day, by template mod 4"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,disk_blocks,55640064,bytes,"4 files per day, by template mod 4"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,ratio_to_raw,0.88374,ratio,"4 files per day, by template mod 4"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_index_bytes,1590397,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,one_template_ranges,676,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_index_bytes,7919596,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=4,byte_spread_largest_over_average,1.2145,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,files,8,count,"8 files per day, by template mod 8"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,row_groups,36661,count,"8 files per day, by template mod 8"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,bytes,55630904,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_bytes,18928209,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,overhead_share_pct,34.025,percent,"8 files per day, by template mod 8"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,disk_blocks,55648256,bytes,"8 files per day, by template mod 8"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,ratio_to_raw,0.88387,ratio,"8 files per day, by template mod 8"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_files,1,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_index_bytes,492253,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,one_template_ranges,443,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_index_bytes,7920416,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,mod_n n=8,byte_spread_largest_over_average,1.3713,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,files,4,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,row_groups,36661,count,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,bytes,55630052,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_bytes,18927357,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,overhead_share_pct,34.024,percent,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,disk_blocks,55635968,bytes,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,ratio_to_raw,0.88367,ratio,"4 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_index_bytes,7919596,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,one_template_ranges,802,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_files,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_index_bytes,7919596,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,all_templates_ranges,4,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=4,byte_spread_largest_over_average,1.0024,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,files,8,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,row_groups,36661,count,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,bytes,55630904,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_bytes,18928209,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,overhead_share_pct,34.025,percent,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,disk_blocks,55652352,bytes,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,ratio_to_raw,0.88393,ratio,"8 files per day, each row group to the file with the fewest bytes"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_index_bytes,7920416,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,one_template_ranges,818,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_files,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_index_bytes,7920416,bytes,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,all_templates_ranges,8,count,one day (2024-01-15); the one-template search is template 3977316063236355336
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,least_full n=8,byte_spread_largest_over_average,1.0027,ratio,across the N files of one day; 1.0 is perfectly even
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_bytes,60061910,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_files,34892,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_col_blocks,152395776,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_bytes,572719,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_blocks,1069056,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_meta_files,131,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_segments_over_ceil,0,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,real_bytes_over_ceil,0,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_bytes,58244197,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_files,34891,count,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_blocks,152371200,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,calibration,model_minus_real_pct,-3.026,percent,the model's per-template-per-day bytes against the binary's

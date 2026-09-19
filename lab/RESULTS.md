@@ -21,6 +21,10 @@ memory       8.0GB
 platform     Darwin 23.3.0 (arm64)
 python       3.12.2
 
+## Further reading
+
+[`CLP_S_NOTES.md`](CLP_S_NOTES.md) - how clp-s works, read off its source at tag v0.13.0, and what TrieDB could take from it. It is the only comparison system in script 07 that shares TrieDB's central idea (one columnar table per distinct key set), so where it differs is where the design choices actually are.
+
 ## Findings so far
 
 - **The Python frontend agrees with the binary**: 0 disagreements over 4 datasets. Every template id and inferred type below is the one TrieDB would assign.
@@ -31,7 +35,7 @@ python       3.12.2
 - **`oneday`**: the smallest layout is zstd -19 at 8,059,807 bytes. Per-template Parquet loses to gzip -9 by 1.15x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.26x of raw NDJSON.
 - **Encodings on `flat30`**: picking the smallest encoding per chunk reaches 0.144x of raw NDJSON and 0.618x of gzip -9; sorting rows inside each chunk is worth a further 2.52%.
 - **Encodings on `uneven`**: picking the smallest encoding per chunk reaches 0.096x of raw NDJSON and 1.052x of gzip -9; sorting rows inside each chunk is worth a further 0.68%.
-- **Bloom filters earn their bytes**: at 10 bits per value they skip 98.1% of row groups for an id that is not there, against 19.4% for min/max statistics alone, and cost 0.87% of the best encoded total.
+- **Bloom filters earn their bytes**: at 10 bits per value they skip 98.4% of row groups for an id that is not there, against 13.5% for min/max statistics alone, and cost 1.30% of the best encoded total.
 - **Which durability call matters as much as batching**: a per-record `fsync(2)` reaches 39,898 records/sec on this platform, the same loop with `F_FULLFSYNC` reaches 360 - Darwin's `fsync` stops at the drive cache. Shape only.
 - **WAL batching pays twice**: zstd 3 over batches of 500 lines compresses to 0.114 of raw, against 0.864 at one line per batch.
 - **Grouping a template's row groups together** turns 51 separate byte ranges into 1 for a one-template search - on S3 at 15 ms a range, the difference between a second and nothing.
@@ -1120,7 +1124,7 @@ Run 2026-09-18T23:56:26+00:00, git `b405451`, 492 rows.
 
 _Files, row groups and overhead per layout_
 
-Run 2026-09-18T22:07:49+00:00, git `b405451`, 451 rows.
+Run 2026-09-19T00:44:41+00:00, git `b405451`, 686 rows.
 
 ### `03_layout_model` / dataset `flat30`
 
@@ -1349,6 +1353,246 @@ Run 2026-09-18T22:07:49+00:00, git `b405451`, 451 rows.
 | calibration                    | model_col_files                  |  16694           | count   |
 | calibration                    | model_col_blocks                 |      7.98392e+07 | bytes   |
 | calibration                    | model_minus_real_pct             |      0           | percent |
+
+### `03_layout_model` / dataset `messy`
+
+| variant                        | metric                           |            value | unit    |
+|--------------------------------|----------------------------------|------------------|---------|
+| sealing                        | partitions                       |    130           | count   |
+| sealing                        | segments                         |  34891           | count   |
+| rate=12 wait=60                | closes_seal                      |  32304           | count   |
+| rate=12 wait=60                | closes_wait                      |  16830           | count   |
+| rate=12 wait=60                | closes_shutdown                  |     97           | count   |
+| rate=12 wait=60                | row_groups                       |  49231           | count   |
+| rate=12 wait=60                | rows_per_rg_median               |      2           | rows    |
+| rate=12 wait=60                | rows_per_rg_p90                  |     10           | rows    |
+| rate=12 wait=60                | backlog_max_lines                |    405           | lines   |
+| rate=12 wait=60                | backlog_median_lines             |    310           | lines   |
+| rate=12 wait=300               | closes_seal                      |  34455           | count   |
+| rate=12 wait=300               | closes_wait                      |   2085           | count   |
+| rate=12 wait=300               | closes_shutdown                  |    121           | count   |
+| rate=12 wait=300               | row_groups                       |  36661           | count   |
+| rate=12 wait=300               | rows_per_rg_median               |      3           | rows    |
+| rate=12 wait=300               | rows_per_rg_p90                  |     14           | rows    |
+| rate=12 wait=300               | backlog_max_lines                |    922           | lines   |
+| rate=12 wait=300               | backlog_median_lines             |    675           | lines   |
+| rate=12 wait=900               | closes_seal                      |  34716           | count   |
+| rate=12 wait=900               | closes_wait                      |    321           | count   |
+| rate=12 wait=900               | closes_shutdown                  |    128           | count   |
+| rate=12 wait=900               | row_groups                       |  35165           | count   |
+| rate=12 wait=900               | rows_per_rg_median               |      2           | rows    |
+| rate=12 wait=900               | rows_per_rg_p90                  |     15           | rows    |
+| rate=12 wait=900               | backlog_max_lines                |   1098           | lines   |
+| rate=12 wait=900               | backlog_median_lines             |    843           | lines   |
+| rate=120 wait=60               | closes_seal                      |  34671           | count   |
+| rate=120 wait=60               | closes_wait                      |    688           | count   |
+| rate=120 wait=60               | closes_shutdown                  |    128           | count   |
+| rate=120 wait=60               | row_groups                       |  35487           | count   |
+| rate=120 wait=60               | rows_per_rg_median               |      3           | rows    |
+| rate=120 wait=60               | rows_per_rg_p90                  |     15           | rows    |
+| rate=120 wait=60               | backlog_max_lines                |   1080           | lines   |
+| rate=120 wait=60               | backlog_median_lines             |    785           | lines   |
+| rate=120 wait=300              | closes_seal                      |  34759           | count   |
+| rate=120 wait=300              | closes_wait                      |     12           | count   |
+| rate=120 wait=300              | closes_shutdown                  |    129           | count   |
+| rate=120 wait=300              | row_groups                       |  34900           | count   |
+| rate=120 wait=300              | rows_per_rg_median               |      2           | rows    |
+| rate=120 wait=300              | rows_per_rg_p90                  |     15           | rows    |
+| rate=120 wait=300              | backlog_max_lines                |   1213           | lines   |
+| rate=120 wait=300              | backlog_median_lines             |    960           | lines   |
+| rate=120 wait=900              | closes_seal                      |  34761           | count   |
+| rate=120 wait=900              | closes_shutdown                  |    130           | count   |
+| rate=120 wait=900              | row_groups                       |  34891           | count   |
+| rate=120 wait=900              | rows_per_rg_median               |      2           | rows    |
+| rate=120 wait=900              | rows_per_rg_p90                  |     15           | rows    |
+| rate=120 wait=900              | backlog_max_lines                |   1235           | lines   |
+| rate=120 wait=900              | backlog_median_lines             |    978           | lines   |
+| rate=1200 wait=60              | closes_seal                      |  34761           | count   |
+| rate=1200 wait=60              | closes_shutdown                  |    130           | count   |
+| rate=1200 wait=60              | row_groups                       |  34891           | count   |
+| rate=1200 wait=60              | rows_per_rg_median               |      2           | rows    |
+| rate=1200 wait=60              | rows_per_rg_p90                  |     15           | rows    |
+| rate=1200 wait=60              | backlog_max_lines                |   1235           | lines   |
+| rate=1200 wait=60              | backlog_median_lines             |    978           | lines   |
+| rate=1200 wait=300             | closes_seal                      |  34761           | count   |
+| rate=1200 wait=300             | closes_shutdown                  |    130           | count   |
+| rate=1200 wait=300             | row_groups                       |  34891           | count   |
+| rate=1200 wait=300             | rows_per_rg_median               |      2           | rows    |
+| rate=1200 wait=300             | rows_per_rg_p90                  |     15           | rows    |
+| rate=1200 wait=300             | backlog_max_lines                |   1235           | lines   |
+| rate=1200 wait=300             | backlog_median_lines             |    978           | lines   |
+| rate=1200 wait=900             | closes_seal                      |  34761           | count   |
+| rate=1200 wait=900             | closes_shutdown                  |    130           | count   |
+| rate=1200 wait=900             | row_groups                       |  34891           | count   |
+| rate=1200 wait=900             | rows_per_rg_median               |      2           | rows    |
+| rate=1200 wait=900             | rows_per_rg_p90                  |     15           | rows    |
+| rate=1200 wait=900             | backlog_max_lines                |   1235           | lines   |
+| rate=1200 wait=900             | backlog_median_lines             |    978           | lines   |
+| rate=12 wait=900 tick          | closes_tick                      | 193050           | count   |
+| rate=12 wait=900 tick          | closes_seal                      |   1195           | count   |
+| rate=12 wait=900 tick          | closes_shutdown                  |      2           | count   |
+| rate=12 wait=900 tick          | row_groups                       | 194247           | count   |
+| rate=12 wait=900 tick          | rows_per_rg_median               |      1           | rows    |
+| rate=12 wait=900 tick          | rows_per_rg_p90                  |      1           | rows    |
+| rate=12 wait=900 tick          | backlog_max_lines                |      6           | lines   |
+| rate=12 wait=900 tick          | backlog_median_lines             |      3           | lines   |
+| rate=120 wait=900 tick         | closes_seal                      |  10691           | count   |
+| rate=120 wait=900 tick         | closes_tick                      | 137611           | count   |
+| rate=120 wait=900 tick         | closes_shutdown                  |     17           | count   |
+| rate=120 wait=900 tick         | row_groups                       | 148319           | count   |
+| rate=120 wait=900 tick         | rows_per_rg_median               |      1           | rows    |
+| rate=120 wait=900 tick         | rows_per_rg_p90                  |      2           | rows    |
+| rate=120 wait=900 tick         | backlog_max_lines                |     60           | lines   |
+| rate=120 wait=900 tick         | backlog_median_lines             |     29           | lines   |
+| rate=1200 wait=900 tick        | closes_seal                      |  28658           | count   |
+| rate=1200 wait=900 tick        | closes_tick                      |  34085           | count   |
+| rate=1200 wait=900 tick        | closes_shutdown                  |     76           | count   |
+| rate=1200 wait=900 tick        | row_groups                       |  62819           | count   |
+| rate=1200 wait=900 tick        | rows_per_rg_median               |      2           | rows    |
+| rate=1200 wait=900 tick        | rows_per_rg_p90                  |      7           | rows    |
+| rate=1200 wait=900 tick        | backlog_max_lines                |    474           | lines   |
+| rate=1200 wait=900 tick        | backlog_median_lines             |    227           | lines   |
+| rate=12 wait=60                | wal_24h_bytes_raw                |      3.59561e+08 | bytes   |
+| rate=12 wait=60                | wal_24h_bytes_zstd               |      4.10259e+07 | bytes   |
+| rate=12 wait=300               | wal_24h_bytes_raw                |      3.59561e+08 | bytes   |
+| rate=12 wait=300               | wal_24h_bytes_zstd               |      4.10259e+07 | bytes   |
+| rate=12 wait=900               | wal_24h_bytes_raw                |      3.59561e+08 | bytes   |
+| rate=12 wait=900               | wal_24h_bytes_zstd               |      4.10259e+07 | bytes   |
+| rate=120 wait=60               | wal_24h_bytes_raw                |      3.59561e+09 | bytes   |
+| rate=120 wait=60               | wal_24h_bytes_zstd               |      4.10259e+08 | bytes   |
+| rate=120 wait=300              | wal_24h_bytes_raw                |      3.59561e+09 | bytes   |
+| rate=120 wait=300              | wal_24h_bytes_zstd               |      4.10259e+08 | bytes   |
+| rate=120 wait=900              | wal_24h_bytes_raw                |      3.59561e+09 | bytes   |
+| rate=120 wait=900              | wal_24h_bytes_zstd               |      4.10259e+08 | bytes   |
+| rate=1200 wait=60              | wal_24h_bytes_raw                |      3.59561e+10 | bytes   |
+| rate=1200 wait=60              | wal_24h_bytes_zstd               |      4.10259e+09 | bytes   |
+| rate=1200 wait=300             | wal_24h_bytes_raw                |      3.59561e+10 | bytes   |
+| rate=1200 wait=300             | wal_24h_bytes_zstd               |      4.10259e+09 | bytes   |
+| rate=1200 wait=900             | wal_24h_bytes_raw                |      3.59561e+10 | bytes   |
+| rate=1200 wait=900             | wal_24h_bytes_zstd               |      4.10259e+09 | bytes   |
+| per_template_day               | files                            |  34891           | count   |
+| per_template_day               | row_groups                       |  36661           | count   |
+| per_template_day               | bytes                            |      5.90709e+07 | bytes   |
+| per_template_day               | overhead_bytes                   |      2.23682e+07 | bytes   |
+| per_template_day               | overhead_share_pct               |     37.87        | percent |
+| per_template_day               | disk_blocks                      |      1.53096e+08 | bytes   |
+| per_template_day               | ratio_to_raw                     |      2.432       | ratio   |
+| per_template_day               | one_template_files               |    841           | count   |
+| per_template_day               | one_template_index_bytes         | 288463           | bytes   |
+| per_template_day               | one_template_ranges              |    841           | count   |
+| per_template_day               | all_templates_files              |  34891           | count   |
+| per_template_day               | all_templates_index_bytes        |      1.28491e+07 | bytes   |
+| per_template_day               | all_templates_ranges             |  34891           | count   |
+| shared_day_limit limit=128.0MB | files                            |      1           | count   |
+| shared_day_limit limit=128.0MB | row_groups                       |  36661           | count   |
+| shared_day_limit limit=128.0MB | bytes                            |      5.56294e+07 | bytes   |
+| shared_day_limit limit=128.0MB | overhead_bytes                   |      1.89267e+07 | bytes   |
+| shared_day_limit limit=128.0MB | overhead_share_pct               |     34.02        | percent |
+| shared_day_limit limit=128.0MB | disk_blocks                      |      5.56319e+07 | bytes   |
+| shared_day_limit limit=128.0MB | ratio_to_raw                     |      0.8836      | ratio   |
+| shared_day_limit limit=128.0MB | one_template_files               |      1           | count   |
+| shared_day_limit limit=128.0MB | one_template_index_bytes         |      7.91898e+06 | bytes   |
+| shared_day_limit limit=128.0MB | one_template_ranges              |    788           | count   |
+| shared_day_limit limit=128.0MB | all_templates_files              |      1           | count   |
+| shared_day_limit limit=128.0MB | all_templates_index_bytes        |      7.91898e+06 | bytes   |
+| shared_day_limit limit=128.0MB | all_templates_ranges             |      1           | count   |
+| shared_day_limit limit=128.0MB | open_file_index_memory_bytes     |      1.91056e+07 | bytes   |
+| shared_day_limit limit=512.0MB | files                            |      1           | count   |
+| shared_day_limit limit=512.0MB | row_groups                       |  36661           | count   |
+| shared_day_limit limit=512.0MB | bytes                            |      5.56294e+07 | bytes   |
+| shared_day_limit limit=512.0MB | overhead_bytes                   |      1.89267e+07 | bytes   |
+| shared_day_limit limit=512.0MB | overhead_share_pct               |     34.02        | percent |
+| shared_day_limit limit=512.0MB | disk_blocks                      |      5.56319e+07 | bytes   |
+| shared_day_limit limit=512.0MB | ratio_to_raw                     |      0.8836      | ratio   |
+| shared_day_limit limit=512.0MB | one_template_files               |      1           | count   |
+| shared_day_limit limit=512.0MB | one_template_index_bytes         |      7.91898e+06 | bytes   |
+| shared_day_limit limit=512.0MB | one_template_ranges              |    788           | count   |
+| shared_day_limit limit=512.0MB | all_templates_files              |      1           | count   |
+| shared_day_limit limit=512.0MB | all_templates_index_bytes        |      7.91898e+06 | bytes   |
+| shared_day_limit limit=512.0MB | all_templates_ranges             |      1           | count   |
+| shared_day_limit limit=512.0MB | open_file_index_memory_bytes     |      7.64227e+07 | bytes   |
+| shared_day_limit limit=1.0GB   | files                            |      1           | count   |
+| shared_day_limit limit=1.0GB   | row_groups                       |  36661           | count   |
+| shared_day_limit limit=1.0GB   | bytes                            |      5.56294e+07 | bytes   |
+| shared_day_limit limit=1.0GB   | overhead_bytes                   |      1.89267e+07 | bytes   |
+| shared_day_limit limit=1.0GB   | overhead_share_pct               |     34.02        | percent |
+| shared_day_limit limit=1.0GB   | disk_blocks                      |      5.56319e+07 | bytes   |
+| shared_day_limit limit=1.0GB   | ratio_to_raw                     |      0.8836      | ratio   |
+| shared_day_limit limit=1.0GB   | one_template_files               |      1           | count   |
+| shared_day_limit limit=1.0GB   | one_template_index_bytes         |      7.91898e+06 | bytes   |
+| shared_day_limit limit=1.0GB   | one_template_ranges              |    788           | count   |
+| shared_day_limit limit=1.0GB   | all_templates_files              |      1           | count   |
+| shared_day_limit limit=1.0GB   | all_templates_index_bytes        |      7.91898e+06 | bytes   |
+| shared_day_limit limit=1.0GB   | all_templates_ranges             |      1           | count   |
+| shared_day_limit limit=1.0GB   | open_file_index_memory_bytes     |      1.52846e+08 | bytes   |
+| mod_n n=4                      | files                            |      4           | count   |
+| mod_n n=4                      | row_groups                       |  36661           | count   |
+| mod_n n=4                      | bytes                            |      5.56301e+07 | bytes   |
+| mod_n n=4                      | overhead_bytes                   |      1.89274e+07 | bytes   |
+| mod_n n=4                      | overhead_share_pct               |     34.02        | percent |
+| mod_n n=4                      | disk_blocks                      |      5.56401e+07 | bytes   |
+| mod_n n=4                      | ratio_to_raw                     |      0.8837      | ratio   |
+| mod_n n=4                      | one_template_files               |      1           | count   |
+| mod_n n=4                      | one_template_index_bytes         |      1.5904e+06  | bytes   |
+| mod_n n=4                      | one_template_ranges              |    676           | count   |
+| mod_n n=4                      | all_templates_files              |      4           | count   |
+| mod_n n=4                      | all_templates_index_bytes        |      7.9196e+06  | bytes   |
+| mod_n n=4                      | all_templates_ranges             |      4           | count   |
+| mod_n n=4                      | byte_spread_largest_over_average |      1.214       | ratio   |
+| mod_n n=8                      | files                            |      8           | count   |
+| mod_n n=8                      | row_groups                       |  36661           | count   |
+| mod_n n=8                      | bytes                            |      5.56309e+07 | bytes   |
+| mod_n n=8                      | overhead_bytes                   |      1.89282e+07 | bytes   |
+| mod_n n=8                      | overhead_share_pct               |     34.02        | percent |
+| mod_n n=8                      | disk_blocks                      |      5.56483e+07 | bytes   |
+| mod_n n=8                      | ratio_to_raw                     |      0.8839      | ratio   |
+| mod_n n=8                      | one_template_files               |      1           | count   |
+| mod_n n=8                      | one_template_index_bytes         | 492253           | bytes   |
+| mod_n n=8                      | one_template_ranges              |    443           | count   |
+| mod_n n=8                      | all_templates_files              |      8           | count   |
+| mod_n n=8                      | all_templates_index_bytes        |      7.92042e+06 | bytes   |
+| mod_n n=8                      | all_templates_ranges             |      8           | count   |
+| mod_n n=8                      | byte_spread_largest_over_average |      1.371       | ratio   |
+| least_full n=4                 | files                            |      4           | count   |
+| least_full n=4                 | row_groups                       |  36661           | count   |
+| least_full n=4                 | bytes                            |      5.56301e+07 | bytes   |
+| least_full n=4                 | overhead_bytes                   |      1.89274e+07 | bytes   |
+| least_full n=4                 | overhead_share_pct               |     34.02        | percent |
+| least_full n=4                 | disk_blocks                      |      5.5636e+07  | bytes   |
+| least_full n=4                 | ratio_to_raw                     |      0.8837      | ratio   |
+| least_full n=4                 | one_template_files               |      4           | count   |
+| least_full n=4                 | one_template_index_bytes         |      7.9196e+06  | bytes   |
+| least_full n=4                 | one_template_ranges              |    802           | count   |
+| least_full n=4                 | all_templates_files              |      4           | count   |
+| least_full n=4                 | all_templates_index_bytes        |      7.9196e+06  | bytes   |
+| least_full n=4                 | all_templates_ranges             |      4           | count   |
+| least_full n=4                 | byte_spread_largest_over_average |      1.002       | ratio   |
+| least_full n=8                 | files                            |      8           | count   |
+| least_full n=8                 | row_groups                       |  36661           | count   |
+| least_full n=8                 | bytes                            |      5.56309e+07 | bytes   |
+| least_full n=8                 | overhead_bytes                   |      1.89282e+07 | bytes   |
+| least_full n=8                 | overhead_share_pct               |     34.02        | percent |
+| least_full n=8                 | disk_blocks                      |      5.56524e+07 | bytes   |
+| least_full n=8                 | ratio_to_raw                     |      0.8839      | ratio   |
+| least_full n=8                 | one_template_files               |      8           | count   |
+| least_full n=8                 | one_template_index_bytes         |      7.92042e+06 | bytes   |
+| least_full n=8                 | one_template_ranges              |    818           | count   |
+| least_full n=8                 | all_templates_files              |      8           | count   |
+| least_full n=8                 | all_templates_index_bytes        |      7.92042e+06 | bytes   |
+| least_full n=8                 | all_templates_ranges             |      8           | count   |
+| least_full n=8                 | byte_spread_largest_over_average |      1.003       | ratio   |
+| calibration                    | real_col_bytes                   |      6.00619e+07 | bytes   |
+| calibration                    | real_col_files                   |  34892           | count   |
+| calibration                    | real_col_blocks                  |      1.52396e+08 | bytes   |
+| calibration                    | real_meta_bytes                  | 572719           | bytes   |
+| calibration                    | real_meta_blocks                 |      1.06906e+06 | bytes   |
+| calibration                    | real_meta_files                  |    131           | count   |
+| calibration                    | real_segments_over_ceil          |      0           | count   |
+| calibration                    | real_bytes_over_ceil             |      0           | bytes   |
+| calibration                    | model_col_bytes                  |      5.82442e+07 | bytes   |
+| calibration                    | model_col_files                  |  34891           | count   |
+| calibration                    | model_col_blocks                 |      1.52371e+08 | bytes   |
+| calibration                    | model_minus_real_pct             |     -3.026       | percent |
 
 ### `03_layout_model` / dataset `uneven`
 
@@ -1604,6 +1848,14 @@ Run 2026-09-18T22:07:49+00:00, git `b405451`, 451 rows.
 - 8 files per day, each row group to the file with the fewest bytes
 - 200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed
 - the model's per-template-per-day bytes against the binary's
+- a (template, day) pair - what the model used to assume was one file
+- segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition
+- 32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08
+- what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung
+- one day (2024-01-15); the one-template search is template 3977316063236355336
+- 88,452 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit
+- 353,809 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit
+- 707,619 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit
 - 32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08
 - one day (2024-01-15); the one-template search is template 1055466456870197778
 - 54,779 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit
@@ -3108,7 +3360,7 @@ Run 2026-09-18T23:57:37+00:00, git `b405451`, 889 rows.
 
 _Is a bloom filter per row group worth its bytes_
 
-Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
+Run 2026-09-19T00:02:33+00:00, git `b405451`, 612 rows.
 
 ### `06_bloom` / dataset `flat30`
 
@@ -3347,6 +3599,195 @@ Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
 | words:http.path      | never_skipped_pct            |     99      | percent |
 | words:http.path      | filter_bytes                 |   1584      | bytes   |
 
+### `06_bloom` / dataset `messy`
+
+| variant            | metric                       |       value | unit    |
+|--------------------|------------------------------|-------------|---------|
+| trace_id@8bits     | row_groups                   |    130      | count   |
+| trace_id@8bits     | filter_bytes                 | 200000      | bytes   |
+| trace_id@8bits     | k                            |      6      | count   |
+| trace_id@8bits     | misses_generated             |   1000      | count   |
+| trace_id@8bits     | misses_rejected_out_of_range |      0      | count   |
+| trace_id@8bits     | present_bloom_skipped_pct    |     97.08   | percent |
+| trace_id@8bits     | present_minmax_skipped_pct   |      0.3908 | percent |
+| trace_id@8bits     | present_ideal_skipped_pct    |     99.23   | percent |
+| trace_id@8bits     | absent_bloom_skipped_pct     |     97.81   | percent |
+| trace_id@8bits     | absent_minmax_skipped_pct    |      0.3254 | percent |
+| trace_id@8bits     | absent_ideal_skipped_pct     |    100      | percent |
+| trace_id@8bits     | share_of_best_total_pct      |      2.035  | percent |
+| trace_id@10bits    | row_groups                   |    130      | count   |
+| trace_id@10bits    | filter_bytes                 | 250045      | bytes   |
+| trace_id@10bits    | k                            |      7      | count   |
+| trace_id@10bits    | misses_generated             |   1000      | count   |
+| trace_id@10bits    | misses_rejected_out_of_range |      0      | count   |
+| trace_id@10bits    | present_bloom_skipped_pct    |     98.45   | percent |
+| trace_id@10bits    | present_minmax_skipped_pct   |      0.3908 | percent |
+| trace_id@10bits    | present_ideal_skipped_pct    |     99.23   | percent |
+| trace_id@10bits    | absent_bloom_skipped_pct     |     99.16   | percent |
+| trace_id@10bits    | absent_minmax_skipped_pct    |      0.3254 | percent |
+| trace_id@10bits    | absent_ideal_skipped_pct     |    100      | percent |
+| trace_id@10bits    | share_of_best_total_pct      |      2.544  | percent |
+| trace_id@16bits    | row_groups                   |    130      | count   |
+| trace_id@16bits    | filter_bytes                 | 400000      | bytes   |
+| trace_id@16bits    | k                            |     11      | count   |
+| trace_id@16bits    | misses_generated             |   1000      | count   |
+| trace_id@16bits    | misses_rejected_out_of_range |      0      | count   |
+| trace_id@16bits    | present_bloom_skipped_pct    |     99.18   | percent |
+| trace_id@16bits    | present_minmax_skipped_pct   |      0.3908 | percent |
+| trace_id@16bits    | present_ideal_skipped_pct    |     99.23   | percent |
+| trace_id@16bits    | absent_bloom_skipped_pct     |     99.94   | percent |
+| trace_id@16bits    | absent_minmax_skipped_pct    |      0.3254 | percent |
+| trace_id@16bits    | absent_ideal_skipped_pct     |    100      | percent |
+| trace_id@16bits    | share_of_best_total_pct      |      4.07   | percent |
+| client.ip@8bits    | row_groups                   |    130      | count   |
+| client.ip@8bits    | filter_bytes                 | 200000      | bytes   |
+| client.ip@8bits    | k                            |      6      | count   |
+| client.ip@8bits    | misses_generated             |   1000      | count   |
+| client.ip@8bits    | misses_rejected_out_of_range |      0      | count   |
+| client.ip@8bits    | present_bloom_skipped_pct    |     97.12   | percent |
+| client.ip@8bits    | present_minmax_skipped_pct   |      0.2285 | percent |
+| client.ip@8bits    | present_ideal_skipped_pct    |     99.23   | percent |
+| client.ip@8bits    | absent_bloom_skipped_pct     |     97.78   | percent |
+| client.ip@8bits    | absent_minmax_skipped_pct    |      0.3046 | percent |
+| client.ip@8bits    | absent_ideal_skipped_pct     |    100      | percent |
+| client.ip@8bits    | share_of_best_total_pct      |      2.035  | percent |
+| client.ip@10bits   | row_groups                   |    130      | count   |
+| client.ip@10bits   | filter_bytes                 | 250045      | bytes   |
+| client.ip@10bits   | k                            |      7      | count   |
+| client.ip@10bits   | misses_generated             |   1000      | count   |
+| client.ip@10bits   | misses_rejected_out_of_range |      0      | count   |
+| client.ip@10bits   | present_bloom_skipped_pct    |     98.41   | percent |
+| client.ip@10bits   | present_minmax_skipped_pct   |      0.2285 | percent |
+| client.ip@10bits   | present_ideal_skipped_pct    |     99.23   | percent |
+| client.ip@10bits   | absent_bloom_skipped_pct     |     99.19   | percent |
+| client.ip@10bits   | absent_minmax_skipped_pct    |      0.3046 | percent |
+| client.ip@10bits   | absent_ideal_skipped_pct     |    100      | percent |
+| client.ip@10bits   | share_of_best_total_pct      |      2.544  | percent |
+| client.ip@16bits   | row_groups                   |    130      | count   |
+| client.ip@16bits   | filter_bytes                 | 400000      | bytes   |
+| client.ip@16bits   | k                            |     11      | count   |
+| client.ip@16bits   | misses_generated             |   1000      | count   |
+| client.ip@16bits   | misses_rejected_out_of_range |      0      | count   |
+| client.ip@16bits   | present_bloom_skipped_pct    |     99.18   | percent |
+| client.ip@16bits   | present_minmax_skipped_pct   |      0.2285 | percent |
+| client.ip@16bits   | present_ideal_skipped_pct    |     99.23   | percent |
+| client.ip@16bits   | absent_bloom_skipped_pct     |     99.95   | percent |
+| client.ip@16bits   | absent_minmax_skipped_pct    |      0.3046 | percent |
+| client.ip@16bits   | absent_ideal_skipped_pct     |    100      | percent |
+| client.ip@16bits   | share_of_best_total_pct      |      4.07   | percent |
+| duration_ms@8bits  | row_groups                   |    130      | count   |
+| duration_ms@8bits  | filter_bytes                 | 199234      | bytes   |
+| duration_ms@8bits  | k                            |      6      | count   |
+| duration_ms@8bits  | misses_generated             |   1000      | count   |
+| duration_ms@8bits  | misses_rejected_out_of_range |      0      | count   |
+| duration_ms@8bits  | present_bloom_skipped_pct    |     97      | percent |
+| duration_ms@8bits  | present_minmax_skipped_pct   |      0.1738 | percent |
+| duration_ms@8bits  | present_ideal_skipped_pct    |     99.06   | percent |
+| duration_ms@8bits  | absent_bloom_skipped_pct     |     97.91   | percent |
+| duration_ms@8bits  | absent_minmax_skipped_pct    |      0.1608 | percent |
+| duration_ms@8bits  | absent_ideal_skipped_pct     |    100      | percent |
+| duration_ms@8bits  | share_of_best_total_pct      |      2.027  | percent |
+| duration_ms@10bits | row_groups                   |    130      | count   |
+| duration_ms@10bits | filter_bytes                 | 249097      | bytes   |
+| duration_ms@10bits | k                            |      7      | count   |
+| duration_ms@10bits | misses_generated             |   1000      | count   |
+| duration_ms@10bits | misses_rejected_out_of_range |      0      | count   |
+| duration_ms@10bits | present_bloom_skipped_pct    |     98.31   | percent |
+| duration_ms@10bits | present_minmax_skipped_pct   |      0.1738 | percent |
+| duration_ms@10bits | present_ideal_skipped_pct    |     99.06   | percent |
+| duration_ms@10bits | absent_bloom_skipped_pct     |     99.23   | percent |
+| duration_ms@10bits | absent_minmax_skipped_pct    |      0.1608 | percent |
+| duration_ms@10bits | absent_ideal_skipped_pct     |    100      | percent |
+| duration_ms@10bits | share_of_best_total_pct      |      2.534  | percent |
+| duration_ms@16bits | row_groups                   |    130      | count   |
+| duration_ms@16bits | filter_bytes                 | 398468      | bytes   |
+| duration_ms@16bits | k                            |     11      | count   |
+| duration_ms@16bits | misses_generated             |   1000      | count   |
+| duration_ms@16bits | misses_rejected_out_of_range |      0      | count   |
+| duration_ms@16bits | present_bloom_skipped_pct    |     99      | percent |
+| duration_ms@16bits | present_minmax_skipped_pct   |      0.1738 | percent |
+| duration_ms@16bits | present_ideal_skipped_pct    |     99.06   | percent |
+| duration_ms@16bits | absent_bloom_skipped_pct     |     99.95   | percent |
+| duration_ms@16bits | absent_minmax_skipped_pct    |      0.1608 | percent |
+| duration_ms@16bits | absent_ideal_skipped_pct     |    100      | percent |
+| duration_ms@16bits | share_of_best_total_pct      |      4.054  | percent |
+| user_id@8bits      | row_groups                   |    130      | count   |
+| user_id@8bits      | filter_bytes                 | 200000      | bytes   |
+| user_id@8bits      | k                            |      6      | count   |
+| user_id@8bits      | misses_generated             |   1000      | count   |
+| user_id@8bits      | misses_rejected_out_of_range |      0      | count   |
+| user_id@8bits      | present_bloom_skipped_pct    |     97.02   | percent |
+| user_id@8bits      | present_minmax_skipped_pct   |      0.4715 | percent |
+| user_id@8bits      | present_ideal_skipped_pct    |     99.15   | percent |
+| user_id@8bits      | absent_bloom_skipped_pct     |     97.83   | percent |
+| user_id@8bits      | absent_minmax_skipped_pct    |      0.4454 | percent |
+| user_id@8bits      | absent_ideal_skipped_pct     |    100      | percent |
+| user_id@8bits      | share_of_best_total_pct      |      2.035  | percent |
+| user_id@10bits     | row_groups                   |    130      | count   |
+| user_id@10bits     | filter_bytes                 | 250045      | bytes   |
+| user_id@10bits     | k                            |      7      | count   |
+| user_id@10bits     | misses_generated             |   1000      | count   |
+| user_id@10bits     | misses_rejected_out_of_range |      0      | count   |
+| user_id@10bits     | present_bloom_skipped_pct    |     98.3    | percent |
+| user_id@10bits     | present_minmax_skipped_pct   |      0.4715 | percent |
+| user_id@10bits     | present_ideal_skipped_pct    |     99.15   | percent |
+| user_id@10bits     | absent_bloom_skipped_pct     |     99.22   | percent |
+| user_id@10bits     | absent_minmax_skipped_pct    |      0.4454 | percent |
+| user_id@10bits     | absent_ideal_skipped_pct     |    100      | percent |
+| user_id@10bits     | share_of_best_total_pct      |      2.544  | percent |
+| user_id@16bits     | row_groups                   |    130      | count   |
+| user_id@16bits     | filter_bytes                 | 400000      | bytes   |
+| user_id@16bits     | k                            |     11      | count   |
+| user_id@16bits     | misses_generated             |   1000      | count   |
+| user_id@16bits     | misses_rejected_out_of_range |      0      | count   |
+| user_id@16bits     | present_bloom_skipped_pct    |     99.09   | percent |
+| user_id@16bits     | present_minmax_skipped_pct   |      0.4715 | percent |
+| user_id@16bits     | present_ideal_skipped_pct    |     99.15   | percent |
+| user_id@16bits     | absent_bloom_skipped_pct     |     99.94   | percent |
+| user_id@16bits     | absent_minmax_skipped_pct    |      0.4454 | percent |
+| user_id@16bits     | absent_ideal_skipped_pct     |    100      | percent |
+| user_id@16bits     | share_of_best_total_pct      |      4.07   | percent |
+| order_id@8bits     | row_groups                   |     70      | count   |
+| order_id@8bits     | filter_bytes                 |  77952      | bytes   |
+| order_id@8bits     | k                            |      6      | count   |
+| order_id@8bits     | misses_generated             |   1000      | count   |
+| order_id@8bits     | misses_rejected_out_of_range |      0      | count   |
+| order_id@8bits     | present_bloom_skipped_pct    |     96.36   | percent |
+| order_id@8bits     | present_minmax_skipped_pct   |      0.3871 | percent |
+| order_id@8bits     | present_ideal_skipped_pct    |     98.57   | percent |
+| order_id@8bits     | absent_bloom_skipped_pct     |     97.7    | percent |
+| order_id@8bits     | absent_minmax_skipped_pct    |      0.4457 | percent |
+| order_id@8bits     | absent_ideal_skipped_pct     |    100      | percent |
+| order_id@8bits     | share_of_best_total_pct      |      0.7931 | percent |
+| order_id@10bits    | row_groups                   |     70      | count   |
+| order_id@10bits    | filter_bytes                 |  97464      | bytes   |
+| order_id@10bits    | k                            |      7      | count   |
+| order_id@10bits    | misses_generated             |   1000      | count   |
+| order_id@10bits    | misses_rejected_out_of_range |      0      | count   |
+| order_id@10bits    | present_bloom_skipped_pct    |     97.71   | percent |
+| order_id@10bits    | present_minmax_skipped_pct   |      0.3871 | percent |
+| order_id@10bits    | present_ideal_skipped_pct    |     98.57   | percent |
+| order_id@10bits    | absent_bloom_skipped_pct     |     99.15   | percent |
+| order_id@10bits    | absent_minmax_skipped_pct    |      0.4457 | percent |
+| order_id@10bits    | absent_ideal_skipped_pct     |    100      | percent |
+| order_id@10bits    | share_of_best_total_pct      |      0.9917 | percent |
+| order_id@16bits    | row_groups                   |     70      | count   |
+| order_id@16bits    | filter_bytes                 | 155904      | bytes   |
+| order_id@16bits    | k                            |     11      | count   |
+| order_id@16bits    | misses_generated             |   1000      | count   |
+| order_id@16bits    | misses_rejected_out_of_range |      0      | count   |
+| order_id@16bits    | present_bloom_skipped_pct    |     98.49   | percent |
+| order_id@16bits    | present_minmax_skipped_pct   |      0.3871 | percent |
+| order_id@16bits    | present_ideal_skipped_pct    |     98.57   | percent |
+| order_id@16bits    | absent_bloom_skipped_pct     |     99.94   | percent |
+| order_id@16bits    | absent_minmax_skipped_pct    |      0.4457 | percent |
+| order_id@16bits    | absent_ideal_skipped_pct     |    100      | percent |
+| order_id@16bits    | share_of_best_total_pct      |      1.586  | percent |
+| words:trace_id     | common_skipped_pct           |     98.42   | percent |
+| words:trace_id     | rare_skipped_pct             |     98.46   | percent |
+| words:trace_id     | never_skipped_pct            |     99.13   | percent |
+| words:trace_id     | filter_bytes                 | 248100      | bytes   |
+
 ### `06_bloom` / dataset `uneven`
 
 | variant           | metric                       |       value | unit    |
@@ -3562,6 +4003,12 @@ Run 2026-09-18T22:10:15+00:00, git `b405451`, 428 rows.
 - 576 row groups, 32,367 distinct words
 - 72 row groups, 31,966 distinct words
 - 72 row groups, 17 distinct words
+- distinct/rows 0.992; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- against script 05's BEST_PER_CHUNK (9,828,235 bytes)
+- distinct/rows 0.994; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- distinct/rows 0.817; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- distinct/rows 0.909; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
+- 130 row groups, 198,441 distinct words
 - distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
 - against script 05's BEST_PER_CHUNK (4,303,865 bytes)
 - distinct/rows 0.928; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column

@@ -43,6 +43,99 @@ MOD_N = [4, 8]
 WAL_RECORD_OVERHEAD = 4 + 8 + 8 + 8 + 4  # section 7.1, before the raw line
 
 
+# --- segment sealing (src/store/disk.rs row_fits / extend_shape) --------------
+#
+# A segment does not hold a whole (template, day). It holds a maximal run of rows that
+# agree on their key set, on each column's kind, and on each Datetime column's rung -
+# and the moment a row would widen any of those, `row_fits` says no and the segment is
+# sealed. Section 6.2 describes the file format and says nothing about this, so the first
+# version of this model assumed one file per (template, day) and was exactly right on
+# flat30 and uneven for the wrong reason: neither has a key carrying two types, so every
+# partition happens to be one run.
+#
+# On `messy` the same assumption predicted 130 files where the binary wrote 34,892.
+#
+# Two details decide the count, and both come from the source rather than the spec:
+#   - The store's kind space is {Str, I64, F64, Dt, Bool} (segment.rs ColKind), so Uuid
+#     and Ip are Str. A UUID column taking an empty string does NOT seal.
+#   - `extend_shape` refuses two different `dt_form`s outright rather than merging them to
+#     Mixed, and `row_fits` then rejects any other rung. So a `ts` column alternating
+#     between RFC 3339 and ten-digit epoch seals in BOTH directions, every time, forever.
+#     That is the single largest source of segments on `messy`: 17,404 of 34,891.
+
+# segment.rs ColKind. Uuid and Ip collapse into Str, which is why widening one of those
+# costs a type but not a segment.
+_KIND = {
+    "String": "Str", "Uuid": "Str", "Ip": "Str",
+    "Int64": "I64", "Float64": "F64", "Datetime": "Dt", "Bool": "Bool",
+    None: None,
+}
+
+
+def _kind_join(a: str, b: str) -> str:
+    if a == b:
+        return a
+    if {a, b} == {"I64", "F64"}:
+        return "F64"
+    return "Str"
+
+
+def seal_starts(ds, rule=None) -> dict:
+    """Row indices, per (template, day), at which the binary would open a new segment.
+
+    One parse pass. Only the boundaries are kept, so this costs a few thousand ints
+    rather than a type per row per column.
+    """
+    from lab.common.frontend import parse_line
+
+    out: dict = defaultdict(list)
+    spec: dict = {}
+    counters: dict = defaultdict(int)
+    for _lab_id, raw in datasets.iter_payloads(ds.path):
+        p = parse_line(raw, rule) if rule else parse_line(raw)
+        shape = {}
+        for k in p.keys:
+            t = p.typed.get(k)
+            shape[k] = (_KIND[p.column_type(k)], t.dt_form if t is not None else None)
+        ts = p.typed.get(rowlib.TS_COLUMN)
+        day = (
+            _day_from_ns(ts.value)
+            if ts is not None and ts.ty == "Datetime" and ts.value is not None
+            else rowlib.UNDATED
+        )
+        key = (p.template_id, day)
+        idx = counters[key]
+        counters[key] += 1
+
+        cur = spec.get(key)
+        if cur is None or not _fits(cur, shape):
+            out[key].append(idx)
+            spec[key] = dict(shape)
+    return dict(out)
+
+
+def _fits(spec: dict, shape: dict) -> bool:
+    if len(shape) != len(spec) or any(k not in spec for k in shape):
+        return False
+    for k, (kind, form) in shape.items():
+        skind, sform = spec[k]
+        if kind is None or skind is None:
+            continue  # a null claims nothing, here as in the type lattice
+        if _kind_join(skind, kind) != skind:
+            return False
+        if skind == "Dt" and form is not None and sform is not None and form != sform:
+            return False
+    return True
+
+
+def _day_from_ns(ns: int) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ns // 1_000_000_000, tz=timezone.utc).strftime(
+        "%Y-%m-%d"
+    )
+
+
 # --- per-template column costs, precomputed -----------------------------------
 
 
@@ -136,7 +229,12 @@ class _Buf:
 
 
 def simulate(
-    P: rowlib.Parsed, costs: dict, rate: float, wait: float, tick_closes: bool
+    P: rowlib.Parsed,
+    costs: dict,
+    rate: float,
+    wait: float,
+    tick_closes: bool,
+    seals: dict | None = None,
 ) -> SimResult:
     """One pass over the dataset on a fake clock.
 
@@ -164,6 +262,7 @@ def simulate(
         reasons[reason] += 1
         backlog -= b.count
 
+    seal_set = {k: set(v) for k, v in (seals or {}).items()}
     order = sorted(range(P.n_rows), key=lambda r: (P.ts_ns[r] is None, P.ts_ns[r] or 0))
     for i, r in enumerate(order):
         now = i / rate
@@ -185,6 +284,14 @@ def simulate(
         tc = costs[tid]
         day = P.day[r]
         key = (tid, day)
+
+        # A row that would not fit the open segment seals it, and `run_end` returns a run
+        # that stops short of that row - so a row group never spans a seal. Without this
+        # the model puts one row group across a whole partition and then cannot tell
+        # which of its 34,891 segments the rows belong to.
+        if seals is not None and cursor[tid] in seal_set.get(key, ()):
+            close(key, "seal")
+
         b = bufs.get(key)
         if b is None:
             seq += 1
@@ -265,9 +372,21 @@ def assign(sim: SimResult, costs: dict, kind: str, **kw) -> Layout:
     """Which file each closed row group lands in. The close decisions are already made."""
     lay = Layout(kind)
     if kind == "per_template_day":
+        seals = kw.get("seals") or {}
         for rg in sim.row_groups:
-            lay.put((rg.tid, rg.day), rg)
-        lay.note = "what TrieDB does today: one segment per leaf per day"
+            starts = seals.get((rg.tid, rg.day))
+            seg = 0
+            if starts:
+                # The run a row group was cut from never spans a seal, so its first row
+                # decides which segment it lands in.
+                import bisect
+
+                seg = bisect.bisect_right(starts, rg.start) - 1
+            lay.put((rg.tid, rg.day, seg), rg)
+        lay.note = (
+            "what TrieDB does today: one segment per leaf per day, resealed whenever a "
+            "row would widen a column's kind or change a Datetime column's rung"
+        )
 
     elif kind == "shared_day_limit":
         limit = kw["limit"]
@@ -471,8 +590,9 @@ def calibrate(ds, P: rowlib.Parsed, costs: dict) -> dict:
 
     # The model, under the same close rule: no timer, so one row group per (template,
     # day) unless 8,192 rows or 8 MB got there first.
-    sim = simulate(P, costs, rate=1e12, wait=1e18, tick_closes=False)
-    lay = assign(sim, costs, "per_template_day")
+    seals = seal_starts(ds)
+    sim = simulate(P, costs, rate=1e12, wait=1e18, tick_closes=False, seals=seals)
+    lay = assign(sim, costs, "per_template_day", seals=seals)
     model = cost_layout(lay, costs, shared_columns=False)
 
     diff = 100.0 * (model.total - real["col_bytes"]) / real["col_bytes"]
@@ -579,10 +699,22 @@ def main() -> int:
         runs = [(r, w, True) for r in rates for w in waits]
 
     # -- close reasons and backlog ---------------------------------------------
+    seals = seal_starts(ds)
+    n_seg = sum(len(v) for v in seals.values())
+    print(
+        f"sealing: {len(seals):,} (template, day) partitions become {n_seg:,} segments "
+        "under the kind/dt_form rule of src/store/disk.rs"
+    )
+    res.add("sealing", "partitions", len(seals), "count",
+            "a (template, day) pair - what the model used to assume was one file")
+    res.add("sealing", "segments", n_seg, "count",
+            "segments the seal rule actually produces; section 6.2 does not mention "
+            "sealing, so the first version of this model assumed one per partition")
+
     sims: dict = {}
     crows = []
     for rate, wait, tick in runs:
-        sim = simulate(P, costs, rate, wait, tick)
+        sim = simulate(P, costs, rate, wait, tick, seals=seals)
         sims[(rate, wait, tick)] = sim
         label = f"rate={rate:g} wait={wait:g}" + (" tick" if tick else "")
         rc = sorted(rg.rows for rg in sim.row_groups)
@@ -670,7 +802,7 @@ def main() -> int:
         f" ({len(sim.row_groups):,} row groups)"
     )
 
-    specs = [("per_template_day", {}, False)]
+    specs = [("per_template_day", {"seals": seals}, False)]
     specs += [("shared_day_limit", {"limit": L}, True) for L in SHARED_LIMITS]
     specs += [("mod_n", {"n": n}, True) for n in MOD_N]
     specs += [("least_full", {"n": n}, True) for n in MOD_N]
@@ -697,8 +829,14 @@ def main() -> int:
     for kind, kw, shared in specs:
         lay = assign(sim, costs, kind, **kw)
         lc = cost_layout(lay, costs, shared_columns=shared)
-        label = lay.name + ("".join(f" {k}={measure.human(v) if k == 'limit' else v}"
-                                   for k, v in kw.items()))
+        # Only the knobs that name the variant. `seals` is a dict of every partition's
+        # segment boundaries, and joining it into the label wrote a 190 KB field into
+        # results.csv that the CSV reader then refused to parse at all.
+        label = lay.name + "".join(
+            f" {k}={measure.human(v) if k == 'limit' else v}"
+            for k, v in kw.items()
+            if k in ("limit", "n")
+        )
         rc = sorted(lc.rows)
         lrows.append(
             [
