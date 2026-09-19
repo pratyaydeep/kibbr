@@ -589,3 +589,851 @@ when,git_sha,bench,variant,metric,value,unit,note
 2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,server_up,1,bool,/health after the disk filled
 2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,rows_after_restart,0,rows,COUNT LOG {} on the same data dir after SIGTERM + restart
 2026-09-19T13:50:52Z,7c787eb,A5_disk_full,run_3,sender_saw,0,text,"response codes {""200"":; first failure 45}; last_write_error null ""/Volumes/labrs/data/leaf_663/undated/seg_000001.col: No space left on device (os error 28): No space left on device (os error 28)"""
+2026-09-19T14:02:05Z,30951fe,B2_appliers,one_applier,rows_per_sec,1026613.0608,rows_per_sec,append to per-template column buffers
+2026-09-19T14:02:05Z,30951fe,B2_appliers,one_applier,rows_per_sec_spread,6.4969,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:05Z,30951fe,B2_appliers,one_applier,busiest_applier_over_mean,1,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:02:05Z,30951fe,B2_appliers,2_appliers_by_template_mod_k,rows_per_sec,1024317.5548,rows_per_sec,append to per-template column buffers
+2026-09-19T14:02:05Z,30951fe,B2_appliers,2_appliers_by_template_mod_k,rows_per_sec_spread,5.5462,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:05Z,30951fe,B2_appliers,2_appliers_by_template_mod_k,busiest_applier_over_mean,1.0002,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:02:05Z,30951fe,B2_appliers,4_appliers_by_template_mod_k,rows_per_sec,877052.4494,rows_per_sec,append to per-template column buffers
+2026-09-19T14:02:05Z,30951fe,B2_appliers,4_appliers_by_template_mod_k,rows_per_sec_spread,1.7650,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:05Z,30951fe,B2_appliers,4_appliers_by_template_mod_k,busiest_applier_over_mean,1.1590,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:02:05Z,30951fe,B2_appliers,8_appliers_by_template_mod_k,rows_per_sec,522599.4085,rows_per_sec,append to per-template column buffers
+2026-09-19T14:02:05Z,30951fe,B2_appliers,8_appliers_by_template_mod_k,rows_per_sec_spread,11.5927,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:05Z,30951fe,B2_appliers,8_appliers_by_template_mod_k,busiest_applier_over_mean,1.4794,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:02:22Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec,6575186.4656,rows_per_sec,44004 matches
+2026-09-19T14:02:22Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec_spread,113.9652,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:22Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec,169760310.6641,rows_per_sec,44004 matches
+2026-09-19T14:02:22Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec_spread,90.5784,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:22Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec,163307299.4280,rows_per_sec,44004 matches
+2026-09-19T14:02:22Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec_spread,0.6728,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/read_all_then_sort,time_ms,204.2270,ms,20000 of 20000 row groups opened
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/read_all_then_sort,time_ms_spread,1.6503,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/read_all_then_sort,row_groups_opened,20000,count,
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/newest_first_stop_early,time_ms,0.5250,ms,42 of 20000 row groups opened
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/newest_first_stop_early,time_ms_spread,21.0556,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/newest_first_stop_early,row_groups_opened,42,count,
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/read_all_then_sort,time_ms,263.0472,ms,20000 of 20000 row groups opened
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/read_all_then_sort,time_ms_spread,1.3370,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/read_all_then_sort,row_groups_opened,20000,count,
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/newest_first_stop_early,time_ms,0.6525,ms,42 of 20000 row groups opened
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/newest_first_stop_early,time_ms_spread,9.8142,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:26Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/newest_first_stop_early,row_groups_opened,42,count,
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,128MB/crc_hardware,scan_ms,27.5033,ms,"6255 row groups, torn tail detected"
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,128MB/crc_hardware,scan_ms_spread,2.7209,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,128MB/crc_hardware,mb_per_sec,4880.6974,MB_per_sec,
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,128MB/crc_software,scan_ms,81.2547,ms,"6255 row groups, torn tail detected"
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,128MB/crc_software,scan_ms_spread,9.6897,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,128MB/crc_software,mb_per_sec,1652.0278,MB_per_sec,
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,512MB/crc_hardware,scan_ms,119.6942,ms,"25017 row groups, torn tail detected"
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,512MB/crc_hardware,scan_ms_spread,55.5950,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,512MB/crc_hardware,mb_per_sec,4485.3930,MB_per_sec,
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,512MB/crc_software,scan_ms,323.2110,ms,"25017 row groups, torn tail detected"
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,512MB/crc_software,scan_ms_spread,3.6688,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,512MB/crc_software,mb_per_sec,1661.0691,MB_per_sec,
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,1024MB/crc_hardware,scan_ms,259.1947,ms,"50034 row groups, torn tail detected"
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,1024MB/crc_hardware,scan_ms_spread,44.2578,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,1024MB/crc_hardware,mb_per_sec,4142.6436,MB_per_sec,
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,1024MB/crc_software,scan_ms,655.5552,ms,"50034 row groups, torn tail detected"
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,1024MB/crc_software,scan_ms_spread,2.6078,pct_of_median,max-min over 3 runs
+2026-09-19T14:02:30Z,30951fe,B13_recovery_scan,1024MB/crc_software,mb_per_sec,1637.9268,MB_per_sec,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,input_bytes,34323584,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,input_bytes,34323584,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,input_bytes,34323584,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,seconds,0.0590,s,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,seconds_spread,11.7182,pct_of_median,max-min over 3 runs
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,output_bytes,34323997,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,row_groups,1600,count,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,input_bytes,34323584,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,input_bytes,34323584,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,input_bytes,34323584,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,seconds,18.7064,s,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,seconds_spread,1.1155,pct_of_median,max-min over 3 runs
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,output_bytes,29594846,bytes,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,row_groups,100,count,
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,crash_1_new_file_half_written,every_row_exactly_once,1,bool,"201 files before startup rule; deleted 0 named as parents, 1 incomplete; 200 files after; "
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,crash_2_new_file_complete_not_renamed,every_row_exactly_once,1,bool,"201 files before startup rule; deleted 200 named as parents, 0 incomplete; 1 files after; "
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,crash_3_renamed_no_old_file_removed,every_row_exactly_once,1,bool,"201 files before startup rule; deleted 200 named as parents, 0 incomplete; 1 files after; "
+2026-09-19T14:03:14Z,30951fe,B11_compaction_cost,crash_4_half_the_old_files_removed,every_row_exactly_once,1,bool,"101 files before startup rule; deleted 100 named as parents, 0 incomplete; 1 files after; "
+2026-09-19T14:04:25Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec,8582881.2052,rows_per_sec,44004 matches
+2026-09-19T14:04:25Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec_spread,29.4451,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:25Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec,204759981.5782,rows_per_sec,44004 matches
+2026-09-19T14:04:25Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec_spread,34.2137,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:25Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec,140295578.0910,rows_per_sec,44004 matches
+2026-09-19T14:04:25Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec_spread,32.7606,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:29Z,30951fe,B4_last_seen,write_lock_per_line,updates_per_sec,115418221.7859,updates_per_sec,"8 threads, one template"
+2026-09-19T14:04:29Z,30951fe,B4_last_seen,write_lock_per_line,updates_per_sec_spread,22.8232,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:29Z,30951fe,B4_last_seen,atomic_per_line,updates_per_sec,35804636.4766,updates_per_sec,"8 threads, one template"
+2026-09-19T14:04:29Z,30951fe,B4_last_seen,atomic_per_line,updates_per_sec_spread,6.8548,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:29Z,30951fe,B4_last_seen,once_per_500_lines,updates_per_sec,3728806686.3097,updates_per_sec,"8 threads, one template"
+2026-09-19T14:04:29Z,30951fe,B4_last_seen,once_per_500_lines,updates_per_sec_spread,32.2272,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,1_threads,chunks_per_sec,6856.8980,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,1_threads,chunks_per_sec_spread,7.4621,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,1_threads,speedup_over_1_thread,1,x,
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,2_threads,chunks_per_sec,12690.5768,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,2_threads,chunks_per_sec_spread,15.3460,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,2_threads,speedup_over_1_thread,1.8508,x,
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,4_threads,chunks_per_sec,22970.3650,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,4_threads,chunks_per_sec_spread,8.8950,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,4_threads,speedup_over_1_thread,3.3500,x,
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,8_threads,chunks_per_sec,36964.8474,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,8_threads,chunks_per_sec_spread,13.7457,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:32Z,30951fe,B7_scan_threads,8_threads,speedup_over_1_thread,5.3909,x,
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,1000_templates/check_every_template,lookups_per_sec,248820.6895,lookups_per_sec,avg 274 templates per answer
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,1000_templates/check_every_template,lookups_per_sec_spread,32.3702,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,1000_templates/key_to_templates_map,lookups_per_sec,12630919.4804,lookups_per_sec,avg 274 templates per answer
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,1000_templates/key_to_templates_map,lookups_per_sec_spread,10.4414,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,10000_templates/check_every_template,lookups_per_sec,18060.9086,lookups_per_sec,avg 2824 templates per answer
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,10000_templates/check_every_template,lookups_per_sec_spread,2.2274,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,10000_templates/key_to_templates_map,lookups_per_sec,3879415.3566,lookups_per_sec,avg 2824 templates per answer
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,10000_templates/key_to_templates_map,lookups_per_sec_spread,6.5663,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,100000_templates/check_every_template,lookups_per_sec,1752.9526,lookups_per_sec,avg 27278 templates per answer
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,100000_templates/check_every_template,lookups_per_sec_spread,3.3683,pct_of_median,max-min over 3 runs
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,100000_templates/key_to_templates_map,lookups_per_sec,451736.6383,lookups_per_sec,avg 27278 templates per answer
+2026-09-19T14:04:34Z,30951fe,B8_template_lookup,100000_templates/key_to_templates_map,lookups_per_sec_spread,17.3676,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:10Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec,8442065.0809,rows_per_sec,44004 matches
+2026-09-19T14:05:10Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec_spread,20.7458,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:10Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec,142619952.6326,rows_per_sec,44004 matches
+2026-09-19T14:05:10Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec_spread,11.2557,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:10Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec,118761304.6288,rows_per_sec,44004 matches
+2026-09-19T14:05:10Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec_spread,25.6112,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:29Z,30951fe,B4_last_seen,write_lock_per_line,updates_per_sec,98874743.6209,updates_per_sec,"8 threads, one template"
+2026-09-19T14:05:29Z,30951fe,B4_last_seen,write_lock_per_line,updates_per_sec_spread,8.5157,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:29Z,30951fe,B4_last_seen,atomic_per_line,updates_per_sec,35826304.8934,updates_per_sec,"8 threads, one template"
+2026-09-19T14:05:29Z,30951fe,B4_last_seen,atomic_per_line,updates_per_sec_spread,13.0300,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:29Z,30951fe,B4_last_seen,once_per_500_lines,updates_per_sec,3590174249.5560,updates_per_sec,"8 threads, one template"
+2026-09-19T14:05:29Z,30951fe,B4_last_seen,once_per_500_lines,updates_per_sec_spread,8.9562,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec,755001.4125,rows_per_sec,
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec_spread,12.3654,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes,327417856,bytes,RSS above the process baseline after the last row
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes_spread,68.8100,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes,484327424,bytes,sampled every 100 ms
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes_spread,37.3127,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec,835365.2626,rows_per_sec,
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec_spread,13.6297,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes,298172416,bytes,RSS above the process baseline after the last row
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes_spread,164.8772,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes,370655232,bytes,sampled every 100 ms
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes_spread,71.1400,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec,783030.7152,rows_per_sec,
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec_spread,10.7343,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes,388448256,bytes,RSS above the process baseline after the last row
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes_spread,48.8169,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes,387235840,bytes,sampled every 100 ms
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes_spread,40.2708,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec,170379.5268,rows_per_sec,
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec_spread,5.4130,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes,1068875776,bytes,RSS above the process baseline after the last row
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes_spread,82.4062,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes,1197195264,bytes,sampled every 100 ms
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes_spread,61.2637,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec,833924.8601,rows_per_sec,
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec_spread,4.4634,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes,221888512,bytes,RSS above the process baseline after the last row
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes_spread,405.2942,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes,221888512,bytes,sampled every 100 ms
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes_spread,364.0331,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec,820110.8120,rows_per_sec,
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec_spread,10.5548,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes,46219264,bytes,RSS above the process baseline after the last row
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes_spread,402.5168,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes,99663872,bytes,sampled every 100 ms
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes_spread,127.8481,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec,299964.3315,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec_spread,0.0591,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes,508854272,bytes,"871 closes at 8,192 rows, 0 forced by the limit"
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes_spread,14.4987,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec,299297.4305,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec_spread,5.2190,pct_of_median,max-min over 3 runs
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes,171196416,bytes,"328 closes at 8,192 rows, 31860 forced by the limit"
+2026-09-19T14:05:39Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes_spread,20.2507,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,plain,rows_per_sec,51918750.1981,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,plain,rows_per_sec_spread,25.7526,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,plain,bytes_per_row_applicable_columns,75.2550,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,plain+zstd3,rows_per_sec,4366330.4329,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,plain+zstd3,rows_per_sec_spread,8.0869,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,plain+zstd3,bytes_per_row_applicable_columns,31.0336,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,rle_same_value_once,rows_per_sec,37221698.2872,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,rle_same_value_once,rows_per_sec_spread,6.3475,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,rle_same_value_once,bytes_per_row_applicable_columns,71.4124,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,rle_same_value_once+zstd3,rows_per_sec,4101655.1570,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,rle_same_value_once+zstd3,rows_per_sec_spread,17.2795,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,rle_same_value_once+zstd3,bytes_per_row_applicable_columns,31.3976,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,dict_word_list,rows_per_sec,9448818.9703,rows_per_sec,100 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,dict_word_list,rows_per_sec_spread,62.9294,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,dict_word_list,bytes_per_row_applicable_columns,104.9623,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,dict_word_list+zstd3,rows_per_sec,4464653.9311,rows_per_sec,100 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,dict_word_list+zstd3,rows_per_sec_spread,8.9249,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,dict_word_list+zstd3,bytes_per_row_applicable_columns,58.0662,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_timestamp_diff,rows_per_sec,656717566.5536,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_timestamp_diff,rows_per_sec_spread,24.4696,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_timestamp_diff,bytes_per_row_applicable_columns,48,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_timestamp_diff+zstd3,rows_per_sec,20828971.7165,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_timestamp_diff+zstd3,rows_per_sec_spread,1.1961,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_timestamp_diff+zstd3,bytes_per_row_applicable_columns,9.2180,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,varint,rows_per_sec,129148534.0569,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,varint,rows_per_sec_spread,2.8743,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,varint,bytes_per_row_applicable_columns,23.5772,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,varint+zstd3,rows_per_sec,31798361.1268,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,varint+zstd3,rows_per_sec_spread,7.9019,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,varint+zstd3,bytes_per_row_applicable_columns,9.1069,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_varint,rows_per_sec,136787941.2881,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_varint,rows_per_sec_spread,3.5412,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_varint,bytes_per_row_applicable_columns,11.7794,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_varint+zstd3,rows_per_sec,49215732.4048,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_varint+zstd3,rows_per_sec_spread,6.2954,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,delta_varint+zstd3,bytes_per_row_applicable_columns,7.8913,bytes,size over the columns the encoding applies to
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,rows_per_sec,4442311.4987,rows_per_sec,
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,rows_per_sec_spread,0.6607,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,bytes_total,12633336,bytes,
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,size_vs_fixed,1,ratio,
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,cpu_vs_fixed,1,x,encode time relative to the fixed choice
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,try_all_keep_smallest,rows_per_sec,1346286.0071,rows_per_sec,
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,try_all_keep_smallest,rows_per_sec_spread,8.7383,pct_of_median,max-min over 3 runs
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,try_all_keep_smallest,bytes_total,12121258,bytes,
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,try_all_keep_smallest,size_vs_fixed,0.9595,ratio,
+2026-09-19T14:10:50Z,30951fe,B12_encoding_cost,try_all_keep_smallest,cpu_vs_fixed,3.2997,x,encode time relative to the fixed choice
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec,821173.6056,rows_per_sec,
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec_spread,11.7477,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes,0,bytes,RSS growth over the run (the 3M generated rows are excluded); fresh process per run
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes,74776576,bytes,sampled every 100 ms
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes_spread,624.0798,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec,812772.9343,rows_per_sec,
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec_spread,7.6575,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes,415793152,bytes,RSS growth over the run (the 3M generated rows are excluded); fresh process per run
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes_spread,79.3561,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes,434126848,bytes,sampled every 100 ms
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes_spread,82.7905,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec,752271.0985,rows_per_sec,
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec_spread,7.9703,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes,0,bytes,RSS growth over the run (the 3M generated rows are excluded); fresh process per run
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes,52985856,bytes,sampled every 100 ms
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes_spread,52.8139,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec,155219.2984,rows_per_sec,
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec_spread,25.5394,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes,489095168,bytes,RSS growth over the run (the 3M generated rows are excluded); fresh process per run
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes_spread,139.5317,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes,664780800,bytes,sampled every 100 ms
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes_spread,85.2397,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec,845278.6468,rows_per_sec,
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec_spread,20.7754,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes,333824000,bytes,RSS growth over the run (the 3M generated rows are excluded); fresh process per run
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes_spread,47.8380,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes,355188736,bytes,sampled every 100 ms
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes_spread,42.8618,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec,785045.8276,rows_per_sec,
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec_spread,7.6792,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes,35258368,bytes,RSS growth over the run (the 3M generated rows are excluded); fresh process per run
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes_spread,818.0297,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes,119422976,bytes,sampled every 100 ms
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes_spread,146.8377,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec,299894.5902,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec_spread,1.3676,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes,699662336,bytes,"whole-process RSS, fresh process; 871 closes at 8,192 rows, 0 forced by the limit"
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes_spread,5.6037,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec,300006.0461,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec_spread,0.0027,pct_of_median,max-min over 3 runs
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes,418529280,bytes,"whole-process RSS, fresh process; 328 closes at 8,192 rows, 33898 forced by the limit"
+2026-09-19T14:11:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes_spread,0.6459,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec,798707.7171,rows_per_sec,
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec_spread,16.9739,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes,259129344,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes_spread,17.8490,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes,259276800,bytes,sampled every 100 ms
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes_spread,15.4818,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec,914297.3830,rows_per_sec,
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec_spread,6.4933,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes,79544320,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes_spread,19.2585,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes,92684288,bytes,sampled every 100 ms
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes_spread,8.0785,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec,805451.5376,rows_per_sec,
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec_spread,17.9002,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes,173654016,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes_spread,117.4073,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes,173703168,bytes,sampled every 100 ms
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes_spread,89.3133,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec,156522.1978,rows_per_sec,
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec_spread,15.5945,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes,962347008,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes_spread,12.9271,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes,1014513664,bytes,sampled every 100 ms
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes_spread,11.2676,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec,942476.4228,rows_per_sec,
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec_spread,1.3397,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes,148226048,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes_spread,2.8407,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes,148226048,bytes,sampled every 100 ms
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes_spread,2.8297,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec,807969.1614,rows_per_sec,
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec_spread,11.1192,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes,164052992,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes_spread,71.4671,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes,164134912,bytes,sampled every 100 ms
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes_spread,25.1946,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec,299899.5285,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec_spread,0.0457,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes,782581760,bytes,"whole-process RSS, fresh process; 871 closes at 8,192 rows, 0 forced by the limit"
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes_spread,8.5314,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec,300008.7584,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec_spread,0.0015,pct_of_median,max-min over 3 runs
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes,427360256,bytes,"whole-process RSS, fresh process; 328 closes at 8,192 rows, 33884 forced by the limit"
+2026-09-19T14:17:34Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes_spread,1.4338,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/1_producers,mb_per_sec,371.8553,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/1_producers,mb_per_sec_spread,10.4931,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/1_producers,row_groups_per_sec,267.0147,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/1_producers,row_groups_per_sec_spread,10.4931,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/1_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/2_producers,mb_per_sec,378.9661,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/2_producers,mb_per_sec_spread,6.0508,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/2_producers,row_groups_per_sec,272.1207,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/2_producers,row_groups_per_sec_spread,6.0508,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/2_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/4_producers,mb_per_sec,380.8701,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/4_producers,mb_per_sec_spread,19.4572,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/4_producers,row_groups_per_sec,273.4878,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/4_producers,row_groups_per_sec_spread,19.4572,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/4_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/8_producers,mb_per_sec,387.9077,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/8_producers,mb_per_sec_spread,5.5692,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/8_producers,row_groups_per_sec,278.5412,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/8_producers,row_groups_per_sec_spread,5.5692,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_shared_file/8_producers,max_file_over_mean,1,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/1_producers,mb_per_sec,388.7073,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/1_producers,mb_per_sec_spread,3.0770,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/1_producers,row_groups_per_sec,279.1154,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/1_producers,row_groups_per_sec_spread,3.0770,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/1_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/2_producers,mb_per_sec,421.5108,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/2_producers,mb_per_sec_spread,7.1147,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/2_producers,row_groups_per_sec,302.6703,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/2_producers,row_groups_per_sec_spread,7.1147,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/2_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/4_producers,mb_per_sec,447.3487,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/4_producers,mb_per_sec_spread,1.7889,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/4_producers,row_groups_per_sec,321.2235,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/4_producers,row_groups_per_sec_spread,1.7889,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/4_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/8_producers,mb_per_sec,478.5180,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/8_producers,mb_per_sec_spread,3.8797,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/8_producers,row_groups_per_sec,343.6050,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/8_producers,row_groups_per_sec_spread,3.8797,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_4/8_producers,max_file_over_mean,1.2765,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/1_producers,mb_per_sec,391.2524,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/1_producers,mb_per_sec_spread,19.6237,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/1_producers,row_groups_per_sec,280.9430,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/1_producers,row_groups_per_sec_spread,19.6237,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/1_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/2_producers,mb_per_sec,426.4096,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/2_producers,mb_per_sec_spread,1.8284,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/2_producers,row_groups_per_sec,306.1880,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/2_producers,row_groups_per_sec_spread,1.8284,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/2_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/4_producers,mb_per_sec,461.0992,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/4_producers,mb_per_sec_spread,4.0975,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/4_producers,row_groups_per_sec,331.0972,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/4_producers,row_groups_per_sec_spread,4.0975,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/4_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/8_producers,mb_per_sec,528.2145,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/8_producers,mb_per_sec_spread,4.2965,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/8_producers,row_groups_per_sec,379.2901,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/8_producers,row_groups_per_sec_spread,4.2965,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,template_mod_8/8_producers,max_file_over_mean,1.4500,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/1_producers,mb_per_sec,385.3469,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/1_producers,mb_per_sec_spread,28.7248,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/1_producers,row_groups_per_sec,276.7024,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/1_producers,row_groups_per_sec_spread,28.7248,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/1_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/2_producers,mb_per_sec,236.3598,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/2_producers,mb_per_sec_spread,5.9780,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/2_producers,row_groups_per_sec,169.7207,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/2_producers,row_groups_per_sec_spread,5.9780,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/2_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/4_producers,mb_per_sec,241.7219,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/4_producers,mb_per_sec_spread,2.8859,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/4_producers,row_groups_per_sec,173.5710,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/4_producers,row_groups_per_sec_spread,2.8859,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/4_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/8_producers,mb_per_sec,251.8404,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/8_producers,mb_per_sec_spread,4.4994,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/8_producers,row_groups_per_sec,180.8367,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/8_producers,row_groups_per_sec_spread,4.4994,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_4/8_producers,max_file_over_mean,1.0441,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/1_producers,mb_per_sec,226.8248,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/1_producers,mb_per_sec_spread,1.1074,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/1_producers,row_groups_per_sec,162.8740,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/1_producers,row_groups_per_sec_spread,1.1074,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/1_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/2_producers,mb_per_sec,238.5021,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/2_producers,mb_per_sec_spread,2.4655,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/2_producers,row_groups_per_sec,171.2589,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/2_producers,row_groups_per_sec_spread,2.4655,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/2_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/4_producers,mb_per_sec,217.0853,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/4_producers,mb_per_sec_spread,20.5378,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/4_producers,row_groups_per_sec,155.8804,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/4_producers,row_groups_per_sec_spread,20.5378,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/4_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/8_producers,mb_per_sec,267.7181,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/8_producers,mb_per_sec_spread,13.8824,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/8_producers,row_groups_per_sec,192.2378,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/8_producers,row_groups_per_sec_spread,13.8824,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,least_bytes_8/8_producers,max_file_over_mean,1.1000,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/1_producers,mb_per_sec,358.5238,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/1_producers,mb_per_sec_spread,45.4610,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/1_producers,row_groups_per_sec,257.4418,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/1_producers,row_groups_per_sec_spread,45.4610,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/1_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/2_producers,mb_per_sec,395.6958,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/2_producers,mb_per_sec_spread,6.2494,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/2_producers,row_groups_per_sec,284.1336,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/2_producers,row_groups_per_sec_spread,6.2494,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/2_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/4_producers,mb_per_sec,413.2560,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/4_producers,mb_per_sec_spread,6.0959,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/4_producers,row_groups_per_sec,296.7429,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/4_producers,row_groups_per_sec_spread,6.0959,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/4_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/8_producers,mb_per_sec,559.5820,MB_per_sec,sync_all per row group
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/8_producers,mb_per_sec_spread,28.2707,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/8_producers,row_groups_per_sec,401.8138,rg_per_sec,
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/8_producers,row_groups_per_sec_spread,28.2707,pct_of_median,max-min over 3 runs
+2026-09-19T14:21:43Z,30951fe,B10_file_layout_writes,one_file_per_template_500/8_producers,max_file_over_mean,4.7397,ratio,largest file / mean of non-empty files (1 = even)
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,lines_per_sec,318.4039,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,lines_per_sec_spread,9.7376,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p50,2983,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p50_spread,0.9387,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p99,8983,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,saved_wait_p99_spread,8.0151,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,wal_bytes_per_line,252.7442,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/1_senders,wal_bytes_per_line_spread,0.0343,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,lines_per_sec,320.9608,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,lines_per_sec_spread,16.2767,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p50,5983,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p50_spread,1.2034,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p99,13751,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,saved_wait_p99_spread,41.7715,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,wal_bytes_per_line,252.7758,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/2_senders,wal_bytes_per_line_spread,0.0227,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,lines_per_sec,720.6994,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,lines_per_sec_spread,12.6068,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p50,5915,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p50_spread,2.0964,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p99,13463,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,saved_wait_p99_spread,46.6464,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,wal_bytes_per_line,252.5757,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/4_senders,wal_bytes_per_line_spread,0.0211,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,lines_per_sec,1649.4104,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,lines_per_sec_spread,8.4982,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p50,5203,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p50_spread,17.3746,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p99,8027,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,saved_wait_p99_spread,22.8728,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,wal_bytes_per_line,252.7675,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_0ms/8_senders,wal_bytes_per_line_spread,0.0193,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,lines_per_sec,257.3821,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,lines_per_sec_spread,6.9500,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p50,3991,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p50_spread,0.1002,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p99,8983,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,saved_wait_p99_spread,39.1406,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,wal_bytes_per_line,252.6162,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/1_senders,wal_bytes_per_line_spread,0.0235,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,lines_per_sec,500.8534,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,lines_per_sec_spread,2.1676,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p50,4003,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p50_spread,1.5488,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p99,7903,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,saved_wait_p99_spread,66.5570,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,wal_bytes_per_line,252.7302,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/2_senders,wal_bytes_per_line_spread,0.0068,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,lines_per_sec,1008.1842,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,lines_per_sec_spread,4.4707,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p50,4011,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p50_spread,0.6981,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p99,7275,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,saved_wait_p99_spread,69.3333,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,wal_bytes_per_line,252.6401,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/4_senders,wal_bytes_per_line_spread,0.0141,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,lines_per_sec,2053.7783,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,lines_per_sec_spread,2.8366,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p50,4003,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p50_spread,0.7994,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p99,5507,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,saved_wait_p99_spread,10.6773,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,wal_bytes_per_line,252.7552,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_1ms/8_senders,wal_bytes_per_line_spread,0.0059,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,lines_per_sec,113.2594,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,lines_per_sec_spread,2.8326,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p50,8975,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p50_spread,0.6240,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p99,12975,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,saved_wait_p99_spread,25.8343,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line,252.1377,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line_spread,0.0112,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,lines_per_sec,227.8653,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,lines_per_sec_spread,0.7138,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p50,8991,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p50_spread,0.1780,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p99,10311,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,saved_wait_p99_spread,3.8018,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line,252.6657,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line_spread,0.0038,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,lines_per_sec,453.3857,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,lines_per_sec_spread,0.7776,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p50,8991,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p50_spread,0.1780,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p99,10311,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,saved_wait_p99_spread,14.4312,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line,252.8114,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line_spread,0.0099,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,lines_per_sec,897.8878,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,lines_per_sec_spread,2.7021,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p50,8999,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p50_spread,0.3556,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p99,10799,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,saved_wait_p99_spread,5.1116,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line,252.5584,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line_spread,0.0117,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,lines_per_sec,35.9967,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,lines_per_sec_spread,8.4246,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p50,26895,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p50_spread,4.6403,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p99,55167,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,saved_wait_p99_spread,88.1687,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line,251.7593,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line_spread,0.2493,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,lines_per_sec,74.4365,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,lines_per_sec_spread,0.8660,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p50,27039,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p50_spread,2.0119,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p99,36127,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,saved_wait_p99_spread,21.5241,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line,252.0439,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line_spread,0.0428,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,lines_per_sec,149.5629,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,lines_per_sec_spread,1.4858,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p50,26975,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p50_spread,2.6098,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p99,30367,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,saved_wait_p99_spread,5.9538,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line,252.1140,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line_spread,0.0008,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,lines_per_sec,294.5138,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,lines_per_sec_spread,1.6019,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p50,27119,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p50_spread,3.1860,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p99,30015,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,saved_wait_p99_spread,14.8726,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line,252.7121,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line_spread,0.0150,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,lines_per_sec,114.7696,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,lines_per_sec_spread,0.2314,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p50,8935,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p50_spread,0.6267,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p99,10327,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,saved_wait_p99_spread,13.8666,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,wal_bytes_per_line,252.0867,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/1_senders,wal_bytes_per_line_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,lines_per_sec,226.5968,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,lines_per_sec_spread,0.7992,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p50,8959,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p50_spread,0.2679,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p99,13055,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,saved_wait_p99_spread,26.2888,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,wal_bytes_per_line,252.6550,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/2_senders,wal_bytes_per_line_spread,0.0042,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,lines_per_sec,460.2877,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,lines_per_sec_spread,0.8729,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p50,8911,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p50_spread,0.4489,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p99,10359,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,saved_wait_p99_spread,21.2376,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,wal_bytes_per_line,252.7859,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/4_senders,wal_bytes_per_line_spread,0.0035,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,lines_per_sec,904.6876,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,lines_per_sec_spread,2.6234,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p50,8959,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p50_spread,0.7144,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p99,11031,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,saved_wait_p99_spread,68.3166,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,wal_bytes_per_line,252.5828,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,ack_before_flush/wait_5ms/8_senders,wal_bytes_per_line_spread,0.0063,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,lines_per_sec,112.7465,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,lines_per_sec_spread,2.2264,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p50,8991,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p50_spread,0.1780,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p99,12103,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,saved_wait_p99_spread,21.6145,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line,206.2840,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/1_senders,wal_bytes_per_line_spread,0.0238,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,lines_per_sec,225.2688,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,lines_per_sec_spread,4.9558,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p50,8991,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p50_spread,0.4449,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p99,11439,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,saved_wait_p99_spread,54.8300,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line,150.5118,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/2_senders,wal_bytes_per_line_spread,0.0334,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,lines_per_sec,444.8925,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,lines_per_sec_spread,2.3749,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p50,8991,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p50_spread,0.1780,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p99,13767,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,saved_wait_p99_spread,27.8928,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line,110.3899,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/4_senders,wal_bytes_per_line_spread,0.0782,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,lines_per_sec,898.9244,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,lines_per_sec_spread,2.1802,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p50,9007,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p50_spread,0.1776,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p99,10175,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,saved_wait_p99_spread,15.1744,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line,88.2982,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_5ms/8_senders,wal_bytes_per_line_spread,0.1048,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,lines_per_sec,37.7272,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,lines_per_sec_spread,2.7787,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p50,27007,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p50_spread,3.5546,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p99,29055,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,saved_wait_p99_spread,20.6505,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line,205.5614,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/1_senders,wal_bytes_per_line_spread,0.1117,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,lines_per_sec,74.4978,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,lines_per_sec_spread,1.3685,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p50,27055,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p50_spread,1.5376,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p99,29887,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,saved_wait_p99_spread,18.1484,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line,150.0089,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/2_senders,wal_bytes_per_line_spread,0.0351,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,lines_per_sec,148.5553,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,lines_per_sec_spread,1.5481,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p50,26927,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p50_spread,2.8522,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p99,30335,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,saved_wait_p99_spread,31.9631,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line,110.2946,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/4_senders,wal_bytes_per_line_spread,0.4191,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,lines_per_sec,301.2539,lines_per_sec,closed-loop senders
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,lines_per_sec_spread,2.3462,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p50,26863,us,sender's wait for the ack
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p50_spread,4.0502,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p99,31039,us,worst 1 percent
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,saved_wait_p99_spread,16.4438,pct_of_median,max-min over 3 runs
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line,88.1681,bytes,raw line avg 200 B
+2026-09-19T14:22:24Z,30951fe,B1_wal_batching,zstd3_ack_after_flush/wait_20ms/8_senders,wal_bytes_per_line_spread,0.0848,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,ingest_rows_per_sec,550761.5342,rows_per_sec,
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,ingest_rows_per_sec_spread,29.4502,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p50,1,us,read lock + snapshot
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p50_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p99,8783,us,worst 1 percent
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_p99_spread,9.9283,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_max,26143,us,
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,search_wait_max_spread,64.6292,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,closes,202,count,row groups closed in 3 s
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,closes_spread,29.2079,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,snapshots,59860,count,snapshots taken in 3 s by 4 searchers
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,snapshots_spread,29.0645,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,X_hold_lock_for_whole_close,violations,0,count,snapshots that did not see every row exactly once (max over 3 runs)
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,ingest_rows_per_sec,803327.3129,rows_per_sec,
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,ingest_rows_per_sec_spread,9.6540,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p50,8,us,read lock + snapshot
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p50_spread,0,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p99,164,us,worst 1 percent
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_p99_spread,21.9512,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_max,7611,us,
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,search_wait_max_spread,180.7384,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,closes,291,count,row groups closed in 3 s
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,closes_spread,9.2784,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,snapshots,142198,count,snapshots taken in 3 s by 4 searchers
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,snapshots_spread,9.5930,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:31Z,30951fe,B3_buffer_lock,Y_move_aside_publish_in_one_step,violations,0,count,snapshots that did not see every row exactly once (max over 3 runs)
+2026-09-19T14:24:50Z,30951fe,B2_appliers,one_applier,rows_per_sec,889111.6932,rows_per_sec,append to per-template column buffers
+2026-09-19T14:24:50Z,30951fe,B2_appliers,one_applier,rows_per_sec_spread,20.2849,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:50Z,30951fe,B2_appliers,one_applier,busiest_applier_over_mean,1,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:24:50Z,30951fe,B2_appliers,2_appliers_by_template_mod_k,rows_per_sec,991403.0485,rows_per_sec,append to per-template column buffers
+2026-09-19T14:24:50Z,30951fe,B2_appliers,2_appliers_by_template_mod_k,rows_per_sec_spread,3.8354,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:50Z,30951fe,B2_appliers,2_appliers_by_template_mod_k,busiest_applier_over_mean,1.0002,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:24:50Z,30951fe,B2_appliers,4_appliers_by_template_mod_k,rows_per_sec,838567.0103,rows_per_sec,append to per-template column buffers
+2026-09-19T14:24:50Z,30951fe,B2_appliers,4_appliers_by_template_mod_k,rows_per_sec_spread,2.5195,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:50Z,30951fe,B2_appliers,4_appliers_by_template_mod_k,busiest_applier_over_mean,1.1590,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:24:50Z,30951fe,B2_appliers,8_appliers_by_template_mod_k,rows_per_sec,576709.7913,rows_per_sec,append to per-template column buffers
+2026-09-19T14:24:50Z,30951fe,B2_appliers,8_appliers_by_template_mod_k,rows_per_sec_spread,2.9609,pct_of_median,max-min over 3 runs
+2026-09-19T14:24:50Z,30951fe,B2_appliers,8_appliers_by_template_mod_k,busiest_applier_over_mean,1.4794,ratio,rows on the busiest applier / mean (1 = even)
+2026-09-19T14:25:07Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec,11393291.0157,rows_per_sec,44004 matches
+2026-09-19T14:25:07Z,30951fe,B5_filters,rows_hashmap_closure,rows_per_sec_spread,63.2570,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:07Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec,177712682.0173,rows_per_sec,44004 matches
+2026-09-19T14:25:07Z,30951fe,B5_filters,columns_closure_per_row,rows_per_sec_spread,13.8945,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:07Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec,158010984.2758,rows_per_sec,44004 matches
+2026-09-19T14:25:07Z,30951fe,B5_filters,columns_plain_data_column_at_a_time,rows_per_sec_spread,25.1190,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/read_all_then_sort,time_ms,207.4966,ms,20000 of 20000 row groups opened
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/read_all_then_sort,time_ms_spread,3.6579,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/read_all_then_sort,row_groups_opened,20000,count,
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/newest_first_stop_early,time_ms,0.5268,ms,42 of 20000 row groups opened
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/newest_first_stop_early,time_ms_spread,10.2262,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_time_inside/newest_first_stop_early,row_groups_opened,42,count,
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/read_all_then_sort,time_ms,261.1577,ms,20000 of 20000 row groups opened
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/read_all_then_sort,time_ms_spread,4.7169,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/read_all_then_sort,row_groups_opened,20000,count,
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/newest_first_stop_early,time_ms,0.6460,ms,42 of 20000 row groups opened
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/newest_first_stop_early,time_ms_spread,8.3973,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:25Z,30951fe,B6_newest_n,rows_sorted_by_other_column_inside/newest_first_stop_early,row_groups_opened,42,count,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,input_bytes,34323584,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,input_bytes,34323584,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,input_bytes,34323584,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,seconds,0.0555,s,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,seconds_spread,16.6816,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,output_bytes,34323997,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,copy_row_groups_untouched,row_groups,1600,count,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,input_bytes,34323584,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,input_bytes,34323584,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,input_bytes,34323584,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,seconds,18.9712,s,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,seconds_spread,2.2993,pct_of_median,max-min over 3 runs
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,output_bytes,29594846,bytes,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,rebuild_8192_row_groups_zstd19,row_groups,100,count,
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,crash_1_new_file_half_written,every_row_exactly_once,1,bool,"201 files before startup rule; deleted 0 named as parents, 1 incomplete; 200 files after; "
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,crash_2_new_file_complete_not_renamed,every_row_exactly_once,1,bool,"201 files before startup rule; deleted 200 named as parents, 0 incomplete; 1 files after; "
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,crash_3_renamed_no_old_file_removed,every_row_exactly_once,1,bool,"201 files before startup rule; deleted 200 named as parents, 0 incomplete; 1 files after; "
+2026-09-19T14:25:28Z,30951fe,B11_compaction_cost,crash_4_half_the_old_files_removed,every_row_exactly_once,1,bool,"101 files before startup rule; deleted 100 named as parents, 0 incomplete; 1 files after; "
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,128MB/crc_hardware,scan_ms,28.9093,ms,"6255 row groups, torn tail detected"
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,128MB/crc_hardware,scan_ms_spread,2.4792,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,128MB/crc_hardware,mb_per_sec,4643.3249,MB_per_sec,
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,128MB/crc_software,scan_ms,83.1983,ms,"6255 row groups, torn tail detected"
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,128MB/crc_software,scan_ms_spread,0.8435,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,128MB/crc_software,mb_per_sec,1613.4342,MB_per_sec,
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,512MB/crc_hardware,scan_ms,123.2275,ms,"25017 row groups, torn tail detected"
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,512MB/crc_hardware,scan_ms_spread,44.1721,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,512MB/crc_hardware,mb_per_sec,4356.7852,MB_per_sec,
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,512MB/crc_software,scan_ms,332.5000,ms,"25017 row groups, torn tail detected"
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,512MB/crc_software,scan_ms_spread,2.9709,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,512MB/crc_software,mb_per_sec,1614.6639,MB_per_sec,
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,1024MB/crc_hardware,scan_ms,307.8697,ms,"50034 row groups, torn tail detected"
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,1024MB/crc_hardware,scan_ms_spread,47.2808,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,1024MB/crc_hardware,mb_per_sec,3487.6819,MB_per_sec,
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,1024MB/crc_software,scan_ms,665.6617,ms,"50034 row groups, torn tail detected"
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,1024MB/crc_software,scan_ms_spread,33.2283,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:38Z,30951fe,B13_recovery_scan,1024MB/crc_software,mb_per_sec,1613.0588,MB_per_sec,
+2026-09-19T14:26:45Z,30951fe,B4_last_seen,write_lock_per_line,updates_per_sec,109188043.0718,updates_per_sec,"8 threads, one template"
+2026-09-19T14:26:45Z,30951fe,B4_last_seen,write_lock_per_line,updates_per_sec_spread,3.4418,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:45Z,30951fe,B4_last_seen,atomic_per_line,updates_per_sec,33211745.4791,updates_per_sec,"8 threads, one template"
+2026-09-19T14:26:45Z,30951fe,B4_last_seen,atomic_per_line,updates_per_sec_spread,7.8367,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:45Z,30951fe,B4_last_seen,once_per_500_lines,updates_per_sec,3969041476.4834,updates_per_sec,"8 threads, one template"
+2026-09-19T14:26:45Z,30951fe,B4_last_seen,once_per_500_lines,updates_per_sec_spread,9.9476,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,1_threads,chunks_per_sec,7052.5540,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,1_threads,chunks_per_sec_spread,2.8955,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,1_threads,speedup_over_1_thread,1,x,
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,2_threads,chunks_per_sec,13855.4530,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,2_threads,chunks_per_sec_spread,4.8680,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,2_threads,speedup_over_1_thread,1.9646,x,
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,4_threads,chunks_per_sec,26784.4737,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,4_threads,chunks_per_sec_spread,0.7922,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,4_threads,speedup_over_1_thread,3.7978,x,
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,8_threads,chunks_per_sec,38373.7519,chunks_per_sec,"zstd decode of 8,192-string column chunks"
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,8_threads,chunks_per_sec_spread,10.3637,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:55Z,30951fe,B7_scan_threads,8_threads,speedup_over_1_thread,5.4411,x,
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,1000_templates/check_every_template,lookups_per_sec,244032.1451,lookups_per_sec,avg 274 templates per answer
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,1000_templates/check_every_template,lookups_per_sec_spread,34.1356,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,1000_templates/key_to_templates_map,lookups_per_sec,12917810.4311,lookups_per_sec,avg 274 templates per answer
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,1000_templates/key_to_templates_map,lookups_per_sec_spread,4.2507,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,10000_templates/check_every_template,lookups_per_sec,18303.3692,lookups_per_sec,avg 2824 templates per answer
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,10000_templates/check_every_template,lookups_per_sec_spread,1.7735,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,10000_templates/key_to_templates_map,lookups_per_sec,4064834.1040,lookups_per_sec,avg 2824 templates per answer
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,10000_templates/key_to_templates_map,lookups_per_sec_spread,10.9411,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,100000_templates/check_every_template,lookups_per_sec,1781.3699,lookups_per_sec,avg 27278 templates per answer
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,100000_templates/check_every_template,lookups_per_sec_spread,3.2516,pct_of_median,max-min over 3 runs
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,100000_templates/key_to_templates_map,lookups_per_sec,546642.2500,lookups_per_sec,avg 27278 templates per answer
+2026-09-19T14:26:57Z,30951fe,B8_template_lookup,100000_templates/key_to_templates_map,lookups_per_sec_spread,2.9652,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec,949075.4212,rows_per_sec,
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rows_per_sec_spread,4.6349,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes,243580928,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_end_bytes_spread,58.2565,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes,259964928,bytes,sampled every 100 ms
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/presized_8192,rss_peak_bytes_spread,8.7540,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec,1016601.1827,rows_per_sec,
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rows_per_sec_spread,1.8200,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes,119373824,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_end_bytes_spread,36.4946,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes,143474688,bytes,sampled every 100 ms
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_on_demand,rss_peak_bytes_spread,30.2958,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec,1005077.9887,rows_per_sec,
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rows_per_sec_spread,5.0038,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes,164511744,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_end_bytes_spread,33.9309,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes,185876480,bytes,sampled every 100 ms
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,1000_templates/grow_and_shrink,rss_peak_bytes_spread,14.2882,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec,197798.0332,rows_per_sec,
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rows_per_sec_spread,3.6806,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes,988872704,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_end_bytes_spread,17.1632,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes,1059913728,bytes,sampled every 100 ms
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/presized_8192,rss_peak_bytes_spread,6.4197,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec,934453.8260,rows_per_sec,
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rows_per_sec_spread,5.7023,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes,146063360,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_end_bytes_spread,27.9305,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes,146063360,bytes,sampled every 100 ms
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_on_demand,rss_peak_bytes_spread,24.6102,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec,920148.3739,rows_per_sec,
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rows_per_sec_spread,6.6380,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes,163725312,bytes,RSS growth over the run (the 1M generated rows are excluded); fresh process per run
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_end_bytes_spread,93.2753,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes,177733632,bytes,sampled every 100 ms
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,10000_templates/grow_and_shrink,rss_peak_bytes_spread,23.1287,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec,298530.4691,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rows_per_sec_spread,0.5560,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes,689356800,bytes,"whole-process RSS, fresh process; 870 closes at 8,192 rows, 0 forced by the limit"
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/no_memory_limit,rss_peak_bytes_spread,3.8954,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec,300008.3889,rows_per_sec,"target 300,000; lower means it fell behind"
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rows_per_sec_spread,0.0017,pct_of_median,max-min over 3 runs
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes,423149568,bytes,"whole-process RSS, fresh process; 328 closes at 8,192 rows, 33880 forced by the limit"
+2026-09-19T14:27:17Z,30951fe,B9_buffer_memory,burst/limit_256MB_close_largest_first,rss_peak_bytes_spread,5.4013,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,plain,rows_per_sec,50858295.8249,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,plain,rows_per_sec_spread,10.6298,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,plain,bytes_per_row_applicable_columns,75.2550,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,plain+zstd3,rows_per_sec,4394586.4874,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,plain+zstd3,rows_per_sec_spread,6.7779,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,plain+zstd3,bytes_per_row_applicable_columns,31.0336,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,rle_same_value_once,rows_per_sec,39127992.1905,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,rle_same_value_once,rows_per_sec_spread,4.5902,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,rle_same_value_once,bytes_per_row_applicable_columns,71.4124,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,rle_same_value_once+zstd3,rows_per_sec,4561594.3645,rows_per_sec,300 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,rle_same_value_once+zstd3,rows_per_sec_spread,9.9925,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,rle_same_value_once+zstd3,bytes_per_row_applicable_columns,31.3976,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,dict_word_list,rows_per_sec,9903537.7052,rows_per_sec,100 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,dict_word_list,rows_per_sec_spread,17.6577,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,dict_word_list,bytes_per_row_applicable_columns,104.9623,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,dict_word_list+zstd3,rows_per_sec,5030856.9255,rows_per_sec,100 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,dict_word_list+zstd3,rows_per_sec_spread,1.8646,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,dict_word_list+zstd3,bytes_per_row_applicable_columns,58.0662,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_timestamp_diff,rows_per_sec,269325909.3366,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_timestamp_diff,rows_per_sec_spread,155.4535,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_timestamp_diff,bytes_per_row_applicable_columns,48,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_timestamp_diff+zstd3,rows_per_sec,21217759.5341,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_timestamp_diff+zstd3,rows_per_sec_spread,1.4025,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_timestamp_diff+zstd3,bytes_per_row_applicable_columns,9.2180,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,varint,rows_per_sec,128894568.5855,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,varint,rows_per_sec_spread,1.1329,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,varint,bytes_per_row_applicable_columns,23.5772,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,varint+zstd3,rows_per_sec,33127767.5557,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,varint+zstd3,rows_per_sec_spread,14.7388,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,varint+zstd3,bytes_per_row_applicable_columns,9.1069,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_varint,rows_per_sec,137578563.5401,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_varint,rows_per_sec_spread,49.5420,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_varint,bytes_per_row_applicable_columns,11.7794,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_varint+zstd3,rows_per_sec,49927625.6647,rows_per_sec,150 column-chunks applicable of 300
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_varint+zstd3,rows_per_sec_spread,3.9409,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,delta_varint+zstd3,bytes_per_row_applicable_columns,7.8913,bytes,size over the columns the encoding applies to
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,rows_per_sec,4055027.3147,rows_per_sec,
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,rows_per_sec_spread,13.3798,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,bytes_total,12633336,bytes,
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,size_vs_fixed,1,ratio,
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,fixed_choice_per_column_type,cpu_vs_fixed,1,x,encode time relative to the fixed choice
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,try_all_keep_smallest,rows_per_sec,1348406.3391,rows_per_sec,
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,try_all_keep_smallest,rows_per_sec_spread,3.9470,pct_of_median,max-min over 3 runs
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,try_all_keep_smallest,bytes_total,12121258,bytes,
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,try_all_keep_smallest,size_vs_fixed,0.9595,ratio,
+2026-09-19T14:31:11Z,30951fe,B12_encoding_cost,try_all_keep_smallest,cpu_vs_fixed,3.0073,x,encode time relative to the fixed choice

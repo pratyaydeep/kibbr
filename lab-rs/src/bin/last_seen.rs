@@ -14,7 +14,7 @@ use std::time::Instant;
 use triedb_lab_rs::*;
 
 const THREADS: usize = 8;
-const PER_THREAD: u64 = 2_000_000;
+const PER_THREAD: u64 = 10_000_000;
 
 fn main() {
     println!("B4 last_seen: {THREADS} threads x {PER_THREAD} updates on one template; 3 runs");

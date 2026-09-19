@@ -32,10 +32,41 @@ DESC = {
 ORDER = ["machine","A4_baseline_searches","A1_where_time_goes","A2_memory_and_startup","A3_search_under_load","A5_disk_full",
          "B10_file_layout_writes","B1_wal_batching","B3_buffer_lock","B2_appliers","B5_filters","B6_newest_n","B11_compaction_cost",
          "B13_recovery_scan","B4_last_seen","B7_scan_threads","B8_template_lookup","B9_buffer_memory","B12_encoding_cost"]
+
+FINDINGS = """## Findings
+
+Read with the caveats in each section. Part A numbers are today's binary on this laptop; Part B numbers are models.
+
+**Today's binary**
+
+- **Ingest is single-threaded at ~30k lines/s.** 1, 2, 4 and 8 HTTP senders all land at 29.7-30.5k lines/s; `parse` alone does 35.6k, memory storage 33.6k. The per-body write lock serialises the work, and parsing is most of it. Crash replay estimate: ~34 s per 1,000,000 lines.
+- **The flush cannot keep up with one file per template per day.** Every open segment holds a descriptor, and macOS caps a process at 10,240 regardless of `ulimit`. Past ~10k template-days the tick flush logs EMFILE, then `File exists` on every retry, and never drains: the 1M-line corpus and the 100k-line drain are ABSENT for that reason; 20k lines took 99 s to drain (60 s of which is the row-group timeout). Graceful shutdown seals one partition at a time and does write everything: 137 s for 300k rows.
+- **Rows are lost across a clean restart.** SIGTERM then restart returned 18,356 / 12,940 / 10,625 of 20,000 accepted rows at 100 / 1,000 / 10,000 templates.
+- **Cold start costs ~1 ms per file**: 8.5 s at 16.5k files, 28 s at 27.7k, 39 s at 38k.
+- **Searches and ingest starve each other.** With 4 senders, S2 goes from 0.3-1 s to 4.8 s, S1 from 33 ms to 1.1 s, and S4's worst case is 154 s; ingest falls from 44.8k to 1.6k lines/s while searches run.
+- **A full disk is silent to the sender.** Every batch got a 200, the server stayed up, the shutdown log still said "90,000 rows written", and after restart `COUNT LOG {}` was 0.
+
+**Design models**
+
+- **B10:** one shared file with `F_FULLFSYNC` per row group sustains ~380 MB/s (270 row groups/s) at any producer count, so one file per day is not the write limit. Sharding by template mod 8 reaches 528 MB/s at 8 producers but leaves files 1.45x uneven; least-bytes placement is even but its global lock costs a third of the throughput; one file per template is 4.7x uneven.
+- **B1:** the ~4 ms `F_FULLFSYNC` is the whole shape: a closed-loop sender sees 4 ms at wait 0-1 ms, 9 ms at 5 ms, 27 ms at 20 ms, and throughput scales only with concurrent senders (2.1k lines/s at 8 senders, wait 1 ms). Acknowledging before the flush changes nothing for a closed-loop sender. zstd 3 cuts WAL bytes per line from 253 to 88 at 8 senders with no visible CPU cost.
+- **B3:** moving rows aside and publishing in one step beats holding the lock: search p99 164 us versus 8.8 ms, ingest 803k versus 551k rows/s, more closes (291 versus 202) - and zero snapshot violations in either strategy.
+- **B2:** one applier appends ~0.9-1.0M rows/s; K appliers keyed by template are no faster (991k at K=2, within noise) and get slower with skew (577k rows/s at K=8, busiest applier 1.48x the mean). One applier is enough for today's ingest rate by a factor of 30.
+- **B5:** rows as HashMaps with a closure filter at ~11M rows/s; column vectors at 158-178M rows/s. The representation is the 15x; closure versus plain data is noise at this size.
+- **B6:** newest-first with early stop opens 42 of 20,000 row groups in 0.5 ms; read-everything takes 204 ms. Row groups sorted by another column cost 0.2 ms more (sorting each opened group by time) - the compaction idea is affordable for newest-N.
+- **B11:** copying row groups merges 200 files in 56 ms; decoding and rebuilding into 8,192-row groups at zstd 19 takes 19.0 s for 14% smaller output. The parent-name swap rule recovered every row exactly once at all four stop points.
+- **B13:** an unfinished 1 GB file of CRC-32C row groups is walked and indexed in ~0.3 s with the hardware CRC (3.5-4.6 GB/s, ±45% run to run as the page cache on 8 GB of RAM comes and goes), 0.67 s in software. The file size limit sets startup cost at roughly 0.3 s per GB.
+- **B4:** a write lock per line manages 109M updates/s across 8 threads, an atomic 33M/s (fetch_max on one line contends harder than a short critical section here), and once per 500 lines 4.0G/s. Any of them is thousands of times faster than ingest.
+- **B7:** zstd decode scales 1.96x at 2 threads, 3.80x at 4, 5.44x at 8 on this 8-core M2 (6.3 GB/s decoded).
+- **B8:** checking every template drops from 244k to 1.8k lookups/s between 1,000 and 100,000 templates; a key-to-templates map stays at 547k/s at 100,000. The map is needed from ~10,000 templates.
+- **B9:** pre-sizing 10,000 buffers costs 1.06 GB of RSS and cuts ingest to 198k rows/s; growing on demand costs 146 MB at 935k rows/s; shrinking after each close saves nothing here (allocator churn leaves it slightly higher). In the burst, no limit peaked at 689 MB; a 256 MB limit closing the largest buffers first peaked at 423 MB at the same 300k rows/s, with 33,880 forced closes.
+- **B12:** trying every encoding and keeping the smallest costs 3.0x the CPU of one fixed choice per column type for 4% fewer bytes. Fixed choices win.
+"""
 out = []
 out.append("# TrieDB lab-rs - speed, locks, memory\n")
 out.append("Throwaway benchmarks. Part A measures today's binary from outside; Part B models one design choice each and imports none of TrieDB's code. Every number is the median of 3 runs, `±` is (max-min)/median. `--release` throughout. Nothing here ships.\n")
 out.append(f"Regenerated {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} from `results/results.csv` by `report.sh`.\n")
+out.append(FINDINGS)
 if "machine" in by:
     out.append("## Machine\n")
     out.append("| item | value |\n|---|---|")

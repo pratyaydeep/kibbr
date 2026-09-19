@@ -62,7 +62,7 @@ fn main() {
         cols.push(r);
     }
     drop(rows);
-    println!("B5 filters: {ROWS} rows, level == \"ERROR\" and status >= 500; 3 runs of 5 passes each");
+    println!("B5 filters: {ROWS} rows, level == \"ERROR\" and status >= 500; 3 runs of 40 passes each");
     let mut rec = Recorder::new("B5_filters");
     let mut out = Vec::new();
 
@@ -75,13 +75,14 @@ fn main() {
     let mut expected = None;
     let mut bench = |name: &str, f: &mut dyn FnMut() -> usize, rec: &mut Recorder, out: &mut Vec<Vec<String>>| {
         let mut rates = vec![];
+        f(); // warm-up: the first pass over 1M rows pays the page faults
         for _ in 0..3 {
             let t = Instant::now();
             let mut n = 0;
-            for _ in 0..5 {
+            for _ in 0..40 {
                 n = f();
             }
-            rates.push(5.0 * ROWS as f64 / t.elapsed().as_secs_f64());
+            rates.push(40.0 * ROWS as f64 / t.elapsed().as_secs_f64());
             match expected {
                 None => expected = Some(n),
                 Some(e) => assert_eq!(e, n, "variants disagree on the match count"),

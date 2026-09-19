@@ -29,8 +29,8 @@ const GROUPS_PER_FILE: usize = 8;
 const ROWS_PER_GROUP: usize = 512;
 const MAGIC: &[u8; 8] = b"LABSEGOK";
 
-// Record: [len u32][first_id u64][count u32][payload]. Footer: [parents_len u32][parents
-// json][MAGIC].
+// Record: [len u32][first_id u64][count u32][payload]. Footer: [parents json][parents_len
+// u32][MAGIC], so a reader finds the length next to the magic.
 fn write_group<W: Write + ?Sized>(f: &mut W, first_id: u64, count: u32, payload: &[u8]) {
     f.write_all(&(payload.len() as u32).to_le_bytes()).unwrap();
     f.write_all(&first_id.to_le_bytes()).unwrap();
@@ -39,8 +39,8 @@ fn write_group<W: Write + ?Sized>(f: &mut W, first_id: u64, count: u32, payload:
 }
 fn write_footer(f: &mut impl Write, parents: &[String]) {
     let j = serde_json::to_vec(parents).unwrap();
-    f.write_all(&(j.len() as u32).to_le_bytes()).unwrap();
     f.write_all(&j).unwrap();
+    f.write_all(&(j.len() as u32).to_le_bytes()).unwrap();
     f.write_all(MAGIC).unwrap();
 }
 
