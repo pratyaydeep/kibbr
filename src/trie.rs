@@ -14,12 +14,14 @@
 // module is shaped to avoid. Scoped so the allow does not travel.
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
+use crate::catalog::{Catalog, CatalogError, Record, Token};
 use crate::flatten::ParsedLog;
 use crate::types::{join, ColumnType};
 
@@ -53,6 +55,11 @@ pub const DEFAULT_DATA_DIR: &str = "/var/lib/triedb/data";
 pub enum TrieError {
     #[error("trie node lock poisoned by a panic in another thread")]
     LockPoisoned,
+    /// The catalog record a line needed could not be made durable, so the template or
+    /// widening it would have caused was not made in memory either. Per line, not fatal:
+    /// the next line that needs no record still lands.
+    #[error("catalog: {0}")]
+    Catalog(#[source] CatalogError),
 }
 
 /// `Static` is an exact token; `Placeholder` matches any token in this position.
@@ -167,6 +174,15 @@ pub struct Trie {
     /// Path length summed over templates, not over lines - one per edge, counted once
     /// per template rather than once per line that walked it.
     tokens: AtomicU64,
+    /// `catalog.log`, when this trie is durable. `None` for the CLI and `--storage memory`,
+    /// where a template exists only for the run.
+    ///
+    /// Owned by the trie because the trie is what a catalog describes: `ingest` writes the
+    /// record *before* it changes a leaf, and the two would drift apart the moment they had
+    /// two owners. A `Mutex` and not the per-node locks - a record is taken while one
+    /// leaf's meta lock is held, and the order is always leaf then catalog, so two lines
+    /// creating two templates cannot deadlock on each other.
+    catalog: Mutex<Option<Catalog>>,
 }
 
 impl Default for Trie {
@@ -187,6 +203,7 @@ impl Trie {
             next_id: AtomicU64::new(1),
             next_template_id: AtomicU64::new(FIRST_TEMPLATE_ID),
             tokens: AtomicU64::new(0),
+            catalog: Mutex::new(None),
         }
     }
 
@@ -209,7 +226,204 @@ impl Trie {
             next_id: AtomicU64::new(next_id),
             next_template_id: AtomicU64::new(next_template_id),
             tokens: AtomicU64::new(tokens),
+            catalog: Mutex::new(None),
         }
+    }
+
+    /// Make this trie durable: every template and widening from here on is appended to
+    /// `catalog` before it exists in memory.
+    pub fn attach_catalog(&self, catalog: Catalog) {
+        if let Ok(mut slot) = self.catalog.lock() {
+            *slot = Some(catalog);
+        }
+    }
+
+    /// Where the catalog is, if this trie has one.
+    pub fn catalog_path(&self) -> Option<std::path::PathBuf> {
+        self.catalog
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|c| c.path().to_path_buf()))
+    }
+
+    /// Append to the catalog, or do nothing when there is none.
+    fn record(&self, records: &[Record]) -> Result<(), TrieError> {
+        let mut slot = self.catalog.lock().map_err(|_| TrieError::LockPoisoned)?;
+        match slot.as_mut() {
+            Some(catalog) => catalog.append(records).map_err(TrieError::Catalog),
+            None => Ok(()),
+        }
+    }
+
+    /// A trie rebuilt from catalog records, in record order.
+    ///
+    /// The last column record for a `(template, name)` wins, which is how a widening
+    /// replays. Two template records with one id, or two with one path, keep the first
+    /// and warn: the catalog is append-only and the writer never produces either, so a
+    /// second is a file that has been edited or spliced, and the first is the one every
+    /// leaf directory was named after.
+    pub fn from_catalog(
+        data_dir: &str,
+        records: &[Record],
+        warn: &mut dyn FnMut(String),
+    ) -> Result<Self, TrieError> {
+        struct Pending {
+            created_at: DateTime<Utc>,
+            last_at: DateTime<Utc>,
+            tokens: Vec<Token>,
+            columns: BTreeMap<String, ColumnDef>,
+        }
+        let mut templates: BTreeMap<u64, Pending> = BTreeMap::new();
+        for record in records {
+            match record {
+                Record::Template {
+                    id,
+                    created_at,
+                    tokens,
+                } => {
+                    if templates.contains_key(id) {
+                        warn(format!(
+                            "template {id} is recorded twice; keeping the first record"
+                        ));
+                        continue;
+                    }
+                    templates.insert(
+                        *id,
+                        Pending {
+                            created_at: *created_at,
+                            last_at: *created_at,
+                            tokens: tokens.clone(),
+                            columns: BTreeMap::new(),
+                        },
+                    );
+                }
+                Record::Column {
+                    template_id,
+                    name,
+                    col_type,
+                    at,
+                    ..
+                } => {
+                    let Some(pending) = templates.get_mut(template_id) else {
+                        warn(format!(
+                            "a column record names template {template_id}, which has no \
+                             template record before it; skipped"
+                        ));
+                        continue;
+                    };
+                    if let Some(at) = at {
+                        pending.last_at = pending.last_at.max(*at);
+                    }
+                    pending.columns.insert(
+                        name.clone(),
+                        ColumnDef {
+                            name: name.clone(),
+                            col_type: *col_type,
+                            widened_at: *at,
+                        },
+                    );
+                }
+                // The time source, from M5.6b. Carried in the file; nothing here reads it yet.
+                Record::TimeSource { .. } => {}
+            }
+        }
+
+        let trie = Self::new_in(data_dir);
+        for (id, pending) in templates {
+            let labels: Vec<String> = pending.tokens.iter().map(Token::label).collect();
+            let borrowed: Vec<&str> = labels.iter().map(String::as_str).collect();
+            let leaf = trie.path_to(&borrowed)?;
+            let mut slot = write(&leaf.leaf_meta)?;
+            if let Some(existing) = slot.as_ref() {
+                warn(format!(
+                    "template {id} has the same path as template {}; keeping the first",
+                    existing.template_id
+                ));
+                continue;
+            }
+            *slot = Some(LeafMeta {
+                template_id: id,
+                columns: pending.columns.into_values().collect(),
+                storage_path: format!("{data_dir}/leaf_{id}"),
+                first_seen: pending.created_at,
+                last_seen: pending.last_at,
+            });
+            leaf.is_leaf.store(true, Ordering::Release);
+            trie.tokens
+                .fetch_add(labels.len() as u64, Ordering::Relaxed);
+            // `max + 1`, so a gap in the sequence is never refilled: a leaf directory is
+            // named by id whether or not the id's template record survived.
+            trie.reserve_template_ids_through(id);
+        }
+        Ok(trie)
+    }
+
+    /// Every template as catalog records, in id order: what writing a catalog from a
+    /// `trie.json` produces, once, on the first start that finds no catalog.
+    ///
+    /// The snapshot stores a path as edge labels, and a label `event=login` is either a
+    /// promoted `event` or a literal key spelled that way - the two render alike and the
+    /// file did not say which. Split at the first `=` here: both readings rebuild the same
+    /// label, so the trie is the same either way, and only the record's spelling can be
+    /// wrong, on a catalog that predates the catalog.
+    pub fn catalog_records(&self) -> Vec<Record> {
+        let mut leaves: Vec<(Vec<String>, LeafMeta)> = Vec::new();
+        for (path, leaf) in self.leaf_paths() {
+            let Ok(slot) = leaf.leaf_meta.read() else {
+                continue;
+            };
+            let Some(meta) = slot.as_ref() else {
+                continue;
+            };
+            leaves.push((
+                path,
+                LeafMeta {
+                    template_id: meta.template_id,
+                    columns: meta
+                        .columns
+                        .iter()
+                        .map(|c| ColumnDef {
+                            name: c.name.clone(),
+                            col_type: c.col_type,
+                            widened_at: c.widened_at,
+                        })
+                        .collect(),
+                    storage_path: meta.storage_path.clone(),
+                    first_seen: meta.first_seen,
+                    last_seen: meta.last_seen,
+                },
+            ));
+        }
+        leaves.sort_by_key(|(_, meta)| meta.template_id);
+
+        let mut records = Vec::new();
+        for (path, meta) in leaves {
+            let tokens = path
+                .iter()
+                .map(|label| match label.split_once('=') {
+                    Some((promoted, value)) => Token::Promoted {
+                        promoted: promoted.to_string(),
+                        value: value.to_string(),
+                    },
+                    None => Token::Key { key: label.clone() },
+                })
+                .collect();
+            records.push(Record::Template {
+                id: meta.template_id,
+                created_at: meta.first_seen,
+                tokens,
+            });
+            for col in &meta.columns {
+                records.push(Record::Column {
+                    template_id: meta.template_id,
+                    name: col.name.clone(),
+                    col_type: col.col_type,
+                    widened_from: None,
+                    at: col.widened_at,
+                });
+            }
+        }
+        records
     }
 
     pub fn data_dir(&self) -> &str {
@@ -272,22 +486,16 @@ impl Trie {
         self.tokens.load(Ordering::Relaxed) + 1
     }
 
-    /// Walk the tokens, creating what is missing, and mark the last node a leaf.
-    /// The `bool` is whether this call is the one that turned it into a leaf - the
-    /// caller stamps a template id on exactly that call.
-    pub fn insert(&self, tokens: &[&str]) -> Result<(Arc<Node>, bool), TrieError> {
+    /// Walk the tokens, creating what is missing, and return the last node - **not yet a
+    /// leaf**. `ingest` marks it one only after the catalog record that describes it is on
+    /// disk, so an interior node this creates and then abandons is the whole cost of a
+    /// failed append: a few nodes nothing walks to, and no template.
+    fn path_to(&self, tokens: &[&str]) -> Result<Arc<Node>, TrieError> {
         let mut node = Arc::clone(&self.root);
         for token in tokens {
             node = self.child_or_create(&node, token)?;
         }
-        // `swap`, not a load followed by a store: two threads inserting the same new
-        // template must not both come back holding "I created it".
-        let is_new = !node.is_leaf.swap(true, Ordering::AcqRel);
-        if is_new {
-            self.tokens
-                .fetch_add(tokens.len() as u64, Ordering::Relaxed);
-        }
-        Ok((node, is_new))
+        Ok(node)
     }
 
     /// Find the child for `token`, creating it if it is genuinely absent.
@@ -419,6 +627,13 @@ impl Trie {
     /// Commutative and associative, so the column type does not depend on arrival order;
     /// monotonic, so a ten-digit order id the ladder called a `Datetime` widens back to
     /// `String` the first time it meets `AX-99213`.
+    ///
+    /// **The catalog is written first.** A new template, a widened column or a column
+    /// added to an existing leaf is appended and fsynced before the leaf changes, under
+    /// the leaf's meta lock so nothing reads the half-made state. If the append fails the
+    /// line is refused with `TrieError::Catalog`, the leaf is exactly as it was, and the
+    /// template id drawn for a new template is left unused - a gap in the sequence, which
+    /// the restart path already tolerates, rather than an id two lines could both hold.
     pub fn ingest(
         &self,
         parsed: &ParsedLog,
@@ -426,64 +641,138 @@ impl Trie {
     ) -> Result<(Arc<Node>, bool), TrieError> {
         let tokens = parsed.walk_tokens();
         let borrowed: Vec<&str> = tokens.iter().map(String::as_str).collect();
-        let (leaf, is_new) = self.insert(&borrowed)?;
+        let leaf = self.path_to(&borrowed)?;
 
         // Scoped, so the write lock is released before the leaf is handed back - a
         // caller that goes straight on to read the columns would otherwise deadlock on
         // a guard it cannot see.
-        {
-            let mut slot = write(&leaf.leaf_meta)?;
-            // `_with`, so an id is drawn only for a leaf without one. Drawing first and
-            // discarding would leave a gap in the sequence for every repeat line - which
-            // is every line but 869 of them.
-            let meta = slot.get_or_insert_with(|| {
+        let mut slot = write(&leaf.leaf_meta)?;
+        let is_new = match slot.as_mut() {
+            None => {
                 let template_id = self.next_template_id();
-                LeafMeta {
+                // `keys` is sorted, so the columns are born in name order - the order
+                // `binary_search_by` below depends on.
+                let columns: Vec<ColumnDef> = parsed
+                    .keys
+                    .iter()
+                    .map(|key| ColumnDef {
+                        name: key.clone(),
+                        col_type: parsed.column_type(key),
+                        widened_at: None,
+                    })
+                    .collect();
+                let mut records = Vec::with_capacity(1 + columns.len());
+                records.push(Record::Template {
+                    id: template_id,
+                    created_at: now,
+                    tokens: parsed
+                        .promoted
+                        .iter()
+                        .map(|key| Token::Promoted {
+                            promoted: key.clone(),
+                            value: parsed.values.get(key).cloned().unwrap_or_default(),
+                        })
+                        .chain(
+                            parsed
+                                .value_keys()
+                                .map(|key| Token::Key { key: key.clone() }),
+                        )
+                        .collect(),
+                });
+                records.extend(columns.iter().map(|col| Record::Column {
                     template_id,
-                    columns: Vec::new(),
+                    name: col.name.clone(),
+                    col_type: col.col_type,
+                    widened_from: None,
+                    at: None,
+                }));
+                self.record(&records)?;
+
+                *slot = Some(LeafMeta {
+                    template_id,
+                    columns,
                     storage_path: format!("{}/leaf_{template_id}", self.data_dir),
                     first_seen: now,
                     last_seen: now,
-                }
-            });
-            meta.last_seen = now;
-
-            for key in &parsed.keys {
-                let incoming = parsed.column_type(key);
-                match meta
-                    .columns
-                    .binary_search_by(|col| col.name.as_str().cmp(key))
-                {
-                    Ok(at) => {
-                        let col = &mut meta.columns[at];
-                        let joined = join(col.col_type, incoming);
-                        if joined != col.col_type {
-                            col.col_type = joined;
-                            col.widened_at = Some(now);
+                });
+                leaf.is_leaf.store(true, Ordering::Release);
+                self.tokens
+                    .fetch_add(tokens.len() as u64, Ordering::Relaxed);
+                true
+            }
+            Some(meta) => {
+                // What this line changes, decided before anything is touched: the record
+                // has to be durable first, and a change applied and then refused would
+                // leave the trie ahead of the file.
+                let mut records = Vec::new();
+                let mut changes: Vec<(String, Option<ColumnType>, bool)> = Vec::new();
+                for key in &parsed.keys {
+                    let incoming = parsed.column_type(key);
+                    match meta
+                        .columns
+                        .binary_search_by(|col| col.name.as_str().cmp(key))
+                    {
+                        Ok(at) => {
+                            let col = &meta.columns[at];
+                            let joined = join(col.col_type, incoming);
+                            if joined != col.col_type {
+                                records.push(Record::Column {
+                                    template_id: meta.template_id,
+                                    name: key.clone(),
+                                    col_type: joined,
+                                    widened_from: col.col_type,
+                                    at: Some(now),
+                                });
+                                changes.push((key.clone(), joined, true));
+                            }
+                        }
+                        // A key not on the path, which one leaf per token multiset makes
+                        // unreachable but not impossible: a promoted `event=login` and
+                        // the literal key `{"event=login": 1}` share one edge label.
+                        // Union the columns rather than drop the value - two schemas in
+                        // one leaf is schema merging's to settle, and losing a column
+                        // here would hide that it happened.
+                        Err(_) => {
+                            records.push(Record::Column {
+                                template_id: meta.template_id,
+                                name: key.clone(),
+                                col_type: incoming,
+                                widened_from: None,
+                                at: None,
+                            });
+                            changes.push((key.clone(), incoming, false));
                         }
                     }
-                    // The creating line lands here for every key, so a column is born with
-                    // the type of the first non-null value it held and `widened_at: None`
-                    // - one type since `first_seen`, which is what that field is for.
-                    //
-                    // A later line reaching this arm means a key not on the path, which
-                    // one leaf per token multiset makes unreachable but not impossible: a
-                    // promoted `event=login` and the literal key `{"event=login": 1}`
-                    // share one edge label. Union the columns rather than drop the value -
-                    // two schemas in one leaf is schema merging's to settle, and losing a
-                    // column here would hide that it happened.
-                    Err(at) => meta.columns.insert(
-                        at,
-                        ColumnDef {
-                            name: key.clone(),
-                            col_type: incoming,
-                            widened_at: None,
-                        },
-                    ),
                 }
+                if !records.is_empty() {
+                    self.record(&records)?;
+                }
+                for (name, col_type, widened) in changes {
+                    match meta
+                        .columns
+                        .binary_search_by(|col| col.name.as_str().cmp(&name))
+                    {
+                        Ok(at) => {
+                            meta.columns[at].col_type = col_type;
+                            if widened {
+                                meta.columns[at].widened_at = Some(now);
+                            }
+                        }
+                        Err(at) => meta.columns.insert(
+                            at,
+                            ColumnDef {
+                                name,
+                                col_type,
+                                widened_at: None,
+                            },
+                        ),
+                    }
+                }
+                meta.last_seen = now;
+                false
             }
-        }
-
+        };
+        drop(slot);
         Ok((leaf, is_new))
     }
 }
@@ -537,4 +826,154 @@ fn read<T>(lock: &RwLock<T>) -> Result<RwLockReadGuard<'_, T>, TrieError> {
 
 fn write<T>(lock: &RwLock<T>) -> Result<RwLockWriteGuard<'_, T>, TrieError> {
     lock.write().map_err(|_| TrieError::LockPoisoned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flatten::parse_line;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("triedb-trie-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        dir
+    }
+
+    fn parsed(line: &str) -> ParsedLog {
+        parse_line(line.as_bytes(), 1).expect("a valid line")
+    }
+
+    /// The write rule: no record on disk, no template in memory. The line is refused
+    /// with the catalog's reason, the trie walks to nothing, and a later line that needs
+    /// no record still lands.
+    #[test]
+    fn a_failed_append_creates_no_template() {
+        let dir = scratch("failed-append");
+        let trie = Trie::new_in(&dir.display().to_string());
+        let good = Catalog::open(&crate::catalog::path_in(&dir), &mut |_| {}).expect("open");
+        trie.attach_catalog(good.0);
+        let now = Utc::now();
+
+        let first = parsed(r#"{"event":"login","user":7}"#);
+        assert!(trie.ingest(&first, now).expect("first line").1);
+        assert_eq!(trie.template_count(), 1);
+
+        // Swap in a catalog that cannot be written to.
+        trie.attach_catalog(Catalog::read_only(&dir.join("dead.log")).expect("read-only"));
+
+        // A new template: refused, and not there.
+        let second = parsed(r#"{"event":"logout","user":7}"#);
+        let Err(err) = trie.ingest(&second, now) else {
+            panic!("the append must fail");
+        };
+        assert!(matches!(err, TrieError::Catalog(_)), "{err}");
+        assert!(err.to_string().contains("catalog"), "{err}");
+        assert_eq!(
+            trie.template_count(),
+            1,
+            "the refused template exists in memory"
+        );
+        let tokens = second.walk_tokens();
+        let borrowed: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        let walked = trie.walk(&borrowed).expect("the interior nodes may exist");
+        assert!(!walked.is_leaf, "the refused template is a leaf");
+        assert_eq!(walked.template_id, None);
+
+        // A widening on the existing template (Int64 ⊔ String): refused, and the column
+        // unchanged.
+        let widen = parsed(r#"{"event":"login","user":"u1"}"#);
+        assert!(matches!(
+            trie.ingest(&widen, now),
+            Err(TrieError::Catalog(_))
+        ));
+        let leaf = trie.all_leaves().into_iter().next().expect("one leaf");
+        let slot = leaf.leaf_meta.read().expect("meta");
+        let user = slot
+            .as_ref()
+            .expect("meta")
+            .columns
+            .iter()
+            .find(|c| c.name == "user")
+            .expect("user column");
+        assert_eq!(user.col_type, Some(ColumnType::Int64));
+        assert_eq!(user.widened_at, None);
+        drop(slot);
+
+        // A repeat of the first line needs no record, so it still goes in.
+        assert!(
+            !trie
+                .ingest(&first, now)
+                .expect("a repeat needs no record")
+                .1
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What `ingest` writes is what `from_catalog` rebuilds: same paths, same ids, same
+    /// column types including the two the segment format cannot spell, and the widening.
+    #[test]
+    fn a_trie_round_trips_through_its_catalog() {
+        let dir = scratch("round-trip");
+        let path = crate::catalog::path_in(&dir);
+        let data_dir = dir.display().to_string();
+        let trie = Trie::new_in(&data_dir);
+        trie.attach_catalog(Catalog::open(&path, &mut |_| {}).expect("open").0);
+        let now = Utc::now();
+
+        for line in [
+            r#"{"event":"login","session":"123e4567-e89b-12d3-a456-426614174000","ip":"10.0.0.1","n":null}"#,
+            r#"{"event":"login","session":"123e4567-e89b-12d3-a456-426614174000","ip":"10.0.0.1","n":7}"#,
+            r#"{"event":"login","session":"not-a-uuid","ip":"10.0.0.1","n":7}"#,
+            r#"{"event":"pay","amount":12.5}"#,
+        ] {
+            trie.ingest(&parsed(line), now).expect("ingest");
+        }
+        assert_eq!(trie.template_count(), 2);
+
+        let (_, records) = Catalog::open(&path, &mut |_| {}).expect("reopen");
+        let mut warnings = Vec::new();
+        let rebuilt =
+            Trie::from_catalog(&data_dir, &records, &mut |w| warnings.push(w)).expect("rebuild");
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let describe = |t: &Trie| -> Vec<String> {
+            t.leaf_paths()
+                .into_iter()
+                .map(|(path, leaf)| {
+                    let slot = leaf.leaf_meta.read().expect("meta");
+                    let meta = slot.as_ref().expect("meta");
+                    let cols: Vec<String> = meta
+                        .columns
+                        .iter()
+                        .map(|c| {
+                            format!(
+                                "{}:{}{}",
+                                c.name,
+                                c.col_type.map_or("null", ColumnType::as_str),
+                                if c.widened_at.is_some() { "*" } else { "" }
+                            )
+                        })
+                        .collect();
+                    format!(
+                        "{} {} [{}]",
+                        meta.template_id,
+                        path.join("/"),
+                        cols.join(",")
+                    )
+                })
+                .collect()
+        };
+        let before = describe(&trie);
+        assert_eq!(before, describe(&rebuilt));
+        assert!(
+            before
+                .iter()
+                .any(|d| d.contains("ip:Ip") && d.contains("session:String*")),
+            "{before:?}"
+        );
+        assert!(before.iter().any(|d| d.contains("n:Int64")), "{before:?}");
+        assert_eq!(rebuilt.next_template_id(), trie.next_template_id());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

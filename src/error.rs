@@ -12,6 +12,13 @@ pub enum DetectorErrorKind {
     #[error("nesting deeper than {limit} levels at key `{key}`")]
     NestingTooDeep { key: String, limit: usize },
 
+    /// The line parsed, and the template or widening it needed could not be made durable
+    /// before it counts. Not the line's fault, but it is the line that did not land, and
+    /// `{"line":N,"msg":"..."}` is the one place a client hears that. The next line that
+    /// needs no new record still goes in, which is why this is per line and not the body.
+    #[error("not ingested: {detail}")]
+    NotDurable { detail: String },
+
     /// Arrays are stored whole, so the object depth limit does not apply inside one - but
     /// a ceiling still has to, since the array is materialised recursively before it can
     /// be stored as text. This is the one that fires there, counting containers of either
