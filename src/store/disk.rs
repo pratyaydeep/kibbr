@@ -166,6 +166,21 @@ pub fn claimed_template_ids(base: &Path) -> Vec<u64> {
     ids
 }
 
+/// Whether `_leaf.json` at `path` already records exactly `keys`.
+///
+/// What `keys_on_disk` starts as: true only for a file that is there and agrees, so a
+/// leaf opened with no file, or with a file from before a key was added, writes on its
+/// first flush and an unchanged one never rewrites.
+fn recorded_keys_match(path: &Path, keys: &BTreeSet<String>) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    let Ok(file) = serde_json::from_slice::<LeafFile>(&bytes) else {
+        return false;
+    };
+    file.keys.len() == keys.len() && file.keys.iter().all(|k| keys.contains(k))
+}
+
 // ── Partitions ─────────────────────────────────────────────────────────────────────
 
 /// Which directory a row belongs in.
@@ -385,34 +400,56 @@ impl DiskLeaf {
             parts.insert(key, open_partition(template_id, &entry.path())?);
         }
 
-        let mut leaf = Self {
+        // Not written here. A leaf opened before its first row has no keys to record,
+        // and an empty key list on disk is worse than none: it is the file the M5 bug
+        // was found through, saying a template has no columns. The first flush with keys
+        // writes it; until then the catalog is the record of the template.
+        let keys_on_disk = recorded_keys_match(&leaf_path, &keys);
+        Ok(Self {
             template_id,
             dir,
             partition_column,
             limits,
             keys,
-            keys_on_disk: true,
+            keys_on_disk,
             parts,
             buffered: 0,
-        };
-        if !leaf_path.exists() {
-            leaf.keys_on_disk = false;
-            leaf.write_leaf_file()?;
-        }
-        Ok(leaf)
+        })
     }
 
+    /// `_leaf.json`, written so that a reader sees the old file or the new one and never
+    /// less than either: `.tmp` → `sync_all` → rename → directory fsync.
+    ///
+    /// Two things it will not do. It will not write when serialisation failed - the old
+    /// code wrote `unwrap_or_default()`, a zero-byte file over a good one. And it will not
+    /// write an empty key list over a non-empty one: a leaf with no keys has nothing to
+    /// say yet, and a file already there says more.
     fn write_leaf_file(&mut self) -> Result<(), StoreError> {
+        let path = self.dir.join(LEAF_FILE);
+        if self.keys.is_empty() {
+            return Ok(());
+        }
+        let io = |source| StoreError::Io {
+            template_id: self.template_id,
+            source,
+        };
         let body = serde_json::to_vec_pretty(&LeafFile {
             template_id: self.template_id,
             partition_column: self.partition_column.clone(),
             keys: self.keys.iter().cloned().collect(),
         })
-        .unwrap_or_default();
-        fs::write(self.dir.join(LEAF_FILE), body).map_err(|source| StoreError::Io {
-            template_id: self.template_id,
-            source,
-        })?;
+        .map_err(|e| io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+        let tmp = self.dir.join(format!("{LEAF_FILE}.tmp"));
+        {
+            let mut handle = fs::File::create(&tmp).map_err(io)?;
+            std::io::Write::write_all(&mut handle, &body).map_err(io)?;
+            handle.sync_all().map_err(io)?;
+        }
+        fs::rename(&tmp, &path).map_err(io)?;
+        fs::File::open(&self.dir)
+            .and_then(|dir| dir.sync_all())
+            .map_err(io)?;
         self.keys_on_disk = true;
         Ok(())
     }

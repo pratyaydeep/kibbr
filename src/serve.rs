@@ -44,6 +44,9 @@ use serde_json::{json, Value};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
+use std::path::Path;
+
+use crate::catalog::Catalog;
 use crate::config::{ApiLimits, Limits, Storage};
 use crate::db;
 use crate::engine;
@@ -155,34 +158,7 @@ impl Server {
         let (trie, stores) = match storage.base_path.clone() {
             Some(base) => {
                 let data_dir = storage.data_dir();
-                let trie = match storage.trie_file.as_deref() {
-                    Some(path) => {
-                        let (trie, failure) = crate::triefile::load_reporting(path, &data_dir);
-                        match failure {
-                            // Absent is not damaged: a first start has no snapshot, and
-                            // saying so would train an operator to ignore the line that
-                            // matters.
-                            Some(crate::triefile::TrieFileError::Io { .. }) if !path.exists() => {
-                                log(&format!(
-                                    "trie.json - {} not found, starting empty",
-                                    path.display()
-                                ));
-                            }
-                            Some(e) => {
-                                log(&format!("WARN trie.json - {}", error::chain(&e)));
-                                log("WARN trie.json - starting with an empty trie; templates \
-                                     are relearned from the next lines ingested");
-                            }
-                            None => log(&format!(
-                                "trie.json - {} restored {} template(s)",
-                                path.display(),
-                                commas(trie.template_count())
-                            )),
-                        }
-                        trie
-                    }
-                    None => Trie::new_in(&data_dir),
-                };
+                let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir)?;
 
                 // Applied whatever the snapshot said, including when it parsed cleanly:
                 // the hazard is a trie that does not know about a directory, and a stale
@@ -284,6 +260,90 @@ impl Server {
     fn write_stores(&self) -> RwLockWriteGuard<'_, StoreManager> {
         self.stores.write().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// The trie, from `catalog.log` - and the catalog attached to it, so every template from
+/// here on is durable before it exists.
+///
+/// The catalog's order. Read it from the start; a torn tail is truncated with a WARN
+/// naming the offset and an unknown kind is skipped with one. **No catalog but a
+/// `trie.json`** is the one-time migration: the snapshot is read once, a catalog is
+/// written from it and flushed, and the trie is then built from that catalog and not the
+/// snapshot - so the first start after the upgrade exercises the same path every later
+/// one does. Once a catalog exists `trie.json` is not opened at all.
+///
+/// A catalog that cannot be *read* (permissions, a directory in its place) is fatal, and
+/// deliberately so: unlike a torn record there is nothing to truncate to, and starting
+/// empty beside a file that holds every template would make every leaf an orphan.
+fn open_catalog(base: &Path, trie_file: Option<&Path>, data_dir: &str) -> Result<Trie, ServeError> {
+    let path = crate::catalog::path_in(base);
+    let existed = path.exists();
+    let mut warn = |message: String| log(&format!("WARN catalog.log - {message}"));
+    fn storage_error(e: &(dyn std::error::Error + 'static)) -> ServeError {
+        ServeError::Storage {
+            detail: error::chain(e),
+        }
+    }
+
+    let (mut catalog, mut records) =
+        Catalog::open(&path, &mut warn).map_err(|e| storage_error(&e))?;
+
+    if !existed {
+        match trie_file {
+            Some(snapshot) if snapshot.exists() => {
+                let (from_snapshot, failure) = crate::triefile::load_reporting(snapshot, data_dir);
+                match failure {
+                    Some(e) => {
+                        log(&format!("WARN trie.json - {}", error::chain(&e)));
+                        log("WARN trie.json - starting with an empty trie; templates \
+                             are relearned from the next lines ingested");
+                    }
+                    None => {
+                        let migrated = from_snapshot.catalog_records();
+                        catalog.append(&migrated).map_err(|e| storage_error(&e))?;
+                        log(&format!(
+                            "catalog.log - none found; wrote {} from {} - {} template(s), \
+                             {} record(s), {} byte(s)",
+                            path.display(),
+                            snapshot.display(),
+                            commas(from_snapshot.template_count()),
+                            commas(migrated.len() as u64),
+                            commas(catalog.len()),
+                        ));
+                        // Carry on from the catalog: reopen and read back what was just
+                        // written, so the trie this process serves is the one the next
+                        // process will rebuild.
+                        drop(catalog);
+                        let reopened =
+                            Catalog::open(&path, &mut warn).map_err(|e| storage_error(&e))?;
+                        catalog = reopened.0;
+                        records = reopened.1;
+                    }
+                }
+            }
+            _ => log(&format!(
+                "catalog.log - {} not found, starting empty",
+                path.display()
+            )),
+        }
+    }
+
+    let trie = Trie::from_catalog(data_dir, &records, &mut warn).map_err(|e| storage_error(&e))?;
+    if existed {
+        log(&format!(
+            "catalog.log - {} restored {} template(s) from {} record(s)",
+            path.display(),
+            commas(trie.template_count()),
+            commas(records.len() as u64)
+        ));
+    } else if !records.is_empty() {
+        log(&format!(
+            "catalog.log - restored {} template(s) from the catalog just written",
+            commas(trie.template_count())
+        ));
+    }
+    trie.attach_catalog(catalog);
+    Ok(trie)
 }
 
 /// Increments the in-flight count for as long as it is alive.
@@ -452,7 +512,8 @@ enum IngestFailure {
     /// The body could not be decoded: wrong encoding, corrupt gzip, or a bomb.
     Body(BodyError),
     /// A lock poisoned mid-body. Fails every line after it too, so the body is abandoned
-    /// rather than answered with 500 copies of one message.
+    /// rather than answered with 500 copies of one message. A catalog append that fails
+    /// is not this: it costs its line, reported in `errors`, and the body goes on.
     Fatal(CliError),
 }
 
@@ -793,6 +854,9 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
                 .trie_file
                 .as_ref()
                 .map(|p| p.display().to_string()),
+            // The file templates are rebuilt from. `trie_file` is the readable snapshot
+            // nothing loads while this exists.
+            "catalog": server.trie.catalog_path().map(|p| p.display().to_string()),
             "flush_interval_ms": server.storage.flush_interval.as_millis() as u64,
             // How long a row group may stay open, which is also what an unclean exit
             // costs until the write-ahead log lands.
@@ -1136,15 +1200,20 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20                       rows, 8MB, or {}ms, whichever comes first. The\n\
                  \x20                       thresholds are checked every {}ms. SIGTERM closes\n\
                  \x20                       and seals everything before exiting.\n\
+                 \x20             catalog   {}/catalog.log - a template is written here, and\n\
+                 \x20                       fsynced, before the line that made it counts as\n\
+                 \x20                       ingested; trie.json is a readable snapshot nothing\n\
+                 \x20                       loads while the catalog exists.\n\
                  \x20             NO WRITE-AHEAD LOG YET. A clean exit loses nothing. A\n\
                  \x20             kill -9 or a power cut loses up to one row group of rows -\n\
-                 \x20             at most {}ms of them - and the trie snapshot with them.",
+                 \x20             at most {}ms of them. Templates survive either.",
                 base.display(),
                 trie_file
                     .as_ref()
                     .map_or_else(|| "none".to_string(), |p| p.display().to_string()),
                 server.storage.row_group_timeout.as_millis(),
                 server.storage.flush_interval.as_millis(),
+                base.display(),
                 server.storage.row_group_timeout.as_millis(),
             ),
             (None, _) => {

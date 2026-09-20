@@ -167,14 +167,21 @@ pub fn save(trie: &Trie, path: &Path) -> Result<u64, TrieFileError> {
         handle.sync_all().map_err(io)?;
     }
     fs::rename(&tmp, path).map_err(io)?;
+    // The rename is durable only once the directory entry is: a failure here is a
+    // snapshot that may not be there after a power cut, and the caller logs it as such
+    // rather than reporting a file that was written.
     if let Some(parent) = path.parent() {
-        if let Ok(handle) = fs::File::open(if parent.as_os_str().is_empty() {
+        let parent = if parent.as_os_str().is_empty() {
             Path::new(".")
         } else {
             parent
-        }) {
-            let _ = handle.sync_all();
-        }
+        };
+        fs::File::open(parent)
+            .and_then(|handle| handle.sync_all())
+            .map_err(|source| TrieFileError::Io {
+                path: parent.display().to_string(),
+                source,
+            })?;
     }
     Ok(body.len() as u64)
 }
