@@ -17,7 +17,37 @@ use crate::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::flatten::{parse_line, ParsedLog};
 use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
 use crate::store::{Row, StoreManager};
-use crate::trie::Trie;
+use crate::trie::{Trie, TrieError};
+
+/// How a line handed to a `read_lines` sink can fail to land.
+///
+/// Two outcomes that must not share a type: a `Line` rejection is counted against its
+/// number and the loop continues, a `Fatal` one ends the read. Before the catalog every
+/// post-parse failure was fatal, which was right - a poisoned lock fails every line after
+/// it. A catalog append that fails is the other thing: it costs the line that needed the
+/// record and nothing else.
+#[derive(Debug)]
+pub enum SinkError {
+    Line(DetectorErrorKind),
+    Fatal(CliError),
+}
+
+impl From<CliError> for SinkError {
+    fn from(e: CliError) -> Self {
+        SinkError::Fatal(e)
+    }
+}
+
+impl From<TrieError> for SinkError {
+    fn from(e: TrieError) -> Self {
+        match e {
+            TrieError::Catalog(_) => SinkError::Line(DetectorErrorKind::NotDurable {
+                detail: crate::error::chain(&e),
+            }),
+            e => SinkError::Fatal(e.into()),
+        }
+    }
+}
 use crate::types::{ColValue, ColumnType, DtForm};
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -89,7 +119,7 @@ pub fn ingest_line(
     stores: Option<&mut StoreManager>,
     parsed: &ParsedLog,
     now: DateTime<Utc>,
-) -> Result<(), CliError> {
+) -> Result<(), SinkError> {
     let (leaf, _) = trie.ingest(parsed, now)?;
     let Some(stores) = stores else {
         return Ok(());
@@ -171,7 +201,7 @@ pub fn report_rejected(e: DetectorError) {
 /// jumping to the reported line has to land on the line that was rejected.
 pub fn read_lines<R: BufRead>(
     mut input: R,
-    sink: &mut dyn FnMut(ParsedLog) -> Result<(), CliError>,
+    sink: &mut dyn FnMut(ParsedLog) -> Result<(), SinkError>,
     on_error: &mut dyn FnMut(DetectorError),
 ) -> Result<LoadStats, CliError> {
     let mut stats = LoadStats::default();
@@ -222,10 +252,17 @@ pub fn read_lines<R: BufRead>(
             continue;
         }
         match parse_line(line, stats.read as usize) {
-            Ok(parsed) => {
-                sink(parsed)?;
-                stats.ingested += 1;
-            }
+            Ok(parsed) => match sink(parsed) {
+                Ok(()) => stats.ingested += 1,
+                // The line parsed and still did not land. Counted and reported exactly
+                // as a line that did not parse: to the client both are "this one is
+                // not in the database", and the message says which.
+                Err(SinkError::Line(kind)) => {
+                    stats.rejected += 1;
+                    on_error(DetectorError::new(stats.read as usize, kind));
+                }
+                Err(SinkError::Fatal(e)) => return Err(e),
+            },
             Err(e) => {
                 stats.rejected += 1;
                 on_error(e);
