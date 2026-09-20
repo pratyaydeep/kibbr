@@ -1,5 +1,6 @@
 //! TrieDB. Generate hostile logs, parse them, build the trie, query it.
 
+mod catalog;
 mod config;
 mod db;
 mod demo;

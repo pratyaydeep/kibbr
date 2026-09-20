@@ -48,3 +48,10 @@ sample.ndjson
 # The M5.5 before/after file-count measurements - scratch, and `gen-logs --seed 42`
 # plus a server on a scratch --data-dir rebuild them.
 /testdata/m55/
+
+# The M5.6a seed-42 corpus the lost_trie/crash_templates scripts were first run by hand
+# against - scratch, `gen-logs --seed 42` rebuilds it.
+/testdata/m56a/
+
+/lab
+/lab-rs

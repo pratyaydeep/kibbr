@@ -4,9 +4,11 @@
 //! directory. None of it is observable from inside a single process: a store that never
 //! reopened its files can hold the right answer in memory and have written nothing.
 //!
-//! Four questions, one per test - do the rows come back, does a damaged `trie.json` warn
+//! The questions, one per test - do the rows come back, is `trie.json` really nothing but
+//! a snapshot once `catalog.log` exists, does a damaged snapshot with no catalog still warn
 //! rather than crash, does a cursor issued before the restart still name the same row
-//! after it, and are ids that a directory already holds ever handed out twice.
+//! after it, are ids that a directory already holds ever handed out twice, and do the two
+//! column types the segment format cannot spell survive.
 //!
 //! HTTP over a bare `TcpStream`, as in `serve.rs` and for the same reason: the contract is
 //! a status line and a JSON body.
@@ -49,6 +51,13 @@ impl Db {
         self.start_with(&[])
     }
 
+    /// A server used for one read and then dropped - which kills it rather than stopping
+    /// it. Fine for a process that ingested nothing: there is nothing unflushed to lose,
+    /// and the restart tests are about what the *next* process sees.
+    fn start_and_keep(&self) -> Server {
+        self.start()
+    }
+
     fn start_with(&self, extra: &[&str]) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
             .args(["serve", "--port", "0"])
@@ -87,6 +96,10 @@ impl Db {
 
     fn trie_json(&self) -> PathBuf {
         self.dir.join("trie.json")
+    }
+
+    fn catalog(&self) -> PathBuf {
+        self.dir.join("catalog.log")
     }
 }
 
@@ -298,21 +311,71 @@ fn a_restart_answers_every_query_identically() {
 
 // ── A damaged snapshot ─────────────────────────────────────────────────────────────
 
-/// Truncated by hand, which is what a machine losing power mid-write leaves behind.
+/// `trie.json` is a snapshot nothing depends on. Delete it, truncate it by hand: with a
+/// catalog beside it the next start reads the catalog, warns about nothing, and answers
+/// every query as before.
 ///
-/// A WARN and an empty trie, never a hard failure. What that rules out is a crash loop: a
-/// process that cannot start because of a file it wrote itself, and that an operator
-/// cannot fix without knowing the format. Starting empty costs the learned templates and
-/// relearns them; refusing to start costs the whole database until someone reads the
-/// source.
+/// Before the catalog this file was the *only* thing on disk that could rebuild a trie,
+/// so losing it made every row unreachable - 2,000 rows, delete the file, restart, every
+/// query 0. This is the test for that.
 #[test]
-fn a_truncated_trie_json_warns_and_starts_clean() {
+fn a_damaged_or_missing_trie_json_changes_no_answer_when_a_catalog_exists() {
+    let db = Db::new();
+
+    let first = db.start();
+    first.ingest(&corpus());
+    first.shutdown();
+    let before: Vec<String> = BATTERY
+        .iter()
+        .map(|q| answer(&db.start_and_keep(), q))
+        .collect();
+
+    // Truncated, then absent. Two damages, one contract.
+    let whole = fs::read(db.trie_json()).expect("no trie.json after a graceful exit");
+    fs::write(db.trie_json(), &whole[..whole.len() / 2]).expect("failed to truncate");
+    let second = db.start();
+    assert!(
+        !second.banner.contains("WARN"),
+        "a truncated snapshot warned although the catalog exists:\n{}",
+        second.banner
+    );
+    assert!(
+        second.banner.contains("catalog.log - ") && second.banner.contains("restored"),
+        "the catalog was not what the restart read:\n{}",
+        second.banner
+    );
+    let truncated: Vec<String> = BATTERY.iter().map(|q| answer(&second, q)).collect();
+    assert_eq!(before, truncated, "a truncated trie.json changed an answer");
+    second.shutdown();
+
+    fs::remove_file(db.trie_json()).expect("no trie.json to remove");
+    let third = db.start();
+    assert!(!third.banner.contains("WARN"), "{}", third.banner);
+    let missing: Vec<String> = BATTERY.iter().map(|q| answer(&third, q)).collect();
+    assert_eq!(before, missing, "a missing trie.json changed an answer");
+
+    // And a clean exit puts the snapshot back, for whoever wants to read it.
+    let log = third.shutdown();
+    assert!(
+        log.contains("trie.json - ") && !log.contains("WARN trie.json"),
+        "the snapshot was not rewritten:\n{log}"
+    );
+    assert!(db.trie_json().exists());
+}
+
+/// No catalog and a truncated `trie.json`: the state a data directory from before the
+/// catalog is in after a machine lost power mid-write. A WARN and an empty trie, never a
+/// hard failure - what that rules out is a crash loop, a process that cannot start because
+/// of a file it wrote itself and that an operator cannot fix without knowing the format.
+#[test]
+fn no_catalog_and_a_truncated_trie_json_warns_and_starts_clean() {
     let db = Db::new();
 
     let first = db.start();
     first.ingest(&corpus());
     first.shutdown();
 
+    fs::remove_file(db.catalog()).expect("no catalog.log after a graceful exit");
     let whole = fs::read(db.trie_json()).expect("no trie.json after a graceful exit");
     assert!(whole.len() > 40, "trie.json is too small to truncate");
     fs::write(db.trie_json(), &whole[..whole.len() / 2]).expect("failed to truncate");
@@ -348,19 +411,119 @@ fn a_truncated_trie_json_warns_and_starts_clean() {
     let report = second.ingest(&corpus());
     assert_eq!(report["ingested"], LINES as u64);
     // `LINES`, not twice it: the relearned templates take fresh ids and so fresh
-    // directories, leaving the orphans unread. Losing the snapshot loses the rows it
-    // described - which is the documented cost of starting empty, and is what makes the
-    // alternative in `a_relearned_template_never_reuses_a_leaf_directory` unacceptable.
+    // directories, leaving the orphans unread. Losing both files loses the rows they
+    // described - which is the documented cost of starting empty.
     assert_eq!(second.query("COUNT LOG {}")["count"], LINES as u64);
 
-    // The next graceful exit leaves a snapshot that parses: the damage does not persist.
+    // The next start has a catalog to read: the damage does not persist. The orphan
+    // warning does, and should - those directories are still there.
     second.shutdown();
     let third = db.start();
     assert!(
-        !third.banner.contains("WARN trie.json"),
+        !third.banner.contains("WARN trie.json") && !third.banner.contains("WARN catalog.log"),
         "the damage survived a clean shutdown:\n{}",
         third.banner
     );
+    assert_eq!(third.query("COUNT LOG {}")["count"], LINES as u64);
+}
+
+/// A data directory from before the catalog: `trie.json` and no `catalog.log`. The first
+/// start writes the catalog from the snapshot, once, says so, and serves from the catalog;
+/// the second start does not need the snapshot at all.
+#[test]
+fn a_trie_json_with_no_catalog_is_migrated_once() {
+    let db = Db::new();
+
+    let first = db.start();
+    first.ingest(&corpus());
+    first.shutdown();
+    let before: Vec<String> = BATTERY
+        .iter()
+        .map(|q| answer(&db.start_and_keep(), q))
+        .collect();
+    let ids_before = template_ids(&db.start_and_keep());
+
+    fs::remove_file(db.catalog()).expect("no catalog.log after a graceful exit");
+
+    let second = db.start();
+    assert!(
+        second.banner.contains("catalog.log - none found; wrote"),
+        "the migration was not logged:\n{}",
+        second.banner
+    );
+    assert!(!second.banner.contains("WARN"), "{}", second.banner);
+    assert!(db.catalog().exists(), "no catalog was written");
+    assert_eq!(
+        template_ids(&second),
+        ids_before,
+        "migration changed the template ids"
+    );
+    let migrated: Vec<String> = BATTERY.iter().map(|q| answer(&second, q)).collect();
+    assert_eq!(before, migrated);
+    second.shutdown();
+
+    // From the catalog now, and the snapshot is not consulted: remove it to prove it.
+    fs::remove_file(db.trie_json()).expect("no trie.json to remove");
+    let third = db.start();
+    assert!(
+        third.banner.contains("catalog.log - ") && third.banner.contains("restored"),
+        "{}",
+        third.banner
+    );
+    assert!(
+        !third.banner.contains("wrote"),
+        "migrated twice:\n{}",
+        third.banner
+    );
+    let again: Vec<String> = BATTERY.iter().map(|q| answer(&third, q)).collect();
+    assert_eq!(before, again);
+}
+
+/// `Uuid` and `Ip` exist only in the catalog: the segment type byte has no value for them
+/// so before it they came back from a restart as whatever the segment said.
+#[test]
+fn uuid_and_ip_column_types_survive_a_restart() {
+    let db = Db::new();
+    let line: &[u8] = b"{\"ts\":\"2024-01-15T10:00:00Z\",\"event\":\"login\",\
+                       \"session\":\"123e4567-e89b-12d3-a456-426614174000\",\
+                       \"client\":\"203.0.113.9\",\"note\":null}\n";
+
+    let first = db.start();
+    assert_eq!(first.ingest(line)["ingested"], 1);
+    let before = column_types(&first);
+    assert_eq!(before["session"], "Uuid", "{before:?}");
+    assert_eq!(before["client"], "Ip", "{before:?}");
+    assert_eq!(before["ts"], "Datetime", "{before:?}");
+    // Only ever null: no type yet, and that is a different fact from `String`.
+    assert_eq!(before["note"], serde_json::Value::Null, "{before:?}");
+    first.shutdown();
+
+    let second = db.start();
+    assert_eq!(
+        column_types(&second),
+        before,
+        "a column type changed across the restart"
+    );
+}
+
+/// `{name: type}` over every column of every template, as `/templates` reports them.
+fn column_types(server: &Server) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    for template in json(&server.get("/templates").1)["templates"]
+        .as_array()
+        .expect("templates is an array")
+    {
+        for col in template["columns"].as_array().expect("columns is an array") {
+            out.insert(
+                col["name"]
+                    .as_str()
+                    .expect("a column has a name")
+                    .to_string(),
+                col["type"].clone(),
+            );
+        }
+    }
+    out
 }
 
 // ── A cursor across a restart ──────────────────────────────────────────────────────
@@ -459,8 +622,8 @@ fn a_cursor_read_against_another_query_is_refused_after_a_restart() {
 /// A relearned template must never be handed a template id that a leaf directory already
 /// holds.
 ///
-/// Ids come from a counter, and leaf directories are *named* by id, so a lost `trie.json`
-/// restarts the counter over directories that still exist. Whether that collides depends
+/// Ids come from a counter, and leaf directories are *named* by id, so losing both the
+/// catalog and `trie.json` restarts the counter over directories that still exist. Whether that collides depends
 /// on the order lines arrive in: relearn the same key sets in a different order and
 /// template *n* is now a different key set from the one whose rows sit in `leaf_n`.
 ///
@@ -487,7 +650,9 @@ fn a_relearned_template_never_reuses_a_leaf_directory() {
     assert_eq!(before.len(), 2, "the two shapes did not make two templates");
     first.shutdown();
 
+    // Both files: with either one the templates come back and nothing is relearned.
     fs::remove_file(db.trie_json()).expect("no trie.json to remove");
+    fs::remove_file(db.catalog()).expect("no catalog.log to remove");
 
     let second = db.start();
     assert_eq!(second.ingest(beta_then_alpha)["ingested"], 2);
