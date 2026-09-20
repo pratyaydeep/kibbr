@@ -514,6 +514,11 @@ fn exists_without_a_window_reads_nothing() {
     let out = query(&["--exists", "--match", "event=hit"]);
     assert_eq!(out["exists"], true);
     assert_eq!(out["meta"]["rows_scanned"], 0);
+    // `leaves_opened`, and `files_opened` beside it. The second cannot fail on this
+    // surface - the CLI's store is in memory and reads no file whatever the query - so
+    // pinning it alone would have been a check that passed however the walk behaved.
+    // `leaves_opened` is what says the walk opened nothing.
+    assert_eq!(out["meta"]["leaves_opened"], 0);
     assert_eq!(out["meta"]["files_opened"], 0);
 }
 

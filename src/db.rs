@@ -120,6 +120,37 @@ pub fn ingest_line(
     parsed: &ParsedLog,
     now: DateTime<Utc>,
 ) -> Result<(), SinkError> {
+    let prepared = Prepared::of(parsed);
+    ingest_prepared(trie, stores, parsed, prepared, now)
+}
+
+/// A line's row and datetime rungs, built before anything is locked.
+///
+/// Splitting this off is what lets `/ingest` build five hundred rows without the store
+/// lock and then only take it to append them. Neither half needs the trie: a row is
+/// built from the line's own keys, and the rungs from its own values.
+pub struct Prepared {
+    pub row: Row,
+    pub forms: Vec<(String, DtForm)>,
+}
+
+impl Prepared {
+    pub fn of(parsed: &ParsedLog) -> Self {
+        Self {
+            row: row_of(parsed),
+            forms: dt_forms_of(parsed),
+        }
+    }
+}
+
+/// The rest of `ingest_line`, with the row already built.
+pub fn ingest_prepared(
+    trie: &Trie,
+    stores: Option<&mut StoreManager>,
+    parsed: &ParsedLog,
+    prepared: Prepared,
+    now: DateTime<Utc>,
+) -> Result<(), SinkError> {
     let (leaf, _) = trie.ingest(parsed, now)?;
     let Some(stores) = stores else {
         return Ok(());
@@ -131,12 +162,14 @@ pub fn ingest_line(
     // `ingest` just wrote the meta, so `None` is a poisoned lock and nothing else.
     // Dropping the row is the only option left and it is counted nowhere.
     if let Some((id, source)) = placed {
-        let mut row = row_of(parsed);
-        let mut forms = dt_forms_of(parsed);
+        let Prepared { mut row, mut forms } = prepared;
         // The effective time: the time column where it holds an instant, and
         // otherwise the arrival time - stored in the system column, **after**
         // fingerprinting, so it is not a key and makes no template. A row with its own
         // time does not get the column.
+        //
+        // Left here rather than moved out with the row: which column holds the time is
+        // the *template's* choice, and nothing outside the trie knows it yet.
         if crate::store::ts_of(&row, source.column()).is_none() {
             row.insert(
                 RECEIVED_AT_COLUMN.to_string(),
@@ -172,7 +205,7 @@ pub fn load<R: BufRead>(
     let mut stores = StoreManager::memory();
     let stats = read_lines(
         input,
-        &mut |parsed| ingest_line(&trie, with_rows.then_some(&mut stores), &parsed, now),
+        &mut |_, parsed| ingest_line(&trie, with_rows.then_some(&mut stores), &parsed, now),
         &mut report_rejected,
     )?;
     Ok(Db {
@@ -184,14 +217,59 @@ pub fn load<R: BufRead>(
 
 /// Every parsed line, in file order. What the oracle scans.
 pub fn load_lines<R: BufRead>(input: R) -> Result<(Vec<ParsedLog>, LoadStats), CliError> {
+    let (lines, stats) = parse_only(input, &mut report_rejected)?;
+    Ok((lines.into_iter().map(|(_, parsed)| parsed).collect(), stats))
+}
+
+/// Split and parse, taking no lock and touching no trie.
+///
+/// **This is the first half of the write path**, and it is a separate function because
+/// `/ingest` has to run it before it takes the store lock. Parsing is most of the cost of
+/// a line, and running it under one global write lock is why ingest measured flat at
+/// 30,000 lines a second from one sender to eight.
+///
+/// The line number comes back beside each `ParsedLog` rather than inside it. A rejection
+/// found in the second half has to be reported against the number an operator would count
+/// in an editor, and after the split the two halves no longer share a counter.
+///
+/// `stats.ingested` is **not** filled in here - nothing has been ingested yet. The caller
+/// applies the lines and counts what landed.
+pub fn parse_only<R: BufRead>(
+    input: R,
+    on_error: &mut dyn FnMut(DetectorError),
+) -> Result<(Vec<(usize, ParsedLog)>, LoadStats), CliError> {
     let mut lines = Vec::new();
     let stats = read_lines(
         input,
-        &mut |parsed| {
-            lines.push(parsed);
+        &mut |at, parsed| {
+            lines.push((at, parsed));
             Ok(())
         },
-        &mut report_rejected,
+        on_error,
+    )?;
+    Ok((lines, stats))
+}
+
+/// One parsed line, its number, and the row built from it.
+pub type PreparedLine = (usize, ParsedLog, Prepared);
+
+/// The same, with each line's row built as well.
+///
+/// What `/ingest` uses: a row is an allocation per key, and five hundred of them under one
+/// global write lock is five hundred allocations nothing else in the process may overlap.
+pub fn parse_and_prepare<R: BufRead>(
+    input: R,
+    on_error: &mut dyn FnMut(DetectorError),
+) -> Result<(Vec<PreparedLine>, LoadStats), CliError> {
+    let mut lines = Vec::new();
+    let stats = read_lines(
+        input,
+        &mut |at, parsed| {
+            let prepared = Prepared::of(&parsed);
+            lines.push((at, parsed, prepared));
+            Ok(())
+        },
+        on_error,
     )?;
     Ok((lines, stats))
 }
@@ -222,7 +300,7 @@ pub fn report_rejected(e: DetectorError) {
 /// jumping to the reported line has to land on the line that was rejected.
 pub fn read_lines<R: BufRead>(
     mut input: R,
-    sink: &mut dyn FnMut(ParsedLog) -> Result<(), SinkError>,
+    sink: &mut dyn FnMut(usize, ParsedLog) -> Result<(), SinkError>,
     on_error: &mut dyn FnMut(DetectorError),
 ) -> Result<LoadStats, CliError> {
     let mut stats = LoadStats::default();
@@ -273,7 +351,7 @@ pub fn read_lines<R: BufRead>(
             continue;
         }
         match parse_line(line, stats.read as usize) {
-            Ok(parsed) => match sink(parsed) {
+            Ok(parsed) => match sink(stats.read as usize, parsed) {
                 Ok(()) => stats.ingested += 1,
                 // The line parsed and still did not land. Counted and reported exactly
                 // as a line that did not parse: to the client both are "this one is

@@ -59,7 +59,7 @@
 //! through `to_bits`.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -309,6 +309,15 @@ pub struct SegmentIndex {
     pub groups: Vec<RowGroup>,
     pub total_rows: u64,
     pub bytes: u64,
+    /// Where the row group data ends and the footer begins.
+    ///
+    /// Distinct from `bytes`, which is the whole file: sealing a segment adds a footer,
+    /// so the two differ by exactly its length. Recorded rather than derived because
+    /// `reopen` has to truncate back to it, and the alternatives are both wrong on an
+    /// edge - the last chunk's end is unknown for a row group with no columns, and
+    /// re-reading `footer_len` means trusting a number the file has already been opened
+    /// to check.
+    pub data_end: u64,
 }
 
 impl SegmentIndex {
@@ -394,6 +403,50 @@ pub enum SegError {
     BadName { path: PathBuf },
     #[error("{path}: a string cell is not utf-8")]
     BadUtf8 { path: PathBuf },
+    /// A value handed to a column whose type it is not. Not a fact about the data: the
+    /// write path coerces every value into its column before it gets here, so this is
+    /// that path having gone wrong. It costs the flush and the rows stay buffered.
+    #[error(
+        "{path}: column `{column}` is {kind} and was handed {value} - writing it would put \
+         a cell on disk the footer does not describe"
+    )]
+    CellType {
+        path: PathBuf,
+        column: String,
+        kind: &'static str,
+        value: String,
+    },
+    /// Unreachable while a line is capped at 64 MiB by `lines::MAX_LINE_BYTES`; an error
+    /// rather than a null cell, because a dropped cell nobody is told about is the thing
+    /// this format stopped doing.
+    #[error(
+        "{path}: column `{column}` was handed a {len} byte string, past the u32 its length \
+         prefix is written as"
+    )]
+    CellTooLong {
+        path: PathBuf,
+        column: String,
+        len: usize,
+    },
+    #[error("{path}: column `{column}` has {given} cell(s) in a row group of {expected} row(s)")]
+    ChunkLength {
+        path: PathBuf,
+        column: String,
+        given: usize,
+        expected: u64,
+    },
+    #[error("{path}: a row group of {given} column(s) in a segment of {expected}")]
+    ColumnCount {
+        path: PathBuf,
+        given: usize,
+        expected: usize,
+    },
+    #[error("{path}: a row group header of {wrote} byte(s) where {expected} was reserved")]
+    HeaderLength {
+        path: PathBuf,
+        wrote: usize,
+        expected: usize,
+    },
     #[error(
         "{path}: row group {group} describes column {column} as {found}, and the footer \
          says {expected} - the segment is corrupt"
@@ -478,24 +531,30 @@ impl<'a> Cursor<'a> {
 
 // ── Chunks ─────────────────────────────────────────────────────────────────────────
 
-/// One cell's bytes, or `None` for a row with no value here.
+/// Whether one cell's bytes went into `out`, or the mismatch that stopped them.
 ///
-/// A value whose type does not match the column's is `None` too: writing it would put a
-/// cell on disk the header does not describe, and a wrong cell is worse than a missing
-/// one. Loud in debug; the caller coerces before it gets here.
-fn cell_bytes(value: &ColValue, kind: ColKind, out: &mut Vec<u8>) -> bool {
-    match (kind, value) {
+/// **A value whose type is not the column's is an error and not a skipped cell.** The
+/// presence bitmap is built from the values and the bytes from this, so a mismatch that
+/// merely wrote nothing left the column marked present with no cell behind it - every
+/// later cell in that chunk shifted by its width, and every row in it read back a
+/// neighbour's value. That was a debug assertion, which is to say it was nothing at all
+/// in the build that ships. The caller coerces before it gets here, so
+/// reaching this is a bug in the caller rather than in the data; it costs the flush, the
+/// rows stay buffered, and the next tick retries.
+fn cell_bytes(value: &ColValue, kind: ColKind, out: &mut Vec<u8>) -> Result<bool, CellMismatch> {
+    Ok(match (kind, value) {
         (_, ColValue::Null) => false,
         // Unreachable: the prefix is a u32 and a line is capped well below 4 GiB
-        // (`lines::MAX_LINE_BYTES`). Null rather than truncation - half a string is worse
-        // than none, and cutting at a byte offset would split a character besides.
+        // (`lines::MAX_LINE_BYTES`). An error rather than truncation *or* a null - half a
+        // string is worse than none and would split a character besides, and a null here
+        // is the silent dropped cell this whole change is about.
         (ColKind::Str, ColValue::String(s)) => match u32::try_from(s.len()) {
             Ok(len) => {
                 out.extend_from_slice(&len.to_le_bytes());
                 out.extend_from_slice(s.as_bytes());
                 true
             }
-            Err(_) => false,
+            Err(_) => return Err(CellMismatch::TooLong { len: s.len() }),
         },
         (ColKind::I64, ColValue::Int64(i)) => {
             out.extend_from_slice(&i.to_le_bytes());
@@ -515,21 +574,54 @@ fn cell_bytes(value: &ColValue, kind: ColKind, out: &mut Vec<u8>) -> bool {
             true
         }
         (kind, value) => {
-            debug_assert!(false, "{kind:?} column handed a {value:?}");
-            false
+            return Err(CellMismatch::Type {
+                kind,
+                value: rendered(value),
+            })
         }
+    })
+}
+
+/// A value for an error message: its debug form, cut short.
+///
+/// Cut because the value that got here may be the 64 MiB stack trace in a JSON field that
+/// this format exists to store, and an error message is not somewhere to put one.
+fn rendered(value: &ColValue) -> String {
+    const MAX: usize = 120;
+    let text = format!("{value:?}");
+    match text.char_indices().nth(MAX) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text,
     }
+}
+
+/// A cell whose type is not its column's, on its way up to the caller that knows which
+/// file and which column it was going into.
+///
+/// A struct rather than a `SegError` because `encode_chunk` encodes bytes and has no
+/// path: naming the file is `append_row_group`'s job, and threading a `&Path` down here
+/// to build an error that is never constructed would be a parameter on every caller for
+/// a case that must not happen.
+#[derive(Debug)]
+pub enum CellMismatch {
+    /// A value whose type is not the column's.
+    Type { kind: ColKind, value: String },
+    /// A string past the `u32` its length prefix is written as.
+    TooLong { len: usize },
 }
 
 /// Encode one column's cells for one row group.
 ///
 /// **Encoding 1 when every row has a value** - which `ts`, `level` and `user_id` usually
 /// do: an all-ones 1,024-byte bitmap per column per row group is pure waste.
-pub fn encode_chunk(values: &[ColValue], kind: ColKind) -> (u8, Vec<u8>) {
-    let present: Vec<bool> = values
-        .iter()
-        .map(|v| !matches!(v, ColValue::Null) && ColKind::of(v).is_some())
-        .collect();
+///
+/// **The bitmap and the cells are built from one reading of the values.** They used to be
+/// built from two - `ColKind::of(v).is_some()` for the bitmap and a match on `(kind,
+/// value)` for the bytes - and the two disagreed for a value of the wrong type: present in
+/// the bitmap, absent from the cells, and every cell after it in the chunk read back one
+/// position out. `present` now asks the same question the cells answer.
+pub fn encode_chunk(values: &[ColValue], kind: ColKind) -> Result<(u8, Vec<u8>), CellMismatch> {
+    let present: Vec<bool> = values.iter().map(|v| ColKind::of(v) == Some(kind)).collect();
     let all_present = present.iter().all(|p| *p);
 
     let mut out = Vec::with_capacity(values.len() * kind.width().unwrap_or(16));
@@ -542,17 +634,25 @@ pub fn encode_chunk(values: &[ColValue], kind: ColKind) -> (u8, Vec<u8>) {
         }
         out.extend_from_slice(&bitmap);
     }
-    for value in values {
-        cell_bytes(value, kind, &mut out);
+    for (value, is_present) in values.iter().zip(&present) {
+        // The two readings have to agree cell for cell. They cannot disagree any more -
+        // `cell_bytes` writes exactly when the type matches, which is what `present` asks -
+        // and that is the point: the bug was the two of them disagreeing silently.
+        if cell_bytes(value, kind, &mut out)? != *is_present {
+            return Err(CellMismatch::Type {
+                kind,
+                value: rendered(value),
+            });
+        }
     }
-    (
+    Ok((
         if all_present {
             ENCODING_ALL_PRESENT
         } else {
             ENCODING_BITMAP
         },
         out,
-    )
+    ))
 }
 
 /// Decode one chunk back into one `ColValue` per row.
@@ -646,9 +746,52 @@ pub struct SegmentWriter {
     at: u64,
 }
 
+/// A segment file that was already there when a new one was about to be created, and what
+/// reopening it cost.
+///
+/// Reported rather than swallowed: the only ways one gets here are a previous process
+/// killed between creating the file and writing its header, or a create that failed
+/// part way on a build that did not clean up. Both are worth a line in the log.
+#[derive(Debug)]
+pub struct Reopened {
+    pub rows: u64,
+    pub groups: usize,
+    pub dropped_bytes: u64,
+    /// The file held no row group at all, so it was rewritten with the columns this run
+    /// needs rather than appended to. An empty segment is not a fact about the data.
+    pub was_empty: bool,
+}
+
+impl std::fmt::Display for Reopened {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.was_empty {
+            return write!(
+                f,
+                "it held no row group that could be read, and its {} byte(s) were \
+                 rewritten as a fresh segment",
+                self.dropped_bytes
+            );
+        }
+        write!(
+            f,
+            "appending to the {} row(s) in {} row group(s) already in it; {} byte(s) past \
+             the last good row group were dropped",
+            self.rows, self.groups, self.dropped_bytes
+        )
+    }
+}
+
 impl SegmentWriter {
     /// Create the file, write the header, and fsync **the containing directory too** -
     /// otherwise the file's existence is not durable, whatever is inside it.
+    ///
+    /// **A create that fails part way leaves nothing behind.** `create_new` has made the
+    /// file by the time the header is written, so a failure after that point - a full
+    /// disk, a descriptor spent on the directory fsync - used to leave a zero-byte file
+    /// that every later attempt at the same sequence number met with `File exists`. The
+    /// rows behind it never left memory and a clean shutdown exited 0 without them
+    /// The file is removed on the way out of every error path here, so a retry retries
+    /// rather than repeating one failure forever.
     pub fn create(path: PathBuf, columns: Vec<ColumnSpec>) -> Result<Self, SegError> {
         let mut file = OpenOptions::new()
             .write(true)
@@ -656,15 +799,29 @@ impl SegmentWriter {
             .open(&path)
             .map_err(|e| io(&path, e))?;
 
-        let mut header = [0u8; HEADER_BYTES as usize];
-        header[..4].copy_from_slice(&MAGIC);
-        header[4] = VERSION;
-        // `write_all` is the loop on short writes: it retries until the buffer is gone or
-        // the error is real.
-        file.write_all(&header).map_err(|e| io(&path, e))?;
-        file.sync_all().map_err(|e| io(&path, e))?;
-        if let Some(dir) = path.parent() {
-            sync_dir(dir).map_err(|e| io(dir, e))?;
+        // From here the file exists, so every failure has to take it away again.
+        let mut write_header = || -> Result<(), SegError> {
+            let mut header = [0u8; HEADER_BYTES as usize];
+            header[..4].copy_from_slice(&MAGIC);
+            header[4] = VERSION;
+            // `write_all` is the loop on short writes: it retries until the buffer is gone
+            // or the error is real.
+            file.write_all(&header).map_err(|e| io(&path, e))?;
+            file.sync_all().map_err(|e| io(&path, e))?;
+            if let Some(dir) = path.parent() {
+                sync_dir(dir).map_err(|e| io(dir, e))?;
+            }
+            Ok(())
+        };
+        if let Err(e) = write_header() {
+            // Best effort, and it has to be: the disk that would not take eight bytes may
+            // not take an unlink either. Reporting the original failure is what matters -
+            // a second error about the cleanup would hide the one that caused it.
+            let _ = std::fs::remove_file(&path);
+            if let Some(dir) = path.parent() {
+                let _ = sync_dir(dir);
+            }
+            return Err(e);
         }
 
         Ok(Self {
@@ -674,10 +831,78 @@ impl SegmentWriter {
                 groups: Vec::new(),
                 total_rows: 0,
                 bytes: HEADER_BYTES,
+                data_end: HEADER_BYTES,
             },
             file,
             at: HEADER_BYTES,
         })
+    }
+
+    /// Create the segment, or take over the one already there.
+    ///
+    /// The second case is the retry path. A file at the sequence number about to be used
+    /// is opened through `open` - the same recovery every other reader gets, so whatever a
+    /// crash left is truncated to the last row group whose CRC checks out - and then
+    /// appended to. A file holding no row group is rewritten with the columns this run
+    /// needs: there is nothing in it to preserve, and sealing it empty would leave a file
+    /// per retry.
+    ///
+    /// The columns of a reopened file are **its own**, not the ones passed in. The caller
+    /// asks again what fits.
+    pub fn create_or_reopen(
+        path: PathBuf,
+        columns: Vec<ColumnSpec>,
+    ) -> Result<(Self, Option<Reopened>), SegError> {
+        let exists = match Self::create(path.clone(), columns.clone()) {
+            Ok(writer) => return Ok((writer, None)),
+            Err(SegError::Io { source, .. }) if source.kind() == ErrorKind::AlreadyExists => source,
+            Err(e) => return Err(e),
+        };
+        let _ = exists;
+
+        let (index, opened) = open(&path)?;
+        let dropped_bytes = match opened {
+            Opened::Sealed => 0,
+            Opened::Recovered { dropped_bytes, .. } => dropped_bytes,
+        };
+        let mut found = Reopened {
+            rows: index.total_rows,
+            groups: index.groups.len(),
+            dropped_bytes,
+            was_empty: index.groups.is_empty(),
+        };
+        if found.was_empty {
+            // What recovery could not read. It has already truncated the file to its
+            // header, so nothing is being thrown away here that was not thrown away
+            // there - but the count belongs in the log either way.
+            found.dropped_bytes = dropped_bytes.max(index.bytes.saturating_sub(HEADER_BYTES));
+            std::fs::remove_file(&path).map_err(|e| io(&path, e))?;
+            if let Some(dir) = path.parent() {
+                sync_dir(dir).map_err(|e| io(dir, e))?;
+            }
+            found.rows = 0;
+            found.groups = 0;
+            return Ok((Self::create(path, columns)?, Some(found)));
+        }
+        Ok((Self::reopen(index)?, Some(found)))
+    }
+
+    /// Cut the footer back off a sealed index and carry on writing where its data ended.
+    ///
+    /// Only ever reached from `create_or_reopen`: `open` seals whatever it recovers, so
+    /// there is always a footer here, and it is always the one this process just wrote.
+    fn reopen(mut index: SegmentIndex) -> Result<Self, SegError> {
+        let at = index.data_end;
+        let path = index.path.clone();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|e| io(&path, e))?;
+        file.set_len(at).map_err(|e| io(&path, e))?;
+        file.seek(SeekFrom::Start(at)).map_err(|e| io(&path, e))?;
+        file.sync_all().map_err(|e| io(&path, e))?;
+        index.bytes = at;
+        Ok(Self { index, file, at })
     }
 
     pub fn index(&self) -> &SegmentIndex {
@@ -706,12 +931,50 @@ impl SegmentWriter {
         row_count: u64,
         span: Option<(i64, i64)>,
     ) -> Result<(), SegError> {
-        debug_assert_eq!(columns.len(), self.index.columns.len());
+        // A real check, because `zip` below would otherwise write whichever list is
+        // shorter and leave a row group the footer describes wrongly - silently, in the
+        // build that ships.
+        if columns.len() != self.index.columns.len() {
+            return Err(SegError::ColumnCount {
+                path: self.index.path.clone(),
+                given: columns.len(),
+                expected: self.index.columns.len(),
+            });
+        }
+        // Every chunk has to be as long as the row group says it is. A short one would
+        // write a header claiming `row_count` rows over fewer cells, and the reader
+        // decodes `row_count` of them - reading past the chunk into its neighbour, which
+        // the CRC vouches for because the bytes on disk are exactly what was written.
+        if let Some((at, values)) = columns
+            .iter()
+            .enumerate()
+            .find(|(_, values)| values.len() as u64 != row_count)
+        {
+            return Err(SegError::ChunkLength {
+                path: self.index.path.clone(),
+                column: self.index.columns[at].name.clone(),
+                given: values.len(),
+                expected: row_count,
+            });
+        }
         let (min_ts, max_ts) = span.unwrap_or((i64::MIN, i64::MIN));
 
         let mut encoded = Vec::with_capacity(columns.len());
         for (values, spec) in columns.iter().zip(&self.index.columns) {
-            encoded.push(encode_chunk(values, spec.kind));
+            let chunk = encode_chunk(values, spec.kind).map_err(|bad| match bad {
+                CellMismatch::Type { kind, value } => SegError::CellType {
+                    path: self.index.path.clone(),
+                    column: spec.name.clone(),
+                    kind: kind.as_str(),
+                    value,
+                },
+                CellMismatch::TooLong { len } => SegError::CellTooLong {
+                    path: self.index.path.clone(),
+                    column: spec.name.clone(),
+                    len,
+                },
+            })?;
+            encoded.push(chunk);
         }
 
         let header_bytes: usize = 8
@@ -739,7 +1002,17 @@ impl SegmentWriter {
             payload.push(*encoding);
             payload.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         }
-        debug_assert_eq!(payload.len(), header_bytes);
+        // The offsets below are `header_bytes` past the frame, so the header's predicted
+        // length and its written length have to be the same number. Checked rather than
+        // asserted: a release build that got this wrong would write a footer pointing at
+        // offsets nothing was written to, and the file would look valid and read garbage.
+        if payload.len() != header_bytes {
+            return Err(SegError::HeaderLength {
+                path: self.index.path.clone(),
+                wrote: payload.len(),
+                expected: header_bytes,
+            });
+        }
 
         // Absolute offsets, recorded as the chunks go down, so the footer needs no
         // arithmetic later and a reader needs none at all.
@@ -766,6 +1039,7 @@ impl SegmentWriter {
 
         self.at += frame.len() as u64;
         self.index.bytes = self.at;
+        self.index.data_end = self.at;
         self.index.total_rows += row_count;
         self.index.groups.push(RowGroup {
             row_count,
@@ -777,13 +1051,28 @@ impl SegmentWriter {
     }
 
     /// Write the footer, fsync, close. A sealed file is never reopened for writing.
-    pub fn seal(mut self) -> Result<SegmentIndex, SegError> {
+    ///
+    /// **The index comes back whether or not the footer did.** The writer is consumed
+    /// either way - the descriptor is gone and there is nothing left to retry with - so a
+    /// `Result<SegmentIndex, _>` would hand the caller an error and take the description
+    /// of every row group it had already fsynced with it. Those rows are on the platter;
+    /// dropping the index makes them vanish from every query in this process while the
+    /// partition's own count still includes them, which is a count that disagrees with
+    /// its own rows and nothing reporting it.
+    ///
+    /// On failure the index describes the file up to `data_end` - the footerless form the
+    /// next `open` recovers, walking the frames and sealing what survives.
+    pub fn seal(mut self) -> (SegmentIndex, Option<SegError>) {
         let footer = encode_footer(&self.index);
         let path = self.index.path.clone();
-        self.file.write_all(&footer).map_err(|e| io(&path, e))?;
-        self.file.sync_all().map_err(|e| io(&path, e))?;
+        if let Err(e) = self.file.write_all(&footer) {
+            return (self.index, Some(io(&path, e)));
+        }
+        if let Err(e) = self.file.sync_all() {
+            return (self.index, Some(io(&path, e)));
+        }
         self.index.bytes = self.at + footer.len() as u64;
-        Ok(self.index)
+        (self.index, None)
     }
 }
 
@@ -987,6 +1276,10 @@ fn parse_footer(path: &Path, raw: &[u8], file_len: u64) -> Result<SegmentIndex, 
         groups,
         total_rows,
         bytes: file_len,
+        // The footer begins where the data ends, and the trailer names its length.
+        data_end: file_len
+            .saturating_sub(TRAILER_BYTES)
+            .saturating_sub(raw.len() as u64),
     })
 }
 
@@ -1251,6 +1544,7 @@ fn recover(
         groups,
         total_rows,
         bytes: good_to,
+        data_end: good_to,
     };
 
     let mut file = OpenOptions::new()
@@ -1268,6 +1562,7 @@ fn recover(
         file.set_len(0).map_err(|e| io(path, e))?;
         file.write_all(&header).map_err(|e| io(path, e))?;
         index.bytes = HEADER_BYTES;
+        index.data_end = HEADER_BYTES;
     } else {
         file.set_len(good_to).map_err(|e| io(path, e))?;
         file.seek(SeekFrom::Start(good_to))
@@ -1344,7 +1639,9 @@ mod tests {
                 .append_row_group(chunks, rows, None)
                 .expect("append a row group");
         }
-        writer.seal().expect("seal the segment")
+        let (index, failure) = writer.seal();
+        assert!(failure.is_none(), "seal failed: {failure:?}");
+        index
     }
 
     /// Every value in a sealed segment, column by column.
@@ -1442,7 +1739,7 @@ mod tests {
         values[0] = ColValue::Bool(true);
         values[9] = ColValue::Bool(false);
 
-        let (encoding, bytes) = encode_chunk(&values, ColKind::Bool);
+        let (encoding, bytes) = encode_chunk(&values, ColKind::Bool).expect("encode");
         assert_eq!(encoding, ENCODING_BITMAP);
         assert_eq!(bytes[0], 0b0000_0001);
         assert_eq!(bytes[1], 0b0000_0010);
@@ -1460,13 +1757,13 @@ mod tests {
     #[test]
     fn a_full_column_gets_encoding_one_and_no_bitmap() {
         let full: Vec<ColValue> = (0..64).map(ColValue::Int64).collect();
-        let (encoding, bytes) = encode_chunk(&full, ColKind::I64);
+        let (encoding, bytes) = encode_chunk(&full, ColKind::I64).expect("encode");
         assert_eq!(encoding, ENCODING_ALL_PRESENT);
         assert_eq!(bytes.len(), 64 * 8, "a bitmap was written anyway");
 
         let mut holed = full.clone();
         holed[7] = ColValue::Null;
-        let (encoding, bytes) = encode_chunk(&holed, ColKind::I64);
+        let (encoding, bytes) = encode_chunk(&holed, ColKind::I64).expect("encode");
         assert_eq!(encoding, ENCODING_BITMAP);
         assert_eq!(
             bytes.len(),
@@ -1812,7 +2109,8 @@ mod tests {
                 .append_row_group(&[values], 10, Some((base, base + 9)))
                 .expect("append");
         }
-        let index = writer.seal().expect("seal");
+        let (index, failure) = writer.seal();
+        assert!(failure.is_none(), "seal failed: {failure:?}");
 
         let hits = index
             .groups
@@ -1827,5 +2125,234 @@ mod tests {
             .filter(|g| g.overlaps(None, None))
             .count();
         assert_eq!(all, 50, "an open window pruned something");
+    }
+
+    // ── What used to be a debug assertion ─────────────────────────────────────────
+
+    /// A value whose type is not its column's is refused, **in a release build**.
+    ///
+    /// It was a debug assertion, so the build that ships wrote the bitmap from one
+    /// reading of the values and the cells from another. A `String` in an `I64` column
+    /// came out marked present with no eight bytes behind it, and every cell after it in
+    /// the chunk shifted - each row reading back its neighbour's value, with nothing
+    /// reporting an error.
+    #[test]
+    fn a_wrong_typed_cell_is_an_error_and_not_a_shifted_chunk() {
+        let values = vec![
+            ColValue::Int64(1),
+            ColValue::String("N/A".into()),
+            ColValue::Int64(3),
+        ];
+        match encode_chunk(&values, ColKind::I64).expect_err("a string is not an i64") {
+            CellMismatch::Type { kind, value } => {
+                assert_eq!(kind, ColKind::I64);
+                assert!(value.contains("N/A"), "the value is not named: {value}");
+            }
+            other => panic!("wrong mismatch: {other:?}"),
+        }
+
+        // And the same value through a writer names the file and the column.
+        let scratch = Scratch::new("celltype");
+        let path = scratch.path("seg_000001.col");
+        let mut writer =
+            SegmentWriter::create(path.clone(), vec![spec("x", ColKind::I64, None)]).expect("create");
+        let e = writer
+            .append_row_group(&[values], 3, None)
+            .expect_err("a wrong-typed cell is not written");
+        match e {
+            SegError::CellType { column, kind, .. } => {
+                assert_eq!(column, "x");
+                assert_eq!(kind, "I64");
+            }
+            other => panic!("wrong error: {other}"),
+        }
+
+        // Nothing of the refused row group reached the file: the encode happens before
+        // the write, so the segment is still the header it was created with.
+        assert_eq!(writer.bytes(), HEADER_BYTES);
+    }
+
+    /// The same check the other way: a chunk of the right type round-trips every cell,
+    /// nulls included, to the position it went in at.
+    #[test]
+    fn a_holed_chunk_reads_every_cell_back_where_it_was_written() {
+        let values = vec![
+            ColValue::Int64(1),
+            ColValue::Null,
+            ColValue::Int64(3),
+            ColValue::Null,
+            ColValue::Int64(5),
+        ];
+        let (encoding, bytes) = encode_chunk(&values, ColKind::I64).expect("encode");
+        assert_eq!(encoding, ENCODING_BITMAP);
+        let back = decode_chunk(Path::new("x"), &bytes, ColKind::I64, 5, encoding).expect("decode");
+        assert_eq!(back, values);
+    }
+
+    /// A row group of the wrong width is refused rather than zipped short.
+    #[test]
+    fn a_row_group_of_the_wrong_width_is_refused() {
+        let scratch = Scratch::new("width");
+        let mut writer = SegmentWriter::create(
+            scratch.path("seg_000001.col"),
+            vec![spec("a", ColKind::I64, None), spec("b", ColKind::I64, None)],
+        )
+        .expect("create");
+        let e = writer
+            .append_row_group(&[vec![ColValue::Int64(1)]], 1, None)
+            .expect_err("one chunk for two columns");
+        match e {
+            SegError::ColumnCount { given, expected, .. } => {
+                assert_eq!((given, expected), (1, 2));
+            }
+            other => panic!("wrong error: {other}"),
+        }
+    }
+
+    // ── Retry-safe creation ────────────────────────────────────────────────────────
+
+    /// A create that fails leaves no file behind for the next attempt to trip over.
+    ///
+    /// The file it used to leave was a zero-byte one that every later attempt at the same
+    /// sequence number met with `File exists`, so the rows behind it never left memory
+    /// and a clean shutdown exited 0 without them.
+    ///
+    /// Two halves, and only one of them is reachable from here. A create that fails at
+    /// `create_new` never made a file, which is what this pins. A create that fails
+    /// *after* it - the header write or the directory fsync, on a disk with no room for
+    /// eight bytes - is what the `remove_file` in `create` is for, and there is no way to
+    /// force that from a unit test without a filesystem that can be filled.
+    /// `scripts/disk_full.sh` and `scripts/open_files.sh` are where it is exercised, and
+    /// both assert that no retry ever answers `File exists`.
+    #[test]
+    fn a_create_that_fails_leaves_nothing_to_trip_over() {
+        let scratch = Scratch::new("partial");
+        let nowhere = scratch.path("no-such-dir").join(segment_name(1));
+        match SegmentWriter::create(nowhere.clone(), vec![spec("x", ColKind::I64, None)]) {
+            Ok(_) => panic!("created a segment under a directory that does not exist"),
+            Err(e) => assert!(matches!(e, SegError::Io { .. }), "wrong error: {e}"),
+        }
+        assert!(!nowhere.exists(), "a failed create left a file behind");
+    }
+
+    /// A segment file already where one is about to be created is opened through the
+    /// normal recovery path and appended to, not refused.
+    #[test]
+    fn an_existing_segment_is_reopened_and_appended_to() {
+        let scratch = Scratch::new("reopen");
+        let path = scratch.path("seg_000001.col");
+        let columns = vec![spec("x", ColKind::I64, None)];
+
+        // One sealed segment with three rows in it.
+        write(
+            &path,
+            columns.clone(),
+            &[vec![vec![
+                ColValue::Int64(1),
+                ColValue::Int64(2),
+                ColValue::Int64(3),
+            ]]],
+        );
+
+        let (mut writer, found) =
+            SegmentWriter::create_or_reopen(path.clone(), columns).expect("reopen");
+        let found = found.expect("the file was already there");
+        assert_eq!(found.rows, 3);
+        assert_eq!(found.groups, 1);
+        assert!(!found.was_empty);
+        assert_eq!(writer.rows(), 3, "the rows already in the file are not lost");
+
+        writer
+            .append_row_group(&[vec![ColValue::Int64(4)]], 1, None)
+            .expect("append");
+        let (index, failure) = writer.seal();
+        assert!(failure.is_none(), "seal failed: {failure:?}");
+        assert_eq!(index.total_rows, 4);
+
+        // And a reader sees all four, in the order they were written.
+        let (reopened, opened) = open(&path).expect("open");
+        assert!(matches!(opened, Opened::Sealed));
+        assert_eq!(reopened.total_rows, 4);
+        let mut file = reopened.open_file().expect("file");
+        let first = reopened.values(&mut file, 0, 0).expect("group 0");
+        let second = reopened.values(&mut file, 1, 0).expect("group 1");
+        assert_eq!(
+            [first, second].concat(),
+            vec![
+                ColValue::Int64(1),
+                ColValue::Int64(2),
+                ColValue::Int64(3),
+                ColValue::Int64(4)
+            ]
+        );
+    }
+
+    /// A file holding no row group - the crash between `create_new` and the header - is
+    /// rewritten with the columns the run needs rather than sealed empty.
+    #[test]
+    fn an_empty_leftover_file_is_rewritten_rather_than_sealed() {
+        let scratch = Scratch::new("leftover");
+        let path = scratch.path("seg_000001.col");
+        std::fs::write(&path, b"").expect("a zero-byte leftover");
+
+        let columns = vec![spec("x", ColKind::Str, None)];
+        let (mut writer, found) =
+            SegmentWriter::create_or_reopen(path.clone(), columns.clone()).expect("reopen");
+        let found = found.expect("the file was already there");
+        assert!(found.was_empty);
+        assert_eq!(writer.rows(), 0);
+        assert_eq!(writer.columns(), columns.as_slice());
+
+        writer
+            .append_row_group(&[vec![ColValue::String("a".into())]], 1, None)
+            .expect("append");
+        let (index, failure) = writer.seal();
+        assert!(failure.is_none(), "seal failed: {failure:?}");
+        assert_eq!(index.total_rows, 1);
+    }
+
+    /// A seal whose footer will not write still hands back the index of everything it had
+    /// already fsynced.
+    ///
+    /// Row groups are fsynced as they close and the footer comes later, so a footer that
+    /// fails has lost nothing that was written. The signature used to be
+    /// `Result<SegmentIndex, _>`, which handed the caller an error and took the
+    /// description of every one of those row groups with it: `store::disk::DiskLeaf`
+    /// dropped it, and rows physically on the platter vanished from every query in the
+    /// process while the partition's own count still included them.
+    ///
+    /// The handle is swapped for a read-only one, which is the portable way to make the
+    /// footer write fail where the row groups before it succeeded - permissions on Unix
+    /// are checked when a file is opened, not when it is written.
+    #[test]
+    fn a_seal_that_cannot_write_its_footer_still_hands_back_the_index() {
+        let scratch = Scratch::new("seal-fails");
+        let path = scratch.path("seg_000001.col");
+        let mut writer = SegmentWriter::create(path.clone(), vec![spec("x", ColKind::I64, None)])
+            .expect("create");
+        writer
+            .append_row_group(&[vec![ColValue::Int64(1), ColValue::Int64(2)]], 2, Some((10, 20)))
+            .expect("append");
+        let data_end = writer.bytes();
+
+        writer.file = File::open(&path).expect("a read-only handle to the same file");
+        let (index, failure) = writer.seal();
+        assert!(failure.is_some(), "a read-only handle took the footer");
+        assert_eq!(index.total_rows, 2, "the fsynced rows went with the error");
+        assert_eq!(index.groups.len(), 1);
+        assert_eq!(index.data_end, data_end);
+
+        // And the footerless file on disk recovers to the same two rows.
+        let (recovered, opened) = open(&path).expect("open");
+        assert!(
+            matches!(opened, Opened::Recovered { .. }),
+            "expected a recovery, got {opened}"
+        );
+        assert_eq!(recovered.total_rows, 2);
+        let mut file = recovered.open_file().expect("file");
+        assert_eq!(
+            recovered.values(&mut file, 0, 0).expect("values"),
+            vec![ColValue::Int64(1), ColValue::Int64(2)]
+        );
     }
 }

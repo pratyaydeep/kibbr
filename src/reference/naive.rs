@@ -258,7 +258,10 @@ pub fn run(
     result.meta.truncated =
         query.mode == QueryMode::Fetch && result.meta.rows_returned < result.count;
     result.meta.limit_source = query.limit_source;
-    result.meta.files_opened = result.meta.templates_matched;
+    // The oracle opens no file and reads every line it was handed, so the file count is
+    // honestly zero. The leaf count is every template it matched.
+    result.meta.files_opened = 0;
+    result.meta.leaves_opened = result.meta.templates_matched;
     result.meta.duration = started.elapsed();
     Ok(result)
 }

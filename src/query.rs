@@ -717,7 +717,11 @@ pub fn result_json(query: &Query, result: &QueryResult) -> Value {
         "meta": {
             "templates_matched": meta.templates_matched,
             "template_ids": meta.template_ids,
+            // Segment files read, and leaves opened. Two numbers because they are two
+            // facts and one of them used to wear the other's name: 870 leaves against
+            // 16,694 files read.
             "files_opened": meta.files_opened,
+            "leaves_opened": meta.leaves_opened,
             // What the segment format buys, per answer: row groups read against row
             // groups dropped on their timestamps, and the bytes of column chunk that
             // reading them cost. A prune nobody can see is a prune nobody notices

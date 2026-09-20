@@ -722,7 +722,8 @@ function renderMeta(result, ms) {
   const m = result.meta;
   $("meta").innerHTML = [
     "<b>" + commas(m.templates_matched) + "</b> template(s) matched",
-    "<b>" + commas(m.files_opened) + "</b> opened",
+    "<b>" + commas(m.leaves_opened) + "</b> leaf/leaves, <b>" +
+      commas(m.files_opened) + "</b> segment file(s) read",
     "<b>" + commas(m.rows_scanned) + "</b> rows scanned",
     "<b>" + commas(m.rows_returned) + "</b> of <b>" + commas(result.count) + "</b> returned",
     "truncated <b>" + m.truncated + "</b>",

@@ -357,9 +357,14 @@ fn every_endpoint_answers() {
     );
     assert!(body.contains("<title>"), "GET / answered no page:\n{body}");
 
+    // `ok` for liveness and `status` for whether the store can write - two fields,
+    // because a process that cannot write is still a process worth leaving alive.
     let (status, body) = server.get("/health");
     assert_eq!(status, 200);
-    assert_eq!(json(&body), serde_json::json!({ "ok": true }));
+    assert_eq!(
+        json(&body),
+        serde_json::json!({ "ok": true, "status": "ok" })
+    );
 
     // Empty, before anything is ingested: a fresh database is a real state and every
     // endpoint has to have an answer for it rather than a division by zero.
@@ -440,6 +445,16 @@ fn three_bad_lines_report_exactly_those_three() {
         let msg = e["msg"].as_str().unwrap_or("");
         assert!(!msg.is_empty(), "rejection has no message: {e}");
     }
+
+    // **In line order, and that is a contract now rather than an accident.** It used to
+    // be one pass numbering its rejections in the order it met them; parsing moved out of
+    // the store lock, so a body is now met twice - once to parse and once to apply -
+    // and the report has to put the two runs back into the order an operator would count
+    // them in.
+    assert!(
+        lines.windows(2).all(|pair| pair[0] < pair[1]),
+        "the report is not in line order: {lines:?}"
+    );
 
     // The isolation half of the contract: the other 497 are queryable, not lost with them.
     assert_eq!(server.query(r#"COUNT LOG {}"#)["count"], 497);
@@ -894,4 +909,235 @@ fn past_capacity_ingest_sheds_with_retry_after() {
     let stats = json(&server.get("/stats").1);
     assert_eq!(stats["ingest"]["requests_shed"], shed.len() as u64);
     assert_eq!(stats["ingest"]["ingest_concurrency"], 1);
+}
+
+// ── When the store cannot write ────────────────────────────────────────────────────
+
+/// `/stats` waited on until a predicate holds, or the timeout runs out.
+fn wait_for_stats(
+    server: &Server,
+    what: &str,
+    mut ready: impl FnMut(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let mut last = serde_json::Value::Null;
+    for _ in 0..200 {
+        last = json(&server.get("/stats").1);
+        if ready(&last) {
+            return last;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("timed out waiting for {what}; last /stats was {last}");
+}
+
+/// A store that cannot write says so, on three surfaces, and the exit code is one of them.
+///
+/// **Why this matters more than it looks.** With no write-ahead log a `200` means
+/// *buffered*, and a buffer that cannot drain is not durability. Measured on a full disk:
+/// every batch got a `200`, the server stayed up, the shutdown log said "90,000 rows
+/// written", and after a restart `COUNT LOG {}` was 0. Nothing anywhere told the sender
+/// to keep its lines.
+///
+/// The disk here is made unwritable rather than full, which is the same errno's worth of
+/// difference: the day directory is set read-only after its first segment is open, and the
+/// second line widens a column - which seals that segment and needs a new file in a
+/// directory that will not take one. `scripts/disk_full.sh` does it the other way, on a
+/// RAM disk that is actually filled.
+#[test]
+#[cfg(unix)]
+fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // A row group closes on the timeout, so one line per flush: the point is to get a
+    // segment open before the directory is locked.
+    let server = Server::start_with(&["--row-group-timeout-ms", "500"]);
+
+    // One line, one template, one day. `x` is an integer here.
+    let first = br#"{"ts": 1705314600, "x": 1}"#;
+    assert_eq!(server.post("/ingest", first).0, 200);
+    let stats = wait_for_stats(&server, "the first line to reach a segment", |s| {
+        s["storage"]["buffered_rows"] == 0
+    });
+    assert_eq!(stats["storage"]["degraded"], false);
+    assert_eq!(json(&server.get("/health").1)["status"], "ok");
+
+    // Every day directory read-only. The open segment's descriptor still works; what
+    // cannot happen any more is *creating* the next segment file in there.
+    let base = server.data_dir().to_path_buf();
+    let mut locked = Vec::new();
+    for leaf in fs::read_dir(&base).expect("data dir").flatten() {
+        if !leaf.path().is_dir() {
+            continue;
+        }
+        for day in fs::read_dir(leaf.path()).expect("leaf dir").flatten() {
+            if day.path().is_dir() {
+                fs::set_permissions(day.path(), fs::Permissions::from_mode(0o555))
+                    .expect("chmod the day directory");
+                locked.push(day.path());
+            }
+        }
+    }
+    assert!(!locked.is_empty(), "no day directory was written");
+
+    // `x` widens to text, which seals the open segment and asks for a new file.
+    let second = br#"{"ts": 1705314601, "x": "N/A"}"#;
+    assert_eq!(
+        server.post("/ingest", second).0,
+        200,
+        "the line was accepted before the store had failed on it"
+    );
+    let stats = wait_for_stats(&server, "the flush tick to fail", |s| {
+        s["storage"]["degraded"] == true
+    });
+    assert!(
+        stats["storage"]["write_failures"].as_u64().unwrap_or(0) > 0,
+        "degraded without a write failure behind it: {stats}"
+    );
+
+    // 1. `/health` says degraded and stays alive: a process that cannot write is not one
+    //    worth restarting, and the rows already on the disk are still queryable.
+    let (status, body) = server.get("/health");
+    assert_eq!(status, 200);
+    let health = json(&body);
+    assert_eq!(health["status"], "degraded");
+    assert_eq!(health["ok"], true);
+    assert!(
+        health["detail"].as_str().unwrap_or("").contains("leaf"),
+        "/health does not say what the write failed with: {health}"
+    );
+
+    // 2. `/ingest` refuses, with a Retry-After and the write error in the body.
+    let (status, headers, body) = request_raw(server.port, "POST", "/ingest", first);
+    assert_eq!(status, 503, "a line the store cannot write got {status}");
+    assert!(
+        headers.to_ascii_lowercase().contains("retry-after:"),
+        "the 503 carried no Retry-After:\n{headers}"
+    );
+    let refusal = json(&body);
+    assert_eq!(refusal["ok"], false);
+    let error = refusal["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("cannot write") && error.contains("leaf"),
+        "the refusal does not carry the last write error: {error}"
+    );
+
+    // 3. Queries still answer. The disk is unwritable, not unreadable.
+    assert_eq!(server.query("COUNT LOG {}")["count"], 2);
+
+    // 4. And the exit code says rows were lost, rather than 0 as it always used to.
+    server.signal("-TERM");
+    let (code, log) = server.wait();
+    for path in &locked {
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
+    }
+    assert_eq!(code, Some(1), "a shutdown that lost rows exited {code:?}\n{log}");
+    assert!(
+        log.contains("NOT written") && log.contains("exit 1"),
+        "the shutdown log does not say how many rows it lost:\n{log}"
+    );
+}
+
+/// The first tick that writes everything clears the refusal.
+#[test]
+#[cfg(unix)]
+fn the_first_successful_tick_clears_the_refusal() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = Server::start_with(&["--row-group-timeout-ms", "500"]);
+    assert_eq!(server.post("/ingest", br#"{"ts": 1705314600, "x": 1}"#).0, 200);
+    wait_for_stats(&server, "the first line to reach a segment", |s| {
+        s["storage"]["buffered_rows"] == 0
+    });
+
+    let base = server.data_dir().to_path_buf();
+    let mut locked = Vec::new();
+    for leaf in fs::read_dir(&base).expect("data dir").flatten() {
+        for day in fs::read_dir(leaf.path()).into_iter().flatten().flatten() {
+            if day.path().is_dir() {
+                fs::set_permissions(day.path(), fs::Permissions::from_mode(0o555)).expect("chmod");
+                locked.push(day.path());
+            }
+        }
+    }
+    assert_eq!(
+        server.post("/ingest", br#"{"ts": 1705314601, "x": "N/A"}"#).0,
+        200
+    );
+    wait_for_stats(&server, "the flush tick to fail", |s| {
+        s["storage"]["degraded"] == true
+    });
+    assert_eq!(server.post("/ingest", br#"{"ts": 1705314602, "x": 3}"#).0, 503);
+
+    // The disk comes back.
+    for path in &locked {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod back");
+    }
+    let stats = wait_for_stats(&server, "a tick that writes everything", |s| {
+        s["storage"]["degraded"] == false
+    });
+    // `last_write_error` is deliberately *not* cleared: what failed a minute ago is still
+    // the answer to "what went wrong", and `degraded` is the field that says whether it
+    // is still going wrong.
+    assert!(
+        !stats["storage"]["last_write_error"].is_null(),
+        "the last write error was forgotten once the disk came back: {stats}"
+    );
+
+    assert_eq!(
+        server.post("/ingest", br#"{"ts": 1705314603, "x": 4}"#).0,
+        200,
+        "still refusing after a tick that wrote everything"
+    );
+    server.signal("-TERM");
+    let (code, log) = server.wait();
+    assert_eq!(code, Some(0), "a shutdown that lost nothing exited {code:?}\n{log}");
+}
+
+/// The cap on open segment files is a setting, and `/stats` reports both halves of it.
+#[test]
+fn the_open_segment_cap_is_reported() {
+    let server = Server::start_with(&["--max-open-segments", "4", "--row-group-timeout-ms", "500"]);
+    let (status, _) = server.post("/ingest", &corpus());
+    assert_eq!(status, 200);
+
+    let stats = wait_for_stats(&server, "the corpus to reach the disk", |s| {
+        s["storage"]["buffered_rows"] == 0
+    });
+    assert_eq!(stats["storage"]["max_open_segments"], 4);
+    let open = stats["storage"]["open_segments"].as_u64().expect("a number");
+    assert!(
+        open <= 4,
+        "{open} segment files open against a cap of 4: {stats}"
+    );
+
+    // And every line the corpus had is still there, across however many files it took.
+    let want = (LINES - BAD.len()) as u64;
+    assert_eq!(server.query("COUNT LOG {}")["count"], want);
+}
+
+/// A query's `meta` counts segment files read, and leaves under the name that used to
+/// mean files.
+///
+/// `files_opened` reported 870 where 16,694 segment files were read.
+#[test]
+fn files_opened_counts_segment_files_and_leaves_opened_takes_the_old_meaning() {
+    let server = Server::start_with(&["--row-group-timeout-ms", "500"]);
+    assert_eq!(server.post("/ingest", &corpus()).0, 200);
+    wait_for_stats(&server, "the corpus to reach the disk", |s| {
+        s["storage"]["buffered_rows"] == 0
+    });
+
+    let meta = server.query("COUNT LOG {}")["meta"].clone();
+    let leaves = meta["leaves_opened"].as_u64().expect("leaves_opened");
+    let files = meta["files_opened"].as_u64().expect("files_opened");
+    assert!(leaves > 0, "no leaf was opened: {meta}");
+    assert!(
+        files >= leaves,
+        "{files} file(s) for {leaves} leaf/leaves - files_opened is still counting leaves: {meta}"
+    );
+    assert_eq!(
+        leaves,
+        meta["templates_matched"].as_u64().expect("templates_matched"),
+        "every matched template has rows here, so the two should agree"
+    );
 }

@@ -30,7 +30,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate};
@@ -39,8 +39,8 @@ use serde::{Deserialize, Serialize};
 use super::segment::{self, ColKind, ColumnSpec, SegmentIndex, SegmentWriter};
 use super::{
     effective_ts, in_window, render_text, value_bytes, DtForms, FlushKind, Flushed, LeafStore,
-    Predicate, Row, RowGroupLimits, Scan, ScanOptions, Store, StoreError, Visitor,
-    DEFAULT_TS_COLUMN, RECEIVED_AT_COLUMN,
+    OpenSegments, Predicate, Row, RowGroupLimits, Scan, ScanOptions, SegmentKey, Store, StoreError,
+    Visitor, DEFAULT_TS_COLUMN, RECEIVED_AT_COLUMN,
 };
 use crate::types::{ColValue, DtForm};
 
@@ -61,19 +61,30 @@ const SEGMENT_MAX_BYTES: u64 = 128 * 1024 * 1024;
 pub struct DiskStore {
     base: PathBuf,
     limits: RowGroupLimits,
+    /// Shared with every leaf this backend makes, and with the `StoreManager` above them.
+    /// The cap is on the process's descriptors, so it cannot live on one leaf.
+    open_segments: Arc<OpenSegments>,
 }
 
 impl DiskStore {
     /// Opening the base is also where the **old layout is refused**. There is no upgrade
     /// path from one file per (template, day, column): a server that finds those files
     /// names the path and exits non-zero rather than reading them.
-    pub fn new(base: PathBuf, limits: RowGroupLimits) -> Result<Self, StoreError> {
+    pub fn new(
+        base: PathBuf,
+        limits: RowGroupLimits,
+        max_open_segments: usize,
+    ) -> Result<Self, StoreError> {
         fs::create_dir_all(&base).map_err(|source| StoreError::Io {
             template_id: 0,
             source,
         })?;
         refuse_legacy_layout(&base)?;
-        Ok(Self { base, limits })
+        Ok(Self {
+            base,
+            limits,
+            open_segments: Arc::new(OpenSegments::new(max_open_segments)),
+        })
     }
 }
 
@@ -134,6 +145,7 @@ impl Store for DiskStore {
             dir,
             self.limits,
             time_column,
+            Arc::clone(&self.open_segments),
         )?))
     }
 
@@ -143,6 +155,10 @@ impl Store for DiskStore {
 
     fn base_path(&self) -> Option<&Path> {
         Some(&self.base)
+    }
+
+    fn open_segments(&self) -> Arc<OpenSegments> {
+        Arc::clone(&self.open_segments)
     }
 }
 
@@ -208,6 +224,21 @@ impl PartKey {
     fn of(ts: Option<i64>) -> Self {
         match ts {
             Some(ns) => PartKey::Day(ns.div_euclid(DAY_NS)),
+            None => PartKey::Undated,
+        }
+    }
+
+    /// How `OpenSegments` spells a partition: the day, or `None` for the undated one.
+    fn day(self) -> Option<i64> {
+        match self {
+            PartKey::Day(day) => Some(day),
+            PartKey::Undated => None,
+        }
+    }
+
+    fn of_day(day: Option<i64>) -> Self {
+        match day {
+            Some(day) => PartKey::Day(day),
             None => PartKey::Undated,
         }
     }
@@ -370,6 +401,10 @@ pub struct DiskLeaf {
     keys_on_disk: bool,
     parts: BTreeMap<PartKey, Partition>,
     buffered: u64,
+    /// The process-wide cap on open segment files, shared with every other leaf and with
+    /// the manager. This leaf seals its own oldest before opening one more; the manager
+    /// is what can seal somebody else's.
+    open_segments: Arc<OpenSegments>,
     /// Segments whose `mixed` chunk has been warned about, so a query on a widened column
     /// says it once per file and not once per row group per query.
     mixed_warned: Mutex<BTreeSet<PathBuf>>,
@@ -384,6 +419,7 @@ impl DiskLeaf {
         dir: PathBuf,
         limits: RowGroupLimits,
         time_column: &str,
+        open_segments: Arc<OpenSegments>,
     ) -> Result<Self, StoreError> {
         let io = |source| StoreError::Io {
             template_id,
@@ -454,8 +490,16 @@ impl DiskLeaf {
             keys_on_disk,
             parts,
             buffered: 0,
+            open_segments,
             mixed_warned: Mutex::new(BTreeSet::new()),
         })
+    }
+
+    fn segment_key(&self, key: PartKey) -> SegmentKey {
+        SegmentKey {
+            template_id: self.template_id,
+            day: key.day(),
+        }
     }
 
     /// `_leaf.json`, written so that a reader sees the old file or the new one and never
@@ -536,6 +580,16 @@ impl DiskLeaf {
     fn part_dir(&self, key: PartKey) -> PathBuf {
         self.dir.join(key.dir_name())
     }
+}
+
+/// Is this a failure that skipping to the next segment number will not fix?
+///
+/// A full disk, a directory that will not take a file, a permission - those are the
+/// disk's, and the next number fails the same way, so they are reported and the rows stay
+/// buffered for the next tick. Everything else the format refused is about the bytes
+/// already at that one path, and the next number is a clean one.
+fn fatal(e: &segment::SegError) -> bool {
+    matches!(e, segment::SegError::Io { .. })
 }
 
 /// What one day directory holds, read off the segments in it.
@@ -824,20 +878,82 @@ impl DiskLeaf {
                 // The next row needs a segment this one cannot hold - a column set
                 // change, a widening type, or a changed datetime rung. Sealing, which is
                 // not the same event as closing a row group.
-                seal_open(part, &mut done.bytes)?;
+                self.seal(key, &mut done.bytes)?;
                 continue;
             }
             if part.open.is_none() {
+                // Room for one more file, made by sealing this leaf's own oldest. Before
+                // the create rather than after it: the cap is on descriptors, and a
+                // descriptor asked for after the limit is reached is a failed open, not a
+                // large number.
+                self.make_room(&mut done.bytes)?;
                 fs::create_dir_all(&dir).map_err(|source| StoreError::Io {
                     template_id,
                     source,
                 })?;
-                let path = dir.join(segment::segment_name(part.next_seq));
+                let path = dir.join(segment::segment_name(self.parts[&key].next_seq));
                 let columns = fresh.unwrap_or_default();
-                part.open = Some(SegmentWriter::create(path, columns)?);
+                let (writer, found) = match SegmentWriter::create_or_reopen(path.clone(), columns)
+                {
+                    Ok(opened) => opened,
+                    // **A file at this number that is not a segment does not wedge the
+                    // partition.** Propagating would fail this flush, and the next, and
+                    // every one after it - the rows behind it never drain, which is the
+                    // `File exists` failure by another name. The number is skipped and
+                    // the file is left alone: a file nobody can explain is a thing to
+                    // look at, not to destroy.
+                    Err(e) if !fatal(&e) => {
+                        eprintln!(
+                            "triedb: WARN leaf {template_id}: {} cannot be opened ({}); \
+                             skipping to the next segment number and leaving it alone",
+                            path.display(),
+                            crate::error::chain(&e)
+                        );
+                        self.parts.entry(key).or_default().next_seq += 1;
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                let rows = writer.rows();
+                let bytes = writer.index().bytes;
+                let part = self.parts.entry(key).or_default();
+                part.open = Some(writer);
                 part.next_seq += 1;
+                self.open_segments.wrote(SegmentKey {
+                    template_id,
+                    day: key.day(),
+                });
+                if let Some(found) = found {
+                    // The rows already in the file are this partition's, and nothing else
+                    // has counted them: `open_partition` read the directory before the
+                    // file was there. Without this the leaf reports fewer rows than a scan
+                    // over its own segments returns.
+                    if !found.was_empty {
+                        part.rows += rows;
+                        part.bytes += bytes;
+                        let spans: Vec<(i64, i64)> = part
+                            .open
+                            .as_ref()
+                            .map(SegmentWriter::index)
+                            .into_iter()
+                            .flat_map(|index| index.groups.iter().filter_map(|g| g.span()))
+                            .collect();
+                        for (lo, hi) in spans {
+                            part.note(Some(lo));
+                            part.note(Some(hi));
+                        }
+                    }
+                    eprintln!(
+                        "triedb: WARN leaf {template_id}: {} was already there - {found}",
+                        path.display()
+                    );
+                    // The file's own columns are not the ones just asked for, so what fits
+                    // is asked again against the writer that actually exists.
+                    continue;
+                }
             }
 
+            let part = self.parts.entry(key).or_default();
             // One row group: the run, cut at the row and byte thresholds.
             let mut take = run.min(limits.rows);
             let mut bytes = 0usize;
@@ -849,7 +965,16 @@ impl DiskLeaf {
                 }
             }
 
-            let writer = part.open.as_mut().unwrap_or_else(|| unreachable!());
+            let Some(writer) = part.open.as_mut() else {
+                // Not reachable: the branch above opens one where there is none, and
+                // nothing between the two can close it. A real error rather than a
+                // panic, because a refactor that made it reachable would
+                // otherwise take the process down instead of costing one flush.
+                return Err(StoreError::NoOpenSegment {
+                    template_id,
+                    partition: key.dir_name(),
+                });
+            };
             let columns = writer.columns().to_vec();
             let rows = &part.buffer[..take];
             let mut chunks: Vec<Vec<ColValue>> = Vec::with_capacity(columns.len());
@@ -896,26 +1021,92 @@ impl DiskLeaf {
             self.buffered -= take as u64;
             done.rows += take as u64;
             done.bytes += written;
+            // Most recently written, so the cap takes somebody else next.
+            self.open_segments.wrote(SegmentKey {
+                template_id,
+                day: key.day(),
+            });
 
             if full {
-                seal_open(self.parts.entry(key).or_default(), &mut done.bytes)?;
+                self.seal(key, &mut done.bytes)?;
             }
         }
     }
-}
 
-/// Write the footer, fsync, close. After sealing, the next write opens the next segment
-/// number, and the sealed file is never reopened for writing.
-fn seal_open(part: &mut Partition, bytes: &mut u64) -> Result<(), StoreError> {
-    let Some(writer) = part.open.take() else {
-        return Ok(());
-    };
-    let before = writer.bytes();
-    let index = writer.seal()?;
-    *bytes += index.bytes.saturating_sub(before);
-    part.bytes += index.bytes.saturating_sub(before);
-    part.sealed.push(index);
-    Ok(())
+    /// Write one partition's footer, fsync, close, and tell the registry the descriptor
+    /// is back.
+    ///
+    /// After sealing, the next write opens the next segment number, and the sealed file is
+    /// never reopened for writing.
+    ///
+    /// **The index is kept whichever way the footer went.** A failed seal has still closed
+    /// the file and its row groups are still fsynced, so the segment moves into `sealed`
+    /// and its rows stay in every answer; the next start walks the footerless file and
+    /// seals what survives. Dropping the index instead made those rows disappear from
+    /// queries while `part.rows` went on counting them - a leaf whose `len()` and whose
+    /// own scan disagreed, with nothing reporting it.
+    fn seal(&mut self, key: PartKey, bytes: &mut u64) -> Result<(), StoreError> {
+        let segment_key = self.segment_key(key);
+        let part = self.parts.entry(key).or_default();
+        let Some(writer) = part.open.take() else {
+            self.open_segments.closed(segment_key);
+            return Ok(());
+        };
+        let before = writer.bytes();
+        // Taken out of `part.open` above, so the descriptor is gone either way: a seal
+        // that fails has still closed the file, and leaving the registry believing
+        // otherwise would hold a slot nothing can free. It is also what bounds
+        // `reap_open_segments` and `make_room`: every attempt frees one, failed or not.
+        self.open_segments.closed(segment_key);
+        let (index, failure) = writer.seal();
+        *bytes += index.bytes.saturating_sub(before);
+        let part = self.parts.entry(key).or_default();
+        part.bytes += index.bytes.saturating_sub(before);
+        part.sealed.push(index);
+        match failure {
+            Some(e) => Err(e.into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Seal this leaf's own oldest open segments until there is room for one more.
+    ///
+    /// **Its own, because that is what `&mut self` reaches.** Where the cap is filled
+    /// entirely by other leaves this returns having done nothing and the segment is opened
+    /// anyway - one over, reaped by `StoreManager::flush_all` as soon as this leaf's flush
+    /// returns. Refusing to open it instead would mean a leaf that can never write while
+    /// some other leaf is busy, which is a deadlock wearing a limit's clothes.
+    ///
+    /// So one leaf's flush can overshoot by one, and only by one: from its second segment
+    /// on it has one of its own to seal. `StoreManager::flush_all` reaps *between* leaves
+    /// rather than only at the end for that reason - otherwise the overshoot is one per
+    /// leaf across a pass, which on 823 templates is the descriptor exhaustion the cap is
+    /// for.
+    ///
+    /// A seal that fails is reported and the loop carries on: the descriptor is freed
+    /// either way, so the count still falls and the next turn picks a different victim.
+    /// Returning on the first error instead would leave the count above the cap for the
+    /// rest of the pass.
+    fn make_room(&mut self, bytes: &mut u64) -> Result<(), StoreError> {
+        let mut failure = None;
+        while self.open_segments.full() {
+            let Some(key) = self.open_segments.oldest_of(self.template_id) else {
+                break;
+            };
+            if let Err(e) = self.seal(PartKey::of_day(key.day), bytes) {
+                failure = failure.or(Some(e));
+            }
+            // `seal` clears it on every path, failed or not; this is the belt that makes
+            // the loop bounded by the overshoot rather than by the disk coming back.
+            if self.open_segments.oldest_of(self.template_id) == Some(key) {
+                self.open_segments.closed(key);
+            }
+        }
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
 }
 
 // ── Reading ────────────────────────────────────────────────────────────────────────
@@ -974,7 +1165,14 @@ impl DiskLeaf {
 
                 let handle = match &mut file {
                     Some(handle) => handle,
-                    none => none.insert(index.open_file()?),
+                    // The one place a segment file is opened for reading, so the one
+                    // place that can count them. Lazy, so a file whose every row group
+                    // the window pruned is never opened and never counted - which is what
+                    // makes the number say what a query cost.
+                    none => {
+                        out.files_read += 1;
+                        none.insert(index.open_file()?)
+                    }
                 };
                 let mut decoded: Vec<(&str, Vec<ColValue>)> = Vec::with_capacity(wanted.len());
                 for at in &wanted {
@@ -1117,9 +1315,7 @@ impl LeafStore for DiskLeaf {
             match self.close_row_groups(key, kind, &mut done) {
                 Ok(()) => {
                     if kind == FlushKind::Final {
-                        if let Err(e) =
-                            seal_open(self.parts.entry(key).or_default(), &mut done.bytes)
-                        {
+                        if let Err(e) = self.seal(key, &mut done.bytes) {
                             failure = failure.or(Some(e));
                         }
                     }
@@ -1196,6 +1392,27 @@ impl LeafStore for DiskLeaf {
             }
         }
         Ok(out)
+    }
+
+    /// Seal the least recently written of this leaf's open segments.
+    ///
+    /// The registry's global victim, whenever the global victim is one of this leaf's:
+    /// this leaf's order is a subsequence of the registry's, so the first entry naming
+    /// this template is the same segment the manager picked.
+    fn seal_lru(&mut self) -> Result<bool, StoreError> {
+        let Some(key) = self.open_segments.oldest_of(self.template_id) else {
+            return Ok(false);
+        };
+        let part = PartKey::of_day(key.day);
+        if self.parts.get(&part).is_none_or(|p| p.open.is_none()) {
+            // The registry names a partition this leaf has nothing open in. Cleared here
+            // rather than left for the manager to choose again on the next pass.
+            self.open_segments.closed(key);
+            return Ok(false);
+        }
+        let mut bytes = 0;
+        self.seal(part, &mut bytes)?;
+        Ok(true)
     }
 
     fn len(&self) -> u64 {
@@ -1323,7 +1540,12 @@ mod tests {
     const DAY: i64 = 1_705_276_800_000_000_000;
 
     fn leaf(scratch: &Scratch, limits: RowGroupLimits) -> DiskLeaf {
-        DiskLeaf::open(101, scratch.0.join("leaf_101"), limits, "ts").expect("open the leaf")
+        leaf_with(scratch, limits, Arc::new(OpenSegments::new(usize::MAX)))
+    }
+
+    /// A leaf sharing one registry, for the tests that check the cap.
+    fn leaf_with(scratch: &Scratch, limits: RowGroupLimits, open: Arc<OpenSegments>) -> DiskLeaf {
+        DiskLeaf::open(101, scratch.0.join("leaf_101"), limits, "ts", open).expect("open the leaf")
     }
 
     fn row(pairs: &[(&str, ColValue)]) -> Row {
@@ -1715,7 +1937,7 @@ mod tests {
         fs::create_dir_all(&day).expect("create the day directory");
         fs::write(day.join("ts.col"), b"TRDB").expect("write a per-column file");
 
-        match DiskStore::new(scratch.0.clone(), RowGroupLimits::default()).err() {
+        match DiskStore::new(scratch.0.clone(), RowGroupLimits::default(), 512).err() {
             Some(StoreError::LegacyLayout { path }) => {
                 assert!(
                     path.ends_with("ts.col"),
@@ -1724,5 +1946,133 @@ mod tests {
             }
             other => panic!("the per-column layout was not refused: {other:?}"),
         }
+    }
+
+    // ── The cap on open segment files ──────────────────────────────────────────────
+
+    /// Past the cap, the least recently written open segment is sealed to make room.
+    ///
+    /// Three days, a cap of two. Writing to each in turn opens one file per day, and the
+    /// third seals the first - which is always safe, because the next row for that day
+    /// opens the next segment number. Without the cap there is one open file per
+    /// (template, day) and nothing bounding it: 20,000 generated lines are about 20,000
+    /// of them, and the operating system's descriptor limit arrives long before that.
+    #[test]
+    fn past_the_cap_the_oldest_open_segment_is_sealed() {
+        let scratch = Scratch::new("cap");
+        let open = Arc::new(OpenSegments::new(2));
+        // A row group per flush, so each day's first row opens its segment straight away.
+        let mut leaf = leaf_with(&scratch, RowGroupLimits::default(), Arc::clone(&open));
+
+        for day in 0..3i64 {
+            leaf.append(
+                row(&[("ts", ColValue::Datetime(DAY + day * 86_400_000_000_000))]),
+                &[],
+            );
+            leaf.flush(FlushKind::Tick).expect("flush");
+            // `Tick` closes nothing on its own, so force the row group with the buffer's
+            // own threshold: a leaf with one row per day never reaches 8,192.
+            leaf.flush(FlushKind::Final).expect("seal");
+        }
+        assert!(
+            open.len() <= 2,
+            "{} segments open against a cap of 2",
+            open.len()
+        );
+
+        // Every row is still there, across however many files it took.
+        let (_, rows) = scan(&leaf, ScanOptions::default());
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// Sealing to make room never loses a row, and the sealed file is complete.
+    ///
+    /// Six days against a cap of one: every new day seals the previous one, so five
+    /// segments are sealed under the cap and the sixth is sealed by the shutdown.
+    #[test]
+    fn a_cap_of_one_still_returns_every_row() {
+        let scratch = Scratch::new("cap-one");
+        let open = Arc::new(OpenSegments::new(1));
+        let mut leaf = leaf_with(&scratch, RowGroupLimits::default(), Arc::clone(&open));
+
+        for day in 0..6i64 {
+            leaf.append(
+                row(&[
+                    ("ts", ColValue::Datetime(DAY + day * 86_400_000_000_000)),
+                    ("n", ColValue::Int64(day)),
+                ]),
+                &[],
+            );
+            leaf.flush(FlushKind::Final).expect("flush");
+        }
+        assert!(open.len() <= 1, "{} open against a cap of 1", open.len());
+        assert_eq!(leaf.len(), 6);
+        assert_eq!(leaf.buffered(), 0);
+
+        let (_, rows) = scan(&leaf, ScanOptions::default());
+        assert_eq!(rows.len(), 6, "sealing to make room lost a row");
+
+        // And a fresh leaf over the same directory reads them all back.
+        let reopened = leaf_with(&scratch, RowGroupLimits::default(), Arc::new(OpenSegments::new(8)));
+        assert_eq!(scan(&reopened, ScanOptions::default()).1.len(), 6);
+    }
+
+    /// A leftover segment file where the next one is about to be created is appended to,
+    /// and its rows are counted as the partition's rather than lost.
+    ///
+    /// The file is the one a crash between `create_new` and the header used to leave,
+    /// which every later attempt at that sequence number met with `File exists`.
+    #[test]
+    fn a_leftover_segment_file_does_not_stop_the_flush() {
+        let scratch = Scratch::new("leftover");
+        let open = Arc::new(OpenSegments::new(8));
+        let mut leaf = leaf_with(&scratch, RowGroupLimits::default(), Arc::clone(&open));
+
+        // Where the first segment of this row's day is going to be created.
+        let day_dir = scratch.0.join("leaf_101").join("2024-01-15");
+        fs::create_dir_all(&day_dir).expect("day dir");
+        fs::write(day_dir.join(segment::segment_name(1)), b"").expect("a zero-byte leftover");
+
+        leaf.append(row(&[("ts", ColValue::Datetime(DAY))]), &[]);
+        leaf.flush(FlushKind::Final).expect("the leftover did not stop the flush");
+        assert_eq!(leaf.buffered(), 0, "the row never left the buffer");
+        assert_eq!(scan(&leaf, ScanOptions::default()).1.len(), 1);
+    }
+
+    // ── What a query cost ──────────────────────────────────────────────────────────
+
+    /// `files_read` counts segment files actually read, and a file a window pruned
+    /// whole is not one of them.
+    ///
+    /// It used to count leaves, and reported 870 where 16,694 files were read.
+    #[test]
+    fn files_read_counts_files_and_not_leaves() {
+        let scratch = Scratch::new("files-read");
+        let mut leaf = leaf(&scratch, RowGroupLimits::default());
+        // Three segments, one per day, each sealed by the shutdown before the next opens.
+        for day in 0..3i64 {
+            leaf.append(
+                row(&[("ts", ColValue::Datetime(DAY + day * 86_400_000_000_000))]),
+                &[],
+            );
+            leaf.flush(FlushKind::Final).expect("flush");
+        }
+
+        let (whole, rows) = scan(&leaf, ScanOptions::default());
+        assert_eq!(rows.len(), 3);
+        assert_eq!(whole.files_read, 3, "one leaf, three files");
+
+        // A window over one day reads one file and never opens the other two.
+        let (one, rows) = scan(
+            &leaf,
+            ScanOptions {
+                since: Some(at(DAY)),
+                until: Some(at(DAY + 86_400_000_000_000)),
+                ts_column: Some("ts".to_string()),
+                ..ScanOptions::default()
+            },
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(one.files_read, 1, "the window opened a file it did not need");
     }
 }
