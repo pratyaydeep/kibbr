@@ -141,6 +141,12 @@ enum Command {
         /// Overrides `TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS`.
         #[arg(long, value_name = "MS")]
         row_group_timeout_ms: Option<usize>,
+        /// The key names a new template's time column is chosen from, in order; the
+        /// first one the template holds as a Datetime wins, and a template holding none
+        /// takes its rows' arrival time. Comma-separated.
+        /// Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+        time_columns: Option<Vec<String>>,
     },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
@@ -242,6 +248,10 @@ enum Command {
         /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
+        /// As `serve --time-columns`: the names a template's time column is chosen from.
+        /// Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+        time_columns: Option<Vec<String>>,
     },
 }
 
@@ -299,6 +309,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             trie_file,
             flush_interval_ms,
             row_group_timeout_ms,
+            time_columns,
         } => serve::run(
             &host,
             port,
@@ -311,6 +322,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 flush_interval_ms,
                 row_group_timeout_ms,
             )?,
+            config::Schema::load(time_columns),
         ),
         Command::Explain {
             query,
@@ -340,6 +352,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_rows,
             max_buckets,
             max_groups,
+            time_columns,
         } => {
             let limits = config::Limits::load(max_rows, max_buckets, max_groups)?;
             let reader = open(&input)?;
@@ -358,6 +371,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 limit,
                 after,
                 limits,
+                time_columns,
             };
             query::run(reader, &mut out, &args)
         }

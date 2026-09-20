@@ -47,7 +47,7 @@ use tokio_util::sync::CancellationToken;
 use std::path::Path;
 
 use crate::catalog::Catalog;
-use crate::config::{ApiLimits, Limits, Storage};
+use crate::config::{ApiLimits, Limits, Schema, Storage};
 use crate::db;
 use crate::engine;
 use crate::error::{self, CliError, DetectorError, ServeError};
@@ -154,11 +154,12 @@ impl Server {
         limits: Limits,
         api: ApiLimits,
         storage: Storage,
+        schema: Schema,
     ) -> Result<Self, ServeError> {
         let (trie, stores) = match storage.base_path.clone() {
             Some(base) => {
                 let data_dir = storage.data_dir();
-                let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir)?;
+                let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir, &schema)?;
 
                 // Applied whatever the snapshot said, including when it parsed cleanly:
                 // the hazard is a trie that does not know about a directory, and a stale
@@ -199,13 +200,12 @@ impl Server {
                         },
                     })?;
                 for leaf in trie.all_leaves() {
-                    let id = leaf
-                        .leaf_meta
-                        .read()
-                        .ok()
-                        .and_then(|slot| slot.as_ref().map(|meta| meta.template_id));
-                    if let Some(id) = id {
-                        if let Err(e) = stores.open_existing(id) {
+                    let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
+                        slot.as_ref()
+                            .map(|meta| (meta.template_id, meta.time_source.column().to_string()))
+                    });
+                    if let Some((id, time_column)) = placed {
+                        if let Err(e) = stores.open_existing(id, &time_column) {
                             // One unreadable leaf directory is one template answering
                             // empty, not a server that will not start.
                             log(&format!("WARN leaf {id} - {}", error::chain(&e)));
@@ -214,7 +214,10 @@ impl Server {
                 }
                 (trie, stores)
             }
-            None => (Trie::new(), StoreManager::memory()),
+            None => (
+                Trie::new().with_time_columns(schema.time_columns.clone()),
+                StoreManager::memory(),
+            ),
         };
 
         Ok(Self {
@@ -275,7 +278,12 @@ impl Server {
 /// A catalog that cannot be *read* (permissions, a directory in its place) is fatal, and
 /// deliberately so: unlike a torn record there is nothing to truncate to, and starting
 /// empty beside a file that holds every template would make every leaf an orphan.
-fn open_catalog(base: &Path, trie_file: Option<&Path>, data_dir: &str) -> Result<Trie, ServeError> {
+fn open_catalog(
+    base: &Path,
+    trie_file: Option<&Path>,
+    data_dir: &str,
+    schema: &Schema,
+) -> Result<Trie, ServeError> {
     let path = crate::catalog::path_in(base);
     let existed = path.exists();
     let mut warn = |message: String| log(&format!("WARN catalog.log - {message}"));
@@ -328,7 +336,19 @@ fn open_catalog(base: &Path, trie_file: Option<&Path>, data_dir: &str) -> Result
         }
     }
 
-    let trie = Trie::from_catalog(data_dir, &records, &mut warn).map_err(|e| storage_error(&e))?;
+    let (trie, backfill) =
+        Trie::from_catalog_with(data_dir, &records, schema.time_columns.clone(), &mut warn)
+            .map_err(|e| storage_error(&e))?;
+    // A template from before the time source existed has its source derived from the
+    // column types the catalog holds; written now, once, so the choice is durable and
+    // the next start makes the same one whatever `time_columns` says by then.
+    if !backfill.is_empty() {
+        catalog.append(&backfill).map_err(|e| storage_error(&e))?;
+        log(&format!(
+            "catalog.log - wrote a time_source record for {} template(s) that had none",
+            commas(backfill.len() as u64)
+        ));
+    }
     if existed {
         log(&format!(
             "catalog.log - {} restored {} template(s) from {} record(s)",
@@ -598,9 +618,23 @@ async fn health() -> Json<Value> {
 /// need a second.
 async fn post_ingest(
     State(server): State<Arc<Server>>,
+    uri: axum::http::Uri,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Response {
+    // `?received_at=<RFC 3339>`: the arrival time the ingest call is given, for a
+    // replay or a differential that needs two servers to stamp one body identically.
+    // Absent, it is now. Malformed, the body is refused rather than stamped with a guess.
+    let now = match received_at_of(uri.query()) {
+        Ok(Some(at)) => at,
+        Ok(None) => Utc::now(),
+        Err(text) => {
+            return fail(
+                StatusCode::BAD_REQUEST,
+                &format!("received_at=`{text}` is not an RFC 3339 instant"),
+            )
+        }
+    };
     let body = match body {
         Ok(body) => body,
         // Two unrelated things behind one rejection, and only one of them is the client's
@@ -637,7 +671,7 @@ async fn post_ingest(
     let done = tokio::task::spawn_blocking(move || {
         let decoded = decode(&body, encoding.as_deref(), held.api.max_decompressed_bytes)
             .map_err(IngestFailure::Body)?;
-        ingest(&held, &decoded, Utc::now()).map_err(IngestFailure::Fatal)
+        ingest(&held, &decoded, now).map_err(IngestFailure::Fatal)
     })
     .await;
 
@@ -656,6 +690,58 @@ async fn post_ingest(
             &format!("ingest task failed: {join}"),
         ),
     }
+}
+
+/// The `received_at` query parameter, or `None` when there is not one. `Err` carries the
+/// text that would not parse.
+fn received_at_of(query: Option<&str>) -> Result<Option<DateTime<Utc>>, String> {
+    let Some(query) = query else {
+        return Ok(None);
+    };
+    for pair in query.split('&') {
+        let Some(("received_at", value)) = pair.split_once('=') else {
+            continue;
+        };
+        let text = percent_decode(value);
+        return DateTime::parse_from_rfc3339(&text)
+            .map(|at| Some(at.with_timezone(&Utc)))
+            .map_err(|_| text);
+    }
+    Ok(None)
+}
+
+/// `%XX` escapes and `+` resolved, which is all an RFC 3339 instant in a query string
+/// can carry. Anything else is left as it was.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+                match u8::from_str_radix(hex, 16) {
+                    Ok(b) => {
+                        out.push(b);
+                        i += 3;
+                    }
+                    Err(_) => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Admission control for `/ingest`: a permit, or a 503 that says when to come back.
@@ -814,6 +900,8 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
             "first_seen": rfc3339_at(meta.first_seen),
             "last_seen": rfc3339_at(meta.last_seen),
             "storage_path": meta.storage_path,
+            // `column:<name>` or `arrival`, as the catalog spells it.
+            "time_source": meta.time_source.as_record(),
         }));
     }
 
@@ -958,12 +1046,13 @@ pub fn run(
     limits: Limits,
     api: ApiLimits,
     storage: Storage,
+    schema: Schema,
 ) -> Result<(), CliError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(ServeError::Runtime)?;
-    runtime.block_on(serve(host, port, limits, api, storage))?;
+    runtime.block_on(serve(host, port, limits, api, storage, schema))?;
     Ok(())
 }
 
@@ -973,6 +1062,7 @@ async fn serve(
     limits: Limits,
     api: ApiLimits,
     storage: Storage,
+    schema: Schema,
 ) -> Result<(), ServeError> {
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -985,7 +1075,7 @@ async fn serve(
         .local_addr()
         .map_err(|source| ServeError::Bind { addr, source })?;
 
-    let server = Arc::new(Server::new(Utc::now(), limits, api, storage)?);
+    let server = Arc::new(Server::new(Utc::now(), limits, api, storage, schema)?);
     let token = CancellationToken::new();
     // Installed before the banner: a server that cannot hear SIGTERM will be killed by
     // the SIGKILL that follows it, and a deploy is a bad place to discover that.

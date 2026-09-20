@@ -69,16 +69,23 @@ pub struct Args {
     pub after: Option<String>,
     /// The caps, already resolved by `config`.
     pub limits: Limits,
+    /// `--time-columns`, or `None` for the environment and then the default.
+    pub time_columns: Option<Vec<String>>,
 }
 
 pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(), CliError> {
-    let query = build(args, Utc::now())?;
+    // One instant for the query *and* for every line's arrival: a `SINCE` is
+    // relative to it, and a row on arrival time sits at it. The engine and the oracle
+    // read the same `now`, which is what lets `scripts/agree.sh` compare their rows.
+    let now = Utc::now();
+    let schema = crate::config::Schema::load(args.time_columns.clone());
+    let query = build(args, now)?;
 
     // `--explain` executes nothing, so it never asks for rows. The load is still O(lines)
     // because there is no persisted trie yet - what is constant is `Plan::duration`, which
     // is what the plan line reports.
     if args.explain {
-        let db = db::load(input, false)?;
+        let db = db::load(input, false, now, &schema)?;
         note(db.stats);
         let plan = engine::plan(&db.trie, &query);
         return explain(out, &query, &plan);
@@ -87,9 +94,9 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     let result = if args.reference {
         let (lines, stats) = db::load_lines(input)?;
         note(stats);
-        crate::reference::naive::run(&lines, &query)?
+        crate::reference::naive::run(&lines, &query, &schema.time_columns)?
     } else {
-        let db = db::load(input, true)?;
+        let db = db::load(input, true, now, &schema)?;
         note(db.stats);
         engine::execute(&db.trie, &db.stores, &query)?
     };
@@ -732,10 +739,13 @@ pub fn result_json(query: &Query, result: &QueryResult) -> Value {
 
 /// One row as one JSON object. Shared with `ndjson`, so a row serialises identically
 /// whether it is a line of its own or an element of `rows`.
+///
+/// Through `store::present`, so the system column leaves as `_received_at` - or
+/// not at all, on a row that ingested a key of that name.
 fn row_json(row: &crate::store::Row) -> Value {
     let mut obj = Map::new();
-    for (key, value) in row.iter().collect::<BTreeMap<_, _>>() {
-        obj.insert(key.clone(), value_json(value));
+    for (key, value) in crate::store::present(row) {
+        obj.insert(key, value_json(value));
     }
     Value::Object(obj)
 }
@@ -915,18 +925,21 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&crate::store::Row]) -> Result<(),
     if rows.is_empty() {
         return Ok(());
     }
-    let mut columns: Vec<&String> = rows.iter().flat_map(|row| row.keys()).collect();
+    // The same presentation `row_json` gives: the system column under its query name.
+    let shown: Vec<BTreeMap<String, &ColValue>> =
+        rows.iter().map(|row| crate::store::present(row)).collect();
+    let mut columns: Vec<&String> = shown.iter().flat_map(|row| row.keys()).collect();
     columns.sort_unstable();
     columns.dedup();
 
     let mut grid = vec![columns.iter().map(|c| (*c).clone()).collect::<Vec<_>>()];
-    for row in rows {
+    for row in &shown {
         grid.push(
             columns
                 .iter()
                 // `-` is "this template has no such column", which is not the same fact
                 // as `(null)` - a column the template has and this row left empty.
-                .map(|c| row.get(*c).map_or_else(|| "-".to_string(), col_text))
+                .map(|c| row.get(*c).map_or_else(|| "-".to_string(), |v| col_text(v)))
                 .collect(),
         );
     }

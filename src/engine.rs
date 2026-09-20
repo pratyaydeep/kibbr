@@ -16,11 +16,11 @@ use crate::config::Limits;
 use crate::fmt::{col_text, commas, duration_text};
 use crate::infer::infer;
 use crate::store::{
-    nanos_of, ts_of, Predicate, Row, Rows, ScanOptions, StoreError, StoreManager, Visitor,
-    DEFAULT_TS_COLUMN,
+    effective_ts, nanos_of, Predicate, Row, Rows, ScanOptions, StoreError, StoreManager, Visitor,
+    RECEIVED_AT_COLUMN,
 };
 use crate::trie::{Node, Trie};
-use crate::types::ColValue;
+use crate::types::{ColValue, ColumnType};
 
 /// The column a `time(...)` bucket is reported under, on every surface.
 pub const BUCKET_COLUMN: &str = "bucket";
@@ -295,6 +295,7 @@ impl Query {
             since: self.time.since,
             until: self.time.until,
             ts_column: None,
+            text_columns: Vec::new(),
         }
     }
 
@@ -303,13 +304,6 @@ impl Query {
     /// answer for it.
     pub fn cursor_at(&self, rank: Rank) -> Cursor {
         Cursor::new(rank, self)
-    }
-
-    /// The column the result is ordered by, and the one a time filter reads.
-    pub fn ts_column(&self) -> String {
-        self.scan_options()
-            .ts_column
-            .unwrap_or_else(|| DEFAULT_TS_COLUMN.to_string())
     }
 }
 
@@ -671,9 +665,13 @@ pub struct PlannedLeaf {
     pub residual: Vec<Match>,
     /// Whether this template carries the column a time filter reads.
     ///
-    /// Settled by the walk, off the key set it is already holding, so `GROUP BY time(...)`
-    /// over a template with no time column answers without opening anything.
-    pub has_ts: bool,
+    /// The template's time column: what its rows are ordered, windowed and
+    /// bucketed by, falling back to the system column on a row where it holds no
+    /// instant. Every template has one, so every leaf has a time axis.
+    pub time_column: String,
+    /// Columns whose type is now `String`. A `Datetime` stored in one of them is rendered
+    /// back to its ingested text by the store before the row is read.
+    pub text_columns: Vec<String>,
 }
 
 /// Walk the trie, collect the leaves that could hold a matching row. Reads no data.
@@ -702,7 +700,6 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
     }
 
     let mut leaves = Vec::new();
-    let ts = query.ts_column();
     for (path, node) in found {
         let Ok(slot) = node.leaf_meta.read() else {
             continue;
@@ -717,7 +714,13 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
                 path: path.clone(),
                 storage_path: meta.storage_path.clone(),
                 residual,
-                has_ts: columns.contains(ts.as_str()),
+                time_column: meta.time_source.column().to_string(),
+                text_columns: meta
+                    .columns
+                    .iter()
+                    .filter(|c| c.col_type == Some(ColumnType::String))
+                    .map(|c| c.name.clone())
+                    .collect(),
             });
         }
     }
@@ -950,7 +953,10 @@ impl Cursor {
             h = fnv(h, &[0]);
         }
         h = fnv(h, &[1]);
-        h = fnv(h, query.ts_column().as_bytes());
+        // The order is by the effective time, whatever a template calls its
+        // column; the guard names that rather than a column, so a cursor survives a
+        // template being created with another name between two pages.
+        h = fnv(h, b"effective_time");
         // Folded to 32 bits: this is a guard against a mistake, not against an attacker,
         // and the cursor is already long.
         ((h >> 32) ^ h) as u32
@@ -1158,7 +1164,7 @@ impl Visitor for Fetch<'_> {
         // `seq` comes from the store, so it is the row's own ordinal and not a count of
         // what this scan admitted. A row leaving a relative `SINCE` window between two
         // pages used to renumber every row behind it in its leaf.
-        let rank = (Reverse(ts_of(row, self.ts)), self.key, seq);
+        let rank = (Reverse(effective_ts(row, self.ts)), self.key, seq);
         // Served on an earlier page. `Rank` is a total order, so this is exact where a
         // `ts` comparison alone is not: rows sharing one nanosecond split across the page
         // boundary rather than being repeated by an inclusive bound or dropped by an
@@ -1240,7 +1246,6 @@ pub fn execute(
 
     let started = Instant::now();
     let mut opts = query.scan_options();
-    let ts = query.ts_column();
     let mut newest = Newest::new(query.limit);
     // Split once rather than per leaf: the width decides the time axis and the columns
     // decide the label, and neither changes between leaves.
@@ -1249,12 +1254,10 @@ pub fn execute(
         _ => (None, Vec::new()),
     };
     let bucket_ns = width.map(width_nanos);
-    // A time axis needs a template that has a time column. Where none of the matched
-    // templates does, there is no axis to fill in and the answer carries no buckets -
-    // `exists: true` and nothing else, which is the second of the two empty answers -
-    // "found, and nothing matched", as against "no such template" - rather than an error.
-    // Filling 72 zeros here would claim we looked along an axis that is not there.
-    let timed = plan.leaves.iter().any(|leaf| leaf.has_ts);
+    // Every template has a time source, so a matched template is a time axis.
+    // With no template matched there is no axis to fill in and the answer carries no
+    // buckets - `exists: false`, the first of the two empty answers.
+    let timed = !plan.leaves.is_empty();
     let mut tally = Tally::new();
 
     for leaf in &plan.leaves {
@@ -1265,6 +1268,9 @@ pub fn execute(
         };
         result.meta.files_opened += 1;
         let preds: Vec<Predicate> = leaf.residual.iter().map(predicate).collect();
+        let ts = leaf.time_column.as_str();
+        opts.ts_column = Some(leaf.time_column.clone());
+        opts.text_columns = leaf.text_columns.clone();
 
         // **Column pruning**, without touching `Predicate`: every predicate here was
         // built from a `Match` two lines up, so its key is known even though a
@@ -1277,7 +1283,8 @@ pub fn execute(
                 let mut wanted: Vec<String> =
                     leaf.residual.iter().map(|term| term.key.clone()).collect();
                 wanted.extend(columns.iter().cloned());
-                wanted.push(ts.clone());
+                wanted.push(ts.to_string());
+                wanted.push(RECEIVED_AT_COLUMN.to_string());
                 wanted.sort();
                 wanted.dedup();
                 wanted
@@ -1301,7 +1308,7 @@ pub fn execute(
                 let mut fetch = Fetch {
                     keep: &mut newest,
                     key: leaf_key(&leaf.path),
-                    ts: &ts,
+                    ts,
                     after: query.cursor.map(|c| c.rank),
                 };
                 store.visit(&opts, &preds, &mut fetch)?
@@ -1315,8 +1322,8 @@ pub fn execute(
                         // `None` twice over: no `time(...)` was asked for, or one was and this
                         // row has no timestamp to place it by. The renderers tell the two
                         // apart from the width, which they already hold.
-                        let bucket =
-                            bucket_ns.and_then(|w| ts_of(row, &ts).map(|ns| bucket_of(ns, w)));
+                        let bucket = bucket_ns
+                            .and_then(|w| effective_ts(row, ts).map(|ns| bucket_of(ns, w)));
                         *tally
                             .entry((bucket, group_values(row, columns)))
                             .or_insert(0) += 1;
@@ -1475,7 +1482,13 @@ mod tests {
     }
 
     fn db() -> db::Db {
-        db::load(corpus().as_bytes(), true).expect("the corpus loads")
+        db::load(
+            corpus().as_bytes(),
+            true,
+            chrono::Utc::now(),
+            &crate::config::Schema::default(),
+        )
+        .expect("the corpus loads")
     }
 
     fn query(mode: QueryMode, since: Option<i64>, until: Option<i64>) -> Query {
@@ -1673,11 +1686,11 @@ mod tests {
         );
     }
 
-    /// The two empty answers, one level down: a template with no time column is found and
-    /// has no time axis. Zero buckets, not an error - and not 72 zeros, which would claim
-    /// we looked along an axis that is not there.
+    /// Every template has a time axis: one with no time column is on arrival
+    /// time, which is `now` and outside a window over 1970 - so the buckets are there,
+    /// zero-filled across the window, and the count is zero.
     #[test]
-    fn a_template_with_no_ts_column_has_no_buckets() {
+    fn a_template_with_no_ts_column_is_on_arrival_time() {
         let db = db();
         let mut q = query(bucketed(300), Some(EPOCH), Some(EPOCH + DAY));
         q.matches = vec![Match {
@@ -1686,24 +1699,40 @@ mod tests {
         }];
         let result = execute(&db.trie, &db.stores, &q).expect("the query answers");
         assert!(result.exists, "the template is real");
-        assert!(result.groups.is_empty(), "{:?}", result.groups);
+        assert_eq!(result.count, 0);
+        assert_eq!(
+            result.groups.len() as i64,
+            DAY / 300,
+            "{:?}",
+            result.groups.len()
+        );
+        assert!(result
+            .groups
+            .iter()
+            .all(|g| g.count == 0 && g.bucket.is_some()));
     }
 
-    /// With no window there is nothing to filter the untimed rows out, so they are in
-    /// `count` - and they get a bucket of their own rather than vanishing from the chart.
+    /// With no window the seven rows on arrival time are counted, and they land in the
+    /// bucket their arrival falls in - no row is without a bucket any more.
     #[test]
-    fn rows_with_no_readable_timestamp_keep_their_count() {
+    fn rows_on_arrival_time_are_bucketed_at_their_arrival() {
         let db = db();
         let result = execute(&db.trie, &db.stores, &query(bucketed(3_600), None, None))
             .expect("the query answers");
 
-        let untimed: u64 = result
+        assert!(
+            result.groups.iter().all(|g| g.bucket.is_some()),
+            "a row without a bucket: {:?}",
+            result.groups.iter().find(|g| g.bucket.is_none())
+        );
+        let newest = result.groups.iter().map(|g| g.bucket).max().flatten();
+        let arrivals: u64 = result
             .groups
             .iter()
-            .filter(|g| g.bucket.is_none())
+            .filter(|g| g.bucket == newest)
             .map(|g| g.count)
             .sum();
-        assert_eq!(untimed, 7, "the seven rows with no ts column");
+        assert_eq!(arrivals, 7, "the seven rows with no ts column, at `now`");
         assert_eq!(
             result.groups.iter().map(|g| g.count).sum::<u64>(),
             result.count,

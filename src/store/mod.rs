@@ -40,6 +40,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
+use crate::infer::infer;
 use crate::types::{ColValue, DtForm};
 
 pub mod disk;
@@ -62,8 +63,22 @@ pub type Predicate = Box<dyn Fn(&Row) -> bool + Send + Sync>;
 /// there would change what `ts=1705314600` matches. See `types::DtForm`.
 pub type DtForms = [(String, DtForm)];
 
-/// The column a time filter reads when none is named.
+/// The column a time filter reads when none is named. A fallback for a `_leaf.json` that
+/// predates the time source; every caller from M5.6b on names the column.
 pub const DEFAULT_TS_COLUMN: &str = "ts";
+
+/// The system column holding a row's arrival time, on rows whose template's time column
+/// gave them none.
+///
+/// A backslash and an underscore: key escaping writes `\\` for a backslash, so no
+/// flattened key can ever be spelled this way - the collision is unreachable rather than
+/// detected. It is added after fingerprinting and never enters a key set, a fingerprint or
+/// a template id. A query shows it as `RECEIVED_AT_NAME`.
+pub const RECEIVED_AT_COLUMN: &str = "\\_received_at";
+
+/// What a query returns the system column as, unless the row has an ingested key of that
+/// name - then the ingested one is shown and the system value is left out.
+pub const RECEIVED_AT_NAME: &str = "_received_at";
 
 #[derive(Debug, Default, Clone)]
 pub struct ScanOptions {
@@ -78,7 +93,13 @@ pub struct ScanOptions {
     pub limit: usize,
     pub since: Option<SystemTime>,
     pub until: Option<SystemTime>,
+    /// The template's time column: what the window and the order read, falling
+    /// back to `RECEIVED_AT_COLUMN` on a row where it holds no `Datetime`.
     pub ts_column: Option<String>,
+    /// Columns whose type is now `String`. A value stored as a `Datetime` in one of them
+    /// is rendered back to the text it arrived as, through the chunk's own `dt_form`
+    /// before anything reads the row.
+    pub text_columns: Vec<String>,
 }
 
 #[derive(Debug, Error)]
@@ -292,7 +313,9 @@ pub trait LeafStore: Send + Sync {
 /// Where leaves come from. A factory and nothing else - the registry lives on
 /// `StoreManager`, so this trait is the whole of what memory and disk actually differ by.
 pub trait Store: Send + Sync {
-    fn open(&self, template_id: u64) -> Result<Box<dyn LeafStore>, StoreError>;
+    /// `time_column` is the template's time column: what the leaf partitions,
+    /// orders and prunes on.
+    fn open(&self, template_id: u64, time_column: &str) -> Result<Box<dyn LeafStore>, StoreError>;
     /// For the banner and `/stats`.
     fn kind(&self) -> &'static str;
     fn base_path(&self) -> Option<&Path>;
@@ -343,9 +366,9 @@ impl StoreManager {
     /// identical error messages. What must not happen is silence, so the count is on
     /// `/stats` - a disk failing behind a 200 on every `/ingest` is the worst outcome
     /// available here.
-    pub fn append(&mut self, template_id: u64, row: Row, forms: &DtForms) {
+    pub fn append(&mut self, template_id: u64, time_column: &str, row: Row, forms: &DtForms) {
         if !self.stores.contains_key(&template_id) {
-            match self.backend.open(template_id) {
+            match self.backend.open(template_id, time_column) {
                 Ok(store) => {
                     self.stores.insert(template_id, store);
                 }
@@ -361,10 +384,11 @@ impl StoreManager {
     pub fn append_batch_to(
         &mut self,
         template_id: u64,
+        time_column: &str,
         rows: impl IntoIterator<Item = (Row, Vec<(String, DtForm)>)>,
     ) {
         for (row, forms) in rows {
-            self.append(template_id, row, &forms);
+            self.append(template_id, time_column, row, &forms);
         }
     }
 
@@ -372,11 +396,11 @@ impl StoreManager {
     ///
     /// The restart path. A leaf whose directory is absent opens empty, which is a known
     /// template holding no rows - the second of the two empty answers, not an error.
-    pub fn open_existing(&mut self, template_id: u64) -> Result<(), StoreError> {
+    pub fn open_existing(&mut self, template_id: u64, time_column: &str) -> Result<(), StoreError> {
         if self.stores.contains_key(&template_id) {
             return Ok(());
         }
-        let store = self.backend.open(template_id)?;
+        let store = self.backend.open(template_id, time_column)?;
         self.stores.insert(template_id, store);
         Ok(())
     }
@@ -486,46 +510,73 @@ impl Default for StoreManager {
 
 // ── Reading a row's place in time ──────────────────────────────────────────────────
 
-/// A row's timestamp, or `None` for a row that cannot be placed in time.
+/// A column's value as an instant, or `None` for a value that is not one.
 ///
-/// **One function, three callers**, and that is the point: the time window reads it, the
-/// result order reads it, and the disk store partitions by it. Two readings that disagree
-/// by one type would put a row in a dated directory while ranking it as undated, and the
-/// partition holding it would then be skipped by a query that should have found it - only
-/// under a limit, only once the heap fills, so an unlimited query and a small fixture
-/// would both pass.
+/// A `Datetime` is one. So is *text* the ladder reads as one: a partition that stores its
+/// time column as text after a second date form arrived hands the value back as
+/// the string it was ingested as, and the row's place in time is still what that string
+/// says. Anything else - absent, null, `"N/A"` - is not an instant.
 pub fn ts_of(row: &Row, column: &str) -> Option<i64> {
     match row.get(column) {
         Some(ColValue::Datetime(ns)) => Some(*ns),
+        Some(ColValue::String(text)) => match infer(text).value {
+            ColValue::Datetime(ns) => Some(ns),
+            _ => None,
+        },
         _ => None,
     }
 }
 
-/// Whether a row's timestamp falls in `[since, until)`.
+/// **The effective time of a row**: the template's time column where it holds an
+/// instant, and otherwise the arrival time the row was stored with.
 ///
-/// A column holding anything but a `Datetime` - absent, null, or widened to `String` by
-/// one bad line - cannot be placed in time, so it is out. That is the cost of the
-/// lattice's monotonicity, and it should show as an empty result rather than as rows
-/// silently admitted on a timestamp nobody could read.
+/// **One function, four callers**, and that is the point: the time window reads it, the
+/// result order reads it, `GROUP BY time(...)` reads it and the disk store partitions by
+/// it. Two readings that disagree by one type would put a row in a dated directory while
+/// ranking it as undated, and the partition holding it would then be skipped by a query
+/// that should have found it - only under a limit, only once the heap fills, so an
+/// unlimited query and a small fixture would both pass.
 ///
-/// Which settles the open case: a **template with no `ts` column at all**, under a time
-/// filter, answers `exists: true, count: 0`. The structure was found; no row in it can
-/// satisfy the predicate. Deliberately not the two alternatives:
-///
-/// - **Not an error.** The pattern is well-formed and the template is real, and "found,
-///   and nothing matched" is an answer rather than a failure.
-/// - **Not "ignore the time clause".** Admitting those rows would make a filtered query
-///   return rows outside its own window, with no way for the operator to see it happened.
-///
-/// This reaches further than it looks. Kibana puts a mandatory time filter on every search,
-/// so once it is the client every ts-less template is queried this way on every request:
-/// erroring would break Discover outright, and ignoring the clause would fill a time
-/// histogram with rows that have no place on it.
-pub fn in_window(value: Option<&ColValue>, since: Option<i64>, until: Option<i64>) -> bool {
-    let Some(ColValue::Datetime(ns)) = value else {
+/// `None` only for a row from before M5.6b: one with neither an instant in its time
+/// column nor a system column, which is a row in an `undated` partition.
+pub fn effective_ts(row: &Row, column: &str) -> Option<i64> {
+    ts_of(row, column).or_else(|| ts_of(row, RECEIVED_AT_COLUMN))
+}
+
+/// Whether an instant falls in `[since, until)`. A row with no effective time is outside
+/// every window - the one case left is a row from before M5.6b, in `undated`.
+pub fn in_window(ts: Option<i64>, since: Option<i64>, until: Option<i64>) -> bool {
+    let Some(ns) = ts else {
         return false;
     };
-    since.is_none_or(|from| *ns >= from) && until.is_none_or(|to| *ns < to)
+    since.is_none_or(|from| ns >= from) && until.is_none_or(|to| ns < to)
+}
+
+/// A row as a query shows it: the system column under its query name, unless the row has
+/// an ingested key of that name, in which case the ingested one is shown and the system
+/// value is left out. A null system value - a segment column the row never had -
+/// is left out too.
+pub fn present(row: &Row) -> BTreeMap<String, &ColValue> {
+    let mut out: BTreeMap<String, &ColValue> = row
+        .iter()
+        .filter(|(key, _)| key.as_str() != RECEIVED_AT_COLUMN)
+        .map(|(key, value)| (key.clone(), value))
+        .collect();
+    if let Some(system) = row.get(RECEIVED_AT_COLUMN) {
+        if !matches!(system, ColValue::Null) && !out.contains_key(RECEIVED_AT_NAME) {
+            out.insert(RECEIVED_AT_NAME.to_string(), system);
+        }
+    }
+    out
+}
+
+/// A `Datetime` stored in a column that is now text, rendered back to what was ingested
+/// through the rung that read it. Every other value is returned as it is.
+pub fn render_text(value: ColValue, form: Option<DtForm>) -> ColValue {
+    match value {
+        ColValue::Datetime(ns) => ColValue::String(form.unwrap_or(DtForm::Mixed).render(ns)),
+        other => other,
+    }
 }
 
 /// Unix nanoseconds, saturating at both ends. i64 nanos run 1677-2262; a bound outside

@@ -35,49 +35,75 @@ trap 'rm -rf "$WORK"' EXIT
 INPUT="$WORK/input.ndjson"
 "$BIN" gen-logs --lines "$NLINES" --templates 12 --seed "$GEN_SEED" > "$INPUT"
 
-# One `L` row per sampled line, holding that line's shell-safe `key=value` terms, plus a
-# `K` row per distinct key for `--group-by`.
+# One `L` row per sampled line, holding the line's time key and its shell-safe
+# `key=value` terms, plus a `K` row per distinct key for `--group-by`.
 #
 # Grouped by line, not pooled, because terms drawn from a pool almost never co-occur on
 # one template - a hundred such queries would agree on "unknown template" a hundred times
 # and check nothing. Terms from one line are guaranteed to have a template that holds
 # them all; the cross-line draw below is what still reaches the unknown case.
 #
+# The time key is the first name on the default `time_columns` list that the line
+# carries, or `-`. It is used to *choose* lines, never to answer anything: at least a
+# quarter of the combinations below touch a template whose time key is not `ts`, because
+# those were the 41.6% of rows no time-range query could see before M5.6b, and a run that
+# never drew one would agree on them a hundred times without checking.
+#
 # Shell-safe only: a quoting bug here would be indistinguishable from a disagreement.
 "$BIN" parse "$INPUT" --json 2>/dev/null | python3 -c '
 import json, sys
+TIME = ["@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix", "datetime",
+        "event_time", "created_at"]
 keys, rows = set(), []
 for line in sys.stdin:
+    parsed = json.loads(line)
     terms = []
-    for k, v in json.loads(line)["values"].items():
+    for k, v in parsed["values"].items():
         keys.add(k)
         if v and len(v) <= 40 and all(32 < ord(c) < 127 for c in v) \
            and not any(c in v for c in " \x27\"*$`\\="):
             terms.append("%s=%s" % (k, v))
     if terms:
-        rows.append(terms)
-for terms in rows[:600]: print("L\t" + "\t".join(terms))
+        tkey = next((t for t in TIME if t in parsed["keys"]), "-")
+        rows.append((tkey, terms))
+for tkey, terms in rows[:600]: print("L\t%s\t%s" % (tkey, "\t".join(terms)))
 for k in sorted(keys):   print("K\t%s" % k)
 ' > "$WORK/harvest.tsv"
 
-ROWS=(); KEYS=()
+ROWS=(); TKEY=(); KEYS=(); NONTS=()
 while IFS= read -r rec; do
   case "$rec" in
-    L*) ROWS[${#ROWS[@]}]="${rec#L$'\t'}" ;;
+    L*) rest="${rec#L$'\t'}"
+        TKEY[${#TKEY[@]}]="${rest%%$'\t'*}"
+        ROWS[${#ROWS[@]}]="${rest#*$'\t'}" ;;
     K*) KEYS[${#KEYS[@]}]="${rec#K$'\t'}" ;;
   esac
 done < "$WORK/harvest.tsv"
+for at in "${!TKEY[@]}"; do
+  [ "${TKEY[$at]}" != "ts" ] && NONTS[${#NONTS[@]}]=$at
+done
 
 if [ ${#ROWS[@]} -eq 0 ]; then echo "no candidate values harvested" >&2; exit 1; fi
-echo "input: $NLINES lines, ${#KEYS[@]} distinct keys, ${#ROWS[@]} sampled lines"
+if [ ${#NONTS[@]} -eq 0 ]; then echo "no sampled line keeps its time under a name other than ts" >&2; exit 1; fi
+echo "input: $NLINES lines, ${#KEYS[@]} distinct keys, ${#ROWS[@]} sampled lines, ${#NONTS[@]} with a time key other than ts"
 
 # One `key=value` term off a sampled line, chosen by index so the caller can take several
 # from the same line and be sure a template holds them together.
 term_from() { IFS=$'\t' read -r -a f <<< "${ROWS[$1]}"; echo "${f[$((RANDOM % ${#f[@]}))]}"; }
 
-# That line's own `ts`, or empty if the template keeps its time under another name.
-ts_of() { IFS=$'\t' read -r -a f <<< "${ROWS[$1]}"; for x in "${f[@]}"; do
-            case "$x" in ts=*) echo "${x#ts=}"; return ;; esac; done; }
+# That line's own time, as RFC 3339, or empty if it has no time key. An epoch is
+# converted here so the boundary draw below works on every template, not only the ones
+# that spell their time `ts`; milliseconds are cut to the second, which keeps the edge
+# on the row's side of the boundary either way round.
+time_of() { IFS=$'\t' read -r -a f <<< "${ROWS[$1]}"; local k="${TKEY[$1]}"; for x in "${f[@]}"; do
+              case "$x" in
+                "$k="*) v="${x#*=}"
+                        case "$k" in
+                          ts_unix) rfc3339 "$v" ;;
+                          ts_ms)   rfc3339 "${v%???}" ;;
+                          *)       echo "$v" ;;
+                        esac; return ;;
+              esac; done; }
 
 RANDOM=$SEED
 rfc3339() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
@@ -92,18 +118,28 @@ disagreements=0
 known=0
 unknown=0
 nonempty=0
+windowed=0
+nonts=0
 for i in $(seq 1 "$COMBOS"); do
   ARGS=()
 
+  # Every fourth draw is forced onto a line whose time key is not `ts`, and every fourth
+  # is forced to carry a window, so each is at least a quarter of the run whatever the
+  # random draws do. The two are staggered so half of the forced windows land on the
+  # forced lines.
   row=$((RANDOM % ${#ROWS[@]}))
+  if [ $((i % 4)) -eq 0 ]; then row=${NONTS[$((RANDOM % ${#NONTS[@]}))]}; fi
+  [ "${TKEY[$row]}" != "ts" ] && nonts=$((nonts + 1))
 
   # Decided before the terms are drawn: a window whose edge is this row's own timestamp
   # only settles `[since, until)` if the row is one the pattern selects, so that draw
   # takes every term off this line unaltered and keeps the answer down to the boundary.
   window=$((RANDOM % 4))
-  hit=$(ts_of "$row")
+  if [ $((i % 4)) -eq 1 ] && [ "$window" -eq 2 ]; then window=0; fi
+  hit=$(time_of "$row")
   boundary=0
   if [ "$window" -eq 3 ] && [ -n "$hit" ]; then boundary=1; fi
+  case "$window" in 0|1) windowed=$((windowed + 1)) ;; 3) [ "$boundary" -eq 1 ] && windowed=$((windowed + 1)) ;; esac
 
   # 1-3 terms, normally off one line so a template exists that holds them all. One draw
   # in four crosses to a second line and one value in six is replaced, which is what
@@ -145,8 +181,9 @@ for i in $(seq 1 "$COMBOS"); do
        if [ "$a" -gt "$b" ]; then t=$a; a=$b; b=$t; fi
        ARGS[${#ARGS[@]}]="--between"
        ARGS[${#ARGS[@]}]="$(rfc3339 $a)"; ARGS[${#ARGS[@]}]="$(rfc3339 $b)" ;;
-    # Every generated timestamp is from 2024, so this window is always empty - which is
-    # the `exists: true, count: 0` answer, checked on both sides.
+    # Every generated timestamp is from 2024, so a row with its own time is outside this
+    # window; a row on arrival time is inside it, at the `now` both sides share.
+    # Before M5.6b this was always the `exists: true, count: 0` answer.
     1) ARGS[${#ARGS[@]}]="--since"; ARGS[${#ARGS[@]}]="$((1 + RANDOM % 48))h" ;;
     # The half-open edge, both ways round: as `until` the row is out, as `since` it is in.
     # Random endpoints never land on a row, so they cannot tell `[since, until)` from
@@ -184,5 +221,10 @@ done
 
 echo
 echo "$COMBOS combinations: $known known template, $unknown unknown template, $nonempty returned rows"
+echo "$COMBOS combinations: $windowed with a window, $nonts on a template whose time key is not ts"
 echo "$COMBOS combinations, $disagreements disagreements"
-[ "$disagreements" -eq 0 ]
+status=0
+[ "$windowed" -ge $((COMBOS / 4)) ] || { echo "FAIL: fewer than a quarter carried a window"; status=1; }
+[ "$nonts" -ge $((COMBOS / 4)) ] || { echo "FAIL: fewer than a quarter touched a template whose time key is not ts"; status=1; }
+[ "$disagreements" -eq 0 ] || status=1
+exit $status

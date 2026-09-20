@@ -256,13 +256,34 @@ for r in json.load(sys.stdin)["rows"]:
     print(json.dumps(r, sort_keys=True))
 '; }
 
-# The `ts` of every returned row, in the order they came back. The ordering guarantee is
-# about which rows and in what order, and `ts` is the whole of what it promises - comparing
-# it rather than the rows themselves is what makes the check robust to two rows sharing a
-# timestamp, which the tiebreak settles but the guarantee does not speak to.
+# The effective time of every returned row, in the order they came back: the
+# row's time column - the first of the default list it carries - or `_received_at`
+# where it is on arrival time. Rendered as one sortable spelling, because a template may
+# spell its time as RFC 3339, ten digits or thirteen and the order is over instants, not
+# text. The ordering guarantee is about which rows and in what order, and the time is the
+# whole of what it promises - comparing it rather than the rows themselves is what makes
+# the check robust to two rows sharing an instant, which the tiebreak settles but the
+# guarantee does not speak to.
 row_ts() { python3 -c '
 import json, sys
-print("\n".join(str(r.get("ts")) for r in json.load(sys.stdin)["rows"]))
+from datetime import datetime, timezone
+TIME = ["@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix", "datetime",
+        "event_time", "created_at", "_received_at"]
+def instant(row):
+    for k in TIME:
+        v = row.get(k)
+        if v is None:
+            continue
+        if isinstance(v, str) and v.isdigit() and len(v) == 10:
+            return datetime.fromtimestamp(int(v), timezone.utc).isoformat()
+        if isinstance(v, str) and v.isdigit() and len(v) == 13:
+            return datetime.fromtimestamp(int(v) / 1000, timezone.utc).isoformat()
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+        except ValueError:
+            continue
+    return "None"
+print("\n".join(instant(r) for r in json.load(sys.stdin)["rows"]))
 '; }
 
 check() { # name expected actual
@@ -349,22 +370,20 @@ for spec in "5 --match event=login_failed" "10 " "1 " "3 --match level=ERROR"; d
   check "LIMIT $n ${extra:-(no term)} is newest-first" "$sorted" "$engine_ts"
 done
 
-# Rows with no timestamp, which only an unwindowed query can return - a time filter
-# excludes them by definition (`store::in_window`). They sort last, after every row that
-# can be placed in time, and among themselves they keep insertion order. The limit is
-# above the row count on purpose, so the page cannot fill from the timestamped rows alone
-# and leave this checking nothing.
+# Every row has a time: a template that spells its time `ts_unix` or `ts_ms`
+# is ordered by it, and a template with no time column is ordered by the instant its
+# rows arrived. So an unwindowed answer is newest-first from end to end, with no row left
+# over to sort last. The limit is above the row count on purpose, so the page cannot fill
+# from one template alone and leave this checking nothing.
 all_ts=$(raw 'MATCH LOG {} LIMIT 100000' | row_ts)
-check "rows with no ts sort after every row that has one" \
-      "$(printf '%s\n' "$all_ts" | grep -vc '^None$') dated, then $(printf '%s\n' "$all_ts" | grep -c '^None$') undated" \
-      "$(printf '%s\n' "$all_ts" | grep -n '^None$' | head -1 | cut -d: -f1 | awk -v n="$(printf '%s\n' "$all_ts" | grep -c '^None$')" '{print $1 - 1 " dated, then " n " undated"}')"
-check "the dated rows of an unwindowed answer are still newest-first" \
-      "$(printf '%s\n' "$all_ts" | grep -v '^None$' | sort -r)" \
-      "$(printf '%s\n' "$all_ts" | grep -v '^None$')"
+check "every row of an unwindowed answer has a time" \
+      "0" "$(printf '%s\n' "$all_ts" | grep -c '^None$')"
+check "an unwindowed answer is newest-first from end to end" \
+      "$(printf '%s\n' "$all_ts" | sort -r)" \
+      "$all_ts"
 
-# The undated rows against the oracle, in full and in order. The windowed rows above never
-# reach one - a time filter excludes every row it cannot place - so this is the only check
-# that exercises the tiebreak, and the tiebreak is what the two sides have to compute
+# The whole answer against the oracle, in full and in order. Rows sharing an instant are
+# settled by the tiebreak, and the tiebreak is what the two sides have to compute
 # separately and land on together.
 check "an unwindowed answer matches the oracle row for row, in order" \
       "$(raw --fetch --limit 100000 --reference | rows_json)" \
@@ -384,9 +403,9 @@ check "LIMIT 1 returns the same row as the head of the unlimited answer" \
 # the failure mode keyset paging is chosen to avoid, so it is checked directly rather than
 # inferred from the two surfaces agreeing.
 #
-# `MATCH LOG {}` with no window is the hard case on purpose: it reaches the templates with
-# no `ts` column at all, whose rows all rank equal on time and whose boundaries are carried
-# entirely by the tiebreak.
+# `MATCH LOG {}` with no window is the hard case on purpose: it reaches every template,
+# whichever name it keeps its time under, and rows sharing an instant have their page
+# boundaries carried entirely by the tiebreak.
 page_all() { # trieql-without-limit  page-size
   local base=$1 size=$2 cursor="" q out
   while :; do

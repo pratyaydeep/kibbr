@@ -96,12 +96,21 @@ fn json_of(out: &std::process::Output) -> Value {
 }
 
 /// Every row rendered, so rows with no `n` column are still comparable.
+/// Every row as text, less `_received_at`: the CLI rebuilds its database per invocation,
+/// so a row on arrival time is stamped afresh by every page, and the stamp is
+/// not what these comparisons are about.
 fn rows_as_text(result: &Value) -> Vec<String> {
     result["rows"]
         .as_array()
         .expect("rows is an array")
         .iter()
-        .map(ToString::to_string)
+        .map(|row| {
+            let mut row = row.clone();
+            if let Some(obj) = row.as_object_mut() {
+                obj.remove("_received_at");
+            }
+            row.to_string()
+        })
         .collect()
 }
 
@@ -141,19 +150,19 @@ fn a_limit_takes_the_newest_rows_not_the_first() {
     );
 }
 
-/// A template with no `ts` column has no timestamp to order by, so its rows fall to the
-/// end - after every row that can be placed in time - and keep the order they were
-/// ingested in.
+/// A template with no `ts` column is on arrival time, which is `now` - so its
+/// rows are the newest, come first, and among themselves keep the order they were
+/// ingested in: they share one instant, and the tiebreak is insertion order.
 #[test]
-fn rows_with_no_timestamp_sort_last_in_insertion_order() {
+fn rows_with_no_timestamp_sort_first_in_insertion_order() {
     let all = query(&["MATCH LOG {}"]);
     let rows = all["rows"].as_array().expect("rows is an array");
     let events: Vec<&str> = rows
         .iter()
         .map(|row| row["event"].as_str().expect("event is a string"))
         .collect();
-    assert_eq!(events, ["hit", "hit", "hit", "hit", "hit", "beat", "beat"]);
-    // Insertion order among the undated ones, which is the documented fallback.
+    assert_eq!(events, ["beat", "beat", "hit", "hit", "hit", "hit", "hit"]);
+    // Insertion order among the rows sharing an arrival instant.
     let nodes: Vec<&str> = rows
         .iter()
         .filter_map(|row| row.get("node").and_then(Value::as_str))
@@ -379,9 +388,9 @@ fn paging_tiles_the_whole_answer_with_no_gaps_or_repeats() {
 }
 
 /// Rows a timestamp cannot separate page like any other. `beat` has no `ts` at all, so
-/// every one of its rows ranks the same on time and the tiebreak carries the boundary.
+/// its rows share one arrival instant and the tiebreak carries the boundary.
 #[test]
-fn undated_rows_page_without_gaps() {
+fn rows_sharing_an_instant_page_without_gaps() {
     let whole = query(&["MATCH LOG {}"]);
     let all: Vec<String> = rows_as_text(&whole);
 

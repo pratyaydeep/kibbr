@@ -88,9 +88,14 @@ MEM_PID=$PID; MEM_PORT=$PORT
 start "$WORK/disk.log" --data-dir "$WORK/data" || exit 1
 DISK_PID=$PID; DISK_PORT=$PORT
 
+# One arrival time for both servers: a template with no time column stamps its
+# rows with the instant the ingest call was given, and two calls a second apart would
+# put a different `_received_at` on the same row on each side - a disagreement about the
+# clock, not about the store.
+RECEIVED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 for port in "$MEM_PORT" "$DISK_PORT"; do
   code=$(curl -s -o "$WORK/ingest.$port" -w '%{http_code}' \
-         -X POST "http://127.0.0.1:$port/ingest" --data-binary "@$INPUT")
+         -X POST "http://127.0.0.1:$port/ingest?received_at=$RECEIVED_AT" --data-binary "@$INPUT")
   if [ "$code" != "200" ]; then
     echo "ingest into :$port answered $code" >&2; cat "$WORK/ingest.$port" >&2; exit 1
   fi
@@ -135,8 +140,8 @@ for i in range(combos):
     verb = rng.choice(["MATCH", "COUNT"])
     q = "%s LOG {%s}" % (verb, pat)
 
-    # Every generated timestamp is from 2024, so `SINCE` is always an empty window - the
-    # `exists: true, count: 0` answer, which both sides have to give.
+    # Every generated timestamp is from 2024, so a row with its own time is outside a
+    # `SINCE`; a row on arrival time is inside it, at the instant both servers were given.
     when = rng.randrange(4)
     if when == 0:
         q += " SINCE %dh" % (1 + rng.randrange(48))

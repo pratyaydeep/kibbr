@@ -55,3 +55,7 @@ sample.ndjson
 
 /lab
 /lab-rs
+
+# The M5.6b seed-42 corpus and the /templates sample the time-source scripts were first
+# run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
+/testdata/m56b/

@@ -7,6 +7,17 @@
 //! leaves, no pruning, no plan, and its own arithmetic for the time window. Sharing that
 //! comparison too was tried and reverted: it made `[since, until)` unfalsifiable, because
 //! a mutation to the one rule moved both answers together.
+//!
+//! **The time source and the read-back of a widened date column are worked out here
+//! independently, not taken from the engine.** An oracle that shares a rule shares its
+//! bugs: the worst query bug this codebase has had - the time column was the literal
+//! name `ts`, so 41.6% of measured rows were invisible to every time-range query -
+//! passed every differential, because this file was written to the same "no `ts`, no
+//! time" rule the engine was. So: a template's time source is decided by the *first
+//! line of that template in file order*, from the configured list, by this file's own
+//! reading of the rule; a row's effective time is worked out here; the system column is
+//! added here; and a `Datetime` in a column whose joined type is `String` is rendered
+//! back through its own rung here. None of it calls the engine or the store.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -19,14 +30,94 @@ use crate::engine::{
     QueryMeta, QueryMode, QueryResult,
 };
 use crate::flatten::ParsedLog;
-use crate::store::{Row, DEFAULT_TS_COLUMN};
-use crate::types::ColValue;
+use crate::store::Row;
+use crate::types::{ColValue, ColumnType, DtForm};
+
+/// The system column, spelled out here rather than imported: a backslash and an
+/// underscore.
+const RECEIVED_AT: &str = "\\_received_at";
+
+/// Where a template gets its time from, by this file's own reading of the rule.
+#[derive(Debug, Clone, PartialEq)]
+enum Source {
+    Column(String),
+    Arrival,
+}
+
+/// The rule: on the line that creates the template, the first configured name that is
+/// one of its keys and whose value the ladder called a `Datetime`. Otherwise arrival.
+fn source_of(line: &ParsedLog, time_columns: &[String]) -> Source {
+    for name in time_columns {
+        if !line.keys.contains(name) {
+            continue;
+        }
+        let is_datetime = line
+            .typed_values
+            .get(name)
+            .is_some_and(|t| t.ty == Some(ColumnType::Datetime));
+        if is_datetime {
+            return Source::Column(name.clone());
+        }
+    }
+    Source::Arrival
+}
+
+/// The effective time of one line, and whether the row needs the system column.
+///
+/// The time column's value where the ladder read it as a `Datetime`; otherwise the
+/// arrival time, which for the CLI is the instant the query was built against - every
+/// line of the file arrived "now", the same `now` `db::load` stamps.
+fn effective(line: &ParsedLog, source: &Source, arrival: i64) -> (i64, bool) {
+    if let Source::Column(name) = source {
+        if let Some(t) = line.typed_values.get(name) {
+            if let (Some(ColumnType::Datetime), ColValue::Datetime(ns)) = (t.ty, &t.value) {
+                return (*ns, false);
+            }
+        }
+    }
+    (arrival, true)
+}
+
+/// A `Datetime` in a column whose type is now `String`, spelled as it was ingested - the
+/// rung inverted by this file's own hand: ten digits for seconds, thirteen for
+/// milliseconds, RFC 3339 for RFC 3339.
+fn text_of(ns: i64, form: Option<DtForm>) -> String {
+    match form {
+        Some(DtForm::EpochSecs) => format!("{}", ns.div_euclid(1_000_000_000)),
+        Some(DtForm::EpochMillis) => format!("{}", ns.div_euclid(1_000_000)),
+        _ => crate::fmt::rfc3339(ns),
+    }
+}
 
 /// `engine::Rank`, spelled again rather than imported - see the note at the top.
 type Rank = (Reverse<Option<i64>>, u64, u64);
 
-pub fn run(lines: &[ParsedLog], query: &Query) -> Result<QueryResult, ExecError> {
+pub fn run(
+    lines: &[ParsedLog],
+    query: &Query,
+    time_columns: &[String],
+) -> Result<QueryResult, ExecError> {
     let started = std::time::Instant::now();
+    let arrival = nanos(query.now);
+
+    // Per template, in file order: the first line decides the time source, and every
+    // line folds its types into the column types - `types::join`, applied here as the
+    // spec writes it, so a column whose join is `String` renders its stored datetimes
+    // back as text. Both are facts about the template, settled before any row is read.
+    let mut sources: HashMap<u64, Source> = HashMap::new();
+    let mut col_types: HashMap<(u64, String), Option<ColumnType>> = HashMap::new();
+    for line in lines {
+        sources
+            .entry(line.template_id)
+            .or_insert_with(|| source_of(line, time_columns));
+        for key in &line.keys {
+            let incoming = line.column_type(key);
+            let slot = col_types
+                .entry((line.template_id, key.clone()))
+                .or_insert(None);
+            *slot = crate::types::join(*slot, incoming);
+        }
+    }
 
     // Brute force: a template exists when some line has the pattern's keys and
     // agrees with it on the keys that line promoted into the fingerprint. Nothing about
@@ -83,21 +174,39 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> Result<QueryResult, ExecError>
         QueryMode::GroupBy(keys) => split_keys(keys),
         _ => (None, Vec::new()),
     };
-    let timed = width.is_some()
-        && lines
-            .iter()
-            .filter(|line| known(line))
-            .any(|line| line.keys.iter().any(|k| k == DEFAULT_TS_COLUMN));
+    // Every template has a time source, so a matched template is a time axis.
+    let timed = width.is_some() && lines.iter().any(&known);
     let mut tally: BTreeMap<(Option<i64>, Vec<String>), u64> = BTreeMap::new();
 
     for line in lines.iter().filter(|line| known(line)) {
-        let row = row_of(line);
+        let source = sources.get(&line.template_id).unwrap_or(&Source::Arrival);
+        let (at_ns, needs_system) = effective(line, source, arrival);
+        let mut row = row_of(line);
+        if needs_system {
+            row.insert(RECEIVED_AT.to_string(), ColValue::Datetime(at_ns));
+        }
+        // A column that has widened to text: this line's own datetime, if the ladder
+        // read one, comes back as the text it arrived as.
+        for key in &line.keys {
+            let joined = col_types
+                .get(&(line.template_id, key.clone()))
+                .copied()
+                .flatten();
+            if joined != Some(ColumnType::String) {
+                continue;
+            }
+            if let Some(ColValue::Datetime(ns)) = row.get(key) {
+                let form = line.typed_values.get(key).and_then(|t| t.dt_form);
+                let text = text_of(*ns, form);
+                row.insert(key.clone(), ColValue::String(text));
+            }
+        }
         let key = leaf_key(&line.walk_tokens());
         let n = seq.entry(line.template_id).or_insert(0);
         let at = *n;
         *n += 1;
 
-        let hit = in_window(&row, query)
+        let hit = in_window(at_ns, query)
             && query.matches.iter().all(|m| {
                 row.get(&m.key)
                     .is_some_and(|have| value_matches(&m.value, have))
@@ -110,15 +219,13 @@ pub fn run(lines: &[ParsedLog], query: &Query) -> Result<QueryResult, ExecError>
             QueryMode::Fetch => {
                 // `count` is incremented above, before this: a row served on an earlier
                 // page is still a row that matched, so the total is the same on every page.
-                let rank = (Reverse(ts_of(&row)), key, at);
+                let rank = (Reverse(Some(at_ns)), key, at);
                 if query.cursor.is_none_or(|c| rank > c.rank()) {
                     ranked.push((rank, row));
                 }
             }
             QueryMode::GroupBy(_) => {
-                let bucket = width
-                    .filter(|_| timed)
-                    .and_then(|w| ts_of(&row).map(|ns| floor_to(ns, w)));
+                let bucket = width.filter(|_| timed).map(|w| floor_to(at_ns, w));
                 *tally
                     .entry((bucket, group_values(&row, &columns)))
                     .or_insert(0) += 1;
@@ -246,27 +353,14 @@ fn fill(
     groups
 }
 
-/// A row's timestamp, or `None`. Worked out here rather than shared with the engine, for
-/// the reason at the top of this file - a mutation to the one reading must not move both
-/// answers together.
-fn ts_of(row: &Row) -> Option<i64> {
-    match row.get(DEFAULT_TS_COLUMN) {
-        Some(ColValue::Datetime(ns)) => Some(*ns),
-        _ => None,
-    }
-}
-
-/// `ts` inside `[since, until)`, worked out from scratch. A row with no readable
-/// timestamp is outside every window.
-fn in_window(row: &Row, query: &Query) -> bool {
+/// An instant inside `[since, until)`, worked out from scratch. Every row has one now
+/// now, so nothing here is outside every window by construction any more.
+fn in_window(ns: i64, query: &Query) -> bool {
     if query.time.is_open() {
         return true;
     }
-    let Some(ColValue::Datetime(ns)) = row.get(DEFAULT_TS_COLUMN) else {
-        return false;
-    };
-    let after = query.time.since.is_none_or(|t| *ns >= nanos(t));
-    let before = query.time.until.is_none_or(|t| *ns < nanos(t));
+    let after = query.time.since.is_none_or(|t| ns >= nanos(t));
+    let before = query.time.until.is_none_or(|t| ns < nanos(t));
     after && before
 }
 
