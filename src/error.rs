@@ -19,6 +19,20 @@ pub enum DetectorErrorKind {
     #[error("not ingested: {detail}")]
     NotDurable { detail: String },
 
+    /// Two flattened keys rendered to the same text.
+    ///
+    /// Not a fact about the line: distinct JSON paths cannot render alike, because key
+    /// escaping is reversible. Reaching this means it has stopped being reversible, and
+    /// the fingerprint, the merge index's set arithmetic and the trie's edge labels are
+    /// all downstream of that - so this line is refused rather than filed under a
+    /// template that is not its shape. It was a debug assertion, which is to say it was
+    /// nothing in the build that ships.
+    #[error(
+        "flattened key `{key}` appears twice; distinct paths cannot render alike, so key \
+         escaping has stopped being reversible"
+    )]
+    DuplicateKey { key: String },
+
     /// Arrays are stored whole, so the object depth limit does not apply inside one - but
     /// a ceiling still has to, since the array is materialised recursively before it can
     /// be stored as text. This is the one that fires there, counting containers of either
@@ -232,6 +246,18 @@ pub enum ServeError {
          point --data-dir at a new directory, or remove this one and re-ingest."
     )]
     LegacyLayout { path: std::path::PathBuf },
+
+    /// The final flush could not write every buffered row, so they went with the process.
+    ///
+    /// **An error and not a log line**, because the exit code is the only part of a
+    /// shutdown an orchestrator reads. It used to exit 0 whatever happened - 20,000 lines
+    /// accepted, 10,625 back after a restart, exit 0. Everything else in the shutdown
+    /// sequence still runs and still prints; this is what the process ends with.
+    #[error(
+        "the final flush failed for {leaves} leaf/leaves and {rows} buffered row(s) went \
+         with the process; with no write-ahead log a buffered row was only ever in memory"
+    )]
+    RowsLost { leaves: usize, rows: u64 },
 }
 
 /// Errors surfaced by the CLI itself.

@@ -141,6 +141,13 @@ enum Command {
         /// Overrides `TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS`.
         #[arg(long, value_name = "MS")]
         row_group_timeout_ms: Option<usize>,
+        /// How many segment files may be open for writing at once, across every leaf.
+        /// Past it the least recently written one is sealed, which is always safe - the
+        /// next row for that partition opens the next segment number. Set it below
+        /// `ulimit -n`: a cap above the descriptor limit is not a cap.
+        /// Overrides `TRIEDB__STORAGE__MAX_OPEN_SEGMENTS`.
+        #[arg(long, value_name = "N")]
+        max_open_segments: Option<usize>,
         /// The key names a new template's time column is chosen from, in order; the
         /// first one the template holds as a Datetime wins, and a template holding none
         /// takes its rows' arrival time. Comma-separated.
@@ -309,6 +316,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             trie_file,
             flush_interval_ms,
             row_group_timeout_ms,
+            max_open_segments,
             time_columns,
         } => serve::run(
             &host,
@@ -321,6 +329,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 trie_file,
                 flush_interval_ms,
                 row_group_timeout_ms,
+                max_open_segments,
             )?,
             config::Schema::load(time_columns),
         ),

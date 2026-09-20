@@ -139,6 +139,10 @@ pub struct Server {
     /// unreachable one. No permit within `INGEST_QUEUE_WAIT` is a 503, which Vector's
     /// adaptive concurrency reads as "send fewer" rather than "the server is gone".
     ingest_permits: Arc<Semaphore>,
+    /// Whether the last flush tick could write. Shared with the registry and read without
+    /// its lock, because `/health` must not queue behind a flush and `/ingest` must not
+    /// buffer a body it is about to refuse.
+    write_health: Arc<crate::store::WriteHealth>,
 }
 
 impl Server {
@@ -188,8 +192,12 @@ impl Server {
                         commas(orphans as u64)
                     ));
                 }
-                let mut stores =
-                    StoreManager::disk(base, storage.row_group_limits()).map_err(|e| match e {
+                let mut stores = StoreManager::disk(
+                    base,
+                    storage.row_group_limits(),
+                    storage.max_open_segments,
+                )
+                .map_err(|e| match e {
                         // The old layout is not a disk that failed; it is a disk holding
                         // something this build must not read. Named and fatal.
                         crate::store::StoreError::LegacyLayout { path } => {
@@ -220,6 +228,7 @@ impl Server {
             ),
         };
 
+        let write_health = stores.health();
         Ok(Self {
             trie,
             stores: RwLock::new(stores),
@@ -235,6 +244,7 @@ impl Server {
             api,
             storage,
             ingest_permits: Arc::new(Semaphore::new(api.ingest_concurrency)),
+            write_health,
         })
     }
 
@@ -551,36 +561,72 @@ enum IngestFailure {
 /// line after it too, so the body is abandoned rather than answered with 500 copies of
 /// one message.
 fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestReport, CliError> {
-    let mut errors = Vec::new();
-    let mut stores = server.write_stores();
+    // ── Half one: split and parse, holding nothing ─────────────────────────────────
+    //
+    // The lock used to be taken here, before the body had been split into lines, so every
+    // body's parse - which is most of the cost of a line - ran one at a time and ingest
+    // measured flat at 30,000 lines a second from one sender to eight.
+    let mut parse_errors = Vec::new();
+    let (parsed, stats) = db::parse_and_prepare(Cursor::new(body), &mut |e: DetectorError| {
+        // Past the cap the rejection is counted and dropped. `stats.rejected` is
+        // still the true total, so nothing is lost but the text.
+        if parse_errors.len() < MAX_REPORTED_ERRORS {
+            parse_errors.push(LineError {
+                line: e.line,
+                msg: e.kind.to_string(),
+            });
+        }
+    })?;
 
-    let stats = db::read_lines(
-        Cursor::new(body),
-        &mut |parsed| db::ingest_line(&server.trie, Some(&mut stores), &parsed, now),
-        &mut |e: DetectorError| {
-            // Past the cap the rejection is counted and dropped. `stats.rejected` is
-            // still the true total, so nothing is lost but the text.
-            if errors.len() < MAX_REPORTED_ERRORS {
-                errors.push(LineError {
-                    line: e.line,
-                    msg: e.kind.to_string(),
-                });
+    // ── Half two: apply them, in order, under the lock ─────────────────────────────
+    //
+    // One lock for the whole body, as before: a client that ingests 500 lines and then
+    // queries must not observe 200 of them.
+    let mut apply_errors = Vec::new();
+    let mut ingested = 0u64;
+    let mut rejected = stats.rejected;
+    {
+        let mut stores = server.write_stores();
+        for (line, parsed, prepared) in parsed {
+            match db::ingest_prepared(&server.trie, Some(&mut stores), &parsed, prepared, now) {
+                Ok(()) => ingested += 1,
+                // The line parsed and still did not land. Counted and reported exactly as
+                // a line that did not parse: to the client both are "this one is not in
+                // the database", and the message says which.
+                Err(db::SinkError::Line(kind)) => {
+                    rejected += 1;
+                    if apply_errors.len() < MAX_REPORTED_ERRORS {
+                        apply_errors.push(LineError {
+                            line,
+                            msg: kind.to_string(),
+                        });
+                    }
+                }
+                // The trie's lock poisoned, which fails every line after it too. The body
+                // is abandoned rather than answered with 500 copies of one message.
+                Err(db::SinkError::Fatal(e)) => return Err(e),
             }
-        },
-    )?;
-    drop(stores);
+        }
+    }
+
+    // **The report is by line number, and it was already.** One pass numbered its
+    // rejections in the order it met them, which was line order; two passes meet them in
+    // two runs, so the merge has to put them back. Capping each half at
+    // `MAX_REPORTED_ERRORS` before the merge changes nothing: an error inside the merged
+    // first thousand has fewer than a thousand errors before it overall, so it has fewer
+    // than a thousand before it in its own half.
+    let mut errors = parse_errors;
+    errors.extend(apply_errors);
+    errors.sort_by_key(|e| e.line);
+    errors.truncate(MAX_REPORTED_ERRORS);
 
     server.lines_read.fetch_add(stats.read, Ordering::Relaxed);
-    server
-        .lines_ingested
-        .fetch_add(stats.ingested, Ordering::Relaxed);
-    server
-        .lines_rejected
-        .fetch_add(stats.rejected, Ordering::Relaxed);
+    server.lines_ingested.fetch_add(ingested, Ordering::Relaxed);
+    server.lines_rejected.fetch_add(rejected, Ordering::Relaxed);
 
     Ok(IngestReport {
-        ingested: stats.ingested,
-        omitted: stats.rejected - errors.len() as u64,
+        ingested,
+        omitted: rejected - errors.len() as u64,
         errors,
     })
 }
@@ -592,10 +638,60 @@ struct QueryRequest {
     q: String,
 }
 
-/// `{"ok":true}`. K8s liveness and Vector's healthcheck, so it takes no lock and reads no
-/// data - a health check that blocks behind a long ingest reports the wrong thing.
-async fn health() -> Json<Value> {
-    Json(json!({ "ok": true }))
+/// `{"ok":true,"status":"ok"}`, or `degraded` while the store cannot write.
+///
+/// Still takes no lock and reads no data - a health check that blocks behind a long ingest
+/// reports the wrong thing - which is why the verdict lives on an `Arc<WriteHealth>`
+/// beside the registry rather than inside it.
+///
+/// **`ok` stays `true` when degraded, and the status says otherwise.** This is the
+/// liveness check an orchestrator kills the process on, and a process that cannot write
+/// is not a process worth killing: restarting it does not empty the disk, and the rows
+/// already on it are still queryable. `degraded` is for the dashboard and the human;
+/// `/ingest` is where the refusal belongs, because that is the caller who would otherwise
+/// be told a lie.
+async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
+    if server.write_health.is_degraded() {
+        return Json(json!({
+            "ok": true,
+            "status": "degraded",
+            "detail": server
+                .write_health
+                .last_error()
+                .unwrap_or_else(|| "the last flush could not write".to_string()),
+        }));
+    }
+    Json(json!({ "ok": true, "status": "ok" }))
+}
+
+/// The refusal a shipper gets while the store cannot write.
+///
+/// 503 and a `Retry-After`, the same shape as the shed at `busy`, and for a related
+/// reason: this server cannot take the batch now and the caller should keep it and come
+/// back. The difference is in the body, which names the write error - an operator reading
+/// a shipper's log needs to see `No space left on device` there and not "try later".
+///
+/// **Why a refusal at all.** With no write-ahead log a `200` means *buffered*, and a
+/// buffer that cannot drain is not durability. Measured on a full disk: every batch got a
+/// `200`, the shutdown log said "90,000 rows written", and after a restart `COUNT LOG {}`
+/// was 0. A `503` is the only answer that keeps the line at the shipper, where it can
+/// still be sent somewhere else. When the WAL lands this moves to the WAL: a store append
+/// that fails after a durable WAL write is logged and answered `Ok`, because the data is
+/// safe by then and a 500 would make a shipper resend a line that is already stored.
+fn cannot_write(detail: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(json!({
+            "ok": false,
+            "error": format!(
+                "the store cannot write, so a 200 would be a lie - there is no \
+                 write-ahead log and a buffered line is not a durable one: {detail}"
+            ),
+            "retry_after": RETRY_AFTER_SECONDS,
+        })),
+    )
+        .into_response()
 }
 
 /// NDJSON in, `{"ok":true,"ingested":N,"errors":[]}` out. Optionally gzipped.
@@ -664,10 +760,11 @@ async fn post_ingest(
         .map(str::to_owned);
 
     let held = Arc::clone(&server);
-    // The parse and the trie walk are CPU work holding a `std` lock, so they do not belong
-    // on a runtime thread that also answers `/health`. Inflating joins them rather than
-    // running above: a gzip bomb is seconds of CPU, and spending it on a runtime thread
-    // would stall every other endpoint while the server was being attacked.
+    // The parse and the trie walk are CPU work, and the appends after them hold a `std`
+    // lock, so none of it belongs on a runtime thread that also answers `/health`.
+    // Inflating joins them rather than running above: a gzip bomb is seconds of CPU, and
+    // spending it on a runtime thread would stall every other endpoint while the server
+    // was being attacked.
     let done = tokio::task::spawn_blocking(move || {
         let decoded = decode(&body, encoding.as_deref(), held.api.max_decompressed_bytes)
             .map_err(IngestFailure::Body)?;
@@ -744,7 +841,8 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Admission control for `/ingest`: a permit, or a 503 that says when to come back.
+/// Admission control for `/ingest`: a 503 while the store cannot write, then a permit or
+/// a 503 that says when to come back.
 ///
 /// **A layer, not a check inside the handler.** A layer wraps the handler, so it runs
 /// before the extractors - before a byte of the body is pulled off the socket. Shedding in
@@ -760,6 +858,22 @@ fn percent_decode(text: &str) -> String {
 /// connections until it is unreachable. The immediate refusal is the kinder answer
 /// precisely because a client knows what to do with it.
 async fn admit(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {
+    // **First, and in the layer rather than in the handler**, for the reason the shed is
+    // here: a layer runs before the extractors, so a body this server cannot store is
+    // refused before ten megabytes of it are pulled off the socket. In the handler the
+    // `Bytes` extractor has already buffered it.
+    //
+    // Before the permit too. A server that cannot write has no use for the slot, and a
+    // shipper told "at capacity" would read that as "send fewer" when the answer is "send
+    // none until the disk is back".
+    if server.write_health.is_degraded() {
+        let detail = server
+            .write_health
+            .last_error()
+            .unwrap_or_else(|| "the last flush could not write".to_string());
+        return cannot_write(&detail);
+    }
+
     let permits = Arc::clone(&server.ingest_permits);
     // `acquire_owned`, so the permit outlives this scope and covers the blocking task,
     // which is the part that is actually scarce.
@@ -921,6 +1035,7 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
 /// outcome available here, so it gets a counter.
 async fn get_stats(State(server): State<Arc<Server>>) -> Response {
     let stores = server.read_stores();
+    let (open_segments, max_open_segments) = stores.open_segments();
     let uptime = server.started.elapsed().as_secs_f64();
     let ingested = server.lines_ingested.load(Ordering::Relaxed);
     let queries = server.queries.load(Ordering::Relaxed);
@@ -932,7 +1047,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "kind": stores.kind(),
             "durable": server.storage.is_durable(),
             "note": if server.storage.is_durable() {
-                "day partitions of segments on disk; a row group closes at 8,192 rows, 8MB or the row group timeout, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
+                "day partitions of segments on disk; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments files are open for writing at once, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
@@ -950,10 +1065,19 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // costs until the write-ahead log lands.
             "row_group_timeout_ms": server.storage.row_group_timeout.as_millis() as u64,
             "stores_open": stores.open(),
+            // Segment files held open for writing, and the cap they are held under. Past
+            // it the least recently written one is sealed, so this is also how close the
+            // process is to spending a descriptor it does not have.
+            "open_segments": open_segments,
+            "max_open_segments": max_open_segments,
             "rows": stores.rows(),
             "buffered_rows": stores.buffered(),
             "write_failures": stores.write_failures(),
             "last_write_error": stores.last_write_error(),
+            // True while the last flush tick failed, which is also while /ingest answers
+            // 503 and /health says degraded. The first tick that writes everything
+            // clears it.
+            "degraded": stores.is_degraded(),
             // On disk this is the segments' bytes as of the last row group closed, plus what the
             // buffer would add. In memory it is payload bytes - key text, string values,
             // and a scalar's fixed width - and the resident size is larger, because
@@ -1115,8 +1239,7 @@ async fn serve(
     // trie snapshot both take the same lock, and a tick arriving between them would write
     // rows the snapshot does not describe.
     let _ = flusher.await;
-    shutdown_sequence(&server);
-    Ok(())
+    shutdown_sequence(&server)
 }
 
 /// Ask every store whether a row group is due, every interval, until the token is
@@ -1210,19 +1333,46 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
 /// Printing the skipped steps rather than omitting them is the point: an operator watching
 /// a clean shutdown scroll past should see exactly which durability they have and which
 /// they do not. Two of the six are real; the WAL's two are not yet.
-fn shutdown_sequence(server: &Server) {
+fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     log("in-flight requests complete");
 
+    // What the final flush could not write, if anything. Carried to the end rather than
+    // returned here: the trie snapshot and the close-stores line are still worth doing
+    // and still worth printing, and an operator reading a failed shutdown wants the whole
+    // sequence and not the first half of it.
+    let mut lost: Option<(usize, u64)> = None;
+
     if server.storage.is_durable() {
-        let summary = server.write_stores().flush_all(FlushKind::Final);
+        let summary = {
+            let mut stores = server.write_stores();
+            let summary = stores.flush_all(FlushKind::Final);
+            // Rows still in a buffer once the final flush has done all it can. **This is
+            // the honest count of what was lost**: with no write-ahead log a buffered row
+            // has never been anywhere but memory, and this process is about to end.
+            if summary.failed > 0 {
+                lost = Some((summary.failed, stores.buffered()));
+            }
+            summary
+        };
         log(&format!(
             "final flush - {} row(s) into {} partition(s), {} byte(s){}",
             commas(summary.rows),
             summary.partitions,
             commas(summary.bytes),
-            match summary.failed {
-                0 => String::new(),
-                n => format!(", {n} leaf/leaves FAILED and their rows are lost"),
+            // Nought rows against a failed leaf is a real outcome and not a rounding: a
+            // leaf whose row groups all landed and whose `_leaf.json` would not write has
+            // failed without losing anything. Said in as many words, because "0 row(s)
+            // were NOT written" beside "FAILED" reads as a bug in the counter.
+            match lost {
+                None => String::new(),
+                Some((leaves, 0)) => format!(
+                    ", {leaves} leaf/leaves FAILED - every row was written, so nothing is \
+                     lost, but something the shutdown had to do did not happen"
+                ),
+                Some((leaves, rows)) => format!(
+                    ", {leaves} leaf/leaves FAILED: {} row(s) were NOT written and are lost",
+                    commas(rows)
+                ),
             },
         ));
     } else {
@@ -1248,20 +1398,48 @@ fn shutdown_sequence(server: &Server) {
     }
 
     let stores = server.read_stores();
+    // Rows still buffered are rows that never reached a file, so they do not belong in a
+    // count of what was written. The line used to be `stores.rows()` whole, which after a
+    // failed final flush claimed 90,000 written where 85,000 were - the shutdown log
+    // contradicting the line above it.
+    let held = stores.rows();
+    let unwritten = stores.buffered();
     let kept = if server.storage.is_durable() {
         "written"
     } else {
         "discarded, they were only in memory"
     };
     log(&format!(
-        "close stores - {} store(s), {} row(s) {kept}",
+        "close stores - {} store(s), {} row(s) {kept}{}",
         commas(stores.open() as u64),
-        commas(stores.rows()),
+        commas(held.saturating_sub(unwritten)),
+        match (server.storage.is_durable(), unwritten) {
+            (true, 0) => String::new(),
+            (true, n) => format!(", {} row(s) still buffered and lost", commas(n)),
+            (false, _) => String::new(),
+        },
     ));
     drop(stores);
 
     log("close WAL - skipped, there is no WAL yet");
-    log("exit 0");
+
+    // **The exit code is the last honest thing a process says.** It used to be 0 whatever
+    // happened, including when leaves failed to flush and their rows went with the
+    // process: 20,000 lines accepted and 10,625 back after a restart, exit 0. An
+    // orchestrator reading that code has no other way to know.
+    match lost {
+        None => {
+            log("exit 0");
+            Ok(())
+        }
+        Some((leaves, rows)) => {
+            log(&format!(
+                "exit 1 - the final flush failed for {leaves} leaf/leaves, costing {} row(s)",
+                commas(rows)
+            ));
+            Err(ServeError::RowsLost { leaves, rows })
+        }
+    }
 }
 
 /// The startup banner.
@@ -1288,8 +1466,11 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20             segments  a row is queryable the moment it is ingested; it\n\
                  \x20                       reaches disk when its row group closes - 8,192\n\
                  \x20                       rows, 8MB, or {}ms, whichever comes first. The\n\
-                 \x20                       thresholds are checked every {}ms. SIGTERM closes\n\
-                 \x20                       and seals everything before exiting.\n\
+                 \x20                       thresholds are checked every {}ms. At most {} are\n\
+                 \x20                       open for writing at once; past that the least\n\
+                 \x20                       recently written is sealed, which costs a file and\n\
+                 \x20                       loses nothing. Keep it under `ulimit -n`.\n\
+                 \x20                       SIGTERM closes and seals everything before exiting.\n\
                  \x20             catalog   {}/catalog.log - a template is written here, and\n\
                  \x20                       fsynced, before the line that made it counts as\n\
                  \x20                       ingested; trie.json is a readable snapshot nothing\n\
@@ -1303,6 +1484,7 @@ fn banner(addr: SocketAddr, server: &Server) {
                     .map_or_else(|| "none".to_string(), |p| p.display().to_string()),
                 server.storage.row_group_timeout.as_millis(),
                 server.storage.flush_interval.as_millis(),
+                commas(server.storage.max_open_segments as u64),
                 base.display(),
                 server.storage.row_group_timeout.as_millis(),
             ),

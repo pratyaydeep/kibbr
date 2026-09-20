@@ -109,7 +109,13 @@ pub struct QueryResult {
 pub struct QueryMeta {
     pub templates_matched: usize,
     pub template_ids: Vec<u64>,
-    pub files_opened: usize,
+    /// **Segment files** read, not leaves. It counted leaves and reported 870 where
+    /// 16,694 files were read; `leaves_opened` below took that meaning.
+    /// A file whose every row group a window pruned is not in it, because nothing in it
+    /// was read.
+    pub files_opened: u64,
+    /// Leaves with a store, opened for this query. What `files_opened` used to mean.
+    pub leaves_opened: usize,
     /// Row groups whose chunks were read, and row groups dropped on their footer
     /// timestamps before any column data was. Together they are what the segment format
     /// buys: `SINCE 1h` over fifty row groups reads one.
@@ -1200,7 +1206,7 @@ impl Visitor for Fetch<'_> {
 /// decided by the time clause:
 ///
 /// - **No time clause** - "does this template exist at all?". Answered by the walk, and it
-///   reads no data: `files_opened` and `rows_scanned` both stay 0, which is the mode's
+///   reads no data: `leaves_opened` and `rows_scanned` both stay 0, which is the mode's
 ///   whole claim.
 /// - **With a time clause** - "is this firing *now*?". `--exists --since 5m` is a cheap
 ///   liveness check, not a contradiction, so it scans - and stops dead on the first row
@@ -1266,7 +1272,7 @@ pub fn execute(
         let Some(store) = stores.lookup(leaf.template_id) else {
             continue;
         };
-        result.meta.files_opened += 1;
+        result.meta.leaves_opened += 1;
         let preds: Vec<Predicate> = leaf.residual.iter().map(predicate).collect();
         let ts = leaf.time_column.as_str();
         opts.ts_column = Some(leaf.time_column.clone());
@@ -1332,6 +1338,7 @@ pub fn execute(
             }
         };
 
+        result.meta.files_opened += scan.files_read;
         result.meta.rows_scanned += scan.scanned;
         result.meta.row_groups_read += scan.row_groups_read;
         result.meta.row_groups_pruned += scan.row_groups_pruned;

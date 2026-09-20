@@ -85,6 +85,7 @@ const BASE_PATH_ENV: &str = "TRIEDB__STORAGE__BASE_PATH";
 const TRIE_FILE_ENV: &str = "TRIEDB__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "TRIEDB__INGESTOR__FLUSH_INTERVAL_MS";
 const ROW_GROUP_TIMEOUT_ENV: &str = "TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS";
+const MAX_OPEN_SEGMENTS_ENV: &str = "TRIEDB__STORAGE__MAX_OPEN_SEGMENTS";
 const TIME_COLUMNS_ENV: &str = "TRIEDB__SCHEMA__TIME_COLUMNS";
 
 /// The names a template's time column is chosen from, first match wins.
@@ -147,6 +148,12 @@ pub enum ConfigError {
     /// "never flush", it is a task that wakes with no delay and burns a core.
     #[error("flush interval must be at least 1ms; 0 would spin the flush task")]
     NoFlushInterval,
+
+    /// And this one cannot read 0 as "off" either: with no segment allowed open there is
+    /// nowhere for a row group to go, so every flush would seal an empty file and the
+    /// buffer would never drain.
+    #[error("max open segments must be at least 1; 0 would leave nowhere for a row group to go")]
+    NoOpenSegments,
 
     #[error("storage directory `{path}`: {source}")]
     BadDataDir {
@@ -211,6 +218,15 @@ pub struct Storage {
     pub flush_interval: Duration,
     /// What a row group closes on, when no size threshold got there first.
     pub row_group_timeout: Duration,
+    /// The cap on segment files open for writing, across every leaf. Past it, the least
+    /// recently written one is sealed - always safe, because the next row for that
+    /// partition opens the next segment number.
+    ///
+    /// The number and what goes wrong without it are at `store::DEFAULT_MAX_OPEN_SEGMENTS`.
+    /// What belongs here is why it is a **setting and not a constant**: it is really a
+    /// statement about the process's descriptor limit, which the process does not choose,
+    /// so an operator running under a tight `ulimit -n` has to be able to say so.
+    pub max_open_segments: usize,
 }
 
 impl Default for Storage {
@@ -220,6 +236,7 @@ impl Default for Storage {
             trie_file: None,
             flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
             row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
+            max_open_segments: crate::store::DEFAULT_MAX_OPEN_SEGMENTS,
         }
     }
 }
@@ -236,6 +253,7 @@ impl Storage {
         trie_file: Option<PathBuf>,
         flush_ms: Option<usize>,
         row_group_ms: Option<usize>,
+        max_open_segments: Option<usize>,
     ) -> Result<Self, ConfigError> {
         let flush_ms = resolve(flush_ms, FLUSH_INTERVAL_ENV, DEFAULT_FLUSH_INTERVAL_MS)?;
         if flush_ms == 0 {
@@ -253,12 +271,22 @@ impl Storage {
         .max(flush_ms);
         let row_group_timeout = Duration::from_millis(row_group_ms as u64);
 
+        let max_open_segments = resolve(
+            max_open_segments,
+            MAX_OPEN_SEGMENTS_ENV,
+            crate::store::DEFAULT_MAX_OPEN_SEGMENTS,
+        )?;
+        if max_open_segments == 0 {
+            return Err(ConfigError::NoOpenSegments);
+        }
+
         if !durable {
             return Ok(Self {
                 base_path: None,
                 trie_file: None,
                 flush_interval,
                 row_group_timeout,
+                max_open_segments,
             });
         }
 
@@ -282,6 +310,7 @@ impl Storage {
             trie_file: Some(trie_file),
             flush_interval,
             row_group_timeout,
+            max_open_segments,
         })
     }
 

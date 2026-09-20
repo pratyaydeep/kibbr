@@ -393,9 +393,14 @@ fn no_catalog_and_a_truncated_trie_json_warns_and_starts_clean() {
     );
 
     // Started, not merely warned: it is serving, which is the half a crash loop fails.
+    // `status: "ok"` is the other half - a lost snapshot is not a store that cannot
+    // write, and `/health` says which of the two this is.
     let (status, body) = second.get("/health");
     assert_eq!(status, 200);
-    assert_eq!(json(&body), serde_json::json!({ "ok": true }));
+    assert_eq!(
+        json(&body),
+        serde_json::json!({ "ok": true, "status": "ok" })
+    );
     assert_eq!(json(&second.get("/templates").1)["count"], 0);
 
     // The leaf directories the lost snapshot described are still on disk, and the server

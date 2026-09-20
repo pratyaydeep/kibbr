@@ -434,14 +434,11 @@ fn split_position(e: &serde_json::Error) -> (Option<usize>, String) {
         // The format changed under us. Hand back what `serde_json` said, whole and
         // unedited, rather than a half-cut message or a position printed twice.
         //
-        // Loud in debug, where someone can act on it: every test that parses a malformed
-        // line runs this path, so a format change fails the suite rather than quietly
-        // degrading every message. Compiled out in release on purpose - a rejected line
-        // must not end the run over a library's formatting.
-        None => {
-            debug_assert!(false, "serde_json message format changed: {text:?}");
-            (None, text)
-        }
+        // No assertion here, in either build. A rejected line must not end the run over a
+        // library's formatting, and an assertion that only fires in debug is not a check -
+        // it is a check in the build nobody ships. `a_bad_line_still_reports_its_position`
+        // below is what fails when the format moves, in every build and in CI.
+        None => (None, text),
     }
 }
 
@@ -496,12 +493,16 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
     // `keys` is a set, and distinct paths cannot render alike - so a duplicate here does
     // not mean the input was odd, it means the rendering stopped being reversible. The
     // fingerprint, the merge index's set arithmetic and the trie's edge labels are all
-    // downstream of that. Loud in debug, where it is a bug in this file; nothing to
-    // recover from at runtime, and a rejected line must not be how an operator finds out.
-    debug_assert!(
-        keys.windows(2).all(|pair| pair[0] != pair[1]),
-        "flattened keys are not a set: {keys:?}"
-    );
+    // downstream of that.
+    //
+    // **Checked in every build and the line is refused.** It was a debug assertion, which
+    // in the build that ships is no check at all: the duplicate would go on to give this
+    // line a fingerprint that is not its shape, and the rows under it would answer a
+    // query about a different template. One refused line naming the key it collided on is
+    // the cheaper outcome, and it is the one an operator can report.
+    if let Some(key) = duplicate_key(&keys) {
+        return Err(DetectorErrorKind::DuplicateKey { key: key.clone() });
+    }
 
     let template_id = template_id(&tokens);
     let fingerprint = tokens
@@ -593,4 +594,100 @@ fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// The first key that appears twice, if any.
+///
+/// A function so the check has something to be tested against: `parse_bytes` cannot be
+/// made to produce a duplicate through its front door, because key escaping is reversible
+/// and that is exactly why. `flatten` sorts, so equal keys are adjacent.
+fn duplicate_key(keys: &[String]) -> Option<&String> {
+    keys.windows(2)
+        .find(|pair| pair[0] == pair[1])
+        .map(|pair| &pair[0])
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────────
+
+/// The two checks that used to be debug assertions, which is to say the two checks that
+/// were not in the build that ships.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `split_position` cuts `serde_json`'s " at line N column M" suffix off a message
+    /// and reports the offset separately, and it can only do that while the suffix is
+    /// spelled that way.
+    ///
+    /// **This is the check, and the debug assertion was not.** A format change used to
+    /// fail the suite in debug and silently double-print the position in release; now it
+    /// fails here, in every build and in CI. The fallback it guarded is still there and
+    /// still hands back the message whole - a rejected line must not end the run over a
+    /// library's formatting.
+    #[test]
+    fn a_serde_json_message_still_carries_its_position_the_way_we_cut_it() {
+        let e = serde_json::from_slice::<Value>(br#"{"a": }"#).expect_err("this is not JSON");
+        assert!(
+            e.to_string().contains(" at line "),
+            "serde_json no longer spells the position ` at line N column M`, so \
+             `split_position` is cutting nothing: {e}"
+        );
+
+        let (offset, message) = split_position(&e);
+        assert_eq!(
+            offset,
+            Some(e.column() - 1),
+            "the offset is not the 0-based column"
+        );
+        assert!(
+            !message.contains(" at line "),
+            "the position was left in the message and will be printed twice: {message}"
+        );
+    }
+
+    /// A rejected line, whole, through the front door: the message has a position and
+    /// does not repeat it.
+    #[test]
+    fn a_bad_line_still_reports_its_position() {
+        let e = parse_line(br#"{"a": }"#, 7).expect_err("this is not JSON");
+        assert_eq!(e.line, 7);
+        let text = e.kind.to_string();
+        assert!(
+            !text.contains(" at line "),
+            "the rejection repeats serde_json's position: {text}"
+        );
+    }
+
+    /// Distinct paths cannot render alike, which is what makes the key set a set.
+    ///
+    /// `{"a.b": 1, "a": {"b": 2}}` is the pair that would collide if the rendering were
+    /// not reversible: one is a key holding a dot, the other is a nested key. They come
+    /// back as `a.b` and `a\.b` - sorted, and `.` sorts before `\` - so the line has two
+    /// keys rather than one repeated.
+    #[test]
+    fn a_dotted_key_and_a_nested_one_do_not_collide() {
+        let parsed = parse_line(br#"{"a.b": 1, "a": {"b": 2}}"#, 1).expect("this is JSON");
+        assert_eq!(parsed.keys, vec!["a.b".to_string(), "a\\.b".to_string()]);
+        assert_eq!(duplicate_key(&parsed.keys), None);
+    }
+
+    /// And if it ever did collide, the line is refused rather than filed under a
+    /// fingerprint that is not its shape.
+    ///
+    /// Driven through `duplicate_key` because `parse_bytes` cannot be made to produce a
+    /// duplicate - that is the property above. What is being checked is that the guard
+    /// finds one, in a release build, where the debug assertion found nothing.
+    #[test]
+    fn a_repeated_key_is_found_in_every_build() {
+        let keys = ["a".to_string(), "b".to_string(), "b".to_string()];
+        assert_eq!(duplicate_key(&keys), Some(&"b".to_string()));
+
+        let kind = DetectorErrorKind::DuplicateKey {
+            key: "b".to_string(),
+        };
+        assert!(
+            kind.to_string().contains("`b`"),
+            "the rejection does not name the key: {kind}"
+        );
+    }
 }

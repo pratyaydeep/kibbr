@@ -114,6 +114,12 @@ pub enum StoreError {
     },
     #[error(transparent)]
     Segment(#[from] segment::SegError),
+    /// A row group with no segment to go in. Not reachable: the write path opens one
+    /// where there is none, and nothing between the two can close it. Here because it was
+    /// a panic on an unreachable branch, and an assumption that turns out to be wrong
+    /// should cost one flush rather than the process.
+    #[error("leaf {template_id}: partition {partition} has rows to write and no open segment")]
+    NoOpenSegment { template_id: u64, partition: String },
     /// One file per (template, day, column), which this build does not read. There is no
     /// upgrade path and no migration: the path is named and the process exits non-zero,
     /// rather than reading bytes it would have to guess the meaning of.
@@ -144,6 +150,12 @@ pub struct Scan {
     /// Bytes of column chunk read off disk. Column pruning shows up here and nowhere
     /// else: naming two columns of eight reads two chunks.
     pub bytes_read: u64,
+    /// Segment **files** opened and read - not leaves, and not row groups.
+    ///
+    /// `files_opened` on a query's `meta` used to count leaves and reported 870 where
+    /// 16,694 segment files were read. A file whose every row group the
+    /// window pruned is not counted: nothing in it was read.
+    pub files_read: u64,
     /// Rows examined, including those the time window and the predicates rejected.
     ///
     /// A partition the disk store skipped unread contributes nothing, which is the honest
@@ -152,6 +164,110 @@ pub struct Scan {
     pub scanned: u64,
     /// Rows that passed everything.
     pub matched: u64,
+}
+
+// ── The cap on open segment files ──────────────────────────────────────────────────
+
+/// How many segment files may be open for writing at once, across every leaf.
+///
+/// A segment stays open after its row group closes, so on the as-built store the count is
+/// "partitions that have taken a row and not been sealed" - one per (template, day), with
+/// nothing bounding it. 20,000 generated lines are 823 templates over 31 days, which is
+/// about 20,000 of them; the operating system's descriptor limit arrives long before
+/// that, and what arrives with it is a flush that fails, a half-created file that makes
+/// every retry fail with `File exists`, and rows that never leave memory.
+pub const DEFAULT_MAX_OPEN_SEGMENTS: usize = 512;
+
+/// One open segment file: the leaf, and the partition inside it.
+///
+/// `day` is `Some(days since the epoch)` or `None` for the undated partition - the two
+/// shapes the disk store has. `Copy`, because the most recently written segment moves to
+/// the back of the order once per row group and an allocation there would buy nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SegmentKey {
+    pub template_id: u64,
+    pub day: Option<i64>,
+}
+
+/// The open segments, in least recently written order, and the cap on how many there may
+/// be.
+///
+/// **It counts and orders; it does not seal.** Sealing needs `&mut` on the leaf that owns
+/// the segment, and a registry that held the writers would have to hand the sealed index
+/// back to that leaf for a query to find its rows. So the registry answers "which leaf
+/// holds the oldest one" and the two callers that can act on that do:
+///
+/// - a leaf about to open a segment seals **its own** oldest first, which is always
+///   possible once it has one and is what keeps a single leaf's flush from overshooting
+///   while it works through thirty-one days;
+/// - `StoreManager::flush_all` reaps between leaves, where it has `&mut` on all of them.
+///
+/// A `Vec` and a linear scan rather than a heap: it holds at most `max` entries and is
+/// touched once per row group, not once per row.
+pub struct OpenSegments {
+    max: usize,
+    order: std::sync::Mutex<Vec<SegmentKey>>,
+}
+
+impl OpenSegments {
+    pub fn new(max: usize) -> Self {
+        Self {
+            max,
+            order: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn max(&self) -> usize {
+        self.max
+    }
+
+    /// A poisoned lock is recovered from rather than propagated, as every other lock in
+    /// this crate is: the contents are an ordering hint, and there is no torn state in a
+    /// `Vec` of `Copy` keys to inherit.
+    fn order(&self) -> std::sync::MutexGuard<'_, Vec<SegmentKey>> {
+        self.order.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn len(&self) -> usize {
+        self.order().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Would one more pass the cap?
+    pub fn full(&self) -> bool {
+        self.len() >= self.max
+    }
+
+    /// Record a write to this segment - the first one, which opened it, or a later one.
+    /// Either way it becomes the most recently written.
+    pub fn wrote(&self, key: SegmentKey) {
+        let mut order = self.order();
+        order.retain(|held| *held != key);
+        order.push(key);
+    }
+
+    pub fn closed(&self, key: SegmentKey) {
+        self.order().retain(|held| *held != key);
+    }
+
+    /// The least recently written open segment.
+    pub fn oldest(&self) -> Option<SegmentKey> {
+        self.order().first().copied()
+    }
+
+    /// The least recently written open segment belonging to one leaf.
+    ///
+    /// Which is also the global victim whenever the global victim is that leaf's: the
+    /// leaf's own order is a subsequence of this one.
+    pub fn oldest_of(&self, template_id: u64) -> Option<SegmentKey> {
+        self.order()
+            .iter()
+            .find(|key| key.template_id == template_id)
+            .copied()
+    }
 }
 
 /// What a flush is being asked to do.
@@ -272,6 +388,21 @@ pub trait LeafStore: Send + Sync {
     /// Write the buffer out. Synchronous, and called by whoever owns the clock.
     fn flush(&mut self, kind: FlushKind) -> Result<Flushed, StoreError>;
 
+    /// Seal this leaf's least recently written open segment, and say whether there was
+    /// one. What `StoreManager` calls to get back under `OpenSegments::max`.
+    ///
+    /// **Always safe**, which is what makes the cap a cap rather than a refusal: the next
+    /// row for that partition opens the next segment number, and a sealed file is a
+    /// complete file. The cost is one more file, paid where the alternative is a
+    /// descriptor the process does not have.
+    ///
+    /// Defaulted to "there was none" for a store that holds no files. That is not a
+    /// guess about a second implementation - the memory store is the second
+    /// implementation, and it has no segments to seal.
+    fn seal_lru(&mut self) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
     /// Hand every surviving row to `v`. The one place filtering happens, so the count,
     /// fetch and group-by paths cannot drift.
     fn visit(
@@ -319,6 +450,66 @@ pub trait Store: Send + Sync {
     /// For the banner and `/stats`.
     fn kind(&self) -> &'static str;
     fn base_path(&self) -> Option<&Path>;
+    /// The registry every leaf this backend makes shares. A backend that holds no files
+    /// hands back an empty one rather than an `Option`, so the manager has one thing to
+    /// read rather than two cases.
+    fn open_segments(&self) -> std::sync::Arc<OpenSegments> {
+        std::sync::Arc::new(OpenSegments::new(0))
+    }
+}
+
+// ── Whether the store can write at all ─────────────────────────────────────────────
+
+/// Whether the last flush tick could write, and what stopped it if it could not.
+///
+/// **Read without the store lock, deliberately.** `/health` is what an orchestrator uses
+/// to decide whether to kill the process, and a health check that queues behind a long
+/// flush reports the wrong thing at exactly the moment it matters. So this is an atomic
+/// and a short-lived mutex beside the registry rather than a field inside it.
+///
+/// Until the write-ahead log lands, a `200` for a line the store cannot write is the
+/// lie: measured on a full disk, every batch got a `200`, the shutdown log said
+/// "90,000 rows written", and after a restart `COUNT LOG {}` was 0. While this says
+/// degraded, `/ingest` answers `503` instead.
+#[derive(Debug, Default)]
+pub struct WriteHealth {
+    degraded: std::sync::atomic::AtomicBool,
+    /// The last error a write failed with. Replaced rather than kept, because what a
+    /// caller being refused wants is why *now*.
+    last_error: std::sync::Mutex<Option<String>>,
+}
+
+impl WriteHealth {
+    pub fn is_degraded(&self) -> bool {
+        self.degraded.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn set_error(&self, detail: String) {
+        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(detail);
+    }
+
+    /// A write failed outside a flush tick - a leaf that could not be opened, a reap that
+    /// could not seal. Set here and cleared only by a tick, so the clearing rule stays in
+    /// one place.
+    fn degrade(&self) {
+        self.degraded
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// What one flush tick did to the verdict. A tick that wrote everything clears it;
+    /// one that could not sets it. The error text is left alone on a clearing tick, so
+    /// `/stats` still says what the last failure was after the disk comes back.
+    fn tick(&self, failed: usize) {
+        self.degraded
+            .store(failed > 0, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 // ── The registry ───────────────────────────────────────────────────────────────────
@@ -337,16 +528,21 @@ pub struct StoreManager {
     backend: Box<dyn Store>,
     stores: BTreeMap<u64, Box<dyn LeafStore>>,
     write_failures: u64,
-    last_write_error: Option<String>,
+    /// The open segment files, shared with every leaf the backend makes. The manager is
+    /// the only thing that can seal one leaf's segment to make room for another's.
+    open_segments: std::sync::Arc<OpenSegments>,
+    health: std::sync::Arc<WriteHealth>,
 }
 
 impl StoreManager {
     pub fn new(backend: Box<dyn Store>) -> Self {
+        let open_segments = backend.open_segments();
         Self {
             backend,
             stores: BTreeMap::new(),
             write_failures: 0,
-            last_write_error: None,
+            open_segments,
+            health: std::sync::Arc::new(WriteHealth::default()),
         }
     }
 
@@ -354,8 +550,26 @@ impl StoreManager {
         Self::new(Box::new(MemoryStore::new()))
     }
 
-    pub fn disk(base: std::path::PathBuf, limits: RowGroupLimits) -> Result<Self, StoreError> {
-        Ok(Self::new(Box::new(DiskStore::new(base, limits)?)))
+    pub fn disk(
+        base: std::path::PathBuf,
+        limits: RowGroupLimits,
+        max_open_segments: usize,
+    ) -> Result<Self, StoreError> {
+        Ok(Self::new(Box::new(DiskStore::new(
+            base,
+            limits,
+            max_open_segments,
+        )?)))
+    }
+
+    /// Shared out at startup and read from `/health` and `/ingest` without this lock.
+    pub fn health(&self) -> std::sync::Arc<WriteHealth> {
+        std::sync::Arc::clone(&self.health)
+    }
+
+    /// Segment files open for writing, and the cap they are held under.
+    pub fn open_segments(&self) -> (usize, usize) {
+        (self.open_segments.len(), self.open_segments.max())
     }
 
     /// Open the store on first write, then buffer the row.
@@ -405,14 +619,34 @@ impl StoreManager {
         Ok(())
     }
 
+    /// Count a failure and record what it was.
+    ///
+    /// **Reported once, recorded every time.** A disk that has gone away fails on every
+    /// line, and a message per line is how a log becomes unreadable at the moment it
+    /// matters - so the `error!` is the first one only. The *stored* string is the latest,
+    /// because it is what a caller being refused with a 503 is shown, and what that caller
+    /// wants is why now.
+    ///
+    /// **It also marks the store degraded**, and not only the flush tick does.
+    ///
+    /// The rule is written around the tick because that is where a full disk shows up
+    /// first, but a leaf that cannot even be *opened* - a directory `create_dir_all` could
+    /// not make - is a store that cannot write by any reading, and `append` drops that row
+    /// on the floor. Without this, a disk that fills before a template's first line
+    /// answers `200` for rows that were never anywhere, which is the exact lie the
+    /// refusal exists to stop.
+    ///
+    /// The clearing rule is still the tick's: the next pass that writes everything clears
+    /// it. If the disk is still bad the next body fails again and sets it again, so the
+    /// worst case is one refused-then-retried body per flush interval rather than a
+    /// server stuck refusing after the disk came back.
     fn note_failure(&mut self, e: &StoreError) {
-        self.write_failures += 1;
-        // Once, on the first failure. A disk that has gone away fails on every line, and
-        // a message per line is how a log becomes unreadable at the moment it matters.
-        if self.last_write_error.is_none() {
+        if self.write_failures == 0 {
             crate::error::report(e);
-            self.last_write_error = Some(crate::error::chain(e));
         }
+        self.write_failures += 1;
+        self.health.set_error(crate::error::chain(e));
+        self.health.degrade();
     }
 
     pub fn get(&self, template_id: u64) -> Result<&dyn LeafStore, StoreError> {
@@ -426,25 +660,40 @@ impl StoreManager {
         self.stores.get(&template_id).map(AsRef::as_ref)
     }
 
-    /// Write every open store's buffer.
+    /// Write every open store's buffer, and get back under the open-segment cap.
     ///
     /// Never returns `Err`: one leaf failing is collected into the summary and the rest
     /// are still written.
+    ///
+    /// **Iterated over a snapshot of the ids rather than over the map.** Reaping between
+    /// leaves needs `&mut` on a leaf other than the one just flushed, which a
+    /// `&mut self.stores` iterator would not allow - and reaping only at the end would let
+    /// a pass of five hundred leaves overshoot the cap by five hundred before anything
+    /// noticed.
     pub fn flush_all(&mut self, kind: FlushKind) -> FlushSummary {
         let mut summary = FlushSummary::default();
         let mut failures = Vec::new();
-        for (id, store) in &mut self.stores {
-            match store.flush(kind) {
-                Ok(done) => {
-                    summary.rows += done.rows;
-                    summary.partitions += done.partitions;
-                    summary.bytes += done.bytes;
-                }
-                Err(e) => {
-                    summary.failed += 1;
-                    failures.push((*id, e));
+        // Counted apart from `summary.failed`, which is leaves whose flush failed and is
+        // what the shutdown reports rows against. A reap that could not seal is still a
+        // store that cannot write, so it reaches the verdict below - without that, a pass
+        // whose only failure was a reap would end by *clearing* `degraded`.
+        let mut reap_failures = 0usize;
+        let ids: Vec<u64> = self.stores.keys().copied().collect();
+        for id in ids {
+            if let Some(store) = self.stores.get_mut(&id) {
+                match store.flush(kind) {
+                    Ok(done) => {
+                        summary.rows += done.rows;
+                        summary.partitions += done.partitions;
+                        summary.bytes += done.bytes;
+                    }
+                    Err(e) => {
+                        summary.failed += 1;
+                        failures.push((id, e));
+                    }
                 }
             }
+            reap_failures += self.reap_open_segments();
         }
         for (id, e) in &failures {
             crate::error::report(e);
@@ -452,11 +701,54 @@ impl StoreManager {
         }
         if let Some((_, e)) = failures.first() {
             self.write_failures += failures.len() as u64;
-            if self.last_write_error.is_none() {
-                self.last_write_error = Some(crate::error::chain(e));
+            self.health.set_error(crate::error::chain(e));
+        }
+        // The verdict `/health` and `/ingest` read. A final flush sets it too: a shutdown
+        // that could not write is degraded for whatever is left of the process.
+        self.health.tick(summary.failed + reap_failures);
+        summary
+    }
+
+    /// Seal least recently written open segments until the count is back under the cap.
+    ///
+    /// **A failed seal does not stop this, and cannot make it spin.** Every path through
+    /// `seal_lru` takes the entry out of the registry - a seal that fails has still closed
+    /// the file - so each turn removes one and the loop is bounded by the overshoot. The
+    /// earlier shape returned on the first error, which left the count above the cap and
+    /// let the rest of the pass add one more per leaf, unbounded, which is the descriptor
+    /// exhaustion the cap exists to prevent.
+    ///
+    /// Each failure is counted once, where it happened, and not once per leaf afterwards.
+    /// The count comes back so the pass's verdict includes it: a reap that could not seal
+    /// is a store that cannot write, and a pass that only failed there must not end by
+    /// clearing `degraded`.
+    fn reap_open_segments(&mut self) -> usize {
+        let mut failed = 0;
+        while self.open_segments.len() > self.open_segments.max() {
+            let Some(key) = self.open_segments.oldest() else {
+                return failed;
+            };
+            let Some(store) = self.stores.get_mut(&key.template_id) else {
+                // A key for a leaf the registry no longer has. Dropped rather than left
+                // to be chosen again on every pass.
+                self.open_segments.closed(key);
+                continue;
+            };
+            match store.seal_lru() {
+                Ok(_) => {}
+                Err(e) => {
+                    failed += 1;
+                    self.note_failure(&e);
+                }
+            }
+            // Whatever happened, that entry has to be gone or this loop is the spin the
+            // early return was avoiding. `seal_lru` clears it on every path; this is the
+            // belt for a future implementation that forgets to.
+            if self.open_segments.oldest() == Some(key) {
+                self.open_segments.closed(key);
             }
         }
-        summary
+        failed
     }
 
     pub fn open(&self) -> usize {
@@ -497,8 +789,12 @@ impl StoreManager {
         self.write_failures
     }
 
-    pub fn last_write_error(&self) -> Option<&str> {
-        self.last_write_error.as_deref()
+    pub fn last_write_error(&self) -> Option<String> {
+        self.health.last_error()
+    }
+
+    pub fn is_degraded(&self) -> bool {
+        self.health.is_degraded()
     }
 }
 
