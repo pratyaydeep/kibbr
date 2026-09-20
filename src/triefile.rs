@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::trie::{ColumnDef, LeafMeta, Node, NodeType, Trie, ROOT_LABEL};
-use crate::types::ColumnType;
+use crate::types::{ColumnType, TimeSource};
 
 /// How deep a file may describe before it is refused.
 ///
@@ -114,6 +114,11 @@ struct LeafMetaRecord {
     storage_path: String,
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
+    /// `column:<name>` or `arrival`. Absent in a snapshot from before M5.6b, in
+    /// which case the source is derived from the column types with the default list -
+    /// the same rule the catalog applies to a record-less template.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    time_source: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -218,6 +223,7 @@ fn collect(node: &Arc<Node>, out: &mut Vec<NodeRecord>, depth: usize) -> Result<
             storage_path: meta.storage_path.clone(),
             first_seen: meta.first_seen,
             last_seen: meta.last_seen,
+            time_source: Some(meta.time_source.as_record()),
         }),
         children: children
             .iter()
@@ -364,6 +370,19 @@ fn build(file: TrieFile, data_dir: &str) -> Result<Trie, TrieFileError> {
             storage_path: meta.storage_path.clone(),
             first_seen: meta.first_seen,
             last_seen: meta.last_seen,
+            time_source: meta
+                .time_source
+                .as_deref()
+                .and_then(TimeSource::from_record)
+                .unwrap_or_else(|| {
+                    let defaults = crate::config::Schema::default().time_columns;
+                    TimeSource::choose(&defaults, |name| {
+                        meta.columns
+                            .iter()
+                            .find(|c| c.name == name)
+                            .and_then(|c| c.col_type)
+                    })
+                }),
         });
         // The two halves of "this is a leaf" must agree, and either half alone is
         // recoverable: a leaf with no metadata has no template id and so no store to

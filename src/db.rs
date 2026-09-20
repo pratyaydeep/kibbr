@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use crate::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::flatten::{parse_line, ParsedLog};
 use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
-use crate::store::{Row, StoreManager};
+use crate::store::{Row, StoreManager, RECEIVED_AT_COLUMN};
 use crate::trie::{Trie, TrieError};
 
 /// How a line handed to a `read_lines` sink can fail to land.
@@ -124,15 +124,27 @@ pub fn ingest_line(
     let Some(stores) = stores else {
         return Ok(());
     };
-    let id = leaf
-        .leaf_meta
-        .read()
-        .ok()
-        .and_then(|slot| slot.as_ref().map(|meta| meta.template_id));
+    let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
+        slot.as_ref()
+            .map(|meta| (meta.template_id, meta.time_source.clone()))
+    });
     // `ingest` just wrote the meta, so `None` is a poisoned lock and nothing else.
     // Dropping the row is the only option left and it is counted nowhere.
-    if let Some(id) = id {
-        stores.append(id, row_of(parsed), &dt_forms_of(parsed));
+    if let Some((id, source)) = placed {
+        let mut row = row_of(parsed);
+        let mut forms = dt_forms_of(parsed);
+        // The effective time: the time column where it holds an instant, and
+        // otherwise the arrival time - stored in the system column, **after**
+        // fingerprinting, so it is not a key and makes no template. A row with its own
+        // time does not get the column.
+        if crate::store::ts_of(&row, source.column()).is_none() {
+            row.insert(
+                RECEIVED_AT_COLUMN.to_string(),
+                ColValue::Datetime(crate::store::nanos_of(crate::query::system_time(now))),
+            );
+            forms.push((RECEIVED_AT_COLUMN.to_string(), DtForm::Rfc3339));
+        }
+        stores.append(id, source.column(), row, &forms);
     }
     Ok(())
 }
@@ -146,12 +158,21 @@ pub fn ingest_line(
 /// file per invocation, so there is nothing for it to persist and nothing it should read
 /// back. A `triedb query` that picked up a `trie.json` would answer about rows its input
 /// file does not contain.
-pub fn load<R: BufRead>(input: R, with_rows: bool) -> Result<Db, CliError> {
-    let trie = Trie::new();
+///
+/// `now` is every line's arrival time, one instant for the whole file: the CLI has no
+/// per-line clock worth the name, and the oracle it is compared against has to be
+/// able to give each line the same arrival time this did.
+pub fn load<R: BufRead>(
+    input: R,
+    with_rows: bool,
+    now: DateTime<Utc>,
+    schema: &crate::config::Schema,
+) -> Result<Db, CliError> {
+    let trie = Trie::new().with_time_columns(schema.time_columns.clone());
     let mut stores = StoreManager::memory();
     let stats = read_lines(
         input,
-        &mut |parsed| ingest_line(&trie, with_rows.then_some(&mut stores), &parsed, Utc::now()),
+        &mut |parsed| ingest_line(&trie, with_rows.then_some(&mut stores), &parsed, now),
         &mut report_rejected,
     )?;
     Ok(Db {

@@ -122,7 +122,7 @@ impl ColValue {
 /// Leading zeros are lost in every case - `0012345678` parses to the same nanoseconds as
 /// `12345678` and no tag brings it back. That loss happens at parse time, which is why
 /// this has to travel from the ladder rather than be worked out at write time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DtForm {
     /// Rows in this partition came from more than one rung. Promotion falls back to
     /// canonical RFC 3339.
@@ -204,6 +204,58 @@ impl Typed {
         match self.ty {
             Some(t) => t.as_str(),
             None => "Null",
+        }
+    }
+}
+
+/// Where a template's rows get their time from.
+///
+/// Decided once, when the template is created, from the first name on `time_columns`
+/// that is one of its keys and whose value on that line inferred as `Datetime`; `Arrival`
+/// when none qualifies. Recorded in the catalog and never changed, so a restart partitions
+/// and orders the same rows the same way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimeSource {
+    Column(String),
+    Arrival,
+}
+
+impl TimeSource {
+    /// The catalog's spelling: `column:<name>` or `arrival`.
+    pub fn as_record(&self) -> String {
+        match self {
+            TimeSource::Column(name) => format!("column:{name}"),
+            TimeSource::Arrival => "arrival".to_string(),
+        }
+    }
+
+    /// `as_record` read back. `None` for a spelling this build does not know.
+    pub fn from_record(text: &str) -> Option<Self> {
+        match text {
+            "arrival" => Some(TimeSource::Arrival),
+            _ => text
+                .strip_prefix("column:")
+                .map(|n| TimeSource::Column(n.to_string())),
+        }
+    }
+
+    /// The rule, over the types a line (or a template) holds per key.
+    pub fn choose<'a>(
+        time_columns: &[String],
+        type_of: impl Fn(&str) -> Option<ColumnType> + 'a,
+    ) -> Self {
+        time_columns
+            .iter()
+            .find(|name| type_of(name) == Some(ColumnType::Datetime))
+            .map_or(TimeSource::Arrival, |name| TimeSource::Column(name.clone()))
+    }
+
+    /// The column the store partitions, orders and windows on: the named one, or the
+    /// system column a row on arrival time carries.
+    pub fn column(&self) -> &str {
+        match self {
+            TimeSource::Column(name) => name,
+            TimeSource::Arrival => crate::store::RECEIVED_AT_COLUMN,
         }
     }
 }

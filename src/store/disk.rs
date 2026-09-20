@@ -5,7 +5,8 @@
 //! ├── _leaf.json          template_id, the column the days were cut on, the key set
 //! ├── 2024-01-15/         seg_000001.col, seg_000002.col …
 //! ├── 2024-01-16/         seg_000001.col
-//! └── undated/            rows whose timestamp column is not a readable Datetime
+//! └── undated/            rows from before M5.6b whose time column held no Datetime;
+//!                         read, never written to
 //! ```
 //!
 //! A partition is a **directory of numbered segments**, not a single file. Lexical name
@@ -29,6 +30,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate};
@@ -36,14 +38,16 @@ use serde::{Deserialize, Serialize};
 
 use super::segment::{self, ColKind, ColumnSpec, SegmentIndex, SegmentWriter};
 use super::{
-    in_window, ts_of, value_bytes, DtForms, FlushKind, Flushed, LeafStore, Predicate, Row,
-    RowGroupLimits, Scan, ScanOptions, Store, StoreError, Visitor, DEFAULT_TS_COLUMN,
+    effective_ts, in_window, render_text, value_bytes, DtForms, FlushKind, Flushed, LeafStore,
+    Predicate, Row, RowGroupLimits, Scan, ScanOptions, Store, StoreError, Visitor,
+    DEFAULT_TS_COLUMN, RECEIVED_AT_COLUMN,
 };
 use crate::types::{ColValue, DtForm};
 
 const DAY_NS: i64 = 86_400 * 1_000_000_000;
 const LEAF_FILE: &str = "_leaf.json";
-/// The partition holding rows whose timestamp column is not a readable `Datetime`.
+/// The partition that held rows whose time column was not a readable `Datetime`, before
+/// every row had a time. Still opened and read; nothing new is written to it.
 const UNDATED: &str = "undated";
 /// The manifest the per-column layout wrote. Its presence is how that layout is
 /// recognised and refused; see `refuse_legacy_layout`.
@@ -123,9 +127,14 @@ impl Store for DiskStore {
     /// That field is persisted as an absolute path, so a restart under a different data
     /// directory would send every leaf back to the old one. It stays in `trie.json` as
     /// the documentation the format asks for; the authority is the configured base.
-    fn open(&self, template_id: u64) -> Result<Box<dyn LeafStore>, StoreError> {
+    fn open(&self, template_id: u64, time_column: &str) -> Result<Box<dyn LeafStore>, StoreError> {
         let dir = self.base.join(format!("leaf_{template_id}"));
-        Ok(Box::new(DiskLeaf::open(template_id, dir, self.limits)?))
+        Ok(Box::new(DiskLeaf::open(
+            template_id,
+            dir,
+            self.limits,
+            time_column,
+        )?))
     }
 
     fn kind(&self) -> &'static str {
@@ -250,11 +259,18 @@ impl Buffered {
     }
 
     /// The row's columns, and what each one claims about its type.
-    fn shape(&self) -> BTreeMap<&str, (Option<ColKind>, Option<DtForm>)> {
+    ///
+    /// A column in `text` claims `Str` whatever the value is: the partition stores it as
+    /// text from the moment a second date form arrived, and a `Datetime` going in
+    /// is rendered through the row's own rung on the way.
+    fn shape(&self, text: &BTreeSet<String>) -> BTreeMap<&str, (Option<ColKind>, Option<DtForm>)> {
         self.row
             .iter()
             .map(|(name, value)| {
-                let kind = ColKind::of(value);
+                let mut kind = ColKind::of(value);
+                if kind.is_some() && text.contains(name) {
+                    kind = Some(ColKind::Str);
+                }
                 let form = (kind == Some(ColKind::Dt))
                     .then(|| self.form_of(name))
                     .flatten();
@@ -282,6 +298,12 @@ struct Partition {
     min_ts: Option<i64>,
     max_ts: Option<i64>,
     bytes: u64,
+    /// Datetime columns this partition stores as text from now on, because a second date
+    /// form arrived. The first change seals the open segment once; after that a
+    /// value of either form goes into a `Str` chunk in the form it arrived in, and the
+    /// column never seals a segment again. Rebuilt on open from the sealed segments, so a
+    /// restart does not pay the one seal a second time.
+    text: BTreeSet<String>,
 }
 
 impl Default for Partition {
@@ -298,6 +320,7 @@ impl Default for Partition {
             min_ts: None,
             max_ts: None,
             bytes: 0,
+            text: BTreeSet::new(),
         }
     }
 }
@@ -347,13 +370,20 @@ pub struct DiskLeaf {
     keys_on_disk: bool,
     parts: BTreeMap<PartKey, Partition>,
     buffered: u64,
+    /// Segments whose `mixed` chunk has been warned about, so a query on a widened column
+    /// says it once per file and not once per row group per query.
+    mixed_warned: Mutex<BTreeSet<PathBuf>>,
 }
 
 impl DiskLeaf {
+    /// `time_column` is the template's time column, which is what the days are
+    /// cut on. A `_leaf.json` from before the time source recorded `ts` whatever the
+    /// template held; where it disagrees it is rewritten at the next flush.
     pub fn open(
         template_id: u64,
         dir: PathBuf,
         limits: RowGroupLimits,
+        time_column: &str,
     ) -> Result<Self, StoreError> {
         let io = |source| StoreError::Io {
             template_id,
@@ -382,8 +412,16 @@ impl DiskLeaf {
             .as_ref()
             .map(|f| f.keys.iter().cloned().collect())
             .unwrap_or_default();
-        let partition_column =
-            recorded.map_or_else(|| DEFAULT_TS_COLUMN.to_string(), |f| f.partition_column);
+        let recorded_column = recorded.map(|f| f.partition_column);
+        if let Some(was) = recorded_column.as_deref().filter(|c| *c != time_column) {
+            eprintln!(
+                "triedb: WARN {}: partitions were cut on `{was}`, the template's time \
+                 column is `{time_column}`; rows already on disk are pruned against the \
+                 old column and new ones are cut on the new one",
+                leaf_path.display()
+            );
+        }
+        let partition_column = time_column.to_string();
 
         let mut parts: BTreeMap<PartKey, Partition> = BTreeMap::new();
         for entry in fs::read_dir(&dir).map_err(io)? {
@@ -404,7 +442,9 @@ impl DiskLeaf {
         // and an empty key list on disk is worse than none: it is the file the M5 bug
         // was found through, saying a template has no columns. The first flush with keys
         // writes it; until then the catalog is the record of the template.
-        let keys_on_disk = recorded_keys_match(&leaf_path, &keys);
+        let keys_on_disk = recorded_keys_match(&leaf_path, &keys)
+            && recorded_column.as_deref() == Some(time_column);
+        let _ = DEFAULT_TS_COLUMN;
         Ok(Self {
             template_id,
             dir,
@@ -414,6 +454,7 @@ impl DiskLeaf {
             keys_on_disk,
             parts,
             buffered: 0,
+            mixed_warned: Mutex::new(BTreeSet::new()),
         })
     }
 
@@ -471,7 +512,7 @@ impl DiskLeaf {
         let buffered = part
             .buffer
             .iter()
-            .filter_map(|b| ts_of(&b.row, &self.partition_column))
+            .filter_map(|b| effective_ts(&b.row, &self.partition_column))
             .max();
         match (part.max_ts, buffered) {
             (Some(a), Some(b)) => Some(a.max(b)),
@@ -484,7 +525,7 @@ impl DiskLeaf {
         let buffered = part
             .buffer
             .iter()
-            .filter_map(|b| ts_of(&b.row, &self.partition_column))
+            .filter_map(|b| effective_ts(&b.row, &self.partition_column))
             .min();
         match (part.min_ts, buffered) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -539,7 +580,35 @@ fn open_partition(template_id: u64, dir: &Path) -> Result<Partition, StoreError>
         }
         part.sealed.push(index);
     }
+    part.text = text_columns_of(&part.sealed);
     Ok(part)
+}
+
+/// The columns the sealed segments show to have been stored as text after holding a
+/// `Datetime`: a `Dt` chunk in one segment and a `Str` in a later one, two `dt_form`s
+/// across segments, or a `mixed` chunk. Any of those is a column that has already paid
+/// its one seal, and the next segment stores it as text without another.
+fn text_columns_of(sealed: &[SegmentIndex]) -> BTreeSet<String> {
+    let mut seen: BTreeMap<&str, (bool, bool, BTreeSet<Option<DtForm>>)> = BTreeMap::new();
+    for index in sealed {
+        for column in &index.columns {
+            let entry = seen.entry(column.name.as_str()).or_default();
+            match column.kind {
+                ColKind::Dt => {
+                    entry.0 = true;
+                    entry.2.insert(column.dt_form);
+                }
+                ColKind::Str => entry.1 = true,
+                _ => {}
+            }
+        }
+    }
+    seen.into_iter()
+        .filter(|(_, (dt, text, forms))| {
+            *dt && (*text || forms.len() > 1 || forms.contains(&Some(DtForm::Mixed)))
+        })
+        .map(|(name, _)| name.to_string())
+        .collect()
 }
 
 // ── Writing ────────────────────────────────────────────────────────────────────────
@@ -547,34 +616,57 @@ fn open_partition(template_id: u64, dir: &Path) -> Result<Partition, StoreError>
 /// The schema one run of rows needs: every column, its type, and its datetime rung.
 type Shape = BTreeMap<String, (Option<ColKind>, Option<DtForm>)>;
 
+/// Why a row cannot go into the segment being built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Misfit {
+    /// The column set or a column's type differs. Seals the segment.
+    Shape,
+    /// A second date form for a `Datetime` column. Seals the segment **once**: from then
+    /// on the partition stores the column as text.
+    DateForm(String),
+}
+
 /// Can `row` go into a segment whose columns are `spec`?
 ///
 /// Three ways it cannot, and each one seals the segment:
 ///
-/// - **The column set differs.** The segment's column order is fixed.
+/// - **The column set differs.** The segment's column order is fixed. The one exception
+///   is the system column: a row without it fits a segment that has it, as a
+///   null cell, so a template whose time column occasionally fails to parse does not
+///   seal on every such row.
 /// - **A column's type would widen.** The footer names one type per column for the whole
 ///   segment, so a wider value cannot go in. A *narrower* one can, coerced up - which is
 ///   what stops a column that has widened once from sealing on every row after it.
 /// - **A datetime column's rung changes.** `dt_form` lives in the row group and in the
-///   footer and the two must agree, so two rungs cannot share a chunk.
-fn row_fits(spec: &[ColumnSpec], row: &Buffered) -> bool {
-    let shape = row.shape();
-    if shape.len() != spec.len() {
-        return false;
+///   footer and the two must agree, so two rungs cannot share a chunk. Reported apart
+///   from the other two, because the caller's answer is different: seal once, then text.
+fn row_fits(spec: &[ColumnSpec], row: &Buffered, text: &BTreeSet<String>) -> Result<(), Misfit> {
+    let shape = row.shape(text);
+    if shape
+        .keys()
+        .any(|name| !spec.iter().any(|c| c.name == *name))
+    {
+        return Err(Misfit::Shape);
     }
-    spec.iter().all(|column| {
+    for column in spec {
         let Some((kind, form)) = shape.get(column.name.as_str()) else {
-            return false;
+            if column.name == RECEIVED_AT_COLUMN {
+                continue;
+            }
+            return Err(Misfit::Shape);
         };
         let Some(kind) = kind else {
             // A null claims nothing about the column, here as in the type lattice.
-            return true;
+            continue;
         };
         if ColKind::join(column.kind, *kind) != column.kind {
-            return false;
+            return Err(Misfit::Shape);
         }
-        column.kind != ColKind::Dt || DtForm::merge(column.dt_form, *form) == column.dt_form
-    })
+        if column.kind == ColKind::Dt && DtForm::merge(column.dt_form, *form) != column.dt_form {
+            return Err(Misfit::DateForm(column.name.clone()));
+        }
+    }
+    Ok(())
 }
 
 /// Fold one row into the schema a new segment would need, or refuse it.
@@ -584,13 +676,21 @@ fn row_fits(spec: &[ColumnSpec], row: &Buffered) -> bool {
 /// that changes after a value has been seen ends the run, so the common shape (a column
 /// that is `I64` for a thousand rows and `Str` for one) writes a thousand ints and then a
 /// string, rather than a thousand ints rendered as text.
-fn extend_shape(shape: &mut Shape, row: &Buffered) -> bool {
-    let incoming = row.shape();
-    if !shape.is_empty() && shape.len() != incoming.len() {
-        return false;
-    }
-    if !shape.is_empty() && incoming.keys().any(|name| !shape.contains_key(*name)) {
-        return false;
+///
+/// The system column is the exception again: a run may gain it after its first row, as
+/// a `Datetime` column that the earlier rows leave null.
+fn extend_shape(shape: &mut Shape, row: &Buffered, text: &BTreeSet<String>) -> Result<(), Misfit> {
+    let incoming = row.shape(text);
+    if !shape.is_empty() {
+        let missing = shape
+            .keys()
+            .any(|name| name != RECEIVED_AT_COLUMN && !incoming.contains_key(name.as_str()));
+        let extra = incoming
+            .keys()
+            .any(|name| *name != RECEIVED_AT_COLUMN && !shape.contains_key(*name));
+        if missing || extra {
+            return Err(Misfit::Shape);
+        }
     }
     for (name, (kind, form)) in &incoming {
         let slot = shape.entry((*name).to_string()).or_insert((None, None));
@@ -598,30 +698,32 @@ fn extend_shape(shape: &mut Shape, row: &Buffered) -> bool {
             (_, None) => {}
             (None, Some(k)) => slot.0 = Some(*k),
             (Some(have), Some(k)) if have == *k => {}
-            (Some(_), Some(_)) => return false,
+            (Some(_), Some(_)) => return Err(Misfit::Shape),
         }
         if slot.0 == Some(ColKind::Dt) {
             match (slot.1, form) {
                 (_, None) => {}
                 (None, Some(f)) => slot.1 = Some(*f),
                 (Some(have), Some(f)) if have == *f => {}
-                (Some(_), Some(_)) => return false,
+                (Some(_), Some(_)) => return Err(Misfit::DateForm((*name).to_string())),
             }
         }
     }
-    true
+    Ok(())
 }
 
 /// A shape, as the columns a segment is created with. A column that has only ever held
 /// nulls is `Str`: every cell in it is absent, and the first real value would have said
-/// otherwise.
+/// otherwise. A `Datetime` column with no rung recorded is the system column, which the
+/// ingest path stamps as RFC 3339; nothing else reaches here without one, and `mixed` is
+/// no longer written.
 fn columns_of(shape: &Shape) -> Vec<ColumnSpec> {
     shape
         .iter()
         .map(|(name, (kind, form))| ColumnSpec {
             name: name.clone(),
             kind: kind.unwrap_or(ColKind::Str),
-            dt_form: (kind == &Some(ColKind::Dt)).then(|| form.unwrap_or(DtForm::Mixed)),
+            dt_form: (kind == &Some(ColKind::Dt)).then(|| form.unwrap_or(DtForm::Rfc3339)),
         })
         .collect()
 }
@@ -629,29 +731,58 @@ fn columns_of(shape: &Shape) -> Vec<ColumnSpec> {
 impl DiskLeaf {
     /// How many rows from the front of the buffer can go into the currently open segment,
     /// and what schema they need if there is none.
-    fn run_end(&self, part: &Partition) -> (usize, Option<Vec<ColumnSpec>>) {
+    ///
+    /// A second date form marks the column as text in the partition **before** the
+    /// answer is given, so the seal it causes is the only one that column ever causes:
+    /// the next segment is built with the column as `Str`, and every later row of either
+    /// form fits it.
+    fn run_end(part: &mut Partition) -> (usize, Option<Vec<ColumnSpec>>) {
         if let Some(open) = &part.open {
             let spec = open.columns();
-            let end = part
-                .buffer
-                .iter()
-                .position(|row| !row_fits(spec, row))
-                .unwrap_or(part.buffer.len());
+            let mut end = part.buffer.len();
+            for (at, row) in part.buffer.iter().enumerate() {
+                match row_fits(spec, row, &part.text) {
+                    Ok(()) => {}
+                    Err(Misfit::Shape) => {
+                        end = at;
+                        break;
+                    }
+                    Err(Misfit::DateForm(column)) => {
+                        part.text.insert(column);
+                        end = at;
+                        break;
+                    }
+                }
+            }
             // A row that does not fit the open segment seals it, and the next run
             // establishes its own schema - so a zero-length run is the signal to seal.
             return (end, None);
         }
-        let mut shape = Shape::new();
-        let mut end = 0;
-        for row in &part.buffer {
-            let mut next = shape.clone();
-            if !extend_shape(&mut next, row) {
-                break;
+        loop {
+            let mut shape = Shape::new();
+            let mut end = 0;
+            let mut again = false;
+            for row in &part.buffer {
+                let mut next = shape.clone();
+                match extend_shape(&mut next, row, &part.text) {
+                    Ok(()) => {}
+                    Err(Misfit::Shape) => break,
+                    // Marked and started over: the rows before this one go into a text
+                    // chunk too, so one segment holds both forms rather than two.
+                    Err(Misfit::DateForm(column)) => {
+                        part.text.insert(column);
+                        again = true;
+                        break;
+                    }
+                }
+                shape = next;
+                end += 1;
             }
-            shape = next;
-            end += 1;
+            if again {
+                continue;
+            }
+            return (end.max(1), Some(columns_of(&shape)));
         }
-        (end.max(1), Some(columns_of(&shape)))
     }
 
     /// Close row groups out of one partition's buffer until its thresholds are quiet.
@@ -688,11 +819,7 @@ impl DiskLeaf {
                 return Ok(());
             }
 
-            let (run, fresh) = match self.parts.get(&key) {
-                Some(part) => self.run_end(part),
-                None => return Ok(()),
-            };
-            let part = self.parts.entry(key).or_default();
+            let (run, fresh) = Self::run_end(part);
             if run == 0 {
                 // The next row needs a segment this one cannot hold - a column set
                 // change, a widening type, or a changed datetime rung. Sealing, which is
@@ -735,15 +862,19 @@ impl DiskLeaf {
                             // The rung travels with the *row*, not with the file:
                             // promoting a datetime to text has to invert the rung that
                             // read it, and a column holding two rungs would render one of
-                            // them wrong.
+                            // them wrong. This is also how a column the partition stores
+                            // as text after a second date form gets each value in
+                            // the form it arrived in.
                             segment::coerce(value, column.kind, row.form_of(&column.name))
                         })
                         .collect(),
                 );
             }
+            // Off the effective time, read from the buffered row's own instant -
+            // so the footer bounds are right even where the chunk it lands in is text.
             let mut span: Option<(i64, i64)> = None;
             for row in rows {
-                if let Some(ns) = ts_of(&row.row, &ts_column) {
+                if let Some(ns) = effective_ts(&row.row, &ts_column) {
                     span = Some(span.map_or((ns, ns), |(lo, hi)| (lo.min(ns), hi.max(ns))));
                 }
             }
@@ -824,7 +955,7 @@ impl DiskLeaf {
                     .filter(|at| {
                         let name = &index.columns[*at].name;
                         opts.columns.iter().any(|want| want == name)
-                            || (windowed && name == ts_name)
+                            || (windowed && (name == ts_name || name == RECEIVED_AT_COLUMN))
                     })
                     .collect()
             };
@@ -848,10 +979,24 @@ impl DiskLeaf {
                 let mut decoded: Vec<(&str, Vec<ColValue>)> = Vec::with_capacity(wanted.len());
                 for at in &wanted {
                     out.bytes_read += u64::from(group.chunks[*at].len);
-                    decoded.push((
-                        index.columns[*at].name.as_str(),
-                        index.values(handle, g, *at)?,
-                    ));
+                    let spec = &index.columns[*at];
+                    let mut values = index.values(handle, g, *at)?;
+                    // A `Dt` chunk in a column that is now text: every value is rendered
+                    // back through the chunk's own `dt_form` - ten digits for
+                    // `epoch_s`, thirteen for `epoch_ms`, RFC 3339 for `rfc3339`. A chunk
+                    // written as `mixed` before M5.6b holds bare nanoseconds and can only
+                    // print canonical RFC 3339, which is said once per segment.
+                    if spec.kind == ColKind::Dt && opts.text_columns.iter().any(|c| c == &spec.name)
+                    {
+                        if spec.dt_form == Some(DtForm::Mixed) {
+                            self.warn_mixed(&index.path, &spec.name);
+                        }
+                        for value in &mut values {
+                            *value =
+                                render_text(std::mem::replace(value, ColValue::Null), spec.dt_form);
+                        }
+                    }
+                    decoded.push((spec.name.as_str(), values));
                 }
 
                 let mut row: Row = Row::with_capacity(decoded.len());
@@ -861,7 +1006,7 @@ impl DiskLeaf {
                     for (name, values) in &decoded {
                         row.insert((*name).to_string(), values[r].clone());
                     }
-                    if windowed && !in_window(row.get(ts_name), since, until) {
+                    if windowed && !in_window(effective_ts(&row, ts_name), since, until) {
                         seq += 1;
                         continue;
                     }
@@ -883,18 +1028,35 @@ impl DiskLeaf {
         // *visibility on disk*, not visibility at all - an unwritten row is still in the
         // answer - and it goes after the segments' rows because that is the position it
         // will have once written.
+        let mut rendered = Row::new();
         for buffered in &part.buffer {
             out.scanned += 1;
-            if windowed && !in_window(buffered.row.get(ts_name), since, until) {
+            if windowed && !in_window(effective_ts(&buffered.row, ts_name), since, until) {
                 seq += 1;
                 continue;
             }
-            if !preds.iter().all(|pred| pred(&buffered.row)) {
+            // The same rendering the chunks get, through the row's own rung: a buffered
+            // row is in the answer exactly as it will be once written.
+            let row = if opts.text_columns.is_empty() {
+                &buffered.row
+            } else {
+                rendered.clear();
+                for (key, value) in &buffered.row {
+                    let value = if opts.text_columns.iter().any(|c| c == key) {
+                        render_text(value.clone(), buffered.form_of(key))
+                    } else {
+                        value.clone()
+                    };
+                    rendered.insert(key.clone(), value);
+                }
+                &rendered
+            };
+            if !preds.iter().all(|pred| pred(row)) {
                 seq += 1;
                 continue;
             }
             out.matched += 1;
-            v.row(&buffered.row, seq);
+            v.row(row, seq);
             seq += 1;
             if opts.limit != 0 && out.matched as usize >= opts.limit {
                 return Ok(false);
@@ -917,7 +1079,7 @@ impl LeafStore for DiskLeaf {
     /// timestamp are in the same day, so the same partition. Undated rows all tie, and all
     /// live in the one undated partition.
     fn append(&mut self, row: Row, forms: &DtForms) -> u64 {
-        let key = PartKey::of(ts_of(&row, &self.partition_column));
+        let key = PartKey::of(effective_ts(&row, &self.partition_column));
         for name in row.keys() {
             if !self.keys.contains(name) {
                 self.keys.insert(name.clone());
@@ -1089,6 +1251,22 @@ impl DiskLeaf {
         contained.then_some(total)
     }
 
+    /// Said once per segment file, whatever the query count.
+    fn warn_mixed(&self, path: &Path, column: &str) {
+        let Ok(mut warned) = self.mixed_warned.lock() else {
+            return;
+        };
+        if warned.insert(path.to_path_buf()) {
+            eprintln!(
+                "triedb: WARN leaf {}: {}: column `{column}` was written as `mixed` before \
+                 M5.6b and holds bare nanoseconds; its values are returned as canonical \
+                 RFC 3339, which may not be the text that was ingested",
+                self.template_id,
+                path.display()
+            );
+        }
+    }
+
     /// Can any row in this partition fall inside `[since, until)`?
     ///
     /// The undated partition never can: a row with no readable timestamp is outside every
@@ -1145,7 +1323,7 @@ mod tests {
     const DAY: i64 = 1_705_276_800_000_000_000;
 
     fn leaf(scratch: &Scratch, limits: RowGroupLimits) -> DiskLeaf {
-        DiskLeaf::open(101, scratch.0.join("leaf_101"), limits).expect("open the leaf")
+        DiskLeaf::open(101, scratch.0.join("leaf_101"), limits, "ts").expect("open the leaf")
     }
 
     fn row(pairs: &[(&str, ColValue)]) -> Row {
@@ -1263,43 +1441,99 @@ mod tests {
         assert_eq!(rows[3]["x"], ColValue::String("N/A".into()));
     }
 
-    /// A rung change seals rather than writing two forms into one chunk. `Mixed` stays a
-    /// value this build *reads* - it is the promotion fallback - but never one it writes.
+    /// A second date form seals once, and then the partition stores the column as text:
+    /// each value in the form it arrived in, and no further seal however often the form
+    /// changes. `Mixed` stays a value this build *reads* but never one it writes.
     #[test]
-    fn a_changed_rung_seals_the_segment_rather_than_mixing_forms() {
+    fn a_changed_rung_seals_once_and_the_column_is_text_from_then_on() {
         let scratch = Scratch::new("rung");
-        let mut leaf = leaf(&scratch, RowGroupLimits::default());
-        for (n, form) in [
-            DtForm::EpochSecs,
-            DtForm::EpochSecs,
-            DtForm::Rfc3339,
-            DtForm::Rfc3339,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            leaf.append(
-                row(&[
-                    ("ts", ColValue::Datetime(DAY)),
-                    ("when", ColValue::Datetime(DAY + n as i64)),
-                ]),
-                &[("when".to_string(), form)],
-            );
-        }
+        // One row per row group, closed on the tick: the seals below are the writer's
+        // own, not a graceful shutdown's.
+        let mut leaf = leaf(
+            &scratch,
+            RowGroupLimits {
+                rows: 1,
+                ..RowGroupLimits::default()
+            },
+        );
+        let rows = |leaf: &mut DiskLeaf, from: i64, forms: &[DtForm]| {
+            for (n, form) in forms.iter().enumerate() {
+                leaf.append(
+                    row(&[
+                        ("ts", ColValue::Datetime(DAY)),
+                        ("when", ColValue::Datetime(DAY + from + n as i64)),
+                    ]),
+                    &[("when".to_string(), *form)],
+                );
+            }
+        };
+        // One form in the first two row groups: `Dt` chunks in a segment of their own.
+        rows(&mut leaf, 0, &[DtForm::EpochSecs, DtForm::EpochSecs]);
+        leaf.flush(FlushKind::Tick).expect("flush");
+        assert_eq!(segments(&scratch).len(), 1);
+
+        // The second form seals it, once. Everything after - either form, as often as it
+        // likes, tick after tick - goes into the next segment as text.
+        rows(
+            &mut leaf,
+            2,
+            &[
+                DtForm::Rfc3339,
+                DtForm::EpochSecs,
+                DtForm::Rfc3339,
+                DtForm::EpochMillis,
+            ],
+        );
+        leaf.flush(FlushKind::Tick).expect("flush");
+        rows(&mut leaf, 6, &[DtForm::EpochSecs, DtForm::Rfc3339]);
+        leaf.flush(FlushKind::Tick).expect("flush");
         leaf.flush(FlushKind::Final).expect("flush");
 
         let files = segments(&scratch);
-        assert_eq!(files.len(), 2, "the rung change did not seal the segment");
-        for (path, want) in files.iter().zip([DtForm::EpochSecs, DtForm::Rfc3339]) {
-            let (index, _) = segment::open(path).expect("open the segment");
-            let at = index.column_at("when").expect("the column is there");
-            assert_eq!(
-                index.columns[at].dt_form,
-                Some(want),
-                "{} carries the wrong rung",
-                path.display()
-            );
-        }
+        assert_eq!(files.len(), 2, "the second form did not seal exactly once");
+        let (first, _) = segment::open(&files[0]).expect("open the segment");
+        let at = first.column_at("when").expect("the column is there");
+        assert_eq!(first.columns[at].kind, ColKind::Dt);
+        assert_eq!(first.columns[at].dt_form, Some(DtForm::EpochSecs));
+        let (second, _) = segment::open(&files[1]).expect("open the segment");
+        let at = second.column_at("when").expect("the column is there");
+        assert_eq!(
+            second.columns[at].kind,
+            ColKind::Str,
+            "text from the second form on"
+        );
+
+        // Read back with `when` now text: the first two through the chunk's rung, the
+        // rest as they were written - every value in the form it arrived in.
+        let (_, got) = scan(
+            &leaf,
+            ScanOptions {
+                text_columns: vec!["when".to_string()],
+                ..ScanOptions::default()
+            },
+        );
+        let when: Vec<String> = got
+            .iter()
+            .map(|r| match &r["when"] {
+                ColValue::String(s) => s.clone(),
+                other => panic!("not text: {other:?}"),
+            })
+            .collect();
+        let want: Vec<String> = [
+            DtForm::EpochSecs,
+            DtForm::EpochSecs,
+            DtForm::Rfc3339,
+            DtForm::EpochSecs,
+            DtForm::Rfc3339,
+            DtForm::EpochMillis,
+            DtForm::EpochSecs,
+            DtForm::Rfc3339,
+        ]
+        .iter()
+        .enumerate()
+        .map(|(n, form)| form.render(DAY + n as i64))
+        .collect();
+        assert_eq!(when, want);
     }
 
     /// A column set change seals, and is also when the key set in `_leaf.json` changes.

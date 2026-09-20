@@ -85,6 +85,20 @@ const BASE_PATH_ENV: &str = "TRIEDB__STORAGE__BASE_PATH";
 const TRIE_FILE_ENV: &str = "TRIEDB__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "TRIEDB__INGESTOR__FLUSH_INTERVAL_MS";
 const ROW_GROUP_TIMEOUT_ENV: &str = "TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS";
+const TIME_COLUMNS_ENV: &str = "TRIEDB__SCHEMA__TIME_COLUMNS";
+
+/// The names a template's time column is chosen from, first match wins.
+pub const DEFAULT_TIME_COLUMNS: &[&str] = &[
+    "@timestamp",
+    "timestamp",
+    "time",
+    "ts",
+    "ts_ms",
+    "ts_unix",
+    "datetime",
+    "event_time",
+    "created_at",
+];
 
 /// How often the thresholds that close a row group are checked.
 ///
@@ -140,6 +154,47 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+}
+
+/// What the type ladder and the trie are told about the data: for now, which key names
+/// may carry a template's time.
+///
+/// Carried by the CLI as well as the server - `triedb query <file>` builds its trie in
+/// the process, and a template created there chooses its time source by the same rule.
+#[derive(Debug, Clone)]
+pub struct Schema {
+    /// Ordered. A template's time source is the first of these that is one of its keys
+    /// and whose value on the creating line inferred as `Datetime`.
+    pub time_columns: Vec<String>,
+}
+
+impl Default for Schema {
+    fn default() -> Self {
+        Self {
+            time_columns: DEFAULT_TIME_COLUMNS.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl Schema {
+    /// Flag > environment > default. The variable is comma-separated; blanks are dropped
+    /// so a trailing comma is not an empty column name.
+    pub fn load(time_columns: Option<Vec<String>>) -> Self {
+        let from_env = || {
+            std::env::var(TIME_COLUMNS_ENV).ok().map(|text| {
+                text.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<String>>()
+            })
+        };
+        let mut schema = Self::default();
+        if let Some(list) = time_columns.or_else(from_env) {
+            schema.time_columns = list;
+        }
+        schema
+    }
 }
 
 /// Where rows and the trie snapshot live, and how often the buffer reaches them.

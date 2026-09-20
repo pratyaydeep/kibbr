@@ -23,7 +23,7 @@ use thiserror::Error;
 
 use crate::catalog::{Catalog, CatalogError, Record, Token};
 use crate::flatten::ParsedLog;
-use crate::types::{join, ColumnType};
+use crate::types::{join, ColumnType, TimeSource};
 
 /// The root carries a label so that a rendered tree and a serialized one agree about
 /// what sits above the first edge.
@@ -103,6 +103,9 @@ pub struct LeafMeta {
     pub first_seen: DateTime<Utc>,
     /// Bumped on every ingest.
     pub last_seen: DateTime<Utc>,
+    /// Where this template's rows get their time. Chosen when the template is
+    /// created, recorded in the catalog, never changed.
+    pub time_source: TimeSource,
 }
 
 pub struct ColumnDef {
@@ -168,6 +171,8 @@ pub struct Trie {
     root: Arc<Node>,
     /// Stamped into every new `LeafMeta`. See `DEFAULT_DATA_DIR`.
     data_dir: String,
+    /// The names a new template's time column is chosen from, in order.
+    time_columns: Vec<String>,
     /// Node ids. The root took 0, so this is also the count of nodes below it.
     next_id: AtomicU64,
     next_template_id: AtomicU64,
@@ -200,6 +205,7 @@ impl Trie {
         Self {
             root: Arc::new(Node::new(0, ROOT_LABEL, NodeType::Static)),
             data_dir: data_dir.to_string(),
+            time_columns: crate::config::Schema::default().time_columns,
             next_id: AtomicU64::new(1),
             next_template_id: AtomicU64::new(FIRST_TEMPLATE_ID),
             tokens: AtomicU64::new(0),
@@ -223,11 +229,23 @@ impl Trie {
         Self {
             root,
             data_dir: data_dir.to_string(),
+            time_columns: crate::config::Schema::default().time_columns,
             next_id: AtomicU64::new(next_id),
             next_template_id: AtomicU64::new(next_template_id),
             tokens: AtomicU64::new(tokens),
             catalog: Mutex::new(None),
         }
+    }
+
+    /// The names a new template's time column is chosen from. Affects templates created
+    /// after the call and nothing already recorded.
+    pub fn with_time_columns(mut self, time_columns: Vec<String>) -> Self {
+        self.time_columns = time_columns;
+        self
+    }
+
+    pub fn time_columns(&self) -> &[String] {
+        &self.time_columns
     }
 
     /// Make this trie durable: every template and widening from here on is appended to
@@ -267,11 +285,30 @@ impl Trie {
         records: &[Record],
         warn: &mut dyn FnMut(String),
     ) -> Result<Self, TrieError> {
+        let time_columns = crate::config::Schema::default().time_columns;
+        Ok(Self::from_catalog_with(data_dir, records, time_columns, warn)?.0)
+    }
+
+    /// `from_catalog`, with the configured time columns and the records a caller should
+    /// append: one `time_source` for every template the catalog holds none for.
+    ///
+    /// A catalog written before M5.6b has no `time_source` records. The source of such a
+    /// template is derived here by the same rule, over the column types the catalog does
+    /// hold - the nearest thing to what its creating line would have said - and handed
+    /// back so it can be made durable, because the choice is one that must not move
+    /// between restarts.
+    pub fn from_catalog_with(
+        data_dir: &str,
+        records: &[Record],
+        time_columns: Vec<String>,
+        warn: &mut dyn FnMut(String),
+    ) -> Result<(Self, Vec<Record>), TrieError> {
         struct Pending {
             created_at: DateTime<Utc>,
             last_at: DateTime<Utc>,
             tokens: Vec<Token>,
             columns: BTreeMap<String, ColumnDef>,
+            time_source: Option<TimeSource>,
         }
         let mut templates: BTreeMap<u64, Pending> = BTreeMap::new();
         for record in records {
@@ -294,6 +331,7 @@ impl Trie {
                             last_at: *created_at,
                             tokens: tokens.clone(),
                             columns: BTreeMap::new(),
+                            time_source: None,
                         },
                     );
                 }
@@ -323,12 +361,36 @@ impl Trie {
                         },
                     );
                 }
-                // The time source, from M5.6b. Carried in the file; nothing here reads it yet.
-                Record::TimeSource { .. } => {}
+                // The first record wins: the source is chosen once and never changes,
+                // so a second is a file that has been edited.
+                Record::TimeSource {
+                    template_id,
+                    source,
+                } => {
+                    let Some(pending) = templates.get_mut(template_id) else {
+                        warn(format!(
+                            "a time_source record names template {template_id}, which has \
+                             no template record before it; skipped"
+                        ));
+                        continue;
+                    };
+                    match TimeSource::from_record(source) {
+                        Some(_) if pending.time_source.is_some() => warn(format!(
+                            "template {template_id} has a second time_source record; \
+                             keeping the first"
+                        )),
+                        Some(parsed) => pending.time_source = Some(parsed),
+                        None => warn(format!(
+                            "template {template_id}: time_source `{source}` is not a \
+                             spelling this build knows; skipped"
+                        )),
+                    }
+                }
             }
         }
 
-        let trie = Self::new_in(data_dir);
+        let trie = Self::new_in(data_dir).with_time_columns(time_columns);
+        let mut backfill = Vec::new();
         for (id, pending) in templates {
             let labels: Vec<String> = pending.tokens.iter().map(Token::label).collect();
             let borrowed: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -341,12 +403,26 @@ impl Trie {
                 ));
                 continue;
             }
+            let time_source = match pending.time_source {
+                Some(source) => source,
+                None => {
+                    let derived = TimeSource::choose(&trie.time_columns, |name| {
+                        pending.columns.get(name).and_then(|c| c.col_type)
+                    });
+                    backfill.push(Record::TimeSource {
+                        template_id: id,
+                        source: derived.as_record(),
+                    });
+                    derived
+                }
+            };
             *slot = Some(LeafMeta {
                 template_id: id,
                 columns: pending.columns.into_values().collect(),
                 storage_path: format!("{data_dir}/leaf_{id}"),
                 first_seen: pending.created_at,
                 last_seen: pending.last_at,
+                time_source,
             });
             leaf.is_leaf.store(true, Ordering::Release);
             trie.tokens
@@ -355,7 +431,7 @@ impl Trie {
             // named by id whether or not the id's template record survived.
             trie.reserve_template_ids_through(id);
         }
-        Ok(trie)
+        Ok((trie, backfill))
     }
 
     /// Every template as catalog records, in id order: what writing a catalog from a
@@ -391,6 +467,7 @@ impl Trie {
                     storage_path: meta.storage_path.clone(),
                     first_seen: meta.first_seen,
                     last_seen: meta.last_seen,
+                    time_source: meta.time_source.clone(),
                 },
             ));
         }
@@ -422,6 +499,10 @@ impl Trie {
                     at: col.widened_at,
                 });
             }
+            records.push(Record::TimeSource {
+                template_id: meta.template_id,
+                source: meta.time_source.as_record(),
+            });
         }
         records
     }
@@ -686,7 +767,36 @@ impl Trie {
                     widened_from: None,
                     at: None,
                 }));
+                // The time source: the first configured name that is one of
+                // this line's keys and read as a `Datetime`. Chosen once, in the same
+                // durable unit as the template, and never changed.
+                let time_source =
+                    TimeSource::choose(&self.time_columns, |name| parsed.column_type(name));
+                records.push(Record::TimeSource {
+                    template_id,
+                    source: time_source.as_record(),
+                });
                 self.record(&records)?;
+
+                if time_source == TimeSource::Arrival {
+                    // One WARN per template, naming the keys an operator could add to
+                    // `time_columns` to give it a time of its own.
+                    let dated: Vec<&str> = columns
+                        .iter()
+                        .filter(|c| c.col_type == Some(ColumnType::Datetime))
+                        .map(|c| c.name.as_str())
+                        .collect();
+                    eprintln!(
+                        "triedb: WARN template {template_id} has no time column among \
+                         [{}]; its rows take their arrival time. Datetime-typed keys: {}",
+                        self.time_columns.join(", "),
+                        if dated.is_empty() {
+                            "none".to_string()
+                        } else {
+                            dated.join(", ")
+                        }
+                    );
+                }
 
                 *slot = Some(LeafMeta {
                     template_id,
@@ -694,6 +804,7 @@ impl Trie {
                     storage_path: format!("{}/leaf_{template_id}", self.data_dir),
                     first_seen: now,
                     last_seen: now,
+                    time_source,
                 });
                 leaf.is_leaf.store(true, Ordering::Release);
                 self.tokens
@@ -716,6 +827,21 @@ impl Trie {
                             let col = &meta.columns[at];
                             let joined = join(col.col_type, incoming);
                             if joined != col.col_type {
+                                // The moment a column widens: the one place an
+                                // operator can learn that `"N/A"` just sent every
+                                // time-range query on this column to a full scan.
+                                // `None ⊔ T` is a column learning its first type, not a
+                                // widening, and is not warned about.
+                                if let (Some(from), Some(to)) = (col.col_type, joined) {
+                                    eprintln!(
+                                        "triedb: WARN template {} column `{key}` widened \
+                                         from {} to {} on value `{}`",
+                                        meta.template_id,
+                                        from.as_str(),
+                                        to.as_str(),
+                                        cut(parsed.values.get(key).map_or("", String::as_str), 80)
+                                    );
+                                }
                                 records.push(Record::Column {
                                     template_id: meta.template_id,
                                     name: key.clone(),
@@ -775,6 +901,16 @@ impl Trie {
         drop(slot);
         Ok((leaf, is_new))
     }
+}
+
+/// The first `n` characters, with an ellipsis where something was cut. On a character
+/// boundary, so a multi-byte value never panics the warning that names it.
+fn cut(text: &str, n: usize) -> String {
+    let mut out: String = text.chars().take(n).collect();
+    if text.chars().count() > n {
+        out.push('…');
+    }
+    out
 }
 
 /// The exact static label, or nothing.

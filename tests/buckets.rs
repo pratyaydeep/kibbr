@@ -209,43 +209,45 @@ fn a_second_key_is_zero_filled_for_every_series() {
     }
 }
 
-/// The two empty answers, one level down. A template with no time column is *found*, and
-/// has no time axis to report along - so zero buckets rather than an error, and not a run
-/// of zeros either, which would claim we looked along an axis that is not there.
+/// Every template has a time axis. One with no time column is on arrival time,
+/// which is `now` and outside a window over 2024 - so the answer is found, counts zero,
+/// and carries the window's buckets zero-filled rather than none: the axis is there.
 #[test]
-fn a_template_with_no_ts_column_answers_with_no_buckets() {
+fn a_template_with_no_ts_column_is_on_arrival_time() {
     let result = json(&[&format!(
         "COUNT LOG {{\"event\": \"beat\"}} BETWEEN {} AND {} GROUP BY time(5m)",
         WINDOW[0], WINDOW[1]
     )]);
     assert_eq!(result["exists"], Value::Bool(true));
     assert_eq!(result["count"], 0);
-    assert_eq!(result["groups"], Value::Array(Vec::new()));
+    let got = buckets(&result);
+    assert_eq!(got.len(), 36, "three hours at five minutes: {got:?}");
+    assert!(got.iter().all(|(b, n)| b != "(null)" && *n == 0), "{got:?}");
 }
 
-/// With no window there is nothing to filter the untimed rows out, so they are in `count` -
-/// and they get a bucket of their own rather than dropping out of the chart and leaving
-/// the two numbers to disagree with no explanation.
+/// With no window the rows on arrival time are in `count`, and they land in the bucket
+/// their arrival falls in - the newest one - rather than in a `null` bucket of their own.
+/// Days, because the axis now runs from the fixture's 2024 to today.
 #[test]
-fn rows_that_cannot_be_placed_in_time_get_a_null_bucket() {
-    let result = json(&["COUNT LOG {} GROUP BY time(1h)"]);
+fn rows_on_arrival_time_land_in_the_newest_bucket() {
+    let result = json(&["COUNT LOG {} GROUP BY time(1d)"]);
     let got = buckets(&result);
 
+    assert!(got.iter().all(|(b, _)| b != "(null)"), "{got:?}");
     assert_eq!(
-        got.first().map(|(b, n)| (b.as_str(), *n)),
-        Some(("(null)", 1))
+        got.last().map(|(_, n)| *n),
+        Some(1),
+        "the one `beat` row, today"
     );
     assert_eq!(
         got.iter().map(|(_, n)| n).sum::<u64>(),
         result["count"].as_u64().expect("a count"),
         "the groups no longer sum to the count: {got:?}"
     );
-    // NDJSON spells it `null` rather than the table's `(null)` - a record in a stream is
-    // parsed, and `"(null)"` would come back a string.
-    let stream = query(&["COUNT LOG {} GROUP BY time(1h)", "--format", "ndjson"]);
+    // NDJSON: every record carries a bucket.
+    let stream = query(&["COUNT LOG {} GROUP BY time(1d)", "--format", "ndjson"]);
     let first: Value = serde_json::from_str(stream.lines().next().expect("a line")).expect("json");
-    assert_eq!(first["bucket"], Value::Null);
-    assert_eq!(first["count"], 1);
+    assert_ne!(first["bucket"], Value::Null);
 }
 
 /// Refused, not truncated. A chart missing its tail still looks like a chart, and nothing
