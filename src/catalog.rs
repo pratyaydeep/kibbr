@@ -68,6 +68,15 @@ pub enum CatalogError {
     /// behind a tear and be truncated away on the next start, so nothing is.
     #[error("{path}: an earlier append left a torn record at offset {offset} that could not be removed; no further records are written until the process restarts")]
     Torn { path: String, offset: u64 },
+    /// The catalog was just created and its directory could not be fsynced, so the file's
+    /// own entry may not survive a crash - and a record fsynced into a file that is not
+    /// there after the crash was never durable.
+    #[error("{path}: created {CATALOG_FILE_NAME} here and could not fsync the directory, so the file itself may not survive a crash: {source}")]
+    SyncDir {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 // ── Records ────────────────────────────────────────────────────────────────────────
@@ -113,8 +122,8 @@ pub enum Record {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<DateTime<Utc>>,
     },
-    /// The time source. Written and read from M5.6b; a known kind here so a catalog that
-    /// carries one is not warned about.
+    /// The time source, `column:<name>` or `arrival`. Recorded so the choice is durable:
+    /// the next start makes the same one whatever the configured list says by then.
     TimeSource { template_id: u64, source: String },
 }
 
@@ -234,14 +243,33 @@ impl Catalog {
         path: &Path,
         warn: &mut dyn FnMut(String),
     ) -> Result<(Self, Vec<Record>), CatalogError> {
+        Self::open_with(path, warn, &mut sync_dir)
+    }
+
+    /// `open`, with the directory fsync handed in so a test can count it and fail it.
+    ///
+    /// **A file this call creates has its directory fsynced before anything is appended.**
+    /// `sync_all` on the file makes its bytes durable and says nothing about the entry
+    /// naming it: after a crash the first record can be on disk in a file that is not in
+    /// the directory, and the line that record let in was counted as ingested. Once, on
+    /// creation - an existing file's entry was made durable by the start that created it.
+    ///
+    /// If that fsync fails the new file is removed before the error is returned. Left in
+    /// place, the next start would find a catalog and skip the one-time `trie.json`
+    /// migration, and every leaf would be an orphan beside an empty catalog.
+    fn open_with(
+        path: &Path,
+        warn: &mut dyn FnMut(String),
+        sync_dir: &mut dyn FnMut(&Path) -> std::io::Result<()>,
+    ) -> Result<(Self, Vec<Record>), CatalogError> {
         let display = path.display().to_string();
         let io = |source| CatalogError::Io {
             path: display.clone(),
             source,
         };
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        let (bytes, creating) = match fs::read(path) {
+            Ok(bytes) => (bytes, false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), true),
             Err(e) => return Err(io(e)),
         };
         let parsed = parse(&bytes);
@@ -280,6 +308,17 @@ impl Catalog {
             .write(true)
             .open(path)
             .map_err(io)?;
+        if creating {
+            let dir = parent_of(path);
+            if let Err(source) = sync_dir(dir) {
+                drop(file);
+                let _ = fs::remove_file(path);
+                return Err(CatalogError::SyncDir {
+                    path: dir.display().to_string(),
+                    source,
+                });
+            }
+        }
         if end < bytes.len() as u64 {
             file.set_len(end).map_err(io)?;
             file.sync_all().map_err(io)?;
@@ -382,6 +421,19 @@ impl Catalog {
 /// The path of the catalog inside `data_dir`.
 pub fn path_in(data_dir: &Path) -> PathBuf {
     data_dir.join(CATALOG_FILE_NAME)
+}
+
+/// The directory holding `path`; `.` for a bare file name.
+fn parent_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
+/// fsync a directory, so the entries in it survive a crash.
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    File::open(dir).and_then(|handle| handle.sync_all())
 }
 
 #[cfg(test)]
@@ -582,5 +634,94 @@ mod tests {
         let (_, records) = Catalog::open(&path, &mut |_| {}).expect("reopen");
         assert_eq!(records, vec![template(101), template(102)]);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The directory is fsynced exactly once, when the file is created, and a failed
+    /// fsync is the open's error rather than a line in a log.
+    #[test]
+    fn creating_the_catalog_syncs_its_directory_once_and_a_failed_sync_is_an_error() {
+        let dir = std::env::temp_dir().join(format!("triedb-catalog-sync-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = path_in(&dir);
+
+        let synced = std::cell::RefCell::new(Vec::new());
+        let mut counting = |d: &Path| {
+            synced.borrow_mut().push(d.to_path_buf());
+            Ok(())
+        };
+        let (mut catalog, _) =
+            Catalog::open_with(&path, &mut |_| {}, &mut counting).expect("create");
+        catalog.append(&[template(101)]).expect("append");
+        drop(catalog);
+        assert_eq!(
+            *synced.borrow(),
+            vec![dir.clone()],
+            "the directory was not synced on creation"
+        );
+
+        // Reopening an existing catalog creates nothing, so it syncs nothing.
+        let (_, records) = Catalog::open_with(&path, &mut |_| {}, &mut counting).expect("reopen");
+        assert_eq!(records, vec![template(101)]);
+        assert_eq!(
+            synced.borrow().len(),
+            1,
+            "an existing catalog's directory was synced again"
+        );
+
+        fs::remove_file(&path).expect("rm");
+        let mut failing = |_: &Path| Err(std::io::Error::other("injected fsync failure"));
+        match Catalog::open_with(&path, &mut |_| {}, &mut failing) {
+            Err(e @ CatalogError::SyncDir { .. }) => {
+                assert!(e.to_string().contains("injected fsync failure"), "{e}");
+            }
+            Err(other) => panic!("failed for another reason: {other}"),
+            Ok(_) => panic!("a failed directory fsync was ignored"),
+        }
+        assert!(
+            !path.exists(),
+            "a catalog whose directory was never synced was left for the next start to trust"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The real directory sync, on a directory it cannot succeed on: write and search
+    /// permission without read, so the file can be created and the directory cannot be
+    /// opened to fsync. The open fails rather than carrying on with an entry that may not
+    /// survive a crash, and leaves no file behind.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_cannot_be_synced_fails_the_first_open() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("triedb-catalog-nosync-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o300)).expect("chmod -wx");
+        if File::open(&dir).is_ok() {
+            // Root, or a filesystem that ignores the mode: nothing here can fail the sync.
+            let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        }
+        let path = path_in(&dir);
+
+        let opened = Catalog::open(&path, &mut |_| {});
+        let left = path.exists();
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&dir);
+
+        match opened {
+            Err(CatalogError::SyncDir { path: named, .. }) => {
+                assert_eq!(named, dir.display().to_string());
+            }
+            Err(other) => panic!("failed for another reason: {other}"),
+            Ok(_) => panic!("created {} and never synced its directory", path.display()),
+        }
+        assert!(
+            !left,
+            "a catalog whose directory entry was never synced was left behind"
+        );
     }
 }

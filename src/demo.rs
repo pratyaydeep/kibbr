@@ -8,7 +8,7 @@
 //! Everything on stdout is a function of the input lines as a set: children are stored
 //! sorted, columns are sorted by name, and the join is commutative, so a different input
 //! order produces the same bytes. The one number that cannot be - how long the run took -
-//! goes to stderr, outside the artifact whose byte-identity is the milestone's done-when.
+//! goes to stderr, outside the artifact whose byte-identity is what the demo is judged by.
 
 use std::io::{BufRead, Write};
 use std::sync::atomic::Ordering;

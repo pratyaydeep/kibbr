@@ -3,8 +3,9 @@
 # the same count over a window wide enough to hold everything, and no `undated` directory
 # may exist once the rows are on disk.
 #
-# Before M5.6b the time column was the literal name `ts`: 148 of 870 templates had no
-# time at all, their rows went to `undated`, and every time-range query skipped them.
+# Before per-template time sources the time column was the literal name `ts`: 148 of 870
+# templates had no time at all, their rows went to `undated`, and every time-range query
+# skipped them.
 #
 #   NLINES=20000 scripts/time_columns.sh
 

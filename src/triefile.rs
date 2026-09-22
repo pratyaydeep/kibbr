@@ -114,7 +114,7 @@ struct LeafMetaRecord {
     storage_path: String,
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
-    /// `column:<name>` or `arrival`. Absent in a snapshot from before M5.6b, in
+    /// `column:<name>` or `arrival`. Absent in a snapshot from before the time source, in
     /// which case the source is derived from the column types with the default list -
     /// the same rule the catalog applies to a record-less template.
     #[serde(default, skip_serializing_if = "Option::is_none")]

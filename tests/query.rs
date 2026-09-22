@@ -4,7 +4,7 @@
 //! Both have `count: 0`, so a result that carries only a count cannot tell them apart and
 //! nothing downstream can either. Pinned this early because retrofitting it means
 //! touching the Elasticsearch translation layer too - by then an unknown field and an
-//! empty result have already been the same response for several milestones.
+//! empty result have already been the same response for several releases.
 //!
 //! Pinned here rather than left to the differential in `scripts/agree.sh`, because that
 //! script judges the engine against the oracle: if the distinction were dropped from
