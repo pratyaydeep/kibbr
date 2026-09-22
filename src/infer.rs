@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! 1.  parses as RFC 3339                          -> Datetime
-//! 2.  exactly 10 or 13 ASCII digits               -> Datetime  (seconds / millis)
+//! 2.  exactly 10 or 13 ASCII digits, naming a
+//!     moment inside the epoch window              -> Datetime  (seconds / millis)
 //! 3.  matches the UUID pattern                    -> Uuid
 //! 4.  parses as IpAddr (v4 or v6)                 -> Ip
 //! 5.  contains @ and matches email                -> String
@@ -14,11 +15,15 @@
 //!
 //! Rule 2 sits above rule 6 on purpose: a ten-digit number is a Unix timestamp before it
 //! is an integer, because getting that wrong turns every time-range query into a full
-//! scan. It misclassifies ten-digit order IDs - the accepted trade.
+//! scan. The window keeps it to numbers that name a moment a log line could carry, so an
+//! order id naming 2112 falls through to rule 6. One naming a moment this century is
+//! still taken for a date - the accepted trade, and the column join corrects it the first
+//! time an id of another shape arrives.
 
 use std::net::IpAddr;
+use std::sync::OnceLock;
 
-use chrono::DateTime;
+use chrono::{DateTime, FixedOffset};
 
 use crate::types::{ColValue, ColumnType, DtForm, Typed};
 
@@ -40,8 +45,10 @@ pub fn infer(raw: &str) -> Typed {
         return dated(ColValue::Datetime(ns), DtForm::Rfc3339);
     }
 
-    // 2. Exactly 10 or 13 ASCII digits -> seconds / milliseconds since the epoch.
-    //    Above rule 6 deliberately.
+    // 2. Exactly 10 or 13 ASCII digits -> seconds / milliseconds since the epoch, if the
+    //    moment they name is inside the window. Above rule 6 deliberately. Outside it the
+    //    digits fall through, neither refused nor text: rule 6 reads them as the integer
+    //    they are.
     if is_epoch_digits(raw) {
         let digits: i64 = match raw.parse() {
             Ok(v) => v,
@@ -53,11 +60,15 @@ pub fn infer(raw: &str) -> Typed {
         } else {
             (1_000_000, DtForm::EpochMillis)
         };
-        // 9_999_999_999 seconds in nanoseconds overflows i64 (nanos run out in 2262).
-        // Saturate rather than wrap: the type call stands, the instant is clamped, and
-        // nothing silently becomes a negative timestamp.
-        let ns = digits.saturating_mul(per_unit);
-        return dated(ColValue::Datetime(ns), form);
+        if epoch_window().contains(digits, per_unit) {
+            // 9_999_999_999 seconds in nanoseconds overflows i64 (nanos run out in
+            // 2262), which only a window reaching past 2262 admits. Saturate rather than
+            // wrap: the type call stands, nothing silently becomes a negative timestamp,
+            // and every value past that end lands on the same clamped instant - the price
+            // of a window wider than the type the instant is stored in.
+            let ns = digits.saturating_mul(per_unit);
+            return dated(ColValue::Datetime(ns), form);
+        }
     }
 
     // 3. UUID.
@@ -120,6 +131,73 @@ fn dated(value: ColValue, form: DtForm) -> Typed {
 
 fn is_epoch_digits(s: &str) -> bool {
     (s.len() == 10 || s.len() == 13) && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The moments rule 2 may read ten or thirteen digits as: `[start, end)`.
+///
+/// By default 2000-01-01 up to but not including 2100-01-01, which costs real timestamps
+/// nothing - no log line is stamped before 2000 or after 2100 - and sends most ten-digit
+/// ids to `Int64`: an order id naming 2112, a phone number naming 2282, ten digits with a
+/// leading zero naming the 1970s.
+///
+/// It decides what type is *stored*, and a column never narrows: a window turned on over
+/// data typed without one makes every misread id column `Datetime` joined with `Int64`,
+/// which is `String`, for good.
+///
+/// Nanoseconds in an `i128`, because either end may be any RFC 3339 instant and an `i64`
+/// of nanoseconds runs out in 2262.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochWindow {
+    start_ns: i128,
+    end_ns: i128,
+}
+
+const NANOS_PER_SEC: i128 = 1_000_000_000;
+
+impl EpochWindow {
+    /// `None` unless `start` is before `end`. An empty window is refused rather than read
+    /// as "rule 2 off": it would type every epoch timestamp as an integer and send every
+    /// time-range query on it to a full scan, the failure rule 2 exists to prevent.
+    pub fn new(start: DateTime<FixedOffset>, end: DateTime<FixedOffset>) -> Option<Self> {
+        let nanos = |dt: DateTime<FixedOffset>| {
+            i128::from(dt.timestamp()) * NANOS_PER_SEC + i128::from(dt.timestamp_subsec_nanos())
+        };
+        let (start_ns, end_ns) = (nanos(start), nanos(end));
+        (start_ns < end_ns).then_some(Self { start_ns, end_ns })
+    }
+
+    /// Does `digits` counted in `per_unit` nanoseconds name a moment inside the window?
+    fn contains(&self, digits: i64, per_unit: i64) -> bool {
+        let ns = i128::from(digits) * i128::from(per_unit);
+        self.start_ns <= ns && ns < self.end_ns
+    }
+}
+
+impl Default for EpochWindow {
+    /// `[2000-01-01T00:00:00Z, 2100-01-01T00:00:00Z)`.
+    fn default() -> Self {
+        Self {
+            start_ns: 946_684_800 * NANOS_PER_SEC,
+            end_ns: 4_102_444_800 * NANOS_PER_SEC,
+        }
+    }
+}
+
+static EPOCH_WINDOW: OnceLock<EpochWindow> = OnceLock::new();
+
+/// Fix the window for the rest of the process. The first call wins, and a process that
+/// never makes one reads the default.
+///
+/// Once, because the ladder is re-run on stored text - to match a query term, to read a
+/// row's place in time - and a window that moved while the process ran would give one
+/// text two types, so a stored value would stop matching itself.
+pub fn set_epoch_window(window: EpochWindow) {
+    // Ignoring a second call keeps the window every earlier `infer` already used.
+    let _ = EPOCH_WINDOW.set(window);
+}
+
+fn epoch_window() -> &'static EpochWindow {
+    EPOCH_WINDOW.get_or_init(EpochWindow::default)
 }
 
 /// 8-4-4-4-12 hex, case-insensitive. Version and variant nibbles are not checked: a value

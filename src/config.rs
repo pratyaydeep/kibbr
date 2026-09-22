@@ -20,6 +20,8 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+use crate::infer::EpochWindow;
+
 /// Default page size for an unlimited `MATCH`.
 pub const DEFAULT_MAX_ROWS: usize = 10_000;
 
@@ -87,6 +89,7 @@ const FLUSH_INTERVAL_ENV: &str = "TRIEDB__INGESTOR__FLUSH_INTERVAL_MS";
 const ROW_GROUP_TIMEOUT_ENV: &str = "TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS";
 const MAX_OPEN_SEGMENTS_ENV: &str = "TRIEDB__STORAGE__MAX_OPEN_SEGMENTS";
 const TIME_COLUMNS_ENV: &str = "TRIEDB__SCHEMA__TIME_COLUMNS";
+const EPOCH_WINDOW_ENV: &str = "TRIEDB__SCHEMA__EPOCH_WINDOW";
 
 /// The names a template's time column is chosen from, first match wins.
 pub const DEFAULT_TIME_COLUMNS: &[&str] = &[
@@ -155,6 +158,18 @@ pub enum ConfigError {
     #[error("max open segments must be at least 1; 0 would leave nowhere for a row group to go")]
     NoOpenSegments,
 
+    /// Refused rather than defaulted: the window decides what type a value is stored as,
+    /// and an operator who set one would believe it was in force.
+    #[error(
+        "{var}=`{value}` is not an epoch window: {reason}; expected two RFC 3339 instants, \
+         start before end, e.g. `2000-01-01T00:00:00Z,2100-01-01T00:00:00Z`"
+    )]
+    BadEpochWindow {
+        var: &'static str,
+        value: String,
+        reason: String,
+    },
+
     #[error("storage directory `{path}`: {source}")]
     BadDataDir {
         path: String,
@@ -202,6 +217,42 @@ impl Schema {
         }
         schema
     }
+}
+
+/// The window ten or thirteen digits must name a moment inside to be read as a timestamp:
+/// environment > default. The variable is two RFC 3339 instants, comma-separated -
+/// neither contains a comma - and the window runs from the first up to but not including
+/// the second.
+///
+/// Not a field of `Schema`, because the ladder cannot be handed one: it is a free function
+/// the flattener, the store and the engine all call. `main` installs this once for the
+/// process instead, before any command types a value.
+pub fn epoch_window() -> Result<EpochWindow, ConfigError> {
+    let Some(raw) = std::env::var_os(EPOCH_WINDOW_ENV) else {
+        return Ok(EpochWindow::default());
+    };
+    // Unset is absence; anything else is a window an operator believes is in force, so a
+    // value that is not even UTF-8 is an error rather than a silent fall back to the
+    // default.
+    let text = raw.to_string_lossy().into_owned();
+    let bad = |reason: String| ConfigError::BadEpochWindow {
+        var: EPOCH_WINDOW_ENV,
+        value: text.clone(),
+        reason,
+    };
+    if raw.to_str().is_none() {
+        return Err(bad("the value is not UTF-8".into()));
+    }
+    let ends: Vec<&str> = text.split(',').map(str::trim).collect();
+    let [start, end] = ends[..] else {
+        return Err(bad(format!("{} comma-separated values, not 2", ends.len())));
+    };
+    let instant = |s: &str| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map_err(|e| bad(format!("`{s}` is not an RFC 3339 instant ({e})")))
+    };
+    EpochWindow::new(instant(start)?, instant(end)?)
+        .ok_or_else(|| bad("the start is not before the end, so the window is empty".into()))
 }
 
 /// Where rows and the trie snapshot live, and how often the buffer reaches them.

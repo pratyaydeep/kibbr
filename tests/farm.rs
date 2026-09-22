@@ -292,7 +292,8 @@ fn farm_flags_belong_to_farm() {
 
 /// Two of the four ways the hostile profile was unlike real logs, turned round: rows pile
 /// onto a few templates, and some columns carry two types. Also that every template has a
-/// time of its own and a ten-digit id is misread as one. Time order and the single day are
+/// time of its own, and that its ten-digit order ids, which name 2112, fall outside the
+/// epoch window and are read as the integers they are. Time order and the single day are
 /// `farm_is_one_day_in_time_order`'s.
 #[test]
 fn farm_has_what_the_hostile_profile_lacks() {
@@ -332,8 +333,12 @@ fn farm_has_what_the_hostile_profile_lacks() {
     );
     let widened = types.values().filter(|t| t.len() > 1).count();
     assert!(widened > 0, "no column carries two types");
-    // A ten-digit id that is not a time, read as one anyway.
-    assert!(records.iter().any(|r| r["types"]["order_id"] == "Datetime"));
+    // A ten-digit id that is not a time, and is not read as one.
+    let order_ids: HashSet<&str> = records
+        .iter()
+        .filter_map(|r| r["types"]["order_id"].as_str())
+        .collect();
+    assert_eq!(order_ids, HashSet::from(["Int64"]));
 }
 
 /// A request's id goes wherever the request goes: a checkout's is in the gateway line, the
