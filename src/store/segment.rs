@@ -1138,6 +1138,27 @@ impl std::fmt::Display for Opened {
     }
 }
 
+/// Refuse a segment from another format version, reading its header and nothing else.
+///
+/// The startup check that runs before the server takes its port, so it only reads: a file
+/// too short to hold a header, one that is not a segment, or one that cannot be read is
+/// `Ok` here and left to `open`, which recovers it or reports it. A whole header naming
+/// another version is the one thing `open` would refuse that the server must not start
+/// over.
+pub fn check_version(path: &Path) -> Result<(), SegError> {
+    let mut header = [0u8; HEADER_BYTES as usize];
+    let Ok(mut file) = File::open(path) else {
+        return Ok(());
+    };
+    if file.read_exact(&mut header).is_err() || header[..4] != MAGIC || header[4] == VERSION {
+        return Ok(());
+    }
+    Err(SegError::BadVersion {
+        path: path.to_path_buf(),
+        found: header[4],
+    })
+}
+
 /// Open a segment, recovering it first if it was never sealed.
 ///
 /// 1. Read the last 8 bytes. A magic that does not match means unsealed → recovery.
@@ -2090,6 +2111,40 @@ mod tests {
             open(&old),
             Err(SegError::BadVersion { found: 1, .. })
         ));
+    }
+
+    /// A newer version is refused as an older one is: a segment this build wrote whole,
+    /// with only the version byte changed, and the error names the file. The server's
+    /// refusal to start is built on this, and an operator acts on the path.
+    #[test]
+    fn a_valid_segment_with_version_3_is_refused_by_path() {
+        let scratch = Scratch::new("version3");
+        let path = scratch.path("seg_000001.col");
+        write(
+            &path,
+            vec![spec("n", ColKind::I64, None)],
+            &[vec![vec![ColValue::Int64(1), ColValue::Int64(2)]]],
+        );
+        open(&path).expect("the segment reads before the flip");
+
+        let mut raw = std::fs::read(&path).expect("read the segment");
+        assert_eq!(raw[4], VERSION);
+        raw[4] = 3;
+        std::fs::write(&path, &raw).expect("write the segment back");
+
+        match open(&path) {
+            Err(e @ SegError::BadVersion { found: 3, .. }) => {
+                let SegError::BadVersion { path: named, .. } = &e else {
+                    unreachable!()
+                };
+                assert_eq!(named, &path, "the wrong path was named");
+                assert!(
+                    e.to_string().contains(&path.display().to_string()),
+                    "the message does not name the path: {e}"
+                );
+            }
+            other => panic!("version 3 was not refused: {other:?}"),
+        }
     }
 
     /// Time pruning is the footer's whole point: a row group that cannot hold a row in

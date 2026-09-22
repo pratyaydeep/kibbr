@@ -292,11 +292,11 @@ impl Trie {
     /// `from_catalog`, with the configured time columns and the records a caller should
     /// append: one `time_source` for every template the catalog holds none for.
     ///
-    /// A catalog written before M5.6b has no `time_source` records. The source of such a
-    /// template is derived here by the same rule, over the column types the catalog does
-    /// hold - the nearest thing to what its creating line would have said - and handed
-    /// back so it can be made durable, because the choice is one that must not move
-    /// between restarts.
+    /// A catalog written before the time source existed has no `time_source` records. The
+    /// source of such a template is derived here by the same rule, over the column types
+    /// the catalog does hold - the nearest thing to what its creating line would have
+    /// said - and handed back so it can be made durable, because the choice is one that
+    /// must not move between restarts.
     pub fn from_catalog_with(
         data_dir: &str,
         records: &[Record],

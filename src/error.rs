@@ -19,6 +19,13 @@ pub enum DetectorErrorKind {
     #[error("not ingested: {detail}")]
     NotDurable { detail: String },
 
+    /// The line parsed and its template exists, and the store could not take the row - a
+    /// leaf whose directory would not open. With no write-ahead log the row is then
+    /// nowhere, so the line is refused rather than counted: `/ingest` answers `503` for
+    /// a body holding one of these, and the shutdown exits non-zero.
+    #[error("not ingested: store: {detail}")]
+    NotStored { detail: String },
+
     /// Two flattened keys rendered to the same text.
     ///
     /// Not a fact about the line: distinct JSON paths cannot render alike, because key
@@ -247,6 +254,18 @@ pub enum ServeError {
     )]
     LegacyLayout { path: std::path::PathBuf },
 
+    /// A segment whose header version is not the one this build reads. Fatal at startup
+    /// and not a leaf answering empty: a count of 0 for a leaf whose rows are sitting on
+    /// disk is a wrong answer given as a right one, and guessing at the bytes would be
+    /// worse. Names the file, because the operator's remedy is about that file.
+    #[error(
+        "{path}: segment format version {found}; this build reads version {} only and \
+         does not guess at the rest. Nothing was served. Start the build that wrote it, or \
+         move the leaf directory holding it out of the data directory.",
+        crate::store::segment::VERSION
+    )]
+    SegmentVersion { path: std::path::PathBuf, found: u8 },
+
     /// The final flush could not write every buffered row, so they went with the process.
     ///
     /// **An error and not a log line**, because the exit code is the only part of a
@@ -258,6 +277,16 @@ pub enum ServeError {
          with the process; with no write-ahead log a buffered row was only ever in memory"
     )]
     RowsLost { leaves: usize, rows: u64 },
+
+    /// Rows the store refused while the process ran - a leaf whose directory would not
+    /// open. Each line was refused to its sender, so none of them is a silent loss; the
+    /// exit code says so anyway, because it is the only part of a run an orchestrator
+    /// reads, and a process that could not store what it was sent did not run cleanly.
+    #[error(
+        "{rows} row(s) could not be stored while this process ran; each line was refused \
+         to its sender with the store error, and none of them is on disk"
+    )]
+    RowsDropped { rows: u64 },
 }
 
 /// Errors surfaced by the CLI itself.

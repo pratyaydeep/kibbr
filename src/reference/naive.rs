@@ -101,9 +101,10 @@ pub fn run(
     let arrival = nanos(query.now);
 
     // Per template, in file order: the first line decides the time source, and every
-    // line folds its types into the column types - `types::join`, applied here as the
-    // spec writes it, so a column whose join is `String` renders its stored datetimes
-    // back as text. Both are facts about the template, settled before any row is read.
+    // line folds its types into the column types - `types::join`, applied here by this
+    // file's own reading of the rule, so a column whose join is `String` renders its
+    // stored datetimes back as text. Both are facts about the template, settled before
+    // any row is read.
     let mut sources: HashMap<u64, Source> = HashMap::new();
     let mut col_types: HashMap<(u64, String), Option<ColumnType>> = HashMap::new();
     for line in lines {

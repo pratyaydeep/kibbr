@@ -36,7 +36,7 @@ start() {  # start <logfile>
   PID=$!
   PORT=""
   # Up to 60s: a restart after kill -9 re-seals every unsealed segment first, one fsync
-  # each, and on the M5.5 layout that is hundreds of files.
+  # each, and with a segment per (template, day) that is hundreds of files.
   for _ in $(seq 1 600); do
     PORT=$(grep -o 'http://127\.0\.0\.1:[0-9]*' "$1" 2>/dev/null | head -1 | sed 's/.*://')
     [ -n "$PORT" ] && break

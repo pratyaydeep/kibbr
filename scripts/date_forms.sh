@@ -5,8 +5,9 @@
 # partition; after a restart every row is still inside a window over its day and every
 # `ts` comes back in the form it arrived in.
 #
-# Before M5.6b every change of `dt_form` sealed the segment, in either direction: 130
-# partitions became 34,892 segment files on the real binary.
+# Before a second date form turned the column to text, every change of `dt_form` sealed
+# the segment, in either direction: 130 partitions became 34,892 segment files on the real
+# binary.
 #
 #   scripts/date_forms.sh
 

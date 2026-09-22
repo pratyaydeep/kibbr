@@ -3,9 +3,10 @@
 # `AX-99213`, five more, each line flushed to its own row group. `MATCH` must return the
 # eleven strings exactly as ingested.
 #
-# Before M5.6b the first five came back as `2112-08-07T08:02:0NZ`: rung 2 read the ten
-# digits as a Datetime, the column widened to String on `AX-99213`, and the chunks already
-# on disk were rendered as canonical RFC 3339 - `dt_form` was written and never read.
+# Before `dt_form` was read back, the first five came back as `2112-08-07T08:02:0NZ`:
+# rung 2 read the ten digits as a Datetime, the column widened to String on `AX-99213`,
+# and the chunks already on disk were rendered as canonical RFC 3339 - `dt_form` was
+# written and never read.
 #
 #   scripts/order_ids.sh
 

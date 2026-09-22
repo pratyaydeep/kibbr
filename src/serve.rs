@@ -50,10 +50,11 @@ use crate::catalog::Catalog;
 use crate::config::{ApiLimits, Limits, Schema, Storage};
 use crate::db;
 use crate::engine;
-use crate::error::{self, CliError, DetectorError, ServeError};
+use crate::error::{self, CliError, DetectorError, DetectorErrorKind, ServeError};
 use crate::fmt::{commas, rfc3339_at};
 use crate::query;
-use crate::store::{FlushKind, StoreManager};
+use crate::store::segment::SegError;
+use crate::store::{FlushKind, StoreError, StoreManager};
 use crate::trie::Trie;
 
 /// The default port this server listens on.
@@ -213,10 +214,22 @@ impl Server {
                             .map(|meta| (meta.template_id, meta.time_source.column().to_string()))
                     });
                     if let Some((id, time_column)) = placed {
-                        if let Err(e) = stores.open_existing(id, &time_column) {
+                        match stores.open_existing(id, &time_column) {
+                            Ok(()) => {}
+                            // `refuse_other_versions` has already read every header before
+                            // the bind; this is a file that changed since. Fatal all the
+                            // same: the bytes are intact and this build cannot read them,
+                            // and answering 0 for that leaf would be a guess served as a
+                            // count.
+                            Err(StoreError::Segment(SegError::BadVersion { path, found })) => {
+                                return Err(ServeError::SegmentVersion { path, found });
+                            }
                             // One unreadable leaf directory is one template answering
-                            // empty, not a server that will not start.
-                            log(&format!("WARN leaf {id} - {}", error::chain(&e)));
+                            // empty, not a server that will not start. Not ingest that
+                            // goes on around it, though: that template's first line
+                            // refuses every body until the leaf opens - see
+                            // `StoreManager::retry_unopened`.
+                            Err(e) => log(&format!("WARN leaf {id} - {}", error::chain(&e))),
                         }
                     }
                 }
@@ -499,6 +512,8 @@ fn decode<'a>(
 struct LineError {
     line: usize,
     msg: String,
+    /// Refused by the store, not by the parser: what makes the body a `503`.
+    not_stored: bool,
 }
 
 /// What one `/ingest` body did.
@@ -507,6 +522,12 @@ struct IngestReport {
     errors: Vec<LineError>,
     /// Rejections past `MAX_REPORTED_ERRORS`, counted but not described.
     omitted: u64,
+    /// Lines the store refused, listed in `errors` up to its cap like any other rejection.
+    /// Any at all makes the answer a `503`: see `partly_stored`.
+    not_stored: u64,
+    /// Why the first of them was refused, for the `503`'s own `error`: past the cap, or
+    /// behind a thousand malformed lines, `errors` may not hold a single one.
+    store_error: Option<String>,
 }
 
 impl IngestReport {
@@ -574,6 +595,7 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
             parse_errors.push(LineError {
                 line: e.line,
                 msg: e.kind.to_string(),
+                not_stored: false,
             });
         }
     })?;
@@ -585,6 +607,8 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
     let mut apply_errors = Vec::new();
     let mut ingested = 0u64;
     let mut rejected = stats.rejected;
+    let mut not_stored = 0u64;
+    let mut store_error = None;
     {
         let mut stores = server.write_stores();
         for (line, parsed, prepared) in parsed {
@@ -595,10 +619,16 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
                 // the database", and the message says which.
                 Err(db::SinkError::Line(kind)) => {
                     rejected += 1;
+                    let refused = matches!(kind, DetectorErrorKind::NotStored { .. });
+                    if let DetectorErrorKind::NotStored { detail } = &kind {
+                        not_stored += 1;
+                        store_error.get_or_insert_with(|| detail.clone());
+                    }
                     if apply_errors.len() < MAX_REPORTED_ERRORS {
                         apply_errors.push(LineError {
                             line,
                             msg: kind.to_string(),
+                            not_stored: refused,
                         });
                     }
                 }
@@ -628,6 +658,8 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
         ingested,
         omitted: rejected - errors.len() as u64,
         errors,
+        not_stored,
+        store_error,
     })
 }
 
@@ -694,6 +726,50 @@ fn cannot_write(detail: &str) -> Response {
         .into_response()
 }
 
+/// A body the store could not take all of: `503`, a `Retry-After`, and the ordinary
+/// report, so the lines that did land and the ones that did not are both named.
+///
+/// **A 503 and not a 200**, though most of the body may be in. With no write-ahead log a
+/// `200` over a line the store refused leaves the shipper believing it was delivered,
+/// and nothing after that can bring it back. A `503` keeps the whole batch at the shipper,
+/// and a retry that resends the lines that landed duplicates them - a cost that is visible
+/// and bounded, where the lost line was neither. Bounded because the store stays degraded
+/// until the leaf opens (`StoreManager::retry_unopened`), so every retry before then is
+/// refused at the door and stores nothing: the lines this body stored are stored twice at
+/// most. `errors` says which lines to resend for a client that reads it.
+///
+/// The message claims no more than the body holds. `errors` is capped, so past the cap -
+/// or behind a thousand malformed lines - it may list few of the refused lines or none,
+/// and the reason is carried here as well.
+fn partly_stored(report: &IngestReport) -> Response {
+    let listed = report.errors.iter().filter(|e| e.not_stored).count() as u64;
+    let where_listed = if listed == report.not_stored {
+        "each is in `errors` by line number".to_string()
+    } else {
+        format!(
+            "{listed} of them are in `errors` by line number, and `errors_omitted` counts \
+             the rest with the other rejections past the report's cap"
+        )
+    };
+    let mut body = report.to_json();
+    body["error"] = json!(format!(
+        "the store could not take {} line(s) of this body ({}); {where_listed}. A 200 would \
+         be a lie: there is no write-ahead log, and a line the store refused is nowhere",
+        report.not_stored,
+        report
+            .store_error
+            .as_deref()
+            .unwrap_or("no reason recorded"),
+    ));
+    body["retry_after"] = json!(RETRY_AFTER_SECONDS);
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(body),
+    )
+        .into_response()
+}
+
 /// NDJSON in, `{"ok":true,"ingested":N,"errors":[]}` out. Optionally gzipped.
 ///
 /// **Single tenant, deliberately.** No stream or tenant identifier, in the path or in a
@@ -705,9 +781,9 @@ fn cannot_write(detail: &str) -> Response {
 /// (`ParsedLog::walk_tokens`) and a header is not part of the line, so separating tenants
 /// means either a forced-first `__stream` token in the fingerprint - changing every
 /// `template_id` - or one `Trie` and `Stores` per tenant, with a tenant selector on
-/// `/query`, `/templates`, `/stats` and the viewer. Both are M9-sized, and a header
+/// `/query`, `/templates`, `/stats` and the viewer. Both are large changes, and a header
 /// accepted but ignored would be worse than neither: it reads as isolation that is not
-/// there. Revisit at M9, with the deployment work.
+/// there. Revisit with the deployment work.
 ///
 /// `body` is a `Result`, not a `Bytes`, for the reason `post_query` decodes its own body:
 /// axum's rejection is plain text, and a client that parses one error format should not
@@ -773,6 +849,9 @@ async fn post_ingest(
     .await;
 
     match done {
+        // The server could not store some of it, which is not the client's fault and not
+        // a thing a 200 can say.
+        Ok(Ok(report)) if report.not_stored > 0 => partly_stored(&report),
         // 200 even with errors in it. The body was accepted and part of it was stored;
         // a 4xx would tell a shipper to retry the whole batch and duplicate the 497
         // lines that landed, and there is nothing the client could have sent differently
@@ -1188,6 +1267,22 @@ async fn serve(
     storage: Storage,
     schema: Schema,
 ) -> Result<(), ServeError> {
+    // Read-only, and before the port is taken: a data directory holding a segment from
+    // another format version is not served at all, so nothing is listening when the
+    // process exits over it. Everything that writes to the directory - catalog recovery,
+    // segment recovery - stays behind the bind, where a second server started on a port in
+    // use fails before touching the files the first one is appending to.
+    if let Some(base) = storage.base_path.as_deref() {
+        crate::store::disk::refuse_other_versions(base).map_err(|e| match e {
+            StoreError::Segment(SegError::BadVersion { path, found }) => {
+                ServeError::SegmentVersion { path, found }
+            }
+            e => ServeError::Storage {
+                detail: error::chain(&e),
+            },
+        })?;
+    }
+
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -1219,7 +1314,7 @@ async fn serve(
         async move {
             token.cancelled().await;
             // Shutdown, step one. Everything after this is the wind-down; the log names each
-            // step so an operator can see which ones this milestone actually has.
+            // step so an operator can see which ones this build actually has.
             log(&format!(
                 "stop accepting - {} request(s) in flight",
                 server.in_flight.load(Ordering::Relaxed)
@@ -1324,7 +1419,7 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
     }
 }
 
-/// The fixed shutdown order, with the steps this milestone does not have named as skipped.
+/// The fixed shutdown order, with the steps this build does not have named as skipped.
 ///
 /// ```text
 /// stop accepting → final flush → WAL checkpoint → trie.json → close stores → close WAL
@@ -1404,6 +1499,7 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     // contradicting the line above it.
     let held = stores.rows();
     let unwritten = stores.buffered();
+    let dropped = stores.rows_dropped();
     let kept = if server.storage.is_durable() {
         "written"
     } else {
@@ -1427,15 +1523,35 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     // happened, including when leaves failed to flush and their rows went with the
     // process: 20,000 lines accepted and 10,625 back after a restart, exit 0. An
     // orchestrator reading that code has no other way to know.
+    //
+    // Rows the store refused while running count too, though each was refused to its
+    // sender: the process did not store what it was sent, and a clean exit would say it
+    // had. When both happened the final flush is the error, and the line names both.
+    let refused = match dropped {
+        0 => String::new(),
+        n => format!(
+            "{} row(s) the store refused while running were never stored",
+            commas(n)
+        ),
+    };
     match lost {
-        None => {
+        None if dropped == 0 => {
             log("exit 0");
             Ok(())
         }
+        None => {
+            log(&format!("exit 1 - {refused}"));
+            Err(ServeError::RowsDropped { rows: dropped })
+        }
         Some((leaves, rows)) => {
             log(&format!(
-                "exit 1 - the final flush failed for {leaves} leaf/leaves, costing {} row(s)",
-                commas(rows)
+                "exit 1 - the final flush failed for {leaves} leaf/leaves, costing {} row(s){}",
+                commas(rows),
+                if refused.is_empty() {
+                    String::new()
+                } else {
+                    format!("; and {refused}")
+                }
             ));
             Err(ServeError::RowsLost { leaves, rows })
         }
@@ -1533,7 +1649,7 @@ fn banner(addr: SocketAddr, server: &Server) {
         // all have to change at once. `post_ingest` has the long form.
         "  tenancy     single tenant - /ingest takes no stream or tenant identifier,\n\
          \x20             and adding one later changes every shipper config in the\n\
-         \x20             fleet. Deliberate; revisit at M9."
+         \x20             fleet. Deliberate; revisit with the deployment work."
             .to_string(),
         String::new(),
         "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first.".to_string(),

@@ -16,7 +16,7 @@
 //! - **The ingest path** has neither. It calls `append` and returns.
 //!
 //! `StoreManager` is a concrete struct and not a trait, which is a deliberate reading of
-//! the milestone against the rule above: the registry, the lazy open and the flush loop
+//! the rule above: the registry, the lazy open and the flush loop
 //! are identical whichever backend they drive, so there is exactly one implementation of
 //! a manager and a trait over it would be the guess the rule forbids. The two things that
 //! genuinely have two implementations are the two that became traits.
@@ -64,7 +64,7 @@ pub type Predicate = Box<dyn Fn(&Row) -> bool + Send + Sync>;
 pub type DtForms = [(String, DtForm)];
 
 /// The column a time filter reads when none is named. A fallback for a `_leaf.json` that
-/// predates the time source; every caller from M5.6b on names the column.
+/// predates the time source; every current caller names the column.
 pub const DEFAULT_TS_COLUMN: &str = "ts";
 
 /// The system column holding a row's arrival time, on rows whose template's time column
@@ -528,6 +528,14 @@ pub struct StoreManager {
     backend: Box<dyn Store>,
     stores: BTreeMap<u64, Box<dyn LeafStore>>,
     write_failures: u64,
+    /// Rows `append` refused. Apart from `write_failures`, which also counts flushes that
+    /// failed and later succeeded: these rows are gone for good, and the shutdown exits
+    /// non-zero on them.
+    rows_dropped: u64,
+    /// Leaves `append` could not open, by template id, with the time column to open them
+    /// on. Retried every flush, and while any is still here the store is degraded: see
+    /// `retry_unopened`.
+    unopened: BTreeMap<u64, String>,
     /// The open segment files, shared with every leaf the backend makes. The manager is
     /// the only thing that can seal one leaf's segment to make room for another's.
     open_segments: std::sync::Arc<OpenSegments>,
@@ -541,6 +549,8 @@ impl StoreManager {
             backend,
             stores: BTreeMap::new(),
             write_failures: 0,
+            rows_dropped: 0,
+            unopened: BTreeMap::new(),
             open_segments,
             health: std::sync::Arc::new(WriteHealth::default()),
         }
@@ -574,36 +584,55 @@ impl StoreManager {
 
     /// Open the store on first write, then buffer the row.
     ///
-    /// A failure to open is **counted and reported, not propagated**. Ingest returns a
-    /// per-line verdict to a client and a directory that cannot be created is not that
-    /// line's fault; failing the body would turn one bad mount into five hundred
-    /// identical error messages. What must not happen is silence, so the count is on
-    /// `/stats` - a disk failing behind a 200 on every `/ingest` is the worst outcome
-    /// available here.
-    pub fn append(&mut self, template_id: u64, time_column: &str, row: Row, forms: &DtForms) {
+    /// **A failure to open is the row's, and it is returned.** The row is not buffered
+    /// anywhere, and with no write-ahead log that makes it nowhere: this used to count the
+    /// failure and return nothing, and `/ingest` answered `200` with the line counted in
+    /// `ingested`. The caller refuses the line by number instead. The body is not failed:
+    /// the other templates' rows in it did land, and in this body the leaf costs its own
+    /// lines and no one else's. The bodies after it are refused whole at the door until
+    /// the leaf opens; see `retry_unopened`.
+    ///
+    /// Counted as well as returned - `write_failures` for `/stats`, `rows_dropped` for the
+    /// exit code - and it marks the store degraded.
+    pub fn append(
+        &mut self,
+        template_id: u64,
+        time_column: &str,
+        row: Row,
+        forms: &DtForms,
+    ) -> Result<(), StoreError> {
         if !self.stores.contains_key(&template_id) {
             match self.backend.open(template_id, time_column) {
                 Ok(store) => {
                     self.stores.insert(template_id, store);
+                    self.unopened.remove(&template_id);
                 }
-                Err(e) => return self.note_failure(&e),
+                Err(e) => {
+                    self.note_failure(&e);
+                    self.rows_dropped += 1;
+                    self.unopened.insert(template_id, time_column.to_string());
+                    return Err(e);
+                }
             }
         }
         if let Some(store) = self.stores.get_mut(&template_id) {
             store.append(row, forms);
         }
+        Ok(())
     }
 
     /// The batch entry point: the ingest path calls this and owns neither buffer nor clock.
+    /// Stops at the first row the store refuses; the rows after it are not appended.
     pub fn append_batch_to(
         &mut self,
         template_id: u64,
         time_column: &str,
         rows: impl IntoIterator<Item = (Row, Vec<(String, DtForm)>)>,
-    ) {
+    ) -> Result<(), StoreError> {
         for (row, forms) in rows {
-            self.append(template_id, time_column, row, &forms);
+            self.append(template_id, time_column, row, &forms)?;
         }
+        Ok(())
     }
 
     /// Open a leaf the trie already knows about, without writing to it.
@@ -631,15 +660,14 @@ impl StoreManager {
     ///
     /// The rule is written around the tick because that is where a full disk shows up
     /// first, but a leaf that cannot even be *opened* - a directory `create_dir_all` could
-    /// not make - is a store that cannot write by any reading, and `append` drops that row
-    /// on the floor. Without this, a disk that fills before a template's first line
-    /// answers `200` for rows that were never anywhere, which is the exact lie the
-    /// refusal exists to stop.
+    /// not make - is a store that cannot write by any reading. `append` refuses that row
+    /// to its line; this is what refuses the *next* body at the door, before it is read.
     ///
     /// The clearing rule is still the tick's: the next pass that writes everything clears
-    /// it. If the disk is still bad the next body fails again and sets it again, so the
-    /// worst case is one refused-then-retried body per flush interval rather than a
-    /// server stuck refusing after the disk came back.
+    /// it, and a pass has not written everything while a leaf `append` could not open
+    /// still will not open - `retry_unopened` is in the pass. So the refusal lasts exactly
+    /// as long as the leaf will not open: until the first tick after a disk fault is
+    /// fixed, and for bytes the format rejects, until an operator moves them.
     fn note_failure(&mut self, e: &StoreError) {
         if self.write_failures == 0 {
             crate::error::report(e);
@@ -695,6 +723,7 @@ impl StoreManager {
             }
             reap_failures += self.reap_open_segments();
         }
+        let unopened = self.retry_unopened();
         for (id, e) in &failures {
             crate::error::report(e);
             let _ = id;
@@ -705,8 +734,50 @@ impl StoreManager {
         }
         // The verdict `/health` and `/ingest` read. A final flush sets it too: a shutdown
         // that could not write is degraded for whatever is left of the process.
-        self.health.tick(summary.failed + reap_failures);
+        self.health.tick(summary.failed + reap_failures + unopened);
         summary
+    }
+
+    /// Try again to open every leaf `append` could not, and count the ones that still fail.
+    ///
+    /// **Why the flush has to ask.** A leaf that will not open holds no buffer, so a pass
+    /// over the open stores never meets it and would end by clearing `degraded` - and the
+    /// next body through the door would store its other lines again and be refused again
+    /// for this leaf's. A shipper retrying that `503` duplicates every good line of its
+    /// batch once per retry, for as long as the leaf stays shut. Kept degraded instead, the
+    /// retry is refused at the door until the leaf opens. The bodies already past the door
+    /// when the fault was found are each partly stored once; none after them is.
+    ///
+    /// **What it costs: every template's ingest, not only this one's.** The door cannot
+    /// tell which bodies need the leaf without parsing them, so while it will not open no
+    /// body is taken, and a leaf whose bytes the format rejects never opens by itself.
+    /// That is the stance a full disk already gets, and the alternative is the unbounded
+    /// duplication above. `/health` says degraded and names the error meanwhile. The retry
+    /// is a full `DiskLeaf::open` under the store lock each tick: nothing for a directory
+    /// that will not list, a footer read per segment before the bad one for a corrupt leaf.
+    ///
+    /// Counted apart from `summary.failed` for the reason reap failures are: that is leaves
+    /// whose buffered rows could not be written, which the shutdown reports as lost, and
+    /// these hold none. Their rows were refused by line and are in `rows_dropped`.
+    fn retry_unopened(&mut self) -> usize {
+        let pending: Vec<(u64, String)> = std::mem::take(&mut self.unopened).into_iter().collect();
+        let mut failed = 0;
+        for (template_id, time_column) in pending {
+            if self.stores.contains_key(&template_id) {
+                continue;
+            }
+            match self.backend.open(template_id, &time_column) {
+                Ok(store) => {
+                    self.stores.insert(template_id, store);
+                }
+                Err(e) => {
+                    failed += 1;
+                    self.note_failure(&e);
+                    self.unopened.insert(template_id, time_column);
+                }
+            }
+        }
+        failed
     }
 
     /// Seal least recently written open segments until the count is back under the cap.
@@ -789,6 +860,11 @@ impl StoreManager {
         self.write_failures
     }
 
+    /// Rows `append` refused over the life of this manager. Never cleared.
+    pub fn rows_dropped(&self) -> u64 {
+        self.rows_dropped
+    }
+
     pub fn last_write_error(&self) -> Option<String> {
         self.health.last_error()
     }
@@ -833,14 +909,15 @@ pub fn ts_of(row: &Row, column: &str) -> Option<i64> {
 /// that should have found it - only under a limit, only once the heap fills, so an
 /// unlimited query and a small fixture would both pass.
 ///
-/// `None` only for a row from before M5.6b: one with neither an instant in its time
-/// column nor a system column, which is a row in an `undated` partition.
+/// `None` only for a row from before the arrival-time column: one with neither an instant
+/// in its time column nor a system column, which is a row in an `undated` partition.
 pub fn effective_ts(row: &Row, column: &str) -> Option<i64> {
     ts_of(row, column).or_else(|| ts_of(row, RECEIVED_AT_COLUMN))
 }
 
 /// Whether an instant falls in `[since, until)`. A row with no effective time is outside
-/// every window - the one case left is a row from before M5.6b, in `undated`.
+/// every window - the one case left is a row from before the arrival-time column, in
+/// `undated`.
 pub fn in_window(ts: Option<i64>, since: Option<i64>, until: Option<i64>) -> bool {
     let Some(ns) = ts else {
         return false;
@@ -903,4 +980,88 @@ pub fn project(row: &Row, columns: &[String]) -> Row {
         .iter()
         .filter_map(|name| row.get(name).map(|v| (name.clone(), v.clone())))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A backend whose leaves fail to open until `shut` is cleared: what a `chmod 000`
+    /// directory looks like from the manager, and then the `chmod 755`.
+    struct Shut(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Store for Shut {
+        fn open(&self, template_id: u64, t: &str) -> Result<Box<dyn LeafStore>, StoreError> {
+            if self.0.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(StoreError::Io {
+                    template_id,
+                    source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                });
+            }
+            MemoryStore::new().open(template_id, t)
+        }
+
+        fn kind(&self) -> &'static str {
+            "shut"
+        }
+
+        fn base_path(&self) -> Option<&Path> {
+            None
+        }
+    }
+
+    /// A row whose leaf will not open is refused to the caller and counted where the exit
+    /// code reads it, and the store stays degraded - through any number of ticks - until
+    /// the leaf opens. A tick that cleared it sooner would let a retrying shipper's next
+    /// body in, to store its other lines a second time.
+    #[test]
+    fn a_row_whose_leaf_will_not_open_is_refused_and_the_store_stays_degraded() {
+        let shut = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut stores = StoreManager::new(Box::new(Shut(std::sync::Arc::clone(&shut))));
+        for n in 0..3 {
+            let refused = stores.append(7, DEFAULT_TS_COLUMN, Row::new(), &[]);
+            assert!(
+                matches!(refused, Err(StoreError::Io { template_id: 7, .. })),
+                "row {n} was not refused: {refused:?}"
+            );
+        }
+        assert_eq!(stores.rows_dropped(), 3);
+        assert_eq!(stores.rows(), 0);
+        assert!(stores.is_degraded());
+
+        for _ in 0..3 {
+            stores.flush_all(FlushKind::Tick);
+            assert!(
+                stores.is_degraded(),
+                "a tick cleared degraded with the leaf still shut"
+            );
+        }
+
+        shut.store(false, std::sync::atomic::Ordering::Relaxed);
+        stores.flush_all(FlushKind::Tick);
+        assert!(
+            !stores.is_degraded(),
+            "the leaf opened and the store is still degraded"
+        );
+        assert!(
+            stores.lookup(7).is_some(),
+            "the tick did not keep the leaf it opened"
+        );
+        // The count is never cleared: those rows are still gone.
+        assert_eq!(stores.rows_dropped(), 3);
+        stores
+            .append(7, DEFAULT_TS_COLUMN, Row::new(), &[])
+            .expect("the leaf is open now");
+        assert_eq!(stores.rows(), 1);
+    }
+
+    #[test]
+    fn a_row_the_store_takes_is_not_counted_as_dropped() {
+        let mut stores = StoreManager::memory();
+        stores
+            .append(7, DEFAULT_TS_COLUMN, Row::new(), &[])
+            .expect("the memory store always opens");
+        assert_eq!(stores.rows_dropped(), 0);
+        assert_eq!(stores.rows(), 1);
+    }
 }
