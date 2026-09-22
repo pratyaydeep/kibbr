@@ -16,7 +16,7 @@ alloc_block  4096 bytes (measured)
 cores        8
 cpu          Apple M2
 disk         SSD (internal, assumed)
-filesystem   ?
+filesystem   apfs
 memory       8.0GB
 platform     Darwin 23.3.0 (arm64)
 python       3.12.2
@@ -27,7 +27,7 @@ python       3.12.2
 
 ## Findings so far
 
-- **The Python frontend agrees with the binary**: 0 disagreements over 4 datasets. Every template id and inferred type below is the one TrieDB would assign.
+- **The Python frontend agrees with the binary**: 0 disagreements over 5 datasets. Every template id and inferred type below is the one TrieDB would assign.
 - **The byte model is calibrated on `flat30`**: it predicts +0.00% of the segment bytes the real binary wrote (bound: 10%).
 - **The byte model is calibrated on `uneven`**: it predicts +0.00% of the segment bytes the real binary wrote (bound: 10%).
 - **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.33x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
@@ -80,7 +80,14 @@ Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`:
 
 _Frontend agreement - the Python port against the binary_
 
-Run 2026-09-19T09:31:35+00:00, git `90152d2`, 8 rows.
+Run 2026-09-22T19:39:49+00:00, git `920cce5`, 10 rows.
+
+### `00_frontend_agree` / dataset `farm`
+
+| variant   | metric         |   value | unit   |
+|-----------|----------------|---------|--------|
+| farm      | lines_compared |   5,000 | lines  |
+| farm      | disagreements  |       0 | count  |
 
 ### `00_frontend_agree` / dataset `flat30`
 
@@ -112,6 +119,7 @@ Run 2026-09-19T09:31:35+00:00, git `90152d2`, 8 rows.
 
 **Notes**
 
+- triedb gen-logs --profile farm --lines 200,000 --seed 42, unmodified; one simulated day in time order, ten services, each with its own time field (@timestamp, time, ts, ts_ms), a request's id recurring across services, 0.5% dirty values on five named keys
 - triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
 - HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else.
 - flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else
@@ -2381,10 +2389,10 @@ Run 2026-09-19T10:01:36+00:00, git `90152d2`, 690 rows.
 **Notes**
 
 - a (template, day) pair - what the model used to assume was one file
-- segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition
+- segments the seal rule actually produces; the `.col` format is silent on sealing, so the first version of this model assumed one per partition
 - close reason
 - lines in memory and not yet in a closed row group - what a crash replays
-- 32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08
+- 32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08
 - zstd 3 over batches of 500 lines, from script 08
 - what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung
 - one day (2024-01-19); the one-template search is template 1055466456870197778
@@ -2401,12 +2409,12 @@ Run 2026-09-19T10:01:36+00:00, git `90152d2`, 690 rows.
 - 8 files per day, each row group to the file with the fewest bytes
 - 200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed
 - the model's per-template-per-day bytes against the binary's
-- 32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08
+- 32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08
 - one day (2024-01-15); the one-template search is template 3977316063236355336
 - 88,452 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit
 - 353,809 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit
 - 707,619 row groups x 16 columns x 12 bytes, plus 24 per row group, at the size limit
-- 32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08
+- 32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08
 - one day (2024-01-15); the one-template search is template 1055466456870197778
 - 54,779 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit
 - 219,118 row groups x 44 columns x 12 bytes, plus 24 per row group, at the size limit
@@ -4603,7 +4611,7 @@ Run 2026-09-22T15:55:51+00:00, git `90152d2`, 1441 rows.
 - fixed part through a word list, each changing part its own column; 0.9987 of the best encoding above
 - fixed part through a word list, each changing part its own column; 0.9999 of the best encoding above
 - the smallest applicable encoding for every chunk of every column
-- section 6.2 chunk sizes, no codec
+- `.col` plain chunk sizes, no codec
 - BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 - 85,822 bytes, 0.0083 of plain
 - 82,864 bytes, 0.0152 of plain

@@ -1146,15 +1146,15 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
 2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
 2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:20:57+00:00,32baccc,03_layout_model,flat30,per_template_day,bytes,37877987,bytes,what TrieDB does today: one segment per leaf per day
@@ -1348,15 +1348,15 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
 2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
 2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:21:52+00:00,32baccc,03_layout_model,flat30,per_template_day,bytes,37877987,bytes,what TrieDB does today: one segment per leaf per day
@@ -1550,15 +1550,15 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
 2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
 2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:30:03+00:00,32baccc,03_layout_model,flat30,per_template_day,bytes,37877987,bytes,what TrieDB does today: one segment per leaf per day
@@ -1767,15 +1767,15 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,rows_per_rg_p90,2,rows,
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
-2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; script 08 has not run, so only the raw figure is given"
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,files,4931,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,row_groups,26890,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T20:31:25+00:00,32baccc,03_layout_model,uneven,per_template_day,bytes,33046269,bytes,what TrieDB does today: one segment per leaf per day
@@ -2587,7 +2587,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T20:58:01+00:00,7bb9de5,05_encodings,flat30,BEST_PER_CHUNK sorted,bytes,6699696,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T20:58:01+00:00,7bb9de5,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_raw,0.1438,ratio,
 2026-09-18T20:58:01+00:00,7bb9de5,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.61868,ratio,
-2026-09-18T20:58:01+00:00,7bb9de5,05_encodings,flat30,plain,bytes,25308103,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T20:58:01+00:00,7bb9de5,05_encodings,flat30,plain,bytes,25308103,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T20:58:01+00:00,7bb9de5,05_encodings,flat30,verdict,sort_saving_pct,2.524,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,arrival/Bool,bits,6290,bytes,"chunks of 8,192 rows, one column type"
 2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,arrival/Bool,bits+zstd3,6968,bytes,"chunks of 8,192 rows, one column type"
@@ -2894,7 +2894,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,BEST_PER_CHUNK sorted,bytes,6696927,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_raw,0.14374,ratio,
 2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.61842,ratio,
-2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,plain,bytes,24901825,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,plain,bytes,24901825,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T21:00:37+00:00,7bb9de5,05_encodings,flat30,verdict,sort_saving_pct,2.525,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,rate=12 wait=300,closes_wait,21177,count,close reason
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,rate=12 wait=300,closes_shutdown,135,count,close reason
@@ -2910,7 +2910,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,rate=12 wait=300 tick,rows_per_rg_p90,1,rows,
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,rate=12 wait=300 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,rate=12 wait=300 tick,backlog_median_lines,3,lines,
-2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
+2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; script 08 has not run, so only the raw figure is given"
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T21:06:43+00:00,7bb9de5,03_layout_model,flat30,per_template_day,bytes,37480364,bytes,what TrieDB does today: one segment per leaf per day
@@ -3337,7 +3337,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:07:36+00:00,7bb9de5,05_encodings,uneven,BEST_PER_CHUNK sorted,bytes,4274800,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T21:07:36+00:00,7bb9de5,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_raw,0.09551,ratio,
 2026-09-18T21:07:36+00:00,7bb9de5,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_gzip9,1.05229,ratio,
-2026-09-18T21:07:36+00:00,7bb9de5,05_encodings,uneven,plain,bytes,20582204,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T21:07:36+00:00,7bb9de5,05_encodings,uneven,plain,bytes,20582204,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T21:07:36+00:00,7bb9de5,05_encodings,uneven,verdict,sort_saving_pct,0.675,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T21:09:44+00:00,5a9cb59,06_bloom,uneven,request_id@8bits,row_groups,2837,count,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
 2026-09-18T21:09:44+00:00,5a9cb59,06_bloom,uneven,request_id@8bits,filter_bytes,14416,bytes,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
@@ -4875,23 +4875,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900 tick,rows_per_rg_p90,2,rows,
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,per_template_day,files,4931,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T21:34:32+00:00,eff5a39,03_layout_model,uneven,per_template_day,row_groups,26890,count,what TrieDB does today: one segment per leaf per day
@@ -5096,23 +5096,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T21:37:54+00:00,eff5a39,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
@@ -5540,7 +5540,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:38:39+00:00,eff5a39,05_encodings,uneven,BEST_PER_CHUNK sorted,bytes,4274800,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T21:38:39+00:00,eff5a39,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_raw,0.09551,ratio,
 2026-09-18T21:38:39+00:00,eff5a39,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_gzip9,1.05229,ratio,
-2026-09-18T21:38:39+00:00,eff5a39,05_encodings,uneven,plain,bytes,20582204,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T21:38:39+00:00,eff5a39,05_encodings,uneven,plain,bytes,20582204,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T21:38:39+00:00,eff5a39,05_encodings,uneven,verdict,sort_saving_pct,0.675,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,arrival/Bool,bits,6290,bytes,"chunks of 8,192 rows, one column type"
 2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,arrival/Bool,bits+zstd3,6968,bytes,"chunks of 8,192 rows, one column type"
@@ -5847,7 +5847,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,BEST_PER_CHUNK sorted,bytes,6696927,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_raw,0.14374,ratio,
 2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.61842,ratio,
-2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,plain,bytes,24901825,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,plain,bytes,24901825,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T21:39:27+00:00,eff5a39,05_encodings,flat30,verdict,sort_saving_pct,2.525,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T21:40:06+00:00,eff5a39,06_bloom,uneven,request_id@8bits,row_groups,2837,count,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
 2026-09-18T21:40:06+00:00,eff5a39,06_bloom,uneven,request_id@8bits,filter_bytes,14416,bytes,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
@@ -6313,7 +6313,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300 tick,rows_per_rg_p90,6,rows,
 2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300 tick,backlog_median_lines,3,lines,
-2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,per_template_day,files,4931,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T21:42:46+00:00,eff5a39,03_layout_model,uneven,per_template_day,row_groups,26890,count,what TrieDB does today: one segment per leaf per day
@@ -6579,7 +6579,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300 tick,rows_per_rg_p90,6,rows,
 2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300 tick,backlog_max_lines,6,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300 tick,backlog_median_lines,3,lines,
-2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,per_template_day,files,4931,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T21:47:21+00:00,eff5a39,03_layout_model,uneven,per_template_day,row_groups,26890,count,what TrieDB does today: one segment per leaf per day
@@ -6791,23 +6791,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900 tick,rows_per_rg_p90,2,rows,
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,per_template_day,files,4931,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T21:50:47+00:00,eff5a39,03_layout_model,uneven,per_template_day,row_groups,26890,count,what TrieDB does today: one segment per leaf per day
@@ -7971,23 +7971,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=900 tick,rows_per_rg_p90,2,rows,
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,per_template_day,files,4931,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T22:04:32+00:00,b405451,03_layout_model,uneven,per_template_day,row_groups,26890,count,what TrieDB does today: one segment per leaf per day
@@ -8194,23 +8194,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,per_template_day,files,16694,count,what TrieDB does today: one segment per leaf per day
 2026-09-18T22:07:49+00:00,b405451,03_layout_model,flat30,per_template_day,row_groups,21312,count,what TrieDB does today: one segment per leaf per day
@@ -8640,7 +8640,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T22:08:27+00:00,b405451,05_encodings,uneven,BEST_PER_CHUNK sorted,bytes,4274800,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T22:08:27+00:00,b405451,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_raw,0.09551,ratio,
 2026-09-18T22:08:27+00:00,b405451,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_gzip9,1.05229,ratio,
-2026-09-18T22:08:27+00:00,b405451,05_encodings,uneven,plain,bytes,20582204,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T22:08:27+00:00,b405451,05_encodings,uneven,plain,bytes,20582204,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T22:08:27+00:00,b405451,05_encodings,uneven,verdict,sort_saving_pct,0.675,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,arrival/Bool,bits,6290,bytes,"chunks of 8,192 rows, one column type"
 2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,arrival/Bool,bits+zstd3,6968,bytes,"chunks of 8,192 rows, one column type"
@@ -8947,7 +8947,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,BEST_PER_CHUNK sorted,bytes,6696927,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_raw,0.14374,ratio,
 2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.61842,ratio,
-2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,plain,bytes,24901825,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,plain,bytes,24901825,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T22:09:14+00:00,b405451,05_encodings,flat30,verdict,sort_saving_pct,2.525,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T22:09:50+00:00,b405451,06_bloom,uneven,request_id@8bits,row_groups,2837,count,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
 2026-09-18T22:09:50+00:00,b405451,06_bloom,uneven,request_id@8bits,filter_bytes,14416,bytes,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
@@ -11063,7 +11063,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-18T23:57:37+00:00,f71e15a,05_encodings,messy,BEST_PER_CHUNK sorted,bytes,9612739,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-18T23:57:37+00:00,f71e15a,05_encodings,messy,BEST_PER_CHUNK sorted,ratio_to_raw,0.15268,ratio,
 2026-09-18T23:57:37+00:00,f71e15a,05_encodings,messy,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.74663,ratio,
-2026-09-18T23:57:37+00:00,f71e15a,05_encodings,messy,plain,bytes,36727111,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-18T23:57:37+00:00,f71e15a,05_encodings,messy,plain,bytes,36727111,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-18T23:57:37+00:00,f71e15a,05_encodings,messy,verdict,sort_saving_pct,2.193,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-18T23:59:58+00:00,f71e15a,07_vs_others,messy,elasticsearch,version,docker.elastic.co/elasticsearch/elasticsearch:8.19.20,tag,pinned in lab/others/docker-compose.yml
 2026-09-18T23:59:58+00:00,f71e15a,07_vs_others,messy,clickhouse,version,clickhouse/clickhouse-server:26.8.7.19,tag,pinned in lab/others/docker-compose.yml
@@ -11375,23 +11375,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,13,rows,
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,files,130,count,what TrieDB does today: one segment per leaf per day
 2026-09-19T00:11:25+00:00,eb6b34e,03_layout_model,messy,per_template_day,row_groups,6534,count,what TrieDB does today: one segment per leaf per day
@@ -11598,26 +11598,26 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,13,rows,
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,sealing,partitions,130,count,"a (template, day) pair - what the model used to assume was one file"
-2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; the `.col` format is silent on sealing, so the first version of this model assumed one per partition"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,files,1,count,"one shared file per day, rolled at 128.0MB"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,row_groups,6534,count,"one shared file per day, rolled at 128.0MB"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,bytes,40127287,bytes,"one shared file per day, rolled at 128.0MB"
@@ -11729,7 +11729,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_blocks,37060608,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
 2026-09-19T00:25:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_minus_real_pct,-38.713,percent,the model's per-template-per-day bytes against the binary's
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,sealing,partitions,130,count,"a (template, day) pair - what the model used to assume was one file"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; the `.col` format is silent on sealing, so the first version of this model assumed one per partition"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_seal,32304,count,close reason
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_wait,16830,count,close reason
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_shutdown,97,count,close reason
@@ -11822,23 +11822,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,7,rows,
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,474,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,227,lines,
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,files,1,count,"one shared file per day, rolled at 128.0MB"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,shared_day_limit limit=128.0MB,row_groups,36661,count,"one shared file per day, rolled at 128.0MB"
@@ -11951,7 +11951,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_col_blocks,152371200,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
 2026-09-19T00:35:15+00:00,eb6b34e,03_layout_model,messy,calibration,model_minus_real_pct,-3.026,percent,the model's per-template-per-day bytes against the binary's
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,sealing,partitions,130,count,"a (template, day) pair - what the model used to assume was one file"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; the `.col` format is silent on sealing, so the first version of this model assumed one per partition"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_seal,32304,count,close reason
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_wait,16830,count,close reason
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,closes_shutdown,97,count,close reason
@@ -12044,23 +12044,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,7,rows,
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,474,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,227,lines,
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,files,34891,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
 2026-09-19T00:44:41+00:00,eb6b34e,03_layout_model,messy,per_template_day,row_groups,36661,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
@@ -13513,7 +13513,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T09:47:57+00:00,90152d2,02_split_vs_wide,messy,verdict,smallest_by_bytes,10229737,bytes,zstd -19
 2026-09-19T09:47:57+00:00,90152d2,02_split_vs_wide,messy,verdict,smallest_by_blocks,10510336,bytes,zstd -19
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,sealing,partitions,4931,count,"a (template, day) pair - what the model used to assume was one file"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,sealing,segments,4931,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,sealing,segments,4931,count,"segments the seal rule actually produces; the `.col` format is silent on sealing, so the first version of this model assumed one per partition"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=60,closes_wait,34898,count,close reason
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=60,closes_shutdown,277,count,close reason
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=60,row_groups,35175,count,
@@ -13601,23 +13601,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=900 tick,rows_per_rg_p90,2,rows,
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=60,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=300,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_raw,265211796,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=12 wait=900,wal_24h_bytes_zstd,30260666,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=60,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=300,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_raw,2652117966,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=120 wait=900,wal_24h_bytes_zstd,302606660,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=60,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=300,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of section 7.1 record per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_raw,26521179667,bytes,"32 bytes of WAL record header per line plus 224 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,rate=1200 wait=900,wal_24h_bytes_zstd,3026066600,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,per_template_day,files,4931,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,per_template_day,row_groups,26890,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
@@ -13743,7 +13743,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,calibration,model_col_blocks,34549760,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
 2026-09-19T09:49:41+00:00,90152d2,03_layout_model,uneven,calibration,model_minus_real_pct,0.0,percent,the model's per-template-per-day bytes against the binary's
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,sealing,partitions,16694,count,"a (template, day) pair - what the model used to assume was one file"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,sealing,segments,16694,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,sealing,segments,16694,count,"segments the seal rule actually produces; the `.col` format is silent on sealing, so the first version of this model assumed one per partition"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=60,closes_wait,51458,count,close reason
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=60,closes_shutdown,112,count,close reason
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=60,row_groups,51570,count,
@@ -13826,23 +13826,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=900 tick,rows_per_rg_p90,6,rows,
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_max_lines,600,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=900 tick,backlog_median_lines,300,lines,
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=60,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=300,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_raw,274710481,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=12 wait=900,wal_24h_bytes_zstd,31344465,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=60,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=300,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_raw,2747104813,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=120 wait=900,wal_24h_bytes_zstd,313444659,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=60,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=300,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of section 7.1 record per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_raw,27471048134,bytes,"32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,rate=1200 wait=900,wal_24h_bytes_zstd,3134446592,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,per_template_day,files,16694,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,per_template_day,row_groups,21312,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
@@ -13968,7 +13968,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,calibration,model_col_blocks,79839232,bytes,"200,000 lines ingested over POST /ingest, server stopped with SIGTERM so every segment is sealed"
 2026-09-19T09:52:58+00:00,90152d2,03_layout_model,flat30,calibration,model_minus_real_pct,0.0,percent,the model's per-template-per-day bytes against the binary's
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,sealing,partitions,130,count,"a (template, day) pair - what the model used to assume was one file"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; section 6.2 does not mention sealing, so the first version of this model assumed one per partition"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,sealing,segments,34891,count,"segments the seal rule actually produces; the `.col` format is silent on sealing, so the first version of this model assumed one per partition"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=60,closes_seal,32304,count,close reason
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=60,closes_wait,16830,count,close reason
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=60,closes_shutdown,97,count,close reason
@@ -14061,23 +14061,23 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=900 tick,rows_per_rg_p90,7,rows,
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=900 tick,backlog_max_lines,474,lines,lines in memory and not yet in a closed row group - what a crash replays
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=900 tick,backlog_median_lines,227,lines,
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=60,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=300,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_raw,359561337,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=12 wait=900,wal_24h_bytes_zstd,41025948,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=60,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=300,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_raw,3595613379,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=120 wait=900,wal_24h_bytes_zstd,410259486,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=60,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=300,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
-2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of section 7.1 record per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
+2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_raw,35956133798,bytes,"32 bytes of WAL record header per line plus 315 bytes of line; zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,rate=1200 wait=900,wal_24h_bytes_zstd,4102594866,bytes,"zstd 3 over batches of 500 lines, from script 08"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,per_template_day,files,34891,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
 2026-09-19T10:01:36+00:00,90152d2,03_layout_model,messy,per_template_day,row_groups,36661,count,"what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung"
@@ -14507,7 +14507,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T10:02:12+00:00,90152d2,05_encodings,uneven,BEST_PER_CHUNK sorted,bytes,4274800,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-19T10:02:12+00:00,90152d2,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_raw,0.09551,ratio,
 2026-09-19T10:02:12+00:00,90152d2,05_encodings,uneven,BEST_PER_CHUNK sorted,ratio_to_gzip9,1.05229,ratio,
-2026-09-19T10:02:12+00:00,90152d2,05_encodings,uneven,plain,bytes,20582204,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-19T10:02:12+00:00,90152d2,05_encodings,uneven,plain,bytes,20582204,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-19T10:02:12+00:00,90152d2,05_encodings,uneven,verdict,sort_saving_pct,0.675,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,arrival/Bool,bits,6290,bytes,"chunks of 8,192 rows, one column type"
 2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,arrival/Bool,bits+zstd3,6968,bytes,"chunks of 8,192 rows, one column type"
@@ -14814,7 +14814,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,BEST_PER_CHUNK sorted,bytes,6696927,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_raw,0.14374,ratio,
 2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.61842,ratio,
-2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,plain,bytes,24901825,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,plain,bytes,24901825,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-19T10:02:59+00:00,90152d2,05_encodings,flat30,verdict,sort_saving_pct,2.525,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,arrival/Bool,bits,59,bytes,"chunks of 8,192 rows, one column type"
 2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,arrival/Bool,bits+zstd3,86,bytes,"chunks of 8,192 rows, one column type"
@@ -15089,7 +15089,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,BEST_PER_CHUNK sorted,bytes,9612739,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,BEST_PER_CHUNK sorted,ratio_to_raw,0.15268,ratio,
 2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.74663,ratio,
-2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,plain,bytes,36727111,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,plain,bytes,36727111,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-19T10:04:05+00:00,90152d2,05_encodings,messy,verdict,sort_saving_pct,2.193,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-19T10:04:40+00:00,90152d2,06_bloom,uneven,request_id@8bits,row_groups,2837,count,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
 2026-09-19T10:04:40+00:00,90152d2,06_bloom,uneven,request_id@8bits,filter_bytes,14416,bytes,distinct/rows 0.942; 1000 ids that exist and 1000 that do not; the denominator is the row groups holding the column
@@ -16675,7 +16675,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-22T15:54:06+00:00,7f71d96,05_encodings,farm,BEST_PER_CHUNK sorted,bytes,6665725,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-22T15:54:06+00:00,7f71d96,05_encodings,farm,BEST_PER_CHUNK sorted,ratio_to_raw,0.06836,ratio,
 2026-09-22T15:54:06+00:00,7f71d96,05_encodings,farm,BEST_PER_CHUNK sorted,ratio_to_gzip9,0.6075,ratio,
-2026-09-22T15:54:06+00:00,7f71d96,05_encodings,farm,plain,bytes,56120206,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-22T15:54:06+00:00,7f71d96,05_encodings,farm,plain,bytes,56120206,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-22T15:54:06+00:00,7f71d96,05_encodings,farm,verdict,sort_saving_pct,-4.602,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-22T15:55:26+00:00,7f71d96,02_split_vs_wide,farm,raw NDJSON,bytes,97713008,bytes,
 2026-09-22T15:55:26+00:00,7f71d96,02_split_vs_wide,farm,raw NDJSON,disk_blocks,97714176,bytes,
@@ -17080,7 +17080,7 @@ when,git_sha,script,dataset,variant,metric,value,unit,note
 2026-09-22T15:55:51+00:00,7f71d96,05_encodings,farm[J80],BEST_PER_CHUNK sorted,bytes,6630279,bytes,the smallest applicable encoding for every chunk of every column
 2026-09-22T15:55:51+00:00,7f71d96,05_encodings,farm[J80],BEST_PER_CHUNK sorted,ratio_to_raw,0.06799,ratio,
 2026-09-22T15:55:51+00:00,7f71d96,05_encodings,farm[J80],BEST_PER_CHUNK sorted,ratio_to_gzip9,0.60427,ratio,
-2026-09-22T15:55:51+00:00,7f71d96,05_encodings,farm[J80],plain,bytes,56192425,bytes,"section 6.2 chunk sizes, no codec"
+2026-09-22T15:55:51+00:00,7f71d96,05_encodings,farm[J80],plain,bytes,56192425,bytes,"`.col` plain chunk sizes, no codec"
 2026-09-22T15:55:51+00:00,7f71d96,05_encodings,farm[J80],verdict,sort_saving_pct,-3.173,percent,BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 2026-09-22T18:19:02+00:00,920cce5,00_frontend_agree,flat30,flat30,lines_compared,5000,lines,
 2026-09-22T18:19:02+00:00,920cce5,00_frontend_agree,flat30,flat30,disagreements,0,count,"triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates"
