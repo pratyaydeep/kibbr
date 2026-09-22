@@ -5,8 +5,8 @@
 .dev
 sample.ndjson
 
-# M1's reordered copies of sample.ndjson - scratch, and `gen-logs` plus `tail -r`
-# rebuilds them.
+# Reordered copies of sample.ndjson, which the in-memory trie must build the same tree
+# from - scratch, and `gen-logs` plus `tail -r` rebuilds them.
 /testdata/m1/
 
 # Malformed-input repros for the F1/F5 checks - scratch, not fixtures.
@@ -16,14 +16,14 @@ sample.ndjson
 /testdata/f4/
 /testdata/f5/
 
-# M2 timing inputs - scratch, `gen-logs --seed 5` rebuilds them.
+# The query engine's timing inputs - scratch, `gen-logs --seed 5` rebuilds them.
 /testdata/m2/
 
 # `scripts/dump_store.sh` output - the in-memory trie and leaf stores written down.
 # Scratch, and the script rebuilds it from the seed.
 /testdata/store/
 
-# M3 HTTP bodies - scratch, `gen-logs` plus tests/serve.rs rebuild them.
+# Request bodies for the HTTP API - scratch, `gen-logs` plus tests/serve.rs rebuild them.
 /testdata/serve/
 
 # Hostile-input repros for the black-box malformed-input sweep - scratch.
@@ -37,7 +37,7 @@ sample.ndjson
 # generator in this session rebuilds it.
 /testdata/buckets/
 
-# The 1M-line corpus the M3.6 viewer was driven against - scratch, `gen-logs --seed 42`
+# The 1M-line corpus the browser viewer was driven against - scratch, `gen-logs --seed 42`
 # rebuilds it.
 /testdata/viewer/
 
@@ -45,25 +45,29 @@ sample.ndjson
 # scratch. The script re-downloads and rebuilds all of it.
 /testdata/vector/
 
-# The M5.5 before/after file-count measurements - scratch, and `gen-logs --seed 42`
-# plus a server on a scratch --data-dir rebuild them.
+# File counts before and after one segment file per batch replaced one file per column -
+# scratch, and `gen-logs --seed 42` plus a server on a scratch --data-dir rebuild them.
 /testdata/m55/
 
-# The M5.6a seed-42 corpus the lost_trie/crash_templates scripts were first run by hand
-# against - scratch, `gen-logs --seed 42` rebuilds it.
+# The seed-42 corpus the template-catalog scripts (lost_trie, crash_templates) were first
+# run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
 /testdata/m56a/
 
 /lab
 /lab-rs
 
-# The M5.6b seed-42 corpus and the /templates sample the time-source scripts were first
-# run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
+# The seed-42 corpus and the /templates sample the per-template time-source scripts were
+# first run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
 /testdata/m56b/
 
-# The M5.6c seed-42 corpora the open-files, disk-full and scaling scripts were first run
-# by hand against - scratch, `gen-logs --seed 42` rebuilds them.
+# The seed-42 corpora the open-files, disk-full and scaling scripts were first run by
+# hand against - scratch, `gen-logs --seed 42` rebuilds them.
 /testdata/m5_6c/
 
-# The M5.6d before/after runs of the leaf-unwritable and bad-version scripts, the suite
-# and the differential pairs - scratch, and the scripts rebuild them.
+# The before/after runs of the leaf-unwritable and bad-version scripts, the suite and
+# the differential pairs - scratch, and the scripts rebuild them.
 /testdata/m5_6d/
+
+# The farm-profile corpora, the old profile's before/after checksums and the side-by-side
+# reports - scratch, and `gen-logs` plus scripts/log_report.sh rebuild them.
+/testdata/farm/

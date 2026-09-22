@@ -2,9 +2,9 @@
 
 A log store that fingerprints each line's shape and infers a type for every value.
 
-**Status: M0** - the generator and the parser. There is no database yet. Two
-subcommands: `gen-logs` makes reproducible, deliberately nasty NDJSON, and `parse`
-prints what the type ladder made of it.
+**Status:** a work in progress. It began as two subcommands - `gen-logs` makes
+reproducible, deliberately nasty NDJSON, and `parse` prints what the type ladder made
+of it - and the later sections add the HTTP server and the viewer.
 
 ---
 
@@ -112,7 +112,7 @@ Reading that:
 - **fingerprint** - the flattened, sorted key set. Nested objects become dotted
   paths. Arrays are never flattened, since that would make the fingerprint depend on
   array length. A low-cardinality key can be promoted into the fingerprint itself as
-  `event=login_failed`, which is what will make the trie branch usefully at M1.
+  `event=login_failed`, which is what makes the trie branch usefully.
 - **the middle column** is the type the ladder chose, first match wins.
 - **`(= …)`** shows up when the ladder turned the text into something else - a
   ten-digit integer read as a timestamp. That is the rule doing its job, out loud.
@@ -322,7 +322,7 @@ identifier is a breaking change to every one of their configs. It is also not a
 header away - the trie path is built from each line's own keys, so separating
 tenants means either splicing a token into the fingerprint (which changes every
 template id) or one trie per tenant, with a tenant selector on `/query`,
-`/templates`, `/stats` and the viewer. Revisit at M9, with the deployment work.
+`/templates`, `/stats` and the viewer. Revisit with the deployment work.
 
 **A `MATCH` with no `LIMIT` gets a page, not everything.** Every matching row
 would otherwise be materialised in the server before a byte of the response is
@@ -389,18 +389,18 @@ body you sent.
 
 **Ctrl-C finishes what it started.** SIGINT and SIGTERM both cancel one
 `CancellationToken`; the listener stops accepting, requests already running finish,
-and the shutdown walks a fixed order naming the steps this milestone does not have
-yet:
+and the shutdown walks a fixed order naming the steps this build does not have yet.
+With `--storage memory`:
 
 ```
 triedb: SIGINT received - shutting down
 triedb: stop accepting - 1 request(s) in flight
 triedb: in-flight requests complete
-triedb: final flush - skipped, storage is memory (M5 puts the stores on disk)
-triedb: WAL checkpoint - skipped, there is no WAL yet (M6)
-triedb: trie.json - skipped, nothing persists the trie yet (M5)
+triedb: final flush - skipped, storage is memory (--data-dir puts the stores on disk)
+triedb: WAL checkpoint - skipped, there is no WAL yet
+triedb: trie.json - skipped, storage is memory
 triedb: close stores - 328 store(s), 60,997 row(s) discarded, they were only in memory
-triedb: close WAL - skipped, there is no WAL yet (M6)
+triedb: close WAL - skipped, there is no WAL yet
 triedb: exit 0
 ```
 
@@ -465,7 +465,8 @@ test result: ok. 9 passed; 0 failed
 
 Every test runs the real binary and reads its stdout. Nothing reaches inside the
 crate and there are no mocks. The one that matters is
-`every_fixture_value_gets_its_labelled_type` - that is the milestone's done-when.
+`every_fixture_value_gets_its_labelled_type`: every hand-labelled value in
+`testdata/fixture.ndjson` must come out with the type its label says.
 
 Lints have to be clean:
 
