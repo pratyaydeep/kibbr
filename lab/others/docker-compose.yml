@@ -2,8 +2,9 @@
 # versions here are also written into results.csv by 07_vs_others.sh, so RESULTS.md says
 # what it measured.
 #
-# Elasticsearch stays on the 8.x line: TRIEDB.md section 10.2 targets "enough of ES 8.11
-# that Kibana Discover works", so 8.x is the line the compatibility surface is aimed at.
+# Elasticsearch stays on the 8.x line: TrieDB's planned ES-compatible API (not built yet)
+# targets enough of ES 8.11 for Kibana Discover to work, so 8.x is the line that
+# compatibility surface is aimed at.
 # 8.19.20 is the current 8.x maintenance release; 9.5.2 is the current major and would be
 # a different question.
 services:

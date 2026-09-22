@@ -106,8 +106,8 @@ def table_for(P: rowlib.Parsed, g: Group, idxs: list) -> pa.Table:
     """One Arrow table for these rows under this group's schema.
 
     A row whose template does not hold a column contributes a null there, which is what
-    a merged template or a WIDE layout has to store and what `null bitmaps` cost in
-    section 6.2's format.
+    a merged template or a WIDE layout has to store and what `null bitmaps` cost in the
+    segment format: one bit per row, ahead of any chunk with a row missing.
     """
     arrays = []
     for key in g.keys:

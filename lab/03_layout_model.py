@@ -6,8 +6,8 @@ in timestamp order at `--rate` lines per second; a row group closes at 8,192 row
 or when its oldest row has waited `--wait` seconds. Closes are counted by reason, because
 which rule fires is what decides the shape.
 
-Bytes come from `common/colmodel.py`, which is TRIEDB.md section 6.2 written out field by
-field, and every file rounds up to a 4 KiB block.
+Bytes come from `common/colmodel.py`, which is the `.col` segment format written out field
+by field, and every file rounds up to a 4 KiB block.
 
 CALIBRATION runs last and is the point of the whole script: the same data goes into the
 real binary under `lab/out/03/calib/`, and the model's per-template-per-day figure is held
@@ -40,7 +40,7 @@ RATES = [12, 120, 1200]
 WAITS = [60, 300, 900]
 SHARED_LIMITS = [128 * 1024**2, 512 * 1024**2, 1024**3]
 MOD_N = [4, 8]
-WAL_RECORD_OVERHEAD = 4 + 8 + 8 + 8 + 4  # section 7.1, before the raw line
+WAL_RECORD_OVERHEAD = 4 + 8 + 8 + 8 + 4  # the WAL record header, before the raw line
 
 
 # --- segment sealing (src/store/disk.rs row_fits / extend_shape) --------------
@@ -48,14 +48,14 @@ WAL_RECORD_OVERHEAD = 4 + 8 + 8 + 8 + 4  # section 7.1, before the raw line
 # A segment does not hold a whole (template, day). It holds a maximal run of rows that
 # agree on their key set, on each column's kind, and on each Datetime column's rung -
 # and the moment a row would widen any of those, `row_fits` says no and the segment is
-# sealed. Section 6.2 describes the file format and says nothing about this, so the first
+# sealed. The `.col` file format fixes the bytes and says nothing about this, so the first
 # version of this model assumed one file per (template, day) and was exactly right on
 # flat30 and uneven for the wrong reason: neither has a key carrying two types, so every
 # partition happens to be one run.
 #
 # On `messy` the same assumption predicted 130 files where the binary wrote 34,892.
 #
-# Two details decide the count, and both come from the source rather than the spec:
+# Two details decide the count, and both come from the source, not the file format:
 #   - The store's kind space is {Str, I64, F64, Dt, Bool} (segment.rs ColKind), so Uuid
 #     and Ip are Str. A UUID column taking an empty string does NOT seal.
 #   - `extend_shape` refuses two different `dt_form`s outright rather than merging them to
@@ -174,7 +174,7 @@ def build_costs(P: rowlib.Parsed) -> dict:
             d = p = 0
             for r in ordered:
                 # Null is `vals is None`: the key was absent, or its JSON value was
-                # null. Section 6.2 spends a bitmap bit on such a row and no data bytes;
+                # null. A plain chunk spends a bitmap bit on such a row and no data bytes;
                 # charging it the four characters of `raws` would price a null as a
                 # string.
                 if P.vals[r][i] is None:
@@ -335,8 +335,8 @@ def simulate(
 def rg_cost(costs: dict, rg: RowGroup, colset: list) -> tuple:
     """`(total, overhead, data)` for one row group written under `colset`.
 
-    A shared file holds one column list for the whole segment (section 6.2: names are
-    stored once per segment), so a row group in one pays a header entry and an all-null
+    A shared file holds one column list for the whole segment (the `.col` footer stores
+    names once per segment), so a row group in one pays a header entry and an all-null
     bitmap for every column it does not hold. That is the honest cost of putting two
     templates in one segment without changing the format, and it is most of what the
     shared-file layouts below are being asked about.
@@ -708,7 +708,7 @@ def main() -> int:
     res.add("sealing", "partitions", len(seals), "count",
             "a (template, day) pair - what the model used to assume was one file")
     res.add("sealing", "segments", n_seg, "count",
-            "segments the seal rule actually produces; section 6.2 does not mention "
+            "segments the seal rule actually produces; the `.col` format is silent on "
             "sealing, so the first version of this model assumed one per partition")
 
     sims: dict = {}
@@ -772,7 +772,7 @@ def main() -> int:
             "wal_24h_bytes_raw",
             int(day_raw),
             "bytes",
-            f"{WAL_RECORD_OVERHEAD} bytes of section 7.1 record per line plus "
+            f"{WAL_RECORD_OVERHEAD} bytes of WAL record header per line plus "
             f"{avg_line:.0f} bytes of line; {ratio_note}",
         )
         if ratio:
@@ -913,7 +913,7 @@ def main() -> int:
             "layout", "files", "row groups", "rg min", "rg median", "rg p90",
             "bytes", "overhead", "overhead %", "disk blocks", "blocks/raw",
         ],
-        title="layouts, under the section 6.2 byte model",
+        title="layouts, under the `.col` byte model",
     )
     measure.table(
         srows,
@@ -1001,7 +1001,7 @@ def main() -> int:
             f"({measure.human(r['meta_bytes'])} of bytes, "
             f"{measure.human(r['meta_blocks'])} of blocks) and {r['dirs']:,} "
             "directories. The model does not predict those: it models the segment "
-            "format, and `_leaf.json` and `trie.json` are not in section 6.2."
+            "format, and `_leaf.json` and `trie.json` are not part of it."
         )
 
     res.flush()

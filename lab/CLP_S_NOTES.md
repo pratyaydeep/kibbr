@@ -37,17 +37,19 @@ encodings underneath it are.
 part of the node**, so a field that is an integer in one record and a string in another
 becomes **two nodes**, and each stays natively typed.
 
-TrieDB instead joins them (TRIEDB.md §3.2) and the column widens to `String` permanently,
-never narrowing. Script 04 on the `messy` dataset measures what that costs: **44% of all
-columns are already String-by-widening with no merging at all**, across 8 distinct keys,
-from fault rates between 0.2% and 3.1%. 461 empty strings out of 89,808 rows turn
-`http.status` from an 8-byte integer into text, forever.
+TrieDB instead joins them over a type lattice (`Int64` with `Float64` gives `Float64`, any
+other mix gives `String`) and the column widens to `String` permanently, never narrowing.
+Script 04 on the `messy` dataset measures what that costs: **44% of all columns are
+already String-by-widening with no merging at all**, across 8 distinct keys, from fault
+rates between 0.2% and 3.1%. 461 empty strings out of 89,808 rows turn `http.status` from
+an 8-byte integer into text, forever.
 
 clp-s never has to make that trade. Two nodes cost two columns; they do not cost a type.
 
 **And the knock-on is worse than the type.** Script 03's calibration found that TrieDB's
 writer *seals the segment* when a type widens or a datetime rung changes
-(`src/store/disk.rs` `row_fits` / `extend_shape` — a rule §6.2 does not document). On
+(`src/store/disk.rs` `row_fits` / `extend_shape`), a trigger missing from the segment
+format's documented ones: 128 MB, the day boundary, shutdown, a template gaining a key. On
 `messy` that turned 130 (template, day) partitions into **34,891 segment files**, 60 MB of
 bytes into 152 MB of disk blocks. Of those seals, **17,404 were `dt_form` alone**: a `ts`
 column alternating between RFC 3339 and ten-digit epoch seals in *both* directions, every
@@ -81,7 +83,8 @@ dictionaries scoped to the whole archive rather than per chunk.
 **Dictionary scope is the part TrieDB gets wrong for small templates.** Script 05 measured
 per-chunk against per-file word lists and found per-file barely ahead (15,217,492 vs
 15,227,549 bytes on `flat30`). clp-s shares its dictionaries across the entire archive,
-which is why fragmentation costs it almost nothing and costs TrieDB everything — see §6.
+which is why fragmentation costs it almost nothing and costs TrieDB everything — see
+"What the lab measured" below.
 
 ## 5. Queries resolve against the dictionaries first
 
@@ -128,9 +131,10 @@ counting, rather than trusting the exit code).
    rungs to `Mixed` (the variant `extend_shape` declines to build) or keep the rung per row
    group rather than per segment.
 3. **Type in the node, not a lattice join.** The larger design question. It removes the
-   "one `N/A` in ten million timestamps" failure §3.2 already warns about, and removes the
-   sealing cost with it. It also breaks the trie's "one leaf per key set" assumption, so it
-   is not a small change.
+   failure TrieDB's own design already warns about — one `N/A` in ten million timestamps
+   turns the column to `String` for good and every time-range query on it into a full scan
+   — and removes the sealing cost with it. It also breaks the trie's "one leaf per key set"
+   assumption, so it is not a small change.
 4. **Log-type plus variable dictionaries for text columns.** Script 05's crude probe
    already paid on the biggest text columns.
 5. **`FormattedFloat`.** Cheap, and it makes float round-tripping exact.
@@ -138,7 +142,7 @@ counting, rather than trusting the exit code).
 ## What TrieDB has that clp-s does not
 
 The trie over promoted values, which turns a dimension lookup into an edge walk rather than
-a dictionary probe; and an Elasticsearch-compatible surface (§10.2), which clp-s does not
-attempt. Script 04's promotion comparison puts a number on the first: a search on a
-promoted `event` value scans 5,957 rows where the same search on an unpromoted key scans
-168,736.
+a dictionary probe; and a planned Elasticsearch-compatible surface on `:9200` (not built
+yet), which clp-s does not attempt. Script 04's promotion comparison puts a number on the
+first: a search on a promoted `event` value scans 5,957 rows where the same search on an
+unpromoted key scans 168,736.

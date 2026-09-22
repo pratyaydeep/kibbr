@@ -16,7 +16,7 @@ alloc_block  4096 bytes (measured)
 cores        8
 cpu          Apple M2
 disk         SSD (internal, assumed)
-filesystem   apfs
+filesystem   ?
 memory       8.0GB
 platform     Darwin 23.3.0 (arm64)
 python       3.12.2
@@ -51,8 +51,8 @@ python       3.12.2
 - **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; TrieDB's best measured layout is WIDE rg=122,880 at 0.086x.
 - **clp-s stores these logs smaller than TrieDB does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
 - **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
-- **Type widening is a ladder cost, not a merging cost** (`farm`, 7 keys carrying two types): 1.5% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (PER_EVENT) takes that to 2.9% and adds no new keys. Section 3.2's monotonic join does the damage inside a single template; merging contributes a few points on top.
-- **Type widening is a ladder cost, not a merging cost** (`messy`, 7 keys carrying two types): 44.0% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (J70) takes that to 50.0% and adds no new keys. Section 3.2's monotonic join does the damage inside a single template; merging contributes a few points on top.
+- **Type widening is a ladder cost, not a merging cost** (`farm`, 7 keys carrying two types): 1.5% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (PER_EVENT) takes that to 2.9% and adds no new keys. The monotonic type join does the damage inside a single template; merging contributes a few points on top.
+- **Type widening is a ladder cost, not a merging cost** (`messy`, 7 keys carrying two types): 44.0% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (J70) takes that to 50.0% and adds no new keys. The monotonic type join does the damage inside a single template; merging contributes a few points on top.
 - **Scanning every template for an unpromoted key bends the wrong way**: 100x the templates costs 2.2x more than linear, not the same. A key-to-templates map is flat.
 
 ## Comparison systems (script 07)

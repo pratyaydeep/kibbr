@@ -48,8 +48,8 @@ TIME_KEYS = ("ts", "ts_unix", "ts_ms")
 # Extra names a real NDJSON file is likely to use.
 REAL_TIME_KEYS = TIME_KEYS + ("@timestamp", "timestamp", "time", "eventTime")
 
-# The single day everything one-day is squeezed into: 2024-01-15, the date section 5.3's
-# worked example uses.
+# The single day everything one-day is squeezed into: 2024-01-15, the date on every line
+# of testdata/sample_logs.ndjson, the fixture tests/query.rs and tests/trieql.rs load.
 DAY0 = 1705276800  # 2024-01-15T00:00:00Z
 DAY_SECS = 86400
 
@@ -407,11 +407,12 @@ def _build_real(size: str) -> Dataset:
 #
 # NOT real logs. Hand-authored here, and every figure derived from it is a statement
 # about these rates and nothing else. It exists because `gen-logs` is too well behaved to
-# answer one question the lab needs: section 3.2's type lattice joins a key's types and a
-# column never narrows, so one bad value pins a column to String for the life of the
-# template. Across flat30, oneday, uneven, sample.ndjson and testdata/m2/1m.ndjson, zero
-# keys carry two types - so `columns widened to String` came back 0 for every merge rule,
-# which is a fact about the generator rather than a verdict on merging.
+# answer one question the lab needs: a column's type is the join of every type its key
+# has shown and a column never narrows, so one bad value pins a column to String for the
+# life of the template. Across flat30, oneday, uneven, sample.ndjson and
+# testdata/m2/1m.ndjson, zero keys carry two types - so `columns widened to String` came
+# back 0 for every merge rule, which is a fact about the generator rather than a verdict
+# on merging.
 #
 # The faults below are the ones production logs actually have, at rates in the range
 # real streams show. Each is listed so a reader can scale the result or disagree with it.
@@ -430,7 +431,8 @@ MESSY_FAULTS = {
     "tags_scalar":        (0.010, "a bare string where the field is otherwise an array"),
     "ts_epoch":           (0.050, "ten-digit epoch seconds where the field is otherwise "
                                   "RFC 3339 - still Datetime, but a different dt_form, "
-                                  "which is the byte section 6.2 added dt_form for"),
+                                  "the per-column byte that exists to record which "
+                                  "form a date took"),
     "trace_id_empty":     (0.008, "empty string in a UUID column"),
     "client_ip_unknown":  (0.006, '"unknown" in an IP column'),
 }

@@ -6,8 +6,7 @@ promoted-key list is a `const` - so the rule is a parameter here, defaulting to 
 `src/flatten.rs` compiles in.
 
 Ported from src/flatten.rs (flattening, escaping, promotion, template id),
-src/key.rs (KeyPath rendering) and src/infer.rs (the type ladder). Section numbers refer
-to .dev/TRIEDB.md.
+src/key.rs (KeyPath rendering) and src/infer.rs (the type ladder).
 
 The one deliberate divergence: the depth limits are checked against the parsed value
 rather than by re-scanning the raw bytes. The binary scans bytes first so that a
@@ -66,7 +65,7 @@ EPOCH_MS = "epoch_ms"
 
 
 def join_types(a, b):
-    """The column type join of section 3.2 - commutative, associative, monotonic.
+    """The column type join - commutative, associative, monotonic.
 
         None  join T        = T
         T     join T        = T
@@ -224,7 +223,7 @@ class Typed:
 
 
 def infer(raw: str) -> Typed:
-    """Section 3.2's ladder. First match wins; the order is the contract."""
+    """The type ladder. First match wins; the order is the contract."""
     ns = _parse_rfc3339(raw)
     if ns is not None:  # 1. RFC 3339
         return Typed(DATETIME, ns, RFC3339)
@@ -461,7 +460,7 @@ class ParsedLog:
 
 
 def parse_obj(obj, rule: PromotionRule = DEFAULT_RULE) -> ParsedLog:
-    """Flatten, type, promote, fingerprint - sections 3.1 and 3.2 over a parsed object."""
+    """Flatten, type, promote, fingerprint - one parsed object to a ParsedLog."""
     pairs = flatten(obj)
     keys, values, typed, promoted, tokens, parts = [], {}, {}, [], [], []
 

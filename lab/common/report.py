@@ -310,7 +310,7 @@ def findings(kept: dict) -> list:
                 f"widening with NO merging at all, across "
                 f"{int(float(none_keys['value'])) if none_keys else '?'} distinct keys. "
                 f"The worst merge rule ({worst[0]}) takes that to {worst[1]:.1f}% and "
-                "adds no new keys. Section 3.2's monotonic join does the damage inside a "
+                "adds no new keys. The monotonic type join does the damage inside a "
                 "single template; merging contributes a few points on top."
             )
 

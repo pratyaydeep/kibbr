@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Searches on keys that are NOT promoted. SHAPE ONLY.
 
-A promoted key is a trie edge: the walk of section 4.2 goes straight to the leaves that
-have it. Every other key is a column, and finding which templates even hold it is a
-separate question - one the trie does not answer. There are two ways to answer it, and
-the only thing that matters is how each grows:
+A promoted key is a trie edge, and promoted edges come first on every path, so a query's
+walk drops each subtree whose edge the pattern contradicts and goes straight to the
+leaves that hold the key. Every other key is a column, and finding which templates even
+hold it is a separate question - one the trie does not answer. There are two ways to
+answer it, and the only thing that matters is how each grows:
 
   scan     ask every template whether its key set contains the key.  O(templates)
   index    keep a map from key to the templates holding it.          O(1) plus the answer

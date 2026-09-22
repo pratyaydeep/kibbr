@@ -250,8 +250,9 @@ def main() -> int:
         f2 = next(r for r in fb if r[0] == "F_FULLFSYNC" and r[1] == 1)
         print(
             f"\n  A per-record fsync(2) does {f1[3]:,} records/sec; the same loop with "
-            f"F_FULLFSYNC does {f2[3]:,}. Section 7.3's 40k-vs-300k figure is about "
-            "batching, but on this platform which call is used moves it by "
+            f"F_FULLFSYNC does {f2[3]:,}. The expected 40k-vs-300k lines/sec gap between "
+            "an fsync per line and one per 500-line WAL batch is about batching, but on "
+            "this platform which call is used moves it by "
             f"{f1[3] / max(f2[3], 1):.0f}x on its own."
         )
 

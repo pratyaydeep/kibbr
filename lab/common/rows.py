@@ -263,7 +263,7 @@ def merged(P: Parsed, mapping: dict) -> Parsed:
 
 _ARROW = {
     STRING: "string",
-    UUID: "string",  # section 6.2 stores both as Str; script 05 tests 16 raw bytes
+    UUID: "string",  # the `.col` format stores both as Str; script 05 tests 16 raw bytes
     IP: "string",
     INT64: "int64",
     FLOAT64: "double",

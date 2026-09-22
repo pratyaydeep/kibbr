@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """What each encoding saves, per column and per column type.
 
-Chunks of 8,192 rows, taken per template - which is the unit section 6.2 calls a row
-group. Every encoder produces real bytes; nothing here is a size model.
+Chunks of 8,192 rows, taken per template - which is the unit the segment format calls a
+row group. Every encoder produces real bytes; nothing here is a size model.
 
 The only speed figure is zstd's, because zstd is a C library doing the work. It is run
 three times at each level and the median is reported. No other number in this script is
@@ -335,9 +335,9 @@ def main() -> int:
         res.add(f"BEST_PER_CHUNK {order_name}", "ratio_to_raw", round(b / raw, 5), "ratio")
         res.add(f"BEST_PER_CHUNK {order_name}", "ratio_to_gzip9", round(b / gz, 5), "ratio")
     plain_total = sum(totals["arrival"][(l, "plain")] for l in types_seen)
-    srows.insert(0, ["plain (section 6.2)", plain_total, round(plain_total / raw, 4),
+    srows.insert(0, ["plain (segment format)", plain_total, round(plain_total / raw, 4),
                      round(plain_total / gz, 3)])
-    res.add("plain", "bytes", plain_total, "bytes", "section 6.2 chunk sizes, no codec")
+    res.add("plain", "bytes", plain_total, "bytes", "`.col` plain chunk sizes, no codec")
     measure.table(
         srows,
         headers=["variant", "bytes", "of raw NDJSON", "of gzip -9"],

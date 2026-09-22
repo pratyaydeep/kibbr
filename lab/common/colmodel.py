@@ -1,4 +1,4 @@
-"""The `.col` byte model of TRIEDB.md section 6.2, to the byte.
+"""A byte model of the `.col` segment format, exact to the byte.
 
 Every field is written out rather than folded into a constant, because the point of the
 model is that a later reading can check it against the format and against script 03's

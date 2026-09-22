@@ -1,6 +1,6 @@
 """Column encodings, each producing real bytes so the sizes are counted and not modelled.
 
-The baseline is section 6.2's plain chunk, exactly: a null bitmap when any row is absent,
+The baseline is the `.col` plain chunk, exactly: a null bitmap when any row is absent,
 then Str as [u32 len][bytes], I64/F64/DT as 8 bytes, Bool as 1 byte. Every other encoder
 here is measured against that, and every one can be run with zstd on top - which is the
 only speed figure in this lab's storage scripts, because zstd is a C library.
@@ -35,7 +35,7 @@ def zstd_bytes(data: bytes, level: int = 3) -> bytes:
 
 
 def bitmap(present: list) -> bytes:
-    """Section 6.2's null bitmap: bit i set means row i is PRESENT, lowest bit first."""
+    """The `.col` null bitmap: bit i set means row i is PRESENT, lowest bit first."""
     out = bytearray(math.ceil(len(present) / 8))
     for i, p in enumerate(present):
         if p:
@@ -165,7 +165,7 @@ def enc_varint(values: list, ty) -> bytes | None:
 
 
 def enc_bits(values: list, ty) -> bytes | None:
-    """Booleans as bits - one eighth of section 6.2's byte per row."""
+    """Booleans as bits - one eighth of the plain chunk's byte per row."""
     if ty != BOOL:
         return None
     present = [v is not None for v in values]

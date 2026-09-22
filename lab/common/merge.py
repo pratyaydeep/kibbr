@@ -1,15 +1,14 @@
-"""Schema merging, prototyped - section 5 with the knobs turned into parameters.
+"""Schema merging, prototyped - the planned rule with its knobs turned into parameters.
 
-TrieDB does not merge yet; `LinearMergeIndex` and `BucketedMergeIndex` are section 5.2's
-plan, not code on disk. So this is a clean-room prototype whose only job is to say what
-each rule would do to the template count, the null share and the rows a search has to
-scan.
+TrieDB does not merge yet; `LinearMergeIndex` (the naive scan, kept as the test oracle)
+and `BucketedMergeIndex` are a plan, not code on disk. So this is a clean-room prototype
+whose only job is to say what each rule would do to the template count, the null share
+and the rows a search has to scan.
 
-Faithful to section 5.4 in the part that matters: the decision is made per line, in
-arrival order, so order dependence is measured rather than defined away. The bucket bound
-of section 5.1 is used as written - a template with T keys can only match a candidate
-with C keys when T is in [floor(C*t), ceil(C/t)], which is provably exact and not a
-heuristic.
+Faithful to the planned merge procedure in the part that matters: the decision is made
+per line, in arrival order, so order dependence is measured rather than defined away. The
+bucket bound is kept as is - a template with T keys can only match a candidate with C
+keys when T is in [floor(C*t), ceil(C/t)], which is provably exact and not a heuristic.
 
 The one liberty taken for speed: a shape's decision is cached until a template enters its
 bucket range. Templates are only ever added, and a template's *original* key set never
@@ -103,7 +102,7 @@ class Result:
 
 
 def _bucket_range(c: int, threshold: float) -> tuple:
-    """Section 5.1. Templates outside this range cannot match, whatever their keys."""
+    """The bucket bound: a template outside this range cannot match, whatever its keys."""
     if threshold <= 0:
         return 0, 10**9
     return math.floor(c * threshold), math.ceil(c / threshold)

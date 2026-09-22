@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Which merging rule - and what each one costs.
 
-Section 5 says "merge if the key sets overlap by at least a threshold" and leaves the
-threshold, what it is measured against, and whether promoted values matter as open
+The planned merge rule, "merge if the key sets overlap by at least a threshold", leaves
+the threshold, what it is measured against, and whether promoted values matter as open
 questions. This script answers them by running each candidate over real lines and
 counting: templates, nulls, type widening, order dependence, and the rows a search has to
 scan once templates are bigger.
@@ -239,7 +239,7 @@ def main() -> int:
         print(
             f"\n  {multi} keys in `{ds.name}` carry more than one type, so the type join "
             f"has something to do. NONE already widens {none_widened} columns to String "
-            "before any merging - that is section 3.2's monotonic join acting inside a "
+            "before any merging - that is the monotonic type join acting inside a "
             "single template, and no merge rule can undo it. The `cols->String` column "
             "above is what each rule adds on top by putting two templates in one leaf."
         )
@@ -250,7 +250,7 @@ def main() -> int:
     # -- J80_SPEC's own question -----------------------------------------------
     spec = results["J80_SPEC"].stats(P.n_rows)
     print(
-        f"\n  J80_SPEC (section 5.3 as written, ignoring promoted values) puts "
+        f"\n  J80_SPEC (the overlap rule taken literally, promoted values ignored) puts "
         f"{spec['rows_in_mixed_promoted_group']:,} rows "
         f"({100.0 * spec['rows_in_mixed_promoted_group'] / P.n_rows:.1f}%) into a "
         f"template whose promoted value differs from their own, across "
