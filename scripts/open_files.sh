@@ -56,8 +56,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-INPUT=testdata/m5_6c/${NLINES}-seed${GEN_SEED}.ndjson
-mkdir -p testdata/m5_6c
+INPUT=testdata/ingest-limits/${NLINES}-seed${GEN_SEED}.ndjson
+mkdir -p testdata/ingest-limits
 [ -f "$INPUT" ] || "$BIN" gen-logs --lines "$NLINES" --templates 12 --seed "$GEN_SEED" > "$INPUT"
 
 PORT=""

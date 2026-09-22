@@ -7,7 +7,7 @@ sample.ndjson
 
 # Reordered copies of sample.ndjson, which the in-memory trie must build the same tree
 # from - scratch, and `gen-logs` plus `tail -r` rebuilds them.
-/testdata/m1/
+/testdata/trie-order/
 
 # Malformed-input repros for the F1/F5 checks - scratch, not fixtures.
 /testdata/f1/
@@ -17,7 +17,7 @@ sample.ndjson
 /testdata/f5/
 
 # The query engine's timing inputs - scratch, `gen-logs --seed 5` rebuilds them.
-/testdata/m2/
+/testdata/query-timing/
 
 # `scripts/dump_store.sh` output - the in-memory trie and leaf stores written down.
 # Scratch, and the script rebuilds it from the seed.
@@ -47,26 +47,26 @@ sample.ndjson
 
 # File counts before and after one segment file per batch replaced one file per column -
 # scratch, and `gen-logs --seed 42` plus a server on a scratch --data-dir rebuild them.
-/testdata/m55/
+/testdata/segment-file-counts/
 
 # The seed-42 corpus the template-catalog scripts (lost_trie, crash_templates) were first
 # run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
-/testdata/m56a/
+/testdata/template-catalog/
 
 /lab
 /lab-rs
 
 # The seed-42 corpus and the /templates sample the per-template time-source scripts were
 # first run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
-/testdata/m56b/
+/testdata/time-source/
 
 # The seed-42 corpora the open-files, disk-full and scaling scripts were first run by
 # hand against - scratch, `gen-logs --seed 42` rebuilds them.
-/testdata/m5_6c/
+/testdata/ingest-limits/
 
 # The before/after runs of the leaf-unwritable and bad-version scripts, the suite and
 # the differential pairs - scratch, and the scripts rebuild them.
-/testdata/m5_6d/
+/testdata/ingest-refusals/
 
 # The farm-profile corpora, the old profile's before/after checksums and the side-by-side
 # reports - scratch, and `gen-logs` plus scripts/log_report.sh rebuild them.

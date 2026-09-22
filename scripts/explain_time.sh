@@ -22,8 +22,9 @@ REPEATS=${REPEATS:-5}
 PATTERN=${PATTERN:---match event=login_ok}
 
 cargo build --release --quiet || exit 1
+mkdir -p testdata/query-timing
 for size in 1k 1m; do
-  f="testdata/m2/$size.ndjson"
+  f="testdata/query-timing/$size.ndjson"
   [ -f "$f" ] && continue
   lines=1000; [ "$size" = 1m ] && lines=1000000
   "$BIN" gen-logs --lines "$lines" --seed 5 > "$f"
@@ -52,7 +53,7 @@ wall() { { time -p "$@" > /dev/null 2>&1 ; } 2>&1 | awk '/^real/{printf "%.0fms"
 printf '%-6s %10s %10s %8s %13s %13s %12s\n' \
   input lines templates nodes "walk (µs)" "explain wall" "count wall"
 for size in 1k 1m; do
-  f="testdata/m2/$size.ndjson"
+  f="testdata/query-timing/$size.ndjson"
   n=$(wc -l < "$f" | tr -d ' ')
   # `demo`'s summary line is where the trie reports its own size. Read by the word
   # before each label, not by splitting on punctuation - the counts are printed with
@@ -87,6 +88,6 @@ echo
 echo "the same query, walk then scan:"
 for size in 1k 1m; do
   echo "  $size:"
-  "$BIN" query "testdata/m2/$size.ndjson" $PATTERN --explain 2>/dev/null | sed 's/^/    /'
-  "$BIN" query "testdata/m2/$size.ndjson" $PATTERN --count   2>/dev/null | sed 's/^/    /'
+  "$BIN" query "testdata/query-timing/$size.ndjson" $PATTERN --explain 2>/dev/null | sed 's/^/    /'
+  "$BIN" query "testdata/query-timing/$size.ndjson" $PATTERN --count   2>/dev/null | sed 's/^/    /'
 done

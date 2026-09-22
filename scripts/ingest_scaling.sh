@@ -47,13 +47,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p testdata/m5_6c
-INPUT=testdata/m5_6c/${LINES}-seed${GEN_SEED}-batch.ndjson
+mkdir -p testdata/ingest-limits
+INPUT=testdata/ingest-limits/${LINES}-seed${GEN_SEED}-batch.ndjson
 [ -f "$INPUT" ] || "$BIN" gen-logs --lines "$LINES" --templates 12 --seed "$GEN_SEED" > "$INPUT"
 # A bigger corpus for the parse measurement: 2,000 lines is over before the process has
 # finished starting, so the small file would report the loader and not the parser.
 PARSE_LINES=${PARSE_LINES:-20000}
-PARSE_INPUT=testdata/m5_6c/${PARSE_LINES}-seed${GEN_SEED}.ndjson
+PARSE_INPUT=testdata/ingest-limits/${PARSE_LINES}-seed${GEN_SEED}.ndjson
 [ -f "$PARSE_INPUT" ] ||
   "$BIN" gen-logs --lines "$PARSE_LINES" --templates 12 --seed "$GEN_SEED" > "$PARSE_INPUT"
 
