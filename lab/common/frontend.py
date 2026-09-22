@@ -6,7 +6,8 @@ promoted-key list is a `const` - so the rule is a parameter here, defaulting to 
 `src/flatten.rs` compiles in.
 
 Ported from src/flatten.rs (flattening, escaping, promotion, template id),
-src/key.rs (KeyPath rendering) and src/infer.rs (the type ladder).
+src/key.rs (KeyPath rendering), src/infer.rs (the type ladder) and src/config.rs (the
+epoch window the ladder's second rung reads).
 
 The one deliberate divergence: the depth limits are checked against the parsed value
 rather than by re-scanning the raw bytes. The binary scans bytes first so that a
@@ -20,6 +21,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
@@ -115,12 +117,13 @@ def _days_from_civil(y: int, m: int, d: int) -> int:
     return era * 146097 + doe - 719468
 
 
-def _parse_rfc3339(raw: str):
+def _parse_rfc3339(raw: str, saturate: bool = True):
     """Unix nanoseconds, or None if this is not RFC 3339.
 
     Saturating at both ends the way `infer` does: i64 nanoseconds cover 1677..2262 while
     RFC 3339 covers year 0..9999, so an out-of-range year is pinned by the sign of its
-    seconds rather than both ends landing on i64::MAX.
+    seconds rather than both ends landing on i64::MAX. The window's ends are read with
+    `saturate=False`, because the binary holds them in an i128 and compares there.
     """
     m = _RFC3339.match(raw)
     if not m:
@@ -142,12 +145,40 @@ def _parse_rfc3339(raw: str):
         sign = 1 if offset[0] == "+" else -1
         secs -= sign * (int(offset[1:3]) * 3600 + int(offset[4:6]) * 60)
     nanos = int((frac[1:] + "0" * 9)[:9]) if frac else 0
+    # A leap second is carried into the next second rather than clamped to :59: chrono
+    # holds `:60` as the `:59` instant plus a full second of sub-second nanos, and both
+    # the ladder's first rung and the epoch window's ends are read from this.
+    if ss == 60:
+        nanos += 1_000_000_000
     total = secs * 1_000_000_000 + nanos
-    return max(-(2**63), min(2**63 - 1, total))
+    return total if not saturate else max(-(2**63), min(2**63 - 1, total))
 
 
 def _is_epoch_digits(raw: str) -> bool:
     return len(raw) in (10, 13) and all("0" <= c <= "9" for c in raw)
+
+
+def _epoch_window() -> tuple:
+    """`[start, end)` in nanoseconds: the moments rung 2 may read digits as.
+
+    2000-01-01 up to but not including 2100-01-01, and the binary's own variable, so a
+    run that moves the window for one side moves it for both. Ten or thirteen digits
+    naming anything else are not timestamps: they fall through to rung 6 and are the
+    integers they are, which is what keeps an order id naming 2112 out of a date column.
+    """
+    text = os.environ.get("TRIEDB__SCHEMA__EPOCH_WINDOW")
+    if text is None:  # unset is absence; set to anything unreadable is an error, as there
+        return (946_684_800 * 1_000_000_000, 4_102_444_800 * 1_000_000_000)
+    ends = [part.strip() for part in text.split(",")]
+    if len(ends) != 2:
+        raise ValueError(f"TRIEDB__SCHEMA__EPOCH_WINDOW={text!r}: not two instants")
+    start, end = (_parse_rfc3339(part, saturate=False) for part in ends)
+    if start is None or end is None or start >= end:
+        raise ValueError(f"TRIEDB__SCHEMA__EPOCH_WINDOW={text!r}: not a window")
+    return (start, end)
+
+
+EPOCH_WINDOW = _epoch_window()
 
 
 def _is_uuid(raw: str) -> bool:
@@ -232,8 +263,12 @@ def infer(raw: str) -> Typed:
         per_unit, form = (
             (1_000_000_000, EPOCH_S) if len(raw) == 10 else (1_000_000, EPOCH_MS)
         )
-        # `saturating_mul`: 9_999_999_999 seconds in nanoseconds overflows i64.
-        return Typed(DATETIME, min(int(raw) * per_unit, 2**63 - 1), form)
+        moment = int(raw) * per_unit
+        start, end = EPOCH_WINDOW
+        if start <= moment < end:  # inside the epoch window, or fall through to rung 6
+            # `saturating_mul`: 9_999_999_999 seconds in nanoseconds overflows i64,
+            # which only a window reaching past 2262 lets through.
+            return Typed(DATETIME, min(moment, 2**63 - 1), form)
 
     if _is_uuid(raw):  # 3
         return Typed(UUID, raw)
