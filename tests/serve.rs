@@ -858,8 +858,15 @@ fn past_capacity_ingest_sheds_with_retry_after() {
     let server = Server::start_with(&["--ingest-concurrency", "1", "--max-body-bytes", "67108864"]);
     let port = server.port;
 
+    // Big enough that one body holds the permit for far longer than the 100ms a queued
+    // sender waits, and small enough that the one body that gets the permit still answers
+    // inside `request_early`'s read timeout - a debug build walking hostile lines is the
+    // slowest this ever runs, and these lines got slower: the generator draws ten-digit
+    // ids across the whole ten-digit range, so those columns now hold both the type a
+    // value inside the epoch window gets and the type one outside it gets, and a column
+    // carrying two types seals a segment every time the type changes.
     let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
-        .args(["gen-logs", "--lines", "60000", "--seed", "11"])
+        .args(["gen-logs", "--lines", "20000", "--seed", "11"])
         .output()
         .expect("failed to run gen-logs");
     let body = std::sync::Arc::new(out.stdout);

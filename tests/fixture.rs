@@ -4,7 +4,12 @@
 use std::process::{Command, Stdio};
 
 fn triedb() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_triedb"));
+    // The fixture's labels are the *default* window's, so an exported one would turn the
+    // whole file red for a reason that has nothing to do with the build. The two tests
+    // that want a window set it back, after this.
+    cmd.env_remove("TRIEDB__SCHEMA__EPOCH_WINDOW");
+    cmd
 }
 
 fn run(args: &[&str]) -> String {
@@ -135,6 +140,83 @@ fn every_fixture_value_gets_its_labelled_type() {
         failures.len(),
         failures.join("\n  ")
     );
+}
+
+/// `parse --json` over stdin with the epoch window set, returning the exit status, the
+/// type of `v` on each line, and stderr.
+fn parse_under_window(window: &str, input: &str) -> (bool, Vec<String>, String) {
+    let mut child = triedb()
+        .args(["parse", "-", "--json"])
+        .env("TRIEDB__SCHEMA__EPOCH_WINDOW", window)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn triedb");
+    let writer = feed(&mut child, input.as_bytes());
+    let out = child.wait_with_output().expect("failed to wait on triedb");
+    writer.join().expect("stdin writer thread panicked");
+    let types = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| json_record(l)["types"]["v"].as_str().unwrap_or("Null").to_string())
+        .collect();
+    (
+        out.status.success(),
+        types,
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// The window is a setting, and the fixture's labels are its default: moved to the 1970s,
+/// the same digits swap sides.
+#[test]
+fn the_epoch_window_is_a_setting() {
+    let input = concat!(
+        r#"{"v":"0000000000"}"#,
+        "\n",
+        r#"{"v":"0946684799"}"#,
+        "\n",
+        r#"{"v":"0946684800"}"#,
+        "\n",
+        r#"{"v":1700000000}"#,
+        "\n",
+        r#"{"v":"0946684799999"}"#,
+        "\n",
+        r#"{"v":"2024-01-15T10:30:00Z"}"#,
+        "\n",
+    );
+    let (ok, types, stderr) =
+        parse_under_window("1970-01-01T00:00:00Z, 2000-01-01T00:00:00Z", input);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(
+        types,
+        ["Datetime", "Datetime", "Int64", "Int64", "Datetime", "Datetime"]
+    );
+}
+
+/// A window that cannot be read stops the process before a line is typed, rather than
+/// typing every line under the default the operator thought they had replaced.
+#[test]
+fn an_unreadable_epoch_window_is_refused() {
+    for (window, why) in [
+        ("2000-01-01T00:00:00Z", "1 comma-separated values"),
+        (
+            "2000-01-01T00:00:00Z,2050-01-01T00:00:00Z,2100-01-01T00:00:00Z",
+            "3 comma-separated values",
+        ),
+        ("", "1 comma-separated values"),
+        ("2000-01-01,2100-01-01", "not an RFC 3339 instant"),
+        ("2100-01-01T00:00:00Z,2000-01-01T00:00:00Z", "window is empty"),
+        ("2000-01-01T00:00:00Z,2000-01-01T00:00:00Z", "window is empty"),
+    ] {
+        let (ok, types, stderr) = parse_under_window(window, "{\"v\":1700000000}\n");
+        assert!(!ok, "`{window}` was accepted");
+        assert!(types.is_empty(), "`{window}` typed lines anyway: {types:?}");
+        assert!(
+            stderr.contains("TRIEDB__SCHEMA__EPOCH_WINDOW") && stderr.contains(why),
+            "`{window}`: stderr did not say `{why}`: {stderr}"
+        );
+    }
 }
 
 /// The worked example, byte for byte.

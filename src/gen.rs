@@ -6,7 +6,10 @@
 //! * nested objects, at several depths
 //! * optional fields present on some lines of a template and absent on others
 //! * ten-digit integers that ARE Unix timestamps (`ts_unix`) and ten-digit integers
-//!   that are NOT (`order_id`) - indistinguishable to rule 2, which is the point
+//!   that are NOT (`order_id`), drawn across the whole ten-digit range - the ones naming
+//!   a moment inside the epoch window are indistinguishable to rule 2, which is the
+//!   point, and the ones outside it make `order_id` a column of two types, which no
+//!   hand-written fixture produces either
 //! * unicode string values, including CJK, emoji, RTL and combining accents
 //! * empty strings
 //! * explicit JSON nulls, which are a different thing from an absent key
@@ -288,7 +291,8 @@ fn value_for(gen: Gen, rng: &mut Rng) -> Value {
         Gen::EpochMillis => Value::from(
             (BASE_EPOCH_SECS + rng.between(0, 60 * 60 * 24 * 30)) * 1000 + rng.between(0, 999),
         ),
-        // Ten digits, so rule 2 claims it as a timestamp. It is an order ID.
+        // Ten digits, so rule 2 claims the ones naming a moment inside the epoch window -
+        // about a third of this range - as timestamps. All of them are order IDs.
         Gen::OrderId10 => Value::from(rng.between(1_000_000_000, 9_999_999_999)),
         Gen::BigInt => Value::from(rng.between(10_000_000_000, 999_999_999_999)),
         Gen::SmallInt => Value::from(rng.between(0, 9999)),

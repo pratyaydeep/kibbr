@@ -301,6 +301,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
+    // Before any command types a value, and for every command alike: a bad window stops
+    // the process here rather than after it has typed lines under the default.
+    infer::set_epoch_window(config::epoch_window()?);
+
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
 

@@ -110,7 +110,20 @@ answer() { raw "$@" | sed 's/"duration_ms":[-+0-9.e]*//'; }
 # The same answer with nothing removed, so it is still JSON. `answer` blanks `duration_ms`
 # in place, which leaves a value-less key that a JSON parser is right to reject - fine for
 # the string comparison the differential does, useless to the checks that read a field.
-raw() { "$BIN" query "$INPUT" "$@" --format json 2>&1; }
+#
+# stderr is kept off the answer and printed only when the query failed, which is the case
+# it was ever wanted for. Merging the two streams corrupts the answer on this corpus: the
+# ladder reads a ten-digit id outside the epoch window as an integer and one inside it as
+# a date, so those columns widen to text and log a line each, and a log line written into
+# the middle of a one-line JSON answer is not JSON. The status returned is the query's.
+raw() {
+  local out status
+  out=$("$BIN" query "$INPUT" "$@" --format json 2>"$WORK/query.err")
+  status=$?
+  printf '%s\n' "$out"
+  [ $status -eq 0 ] || cat "$WORK/query.err"
+  return $status
+}
 
 # ── The grammar's own examples, which have to parse before the rest is worth running ──
 examples=0
@@ -451,7 +464,15 @@ fi
 CAP=50
 
 # `raw`, under a backstop. Separate rather than a global, so nothing above changes meaning.
-capped() { local cap=$1; shift; "$BIN" query "$INPUT" --max-rows "$cap" "$@" --format json 2>&1; }
+capped() {
+  local cap=$1 out status
+  shift
+  out=$("$BIN" query "$INPUT" --max-rows "$cap" "$@" --format json 2>"$WORK/query.err")
+  status=$?
+  printf '%s\n' "$out"
+  [ $status -eq 0 ] || cat "$WORK/query.err"
+  return $status
+}
 
 # Paging with no `LIMIT` on any request: the backstop supplies the page size every time,
 # which is the shape a client that never learned to page produces.
