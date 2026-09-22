@@ -80,7 +80,7 @@ Pinned in `lab/others/docker-compose.yml` and `lab/others/Dockerfile.clps`:
 
 _Frontend agreement - the Python port against the binary_
 
-Run 2026-09-22T19:39:49+00:00, git `920cce5`, 10 rows.
+Run 2026-09-22T20:10:50+00:00, git `7e42f16`, 10 rows.
 
 ### `00_frontend_agree` / dataset `farm`
 
