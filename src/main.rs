@@ -6,6 +6,7 @@ mod db;
 mod demo;
 mod engine;
 mod error;
+mod farm;
 mod flatten;
 mod fmt;
 mod gen;
@@ -43,17 +44,34 @@ struct Cli {
 enum Command {
     /// Generate reproducible NDJSON logs on stdout.
     GenLogs {
+        /// `hostile` is every case the parser must survive, spread flat over a few shapes
+        /// and thirty days; fixtures depend on its bytes. `farm` is one day of a
+        /// ten-service estate, in time order, shaped like real traffic.
+        #[arg(long, value_enum, default_value = "hostile")]
+        profile: Profile,
         /// How many NDJSON lines to write.
         #[arg(long, default_value_t = 1000)]
         lines: u64,
-        /// How many distinct log shapes to draw from. Optional fields split each
-        /// shape into several fingerprints, so `triedb parse` reports more
-        /// templates than this.
-        #[arg(long, default_value_t = 12)]
-        templates: usize,
+        /// `hostile` only: how many distinct log shapes to draw from. Optional fields
+        /// split each shape into several fingerprints, so `triedb parse` reports more
+        /// templates than this. [default: 12]
+        #[arg(long)]
+        templates: Option<usize>,
         /// Same seed, byte-identical output. Nothing here reads the wall clock.
         #[arg(long, default_value_t = 42)]
         seed: u64,
+        /// `farm` only: the simulated day, YYYY-MM-DD, UTC. [default: 2024-01-15]
+        #[arg(long)]
+        day: Option<String>,
+        /// `farm` only: how many services run, 1 to 10 - the first N of gateway, auth,
+        /// payments, worker, dbproxy, access log, scheduler, notifier, search, cache.
+        /// Below 6 there is no access log in front of the gateway. [default: 10]
+        #[arg(long)]
+        services: Option<usize>,
+        /// `farm` only: percent of the values of five named keys that arrive dirty -
+        /// `""`, `"N/A"`, or a number where a string was. [default: 0.5]
+        #[arg(long, value_name = "PERCENT")]
+        dirty_rate: Option<f64>,
     },
     /// Print the fingerprint and inferred types of each line.
     Parse {
@@ -288,10 +306,17 @@ fn run(cli: Cli) -> Result<(), CliError> {
 
     let result = match cli.command {
         Command::GenLogs {
+            profile,
             lines,
             templates,
             seed,
-        } => gen::generate(&mut out, lines, templates, seed).map_err(CliError::from),
+            day,
+            services,
+            dirty_rate,
+        } => gen_logs(
+            &mut out, profile, lines, templates, seed, day, services, dirty_rate,
+        )
+        .map_err(CliError::from),
         Command::Parse { input, limit, json } => {
             let reader = open(&input)?;
             parse::run(reader, &mut out, limit, json)
@@ -395,6 +420,84 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         Err(e) => Err(CliError::Write(e)),
         Ok(()) => Ok(()),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Profile {
+    Hostile,
+    Farm,
+}
+
+/// A flag that belongs to the other profile is refused rather than ignored: a `--day` that
+/// silently did nothing would leave its caller measuring the wrong file.
+#[allow(clippy::too_many_arguments)]
+fn gen_logs<W: Write>(
+    out: &mut W,
+    profile: Profile,
+    lines: u64,
+    templates: Option<usize>,
+    seed: u64,
+    day: Option<String>,
+    services: Option<usize>,
+    dirty_rate: Option<f64>,
+) -> Result<(), error::GenError> {
+    use error::GenError;
+    match profile {
+        Profile::Hostile => {
+            for (given, flag) in [
+                (day.is_some(), "--day"),
+                (services.is_some(), "--services"),
+                (dirty_rate.is_some(), "--dirty-rate"),
+            ] {
+                if given {
+                    return Err(GenError::WrongProfile {
+                        flag,
+                        profile: "farm",
+                    });
+                }
+            }
+            gen::generate(out, lines, templates.unwrap_or(12), seed)
+        }
+        Profile::Farm => {
+            if templates.is_some() {
+                return Err(GenError::WrongProfile {
+                    flag: "--templates",
+                    profile: "hostile",
+                });
+            }
+            if lines > farm::MAX_LINES {
+                return Err(GenError::TooManyLines(farm::MAX_LINES));
+            }
+            // Ten characters, 1970 to 9999: every time form the farm writes - RFC 3339 with
+            // a four-digit year, epoch seconds and milliseconds - is valid on that range
+            // and on no wider one.
+            let day_text = day.unwrap_or_else(|| farm::DEFAULT_DAY.to_string());
+            let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("a valid date");
+            let last = chrono::NaiveDate::from_ymd_opt(9999, 12, 31).expect("a valid date");
+            let day = chrono::NaiveDate::parse_from_str(&day_text, "%Y-%m-%d")
+                .ok()
+                .filter(|d| day_text.len() == 10 && (epoch..=last).contains(d))
+                .ok_or_else(|| GenError::BadDay(day_text.clone()))?;
+            let services = services.unwrap_or(farm::MAX_SERVICES);
+            if !(1..=farm::MAX_SERVICES).contains(&services) {
+                return Err(GenError::BadServices(services));
+            }
+            let rate = dirty_rate.unwrap_or(0.5);
+            if !(0.0..=100.0).contains(&rate) {
+                return Err(GenError::BadDirtyRate(rate));
+            }
+            let opts = farm::Options {
+                lines,
+                seed,
+                day: (day - epoch).num_days(),
+                services,
+                // Parts per million: the rate is read once, and every draw after it is an
+                // integer comparison.
+                dirty_ppm: (rate * 10_000.0).round() as u32,
+            };
+            farm::generate(out, &opts)
+        }
     }
 }
 

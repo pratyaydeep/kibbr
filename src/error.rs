@@ -161,6 +161,24 @@ pub enum GenError {
     #[error("--templates must be at least 1")]
     NoTemplates,
 
+    #[error("{flag} applies only to --profile {profile}")]
+    WrongProfile {
+        flag: &'static str,
+        profile: &'static str,
+    },
+
+    #[error("--day `{0}`: expected YYYY-MM-DD, from 1970-01-01 to 9999-12-31")]
+    BadDay(String),
+
+    #[error("--lines: the farm writes at most {0} lines")]
+    TooManyLines(u64),
+
+    #[error("--services {0}: expected 1 to 10")]
+    BadServices(usize),
+
+    #[error("--dirty-rate {0}: expected a percent from 0 to 100")]
+    BadDirtyRate(f64),
+
     #[error("failed to serialize generated line: {0}")]
     Serialize(#[from] serde_json::Error),
 
