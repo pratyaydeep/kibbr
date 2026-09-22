@@ -162,15 +162,17 @@ fn the_full_tree_is_stable_across_input_orderings() {
     assert!(leaves(&a).len() > 500, "only {} leaves", leaves(&a).len());
 }
 
-/// The same key on three lines of one template, in all six orders: two numbers the
-/// ten-or-thirteen-digit rung calls `Datetime`, and one that is plainly a string. The
+/// The same key on four lines of one template, in all twenty-four orders: ten digits
+/// naming 2112 and thirteen naming 2283, both outside the epoch window and so `Int64`;
+/// ten naming 2023, inside it and so `Datetime`; and one that is plainly a string. The
 /// column is `String` whichever order they arrive in - that is the join being commutative
-/// and associative, and it is also that rung's known misclassification correcting itself
-/// with no heuristic and no second pass.
+/// and associative over three of its types at once, and it is also the ten-digit rung's
+/// known misclassification correcting itself with no heuristic and no second pass.
 #[test]
 fn the_column_join_does_not_depend_on_arrival_order() {
     let lines = [
         r#"{"k":"a","order_id":4500000123}"#,
+        r#"{"k":"a","order_id":1700000123}"#,
         r#"{"k":"a","order_id":9900001234567}"#,
         r#"{"k":"a","order_id":"AX-99213"}"#,
     ];

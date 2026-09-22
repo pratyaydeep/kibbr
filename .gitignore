@@ -71,3 +71,7 @@ sample.ndjson
 # The farm-profile corpora, the old profile's before/after checksums and the side-by-side
 # reports - scratch, and `gen-logs` plus scripts/log_report.sh rebuild them.
 /testdata/farm/
+
+# The before/after runs of the fixture, the agreement scripts and the ingest measurements
+# for the epoch window - scratch, and `gen-logs` plus the scripts rebuild them.
+/testdata/epoch-window/
