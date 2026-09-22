@@ -46,8 +46,9 @@ INPUT="$WORK/input.ndjson"
 # The time key is the first name on the default `time_columns` list that the line
 # carries, or `-`. It is used to *choose* lines, never to answer anything: at least a
 # quarter of the combinations below touch a template whose time key is not `ts`, because
-# those were the 41.6% of rows no time-range query could see before M5.6b, and a run that
-# never drew one would agree on them a hundred times without checking.
+# those were the 41.6% of rows no time-range query could see before per-template time
+# sources, and a run that never drew one would agree on them a hundred times without
+# checking.
 #
 # Shell-safe only: a quoting bug here would be indistinguishable from a disagreement.
 "$BIN" parse "$INPUT" --json 2>/dev/null | python3 -c '
@@ -183,7 +184,8 @@ for i in $(seq 1 "$COMBOS"); do
        ARGS[${#ARGS[@]}]="$(rfc3339 $a)"; ARGS[${#ARGS[@]}]="$(rfc3339 $b)" ;;
     # Every generated timestamp is from 2024, so a row with its own time is outside this
     # window; a row on arrival time is inside it, at the `now` both sides share.
-    # Before M5.6b this was always the `exists: true, count: 0` answer.
+    # Before rows with no time of their own took their arrival time, this was always the
+    # `exists: true, count: 0` answer.
     1) ARGS[${#ARGS[@]}]="--since"; ARGS[${#ARGS[@]}]="$((1 + RANDOM % 48))h" ;;
     # The half-open edge, both ways round: as `until` the row is out, as `since` it is in.
     # Random endpoints never land on a row, so they cannot tell `[since, until)` from

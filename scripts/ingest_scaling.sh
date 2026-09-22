@@ -3,8 +3,8 @@
 #
 # As built, no. One global lock is taken for writing before `/ingest` has split the body
 # into lines, so every body's parse - which is most of the work - runs one at a time, and
-# the rate is flat from 1 sender to 8. M5.6c moves the parse out of the
-# lock; the tick and the queries keep the lock they have, and that is M6c's.
+# the rate is flat from 1 sender to 8. The fix moves the parse out of the lock; the tick
+# and the queries keep the lock they have, and splitting that is later work.
 #
 # Three things this measures around rather than through:
 #

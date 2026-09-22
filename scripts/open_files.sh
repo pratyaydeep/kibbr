@@ -34,7 +34,7 @@ FD_LIMIT=${FD_LIMIT:-256}
 # for the request that is being answered.
 MAX_OPEN_SEGMENTS=${MAX_OPEN_SEGMENTS:-64}
 # Floored at the flush interval (src/config.rs), so the effective timeout is 500ms. Named
-# here as 200 because that is what the milestone's check asks for.
+# here as 200, the value this check was first run with.
 ROW_GROUP_TIMEOUT_MS=${ROW_GROUP_TIMEOUT_MS:-200}
 # How long to wait for the buffer to drain. Every partition costs a footer and an fsync
 # on the way out, and there are about 20,000 of them.

@@ -5,8 +5,8 @@
 //! ├── _leaf.json          template_id, the column the days were cut on, the key set
 //! ├── 2024-01-15/         seg_000001.col, seg_000002.col …
 //! ├── 2024-01-16/         seg_000001.col
-//! └── undated/            rows from before M5.6b whose time column held no Datetime;
-//!                         read, never written to
+//! └── undated/            rows from before the arrival-time column whose time column
+//!                         held no Datetime; read, never written to
 //! ```
 //!
 //! A partition is a **directory of numbered segments**, not a single file. Lexical name
@@ -129,6 +129,56 @@ fn refuse_legacy_layout(base: &Path) -> Result<(), StoreError> {
         Some(path) => Err(StoreError::LegacyLayout { path }),
         None => Ok(()),
     }
+}
+
+/// Refuse a data directory holding a segment from another format version, in any leaf -
+/// the orphans too - and in any segment, not only the last one in a partition.
+///
+/// **Header bytes only, and before the port is taken.** Opening a leaf recovers its
+/// unsealed segments, which writes, so that has to wait until the bind has shown no other
+/// server is running on this port. This reads eight bytes a file and writes nothing, so
+/// it can run first. Opening the leaves finds at most one error per leaf, and which one
+/// depends on `read_dir` order: a partition that fails for another reason can stop the
+/// walk before the one holding another version is read. This reads every header.
+///
+/// Paths are checked in order, so the one named is the same on every start. A directory
+/// that cannot be read is skipped: a leaf that will not open is a WARN at startup, not a
+/// reason to refuse the start. Its first line at ingest is another matter - see
+/// `StoreManager::retry_unopened`.
+pub fn refuse_other_versions(base: &Path) -> Result<(), StoreError> {
+    fn dirs(dir: &Path) -> impl Iterator<Item = fs::DirEntry> {
+        fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+    }
+    let mut paths = Vec::new();
+    for leaf in dirs(base) {
+        if !leaf.file_name().to_string_lossy().starts_with("leaf_") {
+            continue;
+        }
+        for part in dirs(&leaf.path()) {
+            if PartKey::from_dir_name(&part.file_name().to_string_lossy()).is_none() {
+                continue;
+            }
+            let Ok(files) = fs::read_dir(part.path()) else {
+                continue;
+            };
+            for file in files.flatten() {
+                if segment::segment_seq(&file.file_name().to_string_lossy()).is_some() {
+                    paths.push(file.path());
+                }
+            }
+        }
+    }
+    paths.sort_unstable();
+    // One at a time. Measured on 8,902 segments this walk and read adds about 0.4s to a
+    // 0.8s warm start on macOS, and eight threads made the reads slower, not faster.
+    for path in paths {
+        segment::check_version(&path)?;
+    }
+    Ok(())
 }
 
 impl Store for DiskStore {
@@ -379,11 +429,12 @@ struct LeafFile {
     /// sound against *this* column: a query ordering by `created_at` while the directories
     /// were cut on `ts` cannot read "newest directory first" as "newest rows first".
     partition_column: String,
-    /// **The leaf's key set**, and it is here because of a bug found at M5: a trie
-    /// relearned in a different order can point template *n* at a directory holding a
-    /// different key set, and the rows in it become unreachable with no error - the
-    /// filtered query prunes to one template and opens another. Without the key set on
-    /// disk the trie cannot be rebuilt from what is on disk, so those rows stay orphaned.
+    /// **The leaf's key set**, and it is here because of a bug found when the store first
+    /// had to survive a restart: a trie relearned in a different order can point template
+    /// *n* at a directory holding a different key set, and the rows in it become
+    /// unreachable with no error - the filtered query prunes to one template and opens
+    /// another. Without the key set on disk the trie cannot be rebuilt from what is on
+    /// disk, so those rows stay orphaned.
     #[serde(default)]
     keys: Vec<String>,
 }
@@ -431,17 +482,21 @@ impl DiskLeaf {
         let recorded: Option<LeafFile> = fs::read(&leaf_path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        // Printed once the leaf has opened, not as they are found. A leaf that fails to
+        // open is tried again on every flush tick, and these would repeat twice a second
+        // beside a failure that is itself reported once.
+        let mut warnings = Vec::new();
         if let Some(found) = recorded.as_ref().map(|f| f.template_id) {
             if found != template_id {
                 // The directory name and the file inside it disagree about whose rows
                 // these are. Reported rather than acted on: the directory is what the
                 // template id resolves to, and silently reading another leaf's columns is
                 // the one outcome worth refusing to reach quietly.
-                eprintln!(
+                warnings.push(format!(
                     "triedb: WARN {}: records template {found}, but it is leaf {template_id}'s \
                      directory",
                     leaf_path.display()
-                );
+                ));
             }
         }
         let keys: BTreeSet<String> = recorded
@@ -450,12 +505,12 @@ impl DiskLeaf {
             .unwrap_or_default();
         let recorded_column = recorded.map(|f| f.partition_column);
         if let Some(was) = recorded_column.as_deref().filter(|c| *c != time_column) {
-            eprintln!(
+            warnings.push(format!(
                 "triedb: WARN {}: partitions were cut on `{was}`, the template's time \
                  column is `{time_column}`; rows already on disk are pruned against the \
                  old column and new ones are cut on the new one",
                 leaf_path.display()
-            );
+            ));
         }
         let partition_column = time_column.to_string();
 
@@ -473,11 +528,15 @@ impl DiskLeaf {
             };
             parts.insert(key, open_partition(template_id, &entry.path())?);
         }
+        for warning in warnings {
+            eprintln!("{warning}");
+        }
 
         // Not written here. A leaf opened before its first row has no keys to record,
-        // and an empty key list on disk is worse than none: it is the file the M5 bug
-        // was found through, saying a template has no columns. The first flush with keys
-        // writes it; until then the catalog is the record of the template.
+        // and an empty key list on disk is worse than none: it is the file the bug
+        // described on `keys` was found through, saying a template has no columns. The
+        // first flush with keys writes it; until then the catalog is the record of the
+        // template.
         let keys_on_disk = recorded_keys_match(&leaf_path, &keys)
             && recorded_column.as_deref() == Some(time_column);
         let _ = DEFAULT_TS_COLUMN;
@@ -1182,8 +1241,10 @@ impl DiskLeaf {
                     // A `Dt` chunk in a column that is now text: every value is rendered
                     // back through the chunk's own `dt_form` - ten digits for
                     // `epoch_s`, thirteen for `epoch_ms`, RFC 3339 for `rfc3339`. A chunk
-                    // written as `mixed` before M5.6b holds bare nanoseconds and can only
-                    // print canonical RFC 3339, which is said once per segment.
+                    // written as `mixed` by an older build - one that kept two date forms
+                    // in one chunk instead of storing the column as text - holds bare
+                    // nanoseconds and can only print canonical RFC 3339, which is said once
+                    // per segment.
                     if spec.kind == ColKind::Dt && opts.text_columns.iter().any(|c| c == &spec.name)
                     {
                         if spec.dt_form == Some(DtForm::Mixed) {
@@ -1475,9 +1536,9 @@ impl DiskLeaf {
         };
         if warned.insert(path.to_path_buf()) {
             eprintln!(
-                "triedb: WARN leaf {}: {}: column `{column}` was written as `mixed` before \
-                 M5.6b and holds bare nanoseconds; its values are returned as canonical \
-                 RFC 3339, which may not be the text that was ingested",
+                "triedb: WARN leaf {}: {}: column `{column}` was written as `mixed` by an \
+                 older build and holds bare nanoseconds; its values are returned as \
+                 canonical RFC 3339, which may not be the text that was ingested",
                 self.template_id,
                 path.display()
             );
@@ -1927,6 +1988,105 @@ mod tests {
         assert_eq!(second.len(), 21);
         assert_eq!(segments(&scratch).len(), 2, "a sealed segment was reopened");
         assert_eq!(scan(&second, ScanOptions::default()).1.len(), 21);
+    }
+
+    /// Every segment's version is checked, not only the last one's. The last is the one
+    /// recovery looks at, so a check that lived there would pass a sealed segment from
+    /// another version straight through to the reader.
+    #[test]
+    fn a_bad_version_in_an_earlier_segment_fails_the_leaf_by_path() {
+        let scratch = Scratch::new("version");
+        {
+            let mut first = leaf(&scratch, RowGroupLimits::default());
+            first.append(row(&[("ts", ColValue::Datetime(DAY))]), &[]);
+            first.flush(FlushKind::Final).expect("flush");
+            first.append(row(&[("ts", ColValue::Datetime(DAY + 1))]), &[]);
+            first.flush(FlushKind::Final).expect("flush");
+        }
+        let written = segments(&scratch);
+        assert_eq!(
+            written.len(),
+            2,
+            "want two segments in one day: {written:?}"
+        );
+        assert_eq!(written[0].parent(), written[1].parent());
+
+        let mut raw = fs::read(&written[0]).expect("read the first segment");
+        raw[4] = 3;
+        fs::write(&written[0], &raw).expect("write it back");
+
+        let opened = DiskLeaf::open(
+            101,
+            scratch.0.join("leaf_101"),
+            RowGroupLimits::default(),
+            "ts",
+            Arc::new(OpenSegments::new(usize::MAX)),
+        );
+        match opened.err() {
+            Some(StoreError::Segment(segment::SegError::BadVersion { path, found: 3 })) => {
+                assert_eq!(path, written[0], "the wrong segment was named");
+            }
+            other => panic!("the earlier segment's version was not checked: {other:?}"),
+        }
+    }
+
+    /// The scan before the bind finds another version where opening the leaf may not:
+    /// beside a partition that fails for another reason, and in a leaf no template names.
+    /// A leaf it cannot read is skipped, not fatal.
+    #[test]
+    fn every_segment_header_is_checked_whatever_else_is_wrong() {
+        let scratch = Scratch::new("versions");
+        let segment_in = |leaf: &str, day: &str, version: u8| {
+            let dir = scratch.0.join(leaf).join(day);
+            fs::create_dir_all(&dir).expect("mkdir");
+            let path = dir.join("seg_000001.col");
+            let mut bytes = b"TRDB".to_vec();
+            bytes.extend_from_slice(&[version, 0, 0, 0]);
+            fs::write(&path, bytes).expect("write a header");
+            path
+        };
+        segment_in("leaf_101", "2024-01-16", 2);
+        // Fails `DiskLeaf::open` with `NotASegment` and ends that leaf's walk; whether the
+        // version-3 partition is read before it depends on `read_dir` order. The scan
+        // reads every header whatever the order.
+        let foreign = scratch.0.join("leaf_101").join("2024-01-15");
+        fs::create_dir_all(&foreign).expect("mkdir");
+        fs::write(foreign.join("seg_000001.col"), b"not a segment at all").expect("write");
+        // Short files and files that are not segments are left to `open`.
+        fs::write(foreign.join("seg_000002.col"), b"TRD").expect("write");
+        assert!(refuse_other_versions(&scratch.0).is_ok());
+
+        let newer = segment_in("leaf_101", "2024-01-17", 3);
+        let orphan = segment_in("leaf_999", "undated", 1);
+        match refuse_other_versions(&scratch.0) {
+            Err(StoreError::Segment(segment::SegError::BadVersion { path, found: 3 })) => {
+                assert_eq!(path, newer, "not the first in path order");
+            }
+            other => panic!("another version was not refused: {other:?}"),
+        }
+        fs::remove_file(&newer).expect("rm");
+        match refuse_other_versions(&scratch.0) {
+            Err(StoreError::Segment(segment::SegError::BadVersion { path, found: 1 })) => {
+                assert_eq!(path, orphan);
+            }
+            other => panic!("the orphan leaf was not checked: {other:?}"),
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = scratch.0.join("leaf_999");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+            let readable = fs::read_dir(&locked).is_ok();
+            let result = refuse_other_versions(&scratch.0);
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod");
+            if !readable {
+                assert!(
+                    result.is_ok(),
+                    "an unreadable leaf refused the start: {result:?}"
+                );
+            }
+        }
     }
 
     /// The old layout is recognised from names alone and refused by path.

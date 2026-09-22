@@ -101,7 +101,7 @@ fn leaves(tree: &str) -> Vec<String> {
     out
 }
 
-/// The milestone's done-when. The same lines, three orders, one tree.
+/// What the trie has to guarantee: the same lines, three orders, one tree.
 #[test]
 fn the_tree_is_stable_across_input_orderings() {
     let generated = gen(20_000, 12, 42);

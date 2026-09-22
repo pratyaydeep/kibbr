@@ -177,7 +177,17 @@ pub fn ingest_prepared(
             );
             forms.push((RECEIVED_AT_COLUMN.to_string(), DtForm::Rfc3339));
         }
-        stores.append(id, source.column(), row, &forms);
+        // Refused by line, as a catalog append that fails is: the template exists, the row
+        // is nowhere, and the line must not be counted as ingested. `to_string` and not
+        // `error::chain`: every `StoreError` already prints its cause, and a chain would
+        // print it twice.
+        stores
+            .append(id, source.column(), row, &forms)
+            .map_err(|e| {
+                SinkError::Line(DetectorErrorKind::NotStored {
+                    detail: e.to_string(),
+                })
+            })?;
     }
     Ok(())
 }

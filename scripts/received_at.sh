@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The system column is not a key. Three checks:
 #
-# - the template count for 20,000 `--seed 42` lines is what it was before M5.6b: 823,
-#   measured on the M5.6a build - `\_received_at` is added after fingerprinting, so it
-#   can neither make a template nor split one;
+# - the template count for 20,000 `--seed 42` lines is what it was before the system
+#   column existed: 823, measured on a build without it - `\_received_at` is added after
+#   fingerprinting, so it can neither make a template nor split one;
 # - a line that carries its own `_received_at` key is ingested and returned unchanged, and
 #   the system value is left out of that row;
 # - a line with no time column at all comes back with a `_received_at` the store gave it.

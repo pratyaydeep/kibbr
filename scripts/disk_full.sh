@@ -3,8 +3,8 @@
 #
 # As built it is both silent and total: every batch got a `200`, the server stayed up, the
 # shutdown log said "90,000 rows written", and after a restart `COUNT LOG {}` was 0
-# With no write-ahead log a `200` for a line the store cannot write is the lie, so from
-# M5.6c the store says when it cannot write:
+# With no write-ahead log a `200` for a line the store cannot write is the lie, so the
+# store says when it cannot write:
 #
 #   1. While the last flush tick failed, `POST /ingest` answers 503 with a `Retry-After`
 #      and the last write error in the body, and `/health` reports `degraded`.
@@ -249,7 +249,7 @@ elif [ -z "$AFTER" ]; then
 elif [ "$AFTER" -lt "$WRITTEN" ]; then
   echo "FAIL $AFTER rows came back, but /stats reported $WRITTEN written before the disk filled"; FAIL=1
 fi
-# The retry-safety half of the milestone: a create that failed part way left a file that
+# Retry safety: a create that failed part way left a file that
 # every later attempt at that number met with `File exists`.
 EXISTS=$(grep -c 'File exists' "$WORK/run1.log" 2>/dev/null)
 [ "$EXISTS" = "0" ] || { echo "FAIL $EXISTS retries answered \`File exists\`"; FAIL=1; }

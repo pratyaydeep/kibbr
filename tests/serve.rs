@@ -535,7 +535,7 @@ fn a_signal_lets_the_in_flight_request_finish() {
         log.contains("exit 0"),
         "shutdown log has no exit line:\n{log}"
     );
-    // The steps this milestone does not have are named rather than omitted, so an
+    // The steps this build does not have are named rather than omitted, so an
     // operator can see which durability they do not yet have.
     assert!(
         log.contains("WAL"),
