@@ -13,6 +13,7 @@ would quietly answer a different question than the one being asked.
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -28,10 +29,33 @@ from .frontend import (
     parse_line,
 )
 
-# `src/store/mod.rs`: the column a day partition is cut on. A row whose `ts` is not a
-# readable Datetime goes to `undated/`, and this mirrors that rule exactly.
+# The column a day partition was cut on before templates chose their own time column. A
+# row whose `ts` is not a readable Datetime went to `undated/`.
 TS_COLUMN = "ts"
 UNDATED = "undated"
+
+# The binary's rule now (`[schema] time_columns`, `src/config.rs`): a template's time
+# column is the first of these that is one of its keys and a Datetime on the line that
+# created it. A row whose value there is not a Datetime takes its arrival time, which the
+# lab has no clock for, so it is `undated` here.
+TIME_COLUMNS = (
+    "@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix",
+    "datetime", "event_time", "created_at",
+)
+
+# `LAB_TIME_RULE=ts` puts back the literal-`ts` rule, which every figure recorded before
+# the farm data set was measured under - on flat30 it leaves 41.6% of rows undated, where
+# the list rule leaves none.
+OLD_TIME_RULE = os.environ.get("LAB_TIME_RULE") == "ts"
+
+
+def time_source(p) -> str | None:
+    """The time column a template gets from the line that creates it."""
+    for name in TIME_COLUMNS:
+        t = p.typed.get(name)
+        if t is not None and t.ty == DATETIME:
+            return name
+    return None
 
 
 @dataclass
@@ -46,6 +70,8 @@ class Template:
     promoted: tuple = ()
     fingerprint: str = ""
     rows: list = field(default_factory=list)  # RowRef indices into Dataset.rows
+    # The key each row's time is read from, or None if it has none of its own.
+    time_col: str | None = None
 
     @property
     def n(self) -> int:
@@ -133,6 +159,7 @@ def load(ds, rule=DEFAULT_RULE, limit: int | None = None) -> Parsed:
                 keys=list(p.keys),
                 promoted=tuple(sorted((k, p.values[k]) for k in p.promoted)),
                 fingerprint=p.fingerprint,
+                time_col=None if OLD_TIME_RULE else time_source(p),
             )
         acc = type_acc[tid]
         ev = ev_acc[tid]
@@ -145,6 +172,8 @@ def load(ds, rule=DEFAULT_RULE, limit: int | None = None) -> Parsed:
     for tid, tmpl in seen.items():
         tmpl.types = {k: type_acc[tid][k] for k in tmpl.keys}
         tmpl.evidence = {k: set(ev_acc[tid][k]) for k in tmpl.keys}
+        if OLD_TIME_RULE and tmpl.types.get(TS_COLUMN) == DATETIME:
+            tmpl.time_col = TS_COLUMN
     out.templates = seen
 
     # Pass 2: lay the rows out in each template's key order.
@@ -156,8 +185,11 @@ def load(ds, rule=DEFAULT_RULE, limit: int | None = None) -> Parsed:
             for k in tmpl.keys
         )
         ts_ns = None
-        if tmpl.types.get(TS_COLUMN) == DATETIME:
-            ts_ns = vals[tmpl.keys.index(TS_COLUMN)]
+        tc = tmpl.time_col
+        if tc is not None:
+            t = p.typed.get(tc)
+            if OLD_TIME_RULE or (t is not None and t.ty == DATETIME):
+                ts_ns = vals[tmpl.keys.index(tc)]
         idx = len(out.tid)
         out.tid.append(p.template_id)
         out.ts_ns.append(ts_ns)
@@ -173,6 +205,58 @@ def _join(a, b):
     from .frontend import join_types
 
     return join_types(a, b)
+
+
+def merged(P: Parsed, mapping: dict) -> Parsed:
+    """The same rows regrouped by a `lab/out/04/` mapping of lab_id -> merged template.
+
+    Each group becomes a template of its own: the union of its members' keys, each key's
+    type the join over the members that hold it - a member without the key contributes
+    nothing, so absence never widens a column - and every row laid out again in that key
+    order with None where its own template had no such key, which is the null cell a
+    merged leaf stores. Script 02's `groups_from_mapping` folds types the same way.
+    """
+    buckets: dict = defaultdict(list)
+    for r, lab_id in enumerate(P.lab_id):
+        g = mapping.get(lab_id)
+        if g is None:
+            raise KeyError(f"{lab_id} is not in the mapping: rerun 04 on {P.name}")
+        buckets[g].append(r)
+    out = Parsed(P.name, P.note, raw_bytes=P.raw_bytes)
+    for g, idxs in buckets.items():
+        members = []
+        for r in idxs:
+            t = P.templates[P.tid[r]]
+            if t not in members:
+                members.append(t)
+        types: dict = {}
+        for t in members:
+            for k in t.keys:
+                types[k] = _join(types.get(k), t.types[k]) if k in types else t.types[k]
+        keys = sorted(types)
+        first = members[0]
+        tmpl = Template(
+            tid=g,
+            keys=keys,
+            types=types,
+            promoted=first.promoted,
+            fingerprint=f"merged {len(members)} templates",
+            time_col=first.time_col,
+        )
+        pos = {t.tid: {k: i for i, k in enumerate(t.keys)} for t in members}
+        for r in sorted(idxs):
+            at = pos[P.tid[r]]
+            raws = tuple(P.raws[r][at[k]] if k in at else None for k in keys)
+            vals = tuple(P.vals[r][at[k]] if k in at else None for k in keys)
+            tmpl.rows.append(len(out.tid))
+            out.tid.append(g)
+            out.ts_ns.append(P.ts_ns[r])
+            out.day.append(P.day[r])
+            out.raws.append(raws)
+            out.vals.append(vals)
+            out.lab_id.append(P.lab_id[r])
+        out.templates[g] = tmpl
+    return out
 
 
 # --- arrow ---------------------------------------------------------------------

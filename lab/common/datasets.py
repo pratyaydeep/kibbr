@@ -1,8 +1,11 @@
 """The inputs, built under `lab/data/` and reproducible from a seed.
 
-Four shapes, because the questions need different ones:
+Five shapes, because the questions need different ones:
 
   flat30  what `triedb gen-logs` makes by default - 200,000 lines over 31 days.
+  farm    `triedb gen-logs --profile farm`: one simulated day of a ten-service estate,
+          in time order, uneven across templates, with request ids, users and addresses
+          that recur across services. 200,000 lines, or 2,000,000 as `farm_big`.
   oneday  the same lines, timestamps squeezed into one day, so a per-day layout is
           measured without the day count doing the work.
   uneven  one day, and the top 10 templates holding about 80% of the rows, which is what
@@ -34,7 +37,9 @@ from pathlib import Path
 
 from .measure import DATA, LAB
 
-BINARY = LAB.parent / "target" / "release" / "triedb"
+# `LAB_TRIEDB` points the lab at a binary built elsewhere - a worktree of this branch has
+# no build of its own, and the farm profile exists only in newer builds.
+BINARY = Path(os.environ.get("LAB_TRIEDB") or LAB.parent / "target" / "release" / "triedb")
 
 # The generator's time fields, by leaf segment name. `order_id` is also ten digits and is
 # deliberately NOT here: rung 2 mistaking it for a timestamp is a fact about the data we
@@ -338,6 +343,32 @@ def _build_uneven(size: str, name: str = "uneven", total: int | None = None) -> 
     )
 
 
+def _build_farm(size: str, name: str = "farm") -> Dataset:
+    lines = 2_000_000 if size == "big" else 200_000
+    _require_binary()
+    DATA.mkdir(parents=True, exist_ok=True)
+    tmp = DATA / f"_{name}.raw"
+    with open(tmp, "wb") as fh:
+        _run(
+            [str(BINARY), "gen-logs", "--profile", "farm", "--lines", str(lines), "--seed", "42"],
+            stdout=fh,
+        )
+    # Streamed: at 2M lines the file is about a gigabyte. Not squeezed, not sorted - the
+    # generator already writes one day in time order, and `_rewrite` would drop the
+    # milliseconds every farm timestamp carries.
+    with open(tmp, "rb") as fh:
+        ds = _write(
+            name,
+            (ln.rstrip(b"\n") for ln in fh if ln.strip()),
+            f"triedb gen-logs --profile farm --lines {lines:,} --seed 42, unmodified; one "
+            "simulated day in time order, ten services, each with its own time field "
+            "(@timestamp, time, ts, ts_ms), a request's id recurring across services, "
+            "0.5% dirty values on five named keys",
+        )
+    tmp.unlink()
+    return ds
+
+
 def _build_big(size: str) -> Dataset:
     return _build_uneven("big", name="big", total=2_000_000)
 
@@ -536,6 +567,10 @@ BUILDERS = {
     "uneven": _build_uneven,
     "big": _build_big,
     "messy": _build_messy,
+    "farm": _build_farm,
+    # Its own name: `ensure` keys the cache on the name, so a big farm under `farm` would
+    # hand back the small file.
+    "farm_big": lambda size: _build_farm("big", "farm_big"),
     "real": _build_real,
 }
 
@@ -552,6 +587,8 @@ def ensure(name: str, size: str = "small", rebuild: bool = False) -> Dataset:
     """Build `name` if it is not already under `lab/data/`, and return it."""
     if name == "big" or (name == "uneven" and size == "big"):
         name = "big"
+    if name == "farm" and size == "big":
+        name = "farm_big"
     dest = DATA / f"{name}.ndjson"
     notes = _load_notes()
     if dest.exists() and not rebuild and name in notes:
@@ -566,7 +603,7 @@ def ensure(name: str, size: str = "small", rebuild: bool = False) -> Dataset:
 
 def available(size: str = "small") -> list:
     """Every dataset that can be built here - `real` only when the env var points at one."""
-    names = ["flat30", "oneday", "uneven", "messy"]
+    names = ["flat30", "oneday", "uneven", "messy", "farm"]
     if size == "big":
         names.append("big")
     src = os.environ.get("LAB_REAL_LOGS")

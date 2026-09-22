@@ -287,7 +287,7 @@ def window_cost(P: rowlib.Parsed, out: Path, rg: int) -> dict:
     hi = lo + WINDOW_SECONDS
 
     md = pq.ParquetFile(dest).metadata
-    ts_col = tmpl.keys.index(rowlib.TS_COLUMN)
+    ts_col = tmpl.keys.index(tmpl.time_col)
     total = 0
     touched = 0
     groups_touched = 0

@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab.common import datasets, measure
+from lab.common.rows import time_source
 from lab.common.frontend import DATETIME, fold_types, parse_line
 
 # What `src/store/mod.rs` calls DEFAULT_TS_COLUMN. A template whose time column is named
@@ -51,6 +52,10 @@ class Profile:
         # `order_id` - ten digits, not a timestamp, and rung 2 claims it anyway - spread
         # the dataset over 180 years and hide the real span of `ts`.
         self.day_sets: dict = defaultdict(set)
+        # The binary's rule now: each template's time column, chosen on its first line
+        # from `[schema] time_columns`, and the rows that have no Datetime there.
+        self.template_time: dict = {}
+        self.rows_on_arrival = 0
 
     def feed(self, raw: bytes) -> None:
         p = parse_line(raw)
@@ -64,6 +69,11 @@ class Profile:
             self.template_promoted[tid] = tuple(
                 sorted((k, p.values[k]) for k in p.promoted)
             )
+            self.template_time[tid] = time_source(p)
+        tc = self.template_time[tid]
+        own = p.typed.get(tc) if tc is not None else None
+        if own is None or own.ty != DATETIME:
+            self.rows_on_arrival += 1
 
         for key in p.keys:
             raw_value = p.values[key]
@@ -141,6 +151,10 @@ class Profile:
         out.sort(key=lambda c: -c["raw_bytes"])
         return out
 
+    def widest_column(self) -> str:
+        spans = {k: len(v) for k, v in self.day_sets.items()}
+        return max(spans, key=lambda k: spans[k]) if spans else "-"
+
     def time_shape(self) -> dict:
         """Which templates a time-range search cannot skip.
 
@@ -175,12 +189,16 @@ class Profile:
         rbytes = sum(self.template_bytes[t] for t in unskippable)
         spans = {k: len(v) for k, v in self.day_sets.items()}
         widest = max(spans, key=lambda k: spans[k]) if spans else "-"
+        with_col = sum(1 for v in self.template_time.values() if v is not None)
         return {
             "days spanned by `ts`": spans.get(TS_COLUMN, 0),
             "days spanned by every Datetime column pooled": len(
                 set().union(*self.day_sets.values()) if self.day_sets else set()
             ),
-            f"days spanned by the widest column ({widest})": spans.get(widest, 0),
+            # The label is fixed and the column is named under the table: a label naming
+            # it differed per dataset as soon as one had another widest column, and the
+            # side-by-side table is keyed on the label.
+            "days spanned by the widest Datetime column": spans.get(widest, 0),
             "templates_with_ts": len(good),
             "templates_no_time_column": len(no_time),
             "templates_time_not_named_ts": len(wrong_name),
@@ -190,6 +208,15 @@ class Profile:
             "unskippable_bytes": rbytes,
             "unskippable_byte_share": 100.0 * rbytes / self.raw_bytes
             if self.raw_bytes
+            else 0.0,
+            # Under `[schema] time_columns`, which the binary uses now, the question is
+            # not which templates a search cannot skip but which rows had to be stamped
+            # with their arrival instead of their own time.
+            "templates_with_time_column (list rule)": with_col,
+            "templates_without (list rule)": len(self.template_time) - with_col,
+            "rows_on_arrival_time (list rule)": self.rows_on_arrival,
+            "rows_on_arrival_time_share (list rule)": 100.0 * self.rows_on_arrival / self.rows
+            if self.rows
             else 0.0,
         }
 
@@ -248,6 +275,7 @@ def main() -> int:
         headers=["metric"] + names,
         title="time: what a range search cannot skip",
     )
+    print("widest Datetime column: " + ", ".join(f"{p.name} `{p.widest_column()}`" for p in profs))
     for p in profs:
         for k, v in tshapes[p.name].items():
             res.add(

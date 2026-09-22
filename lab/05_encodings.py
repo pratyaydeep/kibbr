@@ -17,6 +17,7 @@ to every column in it.
 from __future__ import annotations
 
 import gzip as gzlib
+import json
 import statistics
 import sys
 import time
@@ -48,7 +49,7 @@ def chunk_order(P: rowlib.Parsed, t, idxs: list) -> list:
         card.append((distinct, i))
     card.sort()
     cols = [i for _, i in card]
-    ts_i = t.keys.index(rowlib.TS_COLUMN) if rowlib.TS_COLUMN in t.types else None
+    ts_i = t.keys.index(t.time_col) if t.time_col is not None else None
 
     def key_of(r):
         base = tuple("" if P.raws[r][i] is None else str(P.raws[r][i]) for i in cols)
@@ -97,13 +98,31 @@ def charged(sizes: dict, names: list) -> dict:
 
 
 def main() -> int:
-    args = measure.parse_args("05_encodings").parse_args()
+    ap = measure.parse_args("05_encodings")
+    ap.add_argument(
+        "--merge",
+        metavar="RULE",
+        help="chunk the templates one of 04's rules produces (e.g. J80) instead of the "
+        "unmerged ones; recorded under the dataset name with [RULE] after it",
+    )
+    args = ap.parse_args()
     ds = datasets.ensure(args.dataset, args.size)
-    res = measure.Results("05_encodings", ds.name)
+    # Its own label, or the merged run would replace the unmerged one wherever the newest
+    # run per (script, dataset) is what counts - RESULTS.md and script 06 both.
+    label = f"{ds.name}[{args.merge}]" if args.merge else ds.name
+    res = measure.Results("05_encodings", label)
     measure.print_machine()
-    print(f"\ndataset {ds.name}: {ds.lines:,} lines, chunks of {CHUNK:,} rows per template")
 
     P = rowlib.load(ds)
+    if args.merge:
+        f = measure.OUT / "04" / ds.name / f"mapping_{args.merge}.json"
+        if not f.exists():
+            sys.exit(f"{f} not found: run 04_merge_rules.py --dataset {ds.name} first")
+        n_before = len(P.templates)
+        P = rowlib.merged(P, json.loads(f.read_text()))
+        print(f"\n{args.merge}: {n_before:,} templates merged into {len(P.templates):,}")
+    print(f"\ndataset {label}: {ds.lines:,} lines, chunks of {CHUNK:,} rows per template")
+    res.add("units", "templates chunked", len(P.templates), "count")
 
     # by (order, type, encoder) -> bytes; and per column for the top-10 table
     totals: dict = defaultdict(lambda: defaultdict(int))

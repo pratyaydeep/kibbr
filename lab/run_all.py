@@ -3,7 +3,8 @@
 
 The order is not the numbering, because three scripts feed each other:
 
-    04 writes the merge mappings that 02 turns into real Parquet files
+    04 writes the merge mappings that 02 turns into real Parquet files and 05 --merge
+       chunks
     08 writes the WAL compression ratio that 03 quotes for a day of WAL
     05 writes the best-encoding total that 06 quotes its filter bytes against
 
@@ -28,15 +29,16 @@ from pathlib import Path
 LAB = Path(__file__).resolve().parent
 PY = LAB / ".venv" / "bin" / "python"
 
-# (script, [datasets]) - None means the script takes no --dataset that matters.
+# (script, [datasets]) - None means the script takes no --dataset that matters. A dataset
+# may be a (dataset, [extra flags]) pair; 05 over farm's J80 templates is the one that is.
 PLAN = [
     ("00_frontend_agree", ["uneven"]),
     ("01_profile_logs", ["uneven"]),
-    ("04_merge_rules", ["uneven", "flat30", "messy"]),
+    ("04_merge_rules", ["uneven", "flat30", "messy", "farm"]),
     ("08_io_shapes", ["uneven"]),
-    ("02_split_vs_wide", ["uneven", "flat30", "oneday", "messy"]),
+    ("02_split_vs_wide", ["uneven", "flat30", "oneday", "messy", "farm"]),
     ("03_layout_model", ["uneven", "flat30", "messy"]),
-    ("05_encodings", ["uneven", "flat30", "messy"]),
+    ("05_encodings", ["uneven", "flat30", "messy", "farm", ("farm", ["--merge", "J80"])]),
     ("06_bloom", ["uneven", "flat30", "messy"]),
     ("09_template_lookup", [None]),
 ]
@@ -50,7 +52,9 @@ def run(script: str, dataset, size: str, extra: list) -> tuple:
     if dataset is not None:
         cmd += ["--dataset", dataset]
     cmd += ["--size", size] + extra
-    label = f"{script}" + (f" --dataset {dataset}" if dataset else "")
+    label = f"{script}" + (f" --dataset {dataset}" if dataset else "") + "".join(
+        f" {x}" for x in extra
+    )
     print(f"\n{'=' * 78}\n>>> {label}\n{'=' * 78}", flush=True)
     t0 = time.perf_counter()
     r = subprocess.run(cmd, cwd=LAB.parent)
@@ -80,6 +84,8 @@ def main() -> int:
         targets = dsets[:1] if script in SELF_SWEEPING else dsets
         for ds in targets:
             extra = []
+            if isinstance(ds, tuple):
+                ds, extra = ds[0], list(ds[1])
             if script == "03_layout_model" and args.skip_calibration:
                 extra.append("--skip-calibration")
             label, code, took = run(script, ds, args.size, extra)

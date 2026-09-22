@@ -33,8 +33,11 @@ python       3.12.2
 - **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.33x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
 - **`flat30`**: the smallest layout is zstd -19 at 8,282,006 bytes. Per-template Parquet loses to gzip -9 by 1.14x on bytes; what TrieDB does today (one Parquet per template per day) costs 1.81x of raw NDJSON.
 - **`oneday`**: the smallest layout is zstd -19 at 8,059,807 bytes. Per-template Parquet loses to gzip -9 by 1.15x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.26x of raw NDJSON.
+- **`farm`**: the smallest layout is zstd -19 at 5,995,347 bytes. Per-template Parquet beats gzip -9 by 0.77x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.09x of raw NDJSON.
 - **Encodings on `flat30`**: picking the smallest encoding per chunk reaches 0.144x of raw NDJSON and 0.618x of gzip -9; sorting rows inside each chunk is worth a further 2.52%.
 - **Encodings on `uneven`**: picking the smallest encoding per chunk reaches 0.096x of raw NDJSON and 1.052x of gzip -9; sorting rows inside each chunk is worth a further 0.68%.
+- **Encodings on `farm`**: picking the smallest encoding per chunk reaches 0.068x of raw NDJSON and 0.608x of gzip -9; sorting rows inside each chunk is worth a further -4.60%.
+- **Encodings on `farm[J80]`**: picking the smallest encoding per chunk reaches 0.068x of raw NDJSON and 0.604x of gzip -9; sorting rows inside each chunk is worth a further -3.17%.
 - **Bloom filters earn their bytes**: at 10 bits per value they skip 98.4% of row groups for an id that is not there, against 13.5% for min/max statistics alone, and cost 1.30% of the best encoded total.
 - **Which durability call matters as much as batching**: a per-record `fsync(2)` reaches 30,664 records/sec on this platform, the same loop with `F_FULLFSYNC` reaches 369 - Darwin's `fsync` stops at the drive cache. Shape only.
 - **WAL batching pays twice**: zstd 3 over batches of 500 lines compresses to 0.114 of raw, against 0.864 at one line per batch.
@@ -48,6 +51,7 @@ python       3.12.2
 - **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; TrieDB's best measured layout is WIDE rg=122,880 at 0.086x.
 - **clp-s stores these logs smaller than TrieDB does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
 - **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
+- **Type widening is a ladder cost, not a merging cost** (`farm`, 7 keys carrying two types): 1.5% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (PER_EVENT) takes that to 2.9% and adds no new keys. Section 3.2's monotonic join does the damage inside a single template; merging contributes a few points on top.
 - **Type widening is a ladder cost, not a merging cost** (`messy`, 7 keys carrying two types): 44.0% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (J70) takes that to 50.0% and adds no new keys. Section 3.2's monotonic join does the damage inside a single template; merging contributes a few points on top.
 - **Scanning every template for an unpromoted key bends the wrong way**: 100x the templates costs 2.2x more than linear, not the same. A key-to-templates map is flat.
 
@@ -117,7 +121,218 @@ Run 2026-09-19T09:31:35+00:00, git `90152d2`, 8 rows.
 
 _What the logs look like_
 
-Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
+Run 2026-09-22T15:48:59+00:00, git `7f71d96`, 514 rows.
+
+### `01_profile_logs` / dataset `farm`
+
+| variant                          | metric                                       |            value | unit    |
+|----------------------------------|----------------------------------------------|------------------|---------|
+| farm                             | rows                                         | 200000           | count   |
+| farm                             | raw bytes                                    |      9.7513e+07  | count   |
+| farm                             | templates                                    |    143           | count   |
+| farm                             | rows/template min                            |      1           | count   |
+| farm                             | rows/template median                         |     70           | count   |
+| farm                             | rows/template p90                            |   2212           | count   |
+| farm                             | rows/template max                            |  57786           | count   |
+| farm                             | top-10 share of rows %                       |     77           | count   |
+| farm                             | templates with <100 rows                     |     81           | count   |
+| farm                             | distinct promoted-value sets                 |     43           | count   |
+| farm                             | templates in the biggest promoted group      |     20           | count   |
+| farm                             | promoted groups holding one template         |     23           | count   |
+| farm                             | distinct column names                        |    178           | count   |
+| farm                             | days spanned by `ts`                         |      1           | count   |
+| farm                             | days spanned by every Datetime column pooled |      5           | count   |
+| farm                             | days spanned by the widest Datetime column   |      2           | count   |
+| farm                             | templates_with_ts                            |     15           | count   |
+| farm                             | templates_no_time_column                     |      0           | count   |
+| farm                             | templates_time_not_named_ts                  |    128           | count   |
+| farm                             | unskippable_templates                        |    128           | count   |
+| farm                             | unskippable_rows                             | 190658           | count   |
+| farm                             | unskippable_row_share                        |     95.33        | percent |
+| farm                             | unskippable_bytes                            |      9.50199e+07 | count   |
+| farm                             | unskippable_byte_share                       |     97.44        | percent |
+| farm                             | templates_with_time_column (list rule)       |    143           | count   |
+| farm                             | templates_without (list rule)                |      0           | count   |
+| farm                             | rows_on_arrival_time (list rule)             |      0           | count   |
+| farm                             | rows_on_arrival_time_share (list rule)       |      0           | percent |
+| column:http_user_agent           | raw_bytes                                    |      9.97334e+06 | bytes   |
+| column:user_agent.original       | raw_bytes                                    |      5.25478e+06 | bytes   |
+| column:time                      | raw_bytes                                    |      2.70291e+06 | bytes   |
+| column:request_id                | raw_bytes                                    |      2.62416e+06 | bytes   |
+| column:http_referer              | raw_bytes                                    |      2.14785e+06 | bytes   |
+| column:request_uri               | raw_bytes                                    |      2.0617e+06  | bytes   |
+| column:http.request.id           | raw_bytes                                    |      1.67066e+06 | bytes   |
+| column:@timestamp                | raw_bytes                                    |      1.55298e+06 | bytes   |
+| column:host.name                 | raw_bytes                                    |      1.53834e+06 | bytes   |
+| column:message                   | raw_bytes                                    |      1.41858e+06 | bytes   |
+| column:msec                      | raw_bytes                                    |      1.21278e+06 | bytes   |
+| column:remote_addr               | raw_bytes                                    |      1.0955e+06  | bytes   |
+| column:url.path                  | raw_bytes                                    |      1.04674e+06 | bytes   |
+| column:statement                 | raw_bytes                                    | 999463           | bytes   |
+| column:url.route                 | raw_bytes                                    | 811725           | bytes   |
+| column:event                     | raw_bytes                                    | 795368           | bytes   |
+| column:hostname                  | raw_bytes                                    | 659207           | bytes   |
+| column:client.ip                 | raw_bytes                                    | 642033           | bytes   |
+| column:upstream.address          | raw_bytes                                    | 597940           | bytes   |
+| column:duration_ms               | raw_bytes                                    | 568908           | bytes   |
+| column:job.id                    | raw_bytes                                    | 545112           | bytes   |
+| column:server_protocol           | raw_bytes                                    | 462288           | bytes   |
+| column:upstream_addr             | raw_bytes                                    | 452589           | bytes   |
+| column:worker                    | raw_bytes                                    | 447143           | bytes   |
+| column:request_time              | raw_bytes                                    | 433175           | bytes   |
+| column:upstream.duration_ms      | raw_bytes                                    | 385684           | bytes   |
+| column:service.name              | raw_bytes                                    | 365624           | bytes   |
+| column:msg                       | raw_bytes                                    | 354511           | bytes   |
+| column:body_bytes_sent           | raw_bytes                                    | 343048           | bytes   |
+| column:service.version           | raw_bytes                                    | 313392           | bytes   |
+| column:request_method            | raw_bytes                                    | 267548           | bytes   |
+| column:upstream.name             | raw_bytes                                    | 262367           | bytes   |
+| column:upstream_response_time    | raw_bytes                                    | 261531           | bytes   |
+| column:ecs\.version              | raw_bytes                                    | 261160           | bytes   |
+| column:status                    | raw_bytes                                    | 259881           | bytes   |
+| column:ts_ms                     | raw_bytes                                    | 252733           | bytes   |
+| column:host                      | raw_bytes                                    | 239313           | bytes   |
+| column:ts                        | raw_bytes                                    | 235374           | bytes   |
+| column:job.type                  | raw_bytes                                    | 217758           | bytes   |
+| column:log\.level                | raw_bytes                                    | 208961           | bytes   |
+| column:http.response.bytes       | raw_bytes                                    | 181909           | bytes   |
+| column:logger                    | raw_bytes                                    | 177381           | bytes   |
+| column:http.request.method       | raw_bytes                                    | 164291           | bytes   |
+| column:user.id                   | raw_bytes                                    | 161034           | bytes   |
+| column:http.response.status_code | raw_bytes                                    | 156624           | bytes   |
+| column:client_addr               | raw_bytes                                    | 150071           | bytes   |
+| column:user                      | raw_bytes                                    | 142555           | bytes   |
+| column:queue                     | raw_bytes                                    | 130164           | bytes   |
+| column:pool                      | raw_bytes                                    | 112889           | bytes   |
+| column:caller                    | raw_bytes                                    | 109034           | bytes   |
+| column:job.args.endpoint         | raw_bytes                                    | 101549           | bytes   |
+| column:level                     | raw_bytes                                    |  99193           | bytes   |
+| column:session_id                | raw_bytes                                    |  85968           | bytes   |
+| column:req_id                    | raw_bytes                                    |  81568           | bytes   |
+| column:query.text                | raw_bytes                                    |  80759           | bytes   |
+| column:lvl                       | raw_bytes                                    |  77764           | bytes   |
+| column:ip                        | raw_bytes                                    |  70623           | bytes   |
+| column:index                     | raw_bytes                                    |  69289           | bytes   |
+| column:error.message             | raw_bytes                                    |  66910           | bytes   |
+| column:db                        | raw_bytes                                    |  64508           | bytes   |
+| column:job.args.run_id           | raw_bytes                                    |  61520           | bytes   |
+| column:run_id                    | raw_bytes                                    |  61035           | bytes   |
+| column:job.args.topic            | raw_bytes                                    |  60176           | bytes   |
+| column:user_id                   | raw_bytes                                    |  54064           | bytes   |
+| column:tls.version               | raw_bytes                                    |  53040           | bytes   |
+| column:severity                  | raw_bytes                                    |  52321           | bytes   |
+| column:logger_name               | raw_bytes                                    |  50839           | bytes   |
+| column:requestId                 | raw_bytes                                    |  46528           | bytes   |
+| column:client                    | raw_bytes                                    |  43470           | bytes   |
+| column:HOSTNAME                  | raw_bytes                                    |  39900           | bytes   |
+| column:key                       | raw_bytes                                    |  31096           | bytes   |
+| column:thread_name               | raw_bytes                                    |  29917           | bytes   |
+| column:job                       | raw_bytes                                    |  28080           | bytes   |
+| column:error.type                | raw_bytes                                    |  24428           | bytes   |
+| column:spanId                    | raw_bytes                                    |  23264           | bytes   |
+| column:node                      | raw_bytes                                    |  22011           | bytes   |
+| column:schedule                  | raw_bytes                                    |  21830           | bytes   |
+| column:job.args.template         | raw_bytes                                    |  21784           | bytes   |
+| column:cluster.status            | raw_bytes                                    |  21279           | bytes   |
+| column:token.kid                 | raw_bytes                                    |  20736           | bytes   |
+| column:next_run                  | raw_bytes                                    |  19780           | bytes   |
+| column:job.args.order_id         | raw_bytes                                    |  18920           | bytes   |
+| column:method                    | raw_bytes                                    |  18288           | bytes   |
+| column:token.exp                 | raw_bytes                                    |  17970           | bytes   |
+| column:hits                      | raw_bytes                                    |  17950           | bytes   |
+| column:took_ms                   | raw_bytes                                    |  17564           | bytes   |
+| column:job.args.image_id         | raw_bytes                                    |  16686           | bytes   |
+| column:job.attempt               | raw_bytes                                    |  15142           | bytes   |
+| column:job.args.product_id       | raw_bytes                                    |  14755           | bytes   |
+| column:order_id                  | raw_bytes                                    |  14540           | bytes   |
+| column:psp_ref                   | raw_bytes                                    |  12798           | bytes   |
+| column:oldest_age_ms             | raw_bytes                                    |  12544           | bytes   |
+| column:mfa                       | raw_bytes                                    |  11456           | bytes   |
+| column:template                  | raw_bytes                                    |  10728           | bytes   |
+| column:result                    | raw_bytes                                    |   9968           | bytes   |
+| column:job.args.width            | raw_bytes                                    |   8940           | bytes   |
+| column:cmd                       | raw_bytes                                    |   8648           | bytes   |
+| column:message_id                | raw_bytes                                    |   8470           | bytes   |
+| column:keyspace_hits             | raw_bytes                                    |   8202           | bytes   |
+| column:query.filters.category    | raw_bytes                                    |   8033           | bytes   |
+| column:level_value               | raw_bytes                                    |   7980           | bytes   |
+| column:job.args.export_id        | raw_bytes                                    |   7740           | bytes   |
+| column:depth                     | raw_bytes                                    |   7599           | bytes   |
+| column:latency_us                | raw_bytes                                    |   7355           | bytes   |
+| column:keyspace_misses           | raw_bytes                                    |   7310           | bytes   |
+| column:rows                      | raw_bytes                                    |   6881           | bytes   |
+| column:name                      | raw_bytes                                    |   6856           | bytes   |
+| column:reason                    | raw_bytes                                    |   6609           | bytes   |
+| column:suggestion                | raw_bytes                                    |   6602           | bytes   |
+| column:job.args.warehouse        | raw_bytes                                    |   6568           | bytes   |
+| column:customer.ip               | raw_bytes                                    |   6270           | bytes   |
+| column:psp                       | raw_bytes                                    |   6146           | bytes   |
+| column:inflight                  | raw_bytes                                    |   6091           | bytes   |
+| column:client_port               | raw_bytes                                    |   6000           | bytes   |
+| column:error                     | raw_bytes                                    |   5855           | bytes   |
+| column:customer.id               | raw_bytes                                    |   5826           | bytes   |
+| column:query.page                | raw_bytes                                    |   5649           | bytes   |
+| column:latency_ms                | raw_bytes                                    |   5590           | bytes   |
+| column:provider                  | raw_bytes                                    |   5456           | bytes   |
+| column:evicted_keys              | raw_bytes                                    |   5378           | bytes   |
+| column:ops_per_sec               | raw_bytes                                    |   5304           | bytes   |
+| column:amount                    | raw_bytes                                    |   5024           | bytes   |
+| column:used_memory_mb            | raw_bytes                                    |   4920           | bytes   |
+| column:job.args.user_id          | raw_bytes                                    |   4754           | bytes   |
+| column:stack_trace               | raw_bytes                                    |   4402           | bytes   |
+| column:channel                   | raw_bytes                                    |   4285           | bytes   |
+| column:cluster.nodes             | raw_bytes                                    |   4248           | bytes   |
+| column:stats.avg_query_us        | raw_bytes                                    |   3690           | bytes   |
+| column:stats.query_per_s         | raw_bytes                                    |   3690           | bytes   |
+| column:age_s                     | raw_bytes                                    |   3600           | bytes   |
+| column:stats.xact_per_s          | raw_bytes                                    |   3501           | bytes   |
+| column:connected_clients         | raw_bytes                                    |   3267           | bytes   |
+| column:product_id                | raw_bytes                                    |   3250           | bytes   |
+| column:job.args.shard            | raw_bytes                                    |   2965           | bytes   |
+| column:shard                     | raw_bytes                                    |   2940           | bytes   |
+| column:currency                  | raw_bytes                                    |   2865           | bytes   |
+| column:card.brand                | raw_bytes                                    |   2820           | bytes   |
+| column:decision                  | raw_bytes                                    |   2477           | bytes   |
+| column:stats.avg_wait_us         | raw_bytes                                    |   2477           | bytes   |
+| column:stats.cl_active           | raw_bytes                                    |   2460           | bytes   |
+| column:stats.sv_active           | raw_bytes                                    |   2066           | bytes   |
+| column:card.last4                | raw_bytes                                    |   1924           | bytes   |
+| column:stats.sv_idle             | raw_bytes                                    |   1731           | bytes   |
+| column:pid                       | raw_bytes                                    |   1714           | bytes   |
+| column:@version                  | raw_bytes                                    |   1596           | bytes   |
+| column:query.filters.price_max   | raw_bytes                                    |   1452           | bytes   |
+| column:stats.cl_waiting          | raw_bytes                                    |   1287           | bytes   |
+| column:rules_hit                 | raw_bytes                                    |   1221           | bytes   |
+| column:error.stack_trace         | raw_bytes                                    |   1215           | bytes   |
+| column:customer.country          | raw_bytes                                    |    962           | bytes   |
+| column:score                     | raw_bytes                                    |    883           | bytes   |
+| column:v                         | raw_bytes                                    |    857           | bytes   |
+| column:job.args.format           | raw_bytes                                    |    704           | bytes   |
+| column:three_ds                  | raw_bytes                                    |    580           | bytes   |
+| column:backoff_ms                | raw_bytes                                    |    544           | bytes   |
+| column:query.filters.in_stock    | raw_bytes                                    |    528           | bytes   |
+| column:threshold_ms              | raw_bytes                                    |    513           | bytes   |
+| column:error.class               | raw_bytes                                    |    363           | bytes   |
+| column:attempt                   | raw_bytes                                    |    332           | bytes   |
+| column:decline_code              | raw_bytes                                    |    328           | bytes   |
+| column:mfa.method                | raw_bytes                                    |    322           | bytes   |
+| column:signup.source             | raw_bytes                                    |    235           | bytes   |
+| column:sqlstate                  | raw_bytes                                    |    205           | bytes   |
+| column:err.message               | raw_bytes                                    |    175           | bytes   |
+| column:locked_for_s              | raw_bytes                                    |    141           | bytes   |
+| column:config.version            | raw_bytes                                    |    114           | bytes   |
+| column:signup.referral           | raw_bytes                                    |    110           | bytes   |
+| column:err.name                  | raw_bytes                                    |    110           | bytes   |
+| column:keys                      | raw_bytes                                    |     74           | bytes   |
+| column:go.version                | raw_bytes                                    |     48           | bytes   |
+| column:failed_attempts           | raw_bytes                                    |     47           | bytes   |
+| column:signal                    | raw_bytes                                    |     42           | bytes   |
+| column:listen.address            | raw_bytes                                    |     30           | bytes   |
+| column:keys.active               | raw_bytes                                    |     24           | bytes   |
+| column:keys.retired              | raw_bytes                                    |     24           | bytes   |
+| column:err.code                  | raw_bytes                                    |     24           | bytes   |
+| column:drain_ms                  | raw_bytes                                    |     24           | bytes   |
+| column:retry_in_ms               | raw_bytes                                    |     10           | bytes   |
 
 ### `01_profile_logs` / dataset `flat30`
 
@@ -138,7 +353,7 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | flat30                         | distinct column names                        |     56           | count   |
 | flat30                         | days spanned by `ts`                         |     31           | count   |
 | flat30                         | days spanned by every Datetime column pooled |  65933           | count   |
-| flat30                         | days spanned by the widest column (order_id) |  44760           | count   |
+| flat30                         | days spanned by the widest Datetime column   |  44760           | count   |
 | flat30                         | templates_with_ts                            |    722           | count   |
 | flat30                         | templates_no_time_column                     |      0           | count   |
 | flat30                         | templates_time_not_named_ts                  |    148           | count   |
@@ -147,6 +362,10 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | flat30                         | unskippable_row_share                        |     41.62        | percent |
 | flat30                         | unskippable_bytes                            |      1.81505e+07 | count   |
 | flat30                         | unskippable_byte_share                       |     38.96        | percent |
+| flat30                         | templates_with_time_column (list rule)       |    870           | count   |
+| flat30                         | templates_without (list rule)                |      0           | count   |
+| flat30                         | rows_on_arrival_time (list rule)             |      0           | count   |
+| flat30                         | rows_on_arrival_time_share (list rule)       |      0           | percent |
 | column:ts                      | raw_bytes                                    |      2.335e+06   | bytes   |
 | column:event                   | raw_bytes                                    |      1.91691e+06 | bytes   |
 | column:ext1.label              | raw_bytes                                    |      1.43334e+06 | bytes   |
@@ -223,7 +442,7 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | messy              | distinct column names                        |     16           | count   |
 | messy              | days spanned by `ts`                         |      1           | count   |
 | messy              | days spanned by every Datetime column pooled |  49780           | count   |
-| messy              | days spanned by the widest column (order_id) |  49780           | count   |
+| messy              | days spanned by the widest Datetime column   |  49780           | count   |
 | messy              | templates_with_ts                            |    130           | count   |
 | messy              | templates_no_time_column                     |      0           | count   |
 | messy              | templates_time_not_named_ts                  |      0           | count   |
@@ -232,6 +451,10 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | messy              | unskippable_row_share                        |      0           | percent |
 | messy              | unskippable_bytes                            |      0           | count   |
 | messy              | unskippable_byte_share                       |      0           | percent |
+| messy              | templates_with_time_column (list rule)       |    130           | count   |
+| messy              | templates_without (list rule)                |      0           | count   |
+| messy              | rows_on_arrival_time (list rule)             |      0           | count   |
+| messy              | rows_on_arrival_time_share (list rule)       |      0           | percent |
 | column:trace_id    | raw_bytes                                    |      7.14388e+06 | bytes   |
 | column:ts          | raw_bytes                                    |      3.90098e+06 | bytes   |
 | column:tags        | raw_bytes                                    |      3.53097e+06 | bytes   |
@@ -268,7 +491,7 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | oneday                         | distinct column names                        |     56           | count   |
 | oneday                         | days spanned by `ts`                         |      1           | count   |
 | oneday                         | days spanned by every Datetime column pooled |  65933           | count   |
-| oneday                         | days spanned by the widest column (order_id) |  44760           | count   |
+| oneday                         | days spanned by the widest Datetime column   |  44760           | count   |
 | oneday                         | templates_with_ts                            |    722           | count   |
 | oneday                         | templates_no_time_column                     |      0           | count   |
 | oneday                         | templates_time_not_named_ts                  |    148           | count   |
@@ -277,6 +500,10 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | oneday                         | unskippable_row_share                        |     41.62        | percent |
 | oneday                         | unskippable_bytes                            |      1.81505e+07 | count   |
 | oneday                         | unskippable_byte_share                       |     38.96        | percent |
+| oneday                         | templates_with_time_column (list rule)       |    870           | count   |
+| oneday                         | templates_without (list rule)                |      0           | count   |
+| oneday                         | rows_on_arrival_time (list rule)             |      0           | count   |
+| oneday                         | rows_on_arrival_time_share (list rule)       |      0           | percent |
 | column:ts                      | raw_bytes                                    |      2.335e+06   | bytes   |
 | column:event                   | raw_bytes                                    |      1.91691e+06 | bytes   |
 | column:ext1.label              | raw_bytes                                    |      1.43334e+06 | bytes   |
@@ -353,7 +580,7 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | uneven                         | distinct column names                        |     68           | count   |
 | uneven                         | days spanned by `ts`                         |      1           | count   |
 | uneven                         | days spanned by every Datetime column pooled |  37443           | count   |
-| uneven                         | days spanned by the widest column (order_id) |  14848           | count   |
+| uneven                         | days spanned by the widest Datetime column   |  14848           | count   |
 | uneven                         | templates_with_ts                            |   4159           | count   |
 | uneven                         | templates_no_time_column                     |      0           | count   |
 | uneven                         | templates_time_not_named_ts                  |    772           | count   |
@@ -362,6 +589,10 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 | uneven                         | unskippable_row_share                        |      8.928       | percent |
 | uneven                         | unskippable_bytes                            |      3.96502e+06 | count   |
 | uneven                         | unskippable_byte_share                       |      8.858       | percent |
+| uneven                         | templates_with_time_column (list rule)       |   4931           | count   |
+| uneven                         | templates_without (list rule)                |      0           | count   |
+| uneven                         | rows_on_arrival_time (list rule)             |      0           | count   |
+| uneven                         | rows_on_arrival_time_share (list rule)       |      0           | percent |
 | column:ts                      | raw_bytes                                    |      3.6429e+06  | bytes   |
 | column:shard.checkpoint        | raw_bytes                                    |      1.92565e+06 | bytes   |
 | column:shard.rows              | raw_bytes                                    |      1.84557e+06 | bytes   |
@@ -433,8 +664,186 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 
 **Notes**
 
-- triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
+- triedb gen-logs --profile farm --lines 200,000 --seed 42, unmodified; one simulated day in time order, ten services, each with its own time field (@timestamp, time, ts, ts_ms), a request's id recurring across services, 0.5% dirty values on five named keys
 - a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
+- type=String distinct=521 distinct/rows=0.0060 avg_len=115.1 null_wide=56.69% null_json=0.00% templates=2
+- type=String distinct=521 distinct/rows=0.0100 avg_len=100.7 null_wide=73.90% null_json=0.00% templates=24
+- type=Datetime distinct=56629 distinct/rows=0.5300 avg_len=25.3 null_wide=46.58% null_json=0.00% templates=21
+- type=String distinct=63285 distinct/rows=0.7717 avg_len=32.0 null_wide=59.00% null_json=0.00% templates=45
+- type=String distinct=1325 distinct/rows=0.0153 avg_len=24.8 null_wide=56.69% null_json=0.00% templates=2
+- type=String distinct=17146 distinct/rows=0.1979 avg_len=23.8 null_wide=56.69% null_json=0.00% templates=2
+- type=String distinct=52198 distinct/rows=0.9998 avg_len=32.0 null_wide=73.90% null_json=0.00% templates=24
+- type=Datetime distinct=64348 distinct/rows=0.9996 avg_len=24.1 null_wide=67.81% null_json=0.00% templates=68
+- type=String distinct=15 distinct/rows=0.0002 avg_len=24.5 null_wide=68.61% null_json=0.00% templates=58
+- type=String distinct=1538 distinct/rows=0.0216 avg_len=19.9 null_wide=64.41% null_json=0.00% templates=48
+- type=Float64 distinct=86252 distinct/rows=0.9957 avg_len=14.0 null_wide=56.69% null_json=0.00% templates=2
+- type=Ip distinct=5645 distinct/rows=0.0652 avg_len=12.6 null_wide=56.69% null_json=0.00% templates=2
+- type=String distinct=9945 distinct/rows=0.1905 avg_len=20.0 null_wide=73.90% null_json=0.00% templates=24
+- type=String distinct=17 distinct/rows=0.0011 avg_len=67.0 null_wide=92.54% null_json=0.00% templates=8
+- type=String distinct=17 distinct/rows=0.0003 avg_len=15.5 null_wide=73.90% null_json=0.00% templates=24
+- type=String distinct=42 distinct/rows=0.0005 avg_len=8.7 null_wide=54.28% null_json=0.00% templates=123
+- type=String distinct=8 distinct/rows=0.0001 avg_len=7.1 null_wide=53.45% null_json=0.00% templates=21
+- type=Ip distinct=5586 distinct/rows=0.1070 avg_len=12.3 null_wide=73.90% null_json=0.00% templates=24
+- type=String distinct=15 distinct/rows=0.0004 avg_len=14.3 null_wide=79.14% null_json=0.00% templates=17
+- type=String distinct=59356 distinct/rows=0.7853 avg_len=7.5 null_wide=62.21% null_json=0.00% templates=51
+- type=Uuid distinct=7367 distinct/rows=0.4865 avg_len=36.0 null_wide=92.43% null_json=0.00% templates=38
+- type=String distinct=2 distinct/rows=0.0000 avg_len=8.0 null_wide=71.11% null_json=0.00% templates=1
+- type=String distinct=18 distinct/rows=0.0003 avg_len=7.8 null_wide=71.11% null_json=0.00% templates=1
+- type=String distinct=4 distinct/rows=0.0002 avg_len=23.0 null_wide=90.28% null_json=0.00% templates=39
+- type=Float64 distinct=1485 distinct/rows=0.0171 avg_len=5.0 null_wide=56.69% null_json=0.00% templates=2
+- type=Float64 distinct=41725 distinct/rows=0.9999 avg_len=9.2 null_wide=79.14% null_json=0.00% templates=17
+- type=String distinct=1 distinct/rows=0.0000 avg_len=7.0 null_wide=73.88% null_json=0.00% templates=28
+- type=String distinct=23 distinct/rows=0.0008 avg_len=12.2 null_wide=85.43% null_json=0.00% templates=62
+- type=Int64 distinct=17056 distinct/rows=0.1969 avg_len=4.0 null_wide=56.69% null_json=0.00% templates=2
+- type=String distinct=2 distinct/rows=0.0000 avg_len=6.0 null_wide=73.88% null_json=0.00% templates=28
+- type=String distinct=2 distinct/rows=0.0000 avg_len=3.1 null_wide=56.69% null_json=0.00% templates=2
+- type=String distinct=9 distinct/rows=0.0002 avg_len=6.3 null_wide=79.14% null_json=0.00% templates=17
+- type=String distinct=1215 distinct/rows=0.0140 avg_len=3.0 null_wide=56.69% null_json=0.00% templates=2
+- type=String distinct=1 distinct/rows=0.0000 avg_len=5.0 null_wide=73.88% null_json=0.00% templates=28
+- type=Int64 distinct=13 distinct/rows=0.0002 avg_len=3.0 null_wide=56.69% null_json=0.00% templates=2
+- type=Datetime distinct=19433 distinct/rows=0.9996 avg_len=13.0 null_wide=90.28% null_json=0.00% templates=39
+- type=String distinct=4 distinct/rows=0.0002 avg_len=11.4 null_wide=89.46% null_json=0.00% templates=12
+- type=Datetime distinct=9342 distinct/rows=1.0000 avg_len=25.2 null_wide=95.33% null_json=0.00% templates=15
+- type=String distinct=17 distinct/rows=0.0011 avg_len=14.4 null_wide=92.43% null_json=0.00% templates=38
+- type=String distinct=3 distinct/rows=0.0001 avg_len=4.0 null_wide=73.88% null_json=0.00% templates=28
+- type=Int64 distinct=12182 distinct/rows=0.2333 avg_len=3.5 null_wide=73.90% null_json=0.00% templates=24
+- type=String distinct=8 distinct/rows=0.0005 avg_len=11.0 null_wide=91.92% null_json=0.00% templates=43
+- type=String distinct=2 distinct/rows=0.0000 avg_len=3.1 null_wide=73.90% null_json=0.00% templates=24
+- type=Int64 distinct=3404 distinct/rows=0.1269 avg_len=6.0 null_wide=86.59% null_json=0.00% templates=10
+- type=Int64 distinct=11 distinct/rows=0.0002 avg_len=3.0 null_wide=73.90% null_json=0.00% templates=24
+- type=Ip distinct=14 distinct/rows=0.0009 avg_len=9.3 null_wide=91.94% null_json=0.00% templates=9
+- type=String distinct=797 distinct/rows=0.0469 avg_len=8.4 null_wide=91.51% null_json=0.00% templates=15
+- type=String distinct=8 distinct/rows=0.0004 avg_len=6.7 null_wide=90.28% null_json=0.00% templates=39
+- type=String distinct=2 distinct/rows=0.0001 avg_len=7.0 null_wide=91.94% null_json=0.00% templates=9
+- type=String distinct=6 distinct/rows=0.0011 avg_len=19.4 null_wide=97.19% null_json=0.00% templates=13
+- type=String distinct=5 distinct/rows=0.0011 avg_len=22.5 null_wide=97.74% null_json=0.00% templates=4
+- type=String distinct=11 distinct/rows=0.0005 avg_len=4.1 null_wide=87.83% null_json=0.00% templates=64
+- type=Uuid distinct=2388 distinct/rows=1.0000 avg_len=36.0 null_wide=98.81% null_json=0.00% templates=1
+- type=String distinct=535 distinct/rows=0.2099 avg_len=32.0 null_wide=98.73% null_json=0.00% templates=13
+- type=String distinct=1488 distinct/rows=0.2634 avg_len=14.3 null_wide=97.18% null_json=0.00% templates=28
+- type=String distinct=4 distinct/rows=0.0002 avg_len=4.0 null_wide=90.28% null_json=0.00% templates=39
+- type=Ip distinct=2906 distinct/rows=0.5263 avg_len=12.8 null_wide=97.24% null_json=0.00% templates=11
+- type=String distinct=1 distinct/rows=0.0002 avg_len=11.0 null_wide=96.85% null_json=0.00% templates=29
+- type=String distinct=9 distinct/rows=0.0043 avg_len=31.7 null_wide=98.95% null_json=0.00% templates=21
+- type=String distinct=1 distinct/rows=0.0001 avg_len=4.0 null_wide=91.94% null_json=0.00% templates=9
+- type=String distinct=989 distinct/rows=0.4903 avg_len=30.5 null_wide=98.99% null_json=0.00% templates=4
+- type=String distinct=1012 distinct/rows=0.5057 avg_len=30.5 null_wide=99.00% null_json=0.00% templates=3
+- type=String distinct=3 distinct/rows=0.0007 avg_len=13.3 null_wide=97.74% null_json=0.00% templates=4
+- type=String distinct=3124 distinct/rows=0.3466 avg_len=6.0 null_wide=95.49% null_json=0.00% templates=24
+- type=Float64 distinct=2 distinct/rows=0.0001 avg_len=3.0 null_wide=91.16% null_json=0.00% templates=11
+- type=String distinct=3 distinct/rows=0.0002 avg_len=3.0 null_wide=91.32% null_json=0.00% templates=10
+- type=String distinct=5 distinct/rows=0.0031 avg_len=31.9 null_wide=99.20% null_json=0.00% templates=10
+- type=String distinct=507 distinct/rows=0.3487 avg_len=32.0 null_wide=99.27% null_json=0.00% templates=9
+- type=String distinct=1203 distinct/rows=0.3258 avg_len=11.8 null_wide=98.15% null_json=0.00% templates=2
+- type=String distinct=3 distinct/rows=0.0019 avg_len=25.0 null_wide=99.20% null_json=0.00% templates=10
+- type=String distinct=1726 distinct/rows=0.6926 avg_len=12.5 null_wide=98.75% null_json=0.00% templates=1
+- type=String distinct=159 distinct/rows=0.0996 avg_len=18.7 null_wide=99.20% null_json=0.00% templates=10
+- type=String distinct=7 distinct/rows=0.0035 avg_len=14.0 null_wide=99.00% null_json=0.00% templates=3
+- type=String distinct=7 distinct/rows=0.0033 avg_len=11.6 null_wide=98.95% null_json=0.00% templates=19
+- type=String distinct=964 distinct/rows=0.6630 avg_len=16.0 null_wide=99.27% null_json=0.00% templates=9
+- type=String distinct=1 distinct/rows=0.0005 avg_len=11.0 null_wide=99.00% null_json=0.00% templates=3
+- type=String distinct=7 distinct/rows=0.0035 avg_len=10.9 null_wide=99.00% null_json=0.00% templates=3
+- type=String distinct=4 distinct/rows=0.0023 avg_len=12.6 null_wide=99.13% null_json=0.00% templates=10
+- type=String distinct=2 distinct/rows=0.0005 avg_len=5.0 null_wide=97.88% null_json=0.00% templates=1
+- type=String distinct=2 distinct/rows=0.0009 avg_len=9.0 null_wide=98.85% null_json=0.00% templates=2
+- type=Datetime distinct=439 distinct/rows=0.4439 avg_len=20.0 null_wide=99.51% null_json=0.00% templates=1
+- type=Datetime distinct=474 distinct/rows=0.2505 avg_len=10.0 null_wide=99.05% null_json=0.00% templates=8
+- type=String distinct=3 distinct/rows=0.0013 avg_len=7.7 null_wide=98.81% null_json=0.00% templates=1
+- type=Datetime distinct=1768 distinct/rows=0.9839 avg_len=10.0 null_wide=99.10% null_json=0.00% templates=1
+- type=Int64 distinct=2201 distinct/rows=0.3896 avg_len=3.2 null_wide=97.18% null_json=0.00% templates=28
+- type=Int64 distinct=248 distinct/rows=0.0235 avg_len=1.7 null_wide=94.73% null_json=0.00% templates=30
+- type=Int64 distinct=1372 distinct/rows=0.4933 avg_len=6.0 null_wide=98.61% null_json=0.00% templates=4
+- type=Int64 distinct=3 distinct/rows=0.0002 avg_len=1.0 null_wide=92.43% null_json=0.00% templates=38
+- type=Int64 distinct=968 distinct/rows=0.3280 avg_len=5.0 null_wide=98.52% null_json=0.00% templates=8
+- type=Datetime distinct=507 distinct/rows=0.3487 avg_len=10.0 null_wide=99.27% null_json=0.00% templates=9
+- type=String distinct=474 distinct/rows=1.0000 avg_len=27.0 null_wide=99.76% null_json=0.00% templates=2
+- type=Int64 distinct=542 distinct/rows=0.1261 avg_len=2.9 null_wide=97.85% null_json=0.00% templates=1
+- type=Bool distinct=2 distinct/rows=0.0008 avg_len=4.8 null_wide=98.81% null_json=0.00% templates=1
+- type=String distinct=7 distinct/rows=0.0082 avg_len=12.5 null_wide=99.57% null_json=0.00% templates=6
+- type=String distinct=1 distinct/rows=0.0004 avg_len=4.0 null_wide=98.75% null_json=0.00% templates=1
+- type=Int64 distinct=3 distinct/rows=0.0011 avg_len=3.2 null_wide=98.61% null_json=0.00% templates=4
+- type=String distinct=2 distinct/rows=0.0008 avg_len=3.5 null_wide=98.75% null_json=0.00% templates=1
+- type=Datetime distinct=847 distinct/rows=1.0000 avg_len=10.0 null_wide=99.58% null_json=0.00% templates=2
+- type=Int64 distinct=1229 distinct/rows=0.9992 avg_len=6.7 null_wide=99.39% null_json=0.00% templates=1
+- type=String distinct=12 distinct/rows=0.0082 avg_len=5.5 null_wide=99.27% null_json=0.00% templates=16
+- type=Int64 distinct=4 distinct/rows=0.0025 avg_len=5.0 null_wide=99.20% null_json=0.00% templates=10
+- type=Uuid distinct=103 distinct/rows=0.4791 avg_len=36.0 null_wide=99.89% null_json=0.00% templates=4
+- type=Int64 distinct=73 distinct/rows=0.0170 avg_len=1.8 null_wide=97.85% null_json=0.00% templates=1
+- type=Int64 distinct=790 distinct/rows=0.3170 avg_len=3.0 null_wide=98.75% null_json=0.00% templates=1
+- type=Int64 distinct=1229 distinct/rows=0.9992 avg_len=5.9 null_wide=99.39% null_json=0.00% templates=1
+- type=String distinct=116 distinct/rows=0.0180 avg_len=1.1 null_wide=96.77% null_json=0.00% templates=3
+- type=String distinct=1 distinct/rows=0.0012 avg_len=8.0 null_wide=99.57% null_json=0.00% templates=6
+- type=String distinct=11 distinct/rows=0.0232 avg_len=13.9 null_wide=99.76% null_json=0.00% templates=5
+- type=String distinct=295 distinct/rows=0.6250 avg_len=14.0 null_wide=99.76% null_json=0.00% templates=10
+- type=String distinct=3 distinct/rows=0.0018 avg_len=4.0 null_wide=99.18% null_json=0.00% templates=4
+- type=Ip distinct=446 distinct/rows=0.9102 avg_len=12.8 null_wide=99.75% null_json=0.00% templates=2
+- type=String distinct=2 distinct/rows=0.0019 avg_len=5.7 null_wide=99.46% null_json=0.00% templates=6
+- type=Int64 distinct=22 distinct/rows=0.0051 avg_len=1.4 null_wide=97.85% null_json=0.00% templates=2
+- type=Int64 distinct=1187 distinct/rows=0.9892 avg_len=5.0 null_wide=99.40% null_json=0.00% templates=1
+- type=String distinct=8 distinct/rows=0.0452 avg_len=33.1 null_wide=99.91% null_json=0.00% templates=10
+- type=Int64 distinct=422 distinct/rows=0.4346 avg_len=6.0 null_wide=99.51% null_json=0.00% templates=5
+- type=Int64 distinct=5 distinct/rows=0.0009 avg_len=1.0 null_wide=97.18% null_json=0.00% templates=28
+- type=Int64 distinct=656 distinct/rows=0.3447 avg_len=2.9 null_wide=99.05% null_json=0.00% templates=6
+- type=String distinct=2 distinct/rows=0.0023 avg_len=6.4 null_wide=99.57% null_json=0.00% templates=6
+- type=Int64 distinct=1139 distinct/rows=0.9260 avg_len=4.4 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=1128 distinct/rows=0.9171 avg_len=4.3 null_wide=99.39% null_json=0.00% templates=1
+- type=String distinct=398 distinct/rows=0.4168 avg_len=5.3 null_wide=99.52% null_json=0.00% templates=5
+- type=Int64 distinct=522 distinct/rows=0.4244 avg_len=4.0 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=383 distinct/rows=0.4961 avg_len=6.2 null_wide=99.61% null_json=0.00% templates=6
+- type=String distinct=2 distinct/rows=0.2222 avg_len=489.1 null_wide=100.00% null_json=0.00% templates=2
+- type=String distinct=1 distinct/rows=0.0012 avg_len=5.0 null_wide=99.57% null_json=0.00% templates=6
+- type=Int64 distinct=1 distinct/rows=0.0002 avg_len=1.0 null_wide=97.88% null_json=0.00% templates=1
+- type=Int64 distinct=511 distinct/rows=0.4154 avg_len=3.0 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=548 distinct/rows=0.4455 avg_len=3.0 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=1 distinct/rows=0.0008 avg_len=3.0 null_wide=99.40% null_json=0.00% templates=1
+- type=Int64 distinct=267 distinct/rows=0.2171 avg_len=2.8 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=61 distinct/rows=0.0496 avg_len=2.7 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=495 distinct/rows=0.7615 avg_len=5.0 null_wide=99.67% null_json=0.00% templates=1
+- type=Int64 distinct=287 distinct/rows=0.1423 avg_len=1.5 null_wide=98.99% null_json=0.00% templates=4
+- type=Int64 distinct=292 distinct/rows=0.1459 avg_len=1.5 null_wide=99.00% null_json=0.00% templates=3
+- type=String distinct=6 distinct/rows=0.0063 avg_len=3.0 null_wide=99.52% null_json=0.00% templates=5
+- type=String distinct=4 distinct/rows=0.0083 avg_len=5.9 null_wide=99.76% null_json=0.00% templates=3
+- type=String distinct=3 distinct/rows=0.0061 avg_len=5.1 null_wide=99.75% null_json=0.00% templates=2
+- type=Int64 distinct=113 distinct/rows=0.0919 avg_len=2.0 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=41 distinct/rows=0.0333 avg_len=2.0 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=16 distinct/rows=0.0130 avg_len=1.7 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=405 distinct/rows=0.8420 avg_len=4.0 null_wide=99.76% null_json=0.00% templates=3
+- type=Int64 distinct=15 distinct/rows=0.0122 avg_len=1.4 null_wide=99.39% null_json=0.00% templates=1
+- type=Int64 distinct=2 distinct/rows=0.0023 avg_len=2.0 null_wide=99.57% null_json=0.00% templates=6
+- type=Int64 distinct=1 distinct/rows=0.0006 avg_len=1.0 null_wide=99.20% null_json=0.00% templates=10
+- type=Int64 distinct=20 distinct/rows=0.0391 avg_len=2.8 null_wide=99.74% null_json=0.00% templates=11
+- type=Int64 distinct=33 distinct/rows=0.0268 avg_len=1.0 null_wide=99.39% null_json=0.00% templates=1
+- type=String distinct=2 distinct/rows=0.0274 avg_len=16.7 null_wide=99.96% null_json=0.00% templates=1
+- type=String distinct=1 distinct/rows=0.3333 avg_len=405.0 null_wide=100.00% null_json=0.00% templates=3
+- type=String distinct=9 distinct/rows=0.0187 avg_len=2.0 null_wide=99.76% null_json=0.00% templates=3
+- type=Int64 distinct=93 distinct/rows=0.1898 avg_len=1.8 null_wide=99.75% null_json=0.00% templates=2
+- type=Int64 distinct=1 distinct/rows=0.0012 avg_len=1.0 null_wide=99.57% null_json=0.00% templates=6
+- type=String distinct=2 distinct/rows=0.0093 avg_len=3.3 null_wide=99.89% null_json=0.00% templates=4
+- type=Bool distinct=1 distinct/rows=0.0069 avg_len=4.0 null_wide=99.93% null_json=0.00% templates=1
+- type=Int64 distinct=126 distinct/rows=0.9265 avg_len=4.0 null_wide=99.93% null_json=0.00% templates=9
+- type=Bool distinct=1 distinct/rows=0.0076 avg_len=4.0 null_wide=99.93% null_json=0.00% templates=5
+- type=Int64 distinct=1 distinct/rows=0.0058 avg_len=3.0 null_wide=99.91% null_json=0.00% templates=11
+- type=String distinct=2 distinct/rows=0.2222 avg_len=40.3 null_wide=100.00% null_json=0.00% templates=2
+- type=Int64 distinct=5 distinct/rows=0.0151 avg_len=1.0 null_wide=99.83% null_json=0.00% templates=2
+- type=String distinct=5 distinct/rows=0.2083 avg_len=13.7 null_wide=99.99% null_json=0.00% templates=1
+- type=String distinct=2 distinct/rows=0.0233 avg_len=3.7 null_wide=99.96% null_json=0.00% templates=1
+- type=String distinct=3 distinct/rows=0.0492 avg_len=3.9 null_wide=99.97% null_json=0.00% templates=2
+- type=String distinct=2 distinct/rows=0.0488 avg_len=5.0 null_wide=99.98% null_json=0.00% templates=1
+- type=String distinct=2 distinct/rows=0.2500 avg_len=21.9 null_wide=100.00% null_json=0.00% templates=2
+- type=Int64 distinct=1 distinct/rows=0.0213 avg_len=3.0 null_wide=99.98% null_json=0.00% templates=1
+- type=String distinct=1 distinct/rows=0.1667 avg_len=19.0 null_wide=100.00% null_json=0.00% templates=1
+- type=String distinct=11 distinct/rows=1.0000 avg_len=10.0 null_wide=99.99% null_json=0.00% templates=1
+- type=String distinct=2 distinct/rows=0.2500 avg_len=13.8 null_wide=100.00% null_json=0.00% templates=2
+- type=Int64 distinct=1 distinct/rows=0.0135 avg_len=1.0 null_wide=99.96% null_json=0.00% templates=1
+- type=String distinct=1 distinct/rows=0.1667 avg_len=8.0 null_wide=100.00% null_json=0.00% templates=1
+- type=Int64 distinct=1 distinct/rows=0.0213 avg_len=1.0 null_wide=99.98% null_json=0.00% templates=1
+- type=String distinct=1 distinct/rows=0.1667 avg_len=7.0 null_wide=100.00% null_json=0.00% templates=1
+- type=String distinct=1 distinct/rows=0.1667 avg_len=5.0 null_wide=100.00% null_json=0.00% templates=1
+- type=Int64 distinct=1 distinct/rows=0.0417 avg_len=1.0 null_wide=99.99% null_json=0.00% templates=1
+- type=Int64 distinct=2 distinct/rows=0.2500 avg_len=3.0 null_wide=100.00% null_json=0.00% templates=2
+- type=Int64 distinct=6 distinct/rows=1.0000 avg_len=4.0 null_wide=100.00% null_json=0.00% templates=1
+- type=Int64 distinct=2 distinct/rows=1.0000 avg_len=5.0 null_wide=100.00% null_json=0.00% templates=2
+- triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
 - type=Datetime distinct=114166 distinct/rows=0.9779 avg_len=20.0 null_wide=41.62% null_json=0.00% templates=722
 - type=String distinct=6 distinct/rows=0.0000 avg_len=11.5 null_wide=16.62% null_json=0.00% templates=864
 - type=String distinct=8 distinct/rows=0.0001 avg_len=21.5 null_wide=66.72% null_json=0.00% templates=528
@@ -586,7 +995,141 @@ Run 2026-09-19T09:32:47+00:00, git `90152d2`, 292 rows.
 
 _Splitting by template: does it help or hurt compression_
 
-Run 2026-09-19T09:47:57+00:00, git `90152d2`, 492 rows.
+Run 2026-09-22T15:55:26+00:00, git `90152d2`, 621 rows.
+
+### `02_split_vs_wide` / dataset `farm`
+
+| variant                          | metric                      |            value | unit   |
+|----------------------------------|-----------------------------|------------------|--------|
+| raw NDJSON                       | bytes                       |      9.7713e+07  | bytes  |
+| raw NDJSON                       | disk_blocks                 |      9.77142e+07 | bytes  |
+| raw NDJSON                       | files                       |      1           | count  |
+| raw NDJSON                       | ratio_to_raw_bytes          |      1           | ratio  |
+| raw NDJSON                       | ratio_to_raw_blocks         |      1           | ratio  |
+| raw NDJSON                       | ratio_to_gzip9              |      8.905       | ratio  |
+| gzip -9                          | bytes                       |      1.09724e+07 | bytes  |
+| gzip -9                          | disk_blocks                 |      1.101e+07   | bytes  |
+| gzip -9                          | files                       |      1           | count  |
+| gzip -9                          | ratio_to_raw_bytes          |      0.1123      | ratio  |
+| gzip -9                          | ratio_to_raw_blocks         |      0.1127      | ratio  |
+| gzip -9                          | ratio_to_gzip9              |      1           | ratio  |
+| zstd -19                         | bytes                       |      5.99535e+06 | bytes  |
+| zstd -19                         | disk_blocks                 |      6.31603e+06 | bytes  |
+| zstd -19                         | files                       |      1           | count  |
+| zstd -19                         | ratio_to_raw_bytes          |      0.06136     | ratio  |
+| zstd -19                         | ratio_to_raw_blocks         |      0.06464     | ratio  |
+| zstd -19                         | ratio_to_gzip9              |      0.5464      | ratio  |
+| WIDE rg=1,000                    | bytes                       |      1.8409e+07  | bytes  |
+| WIDE rg=1,000                    | disk_blocks                 |      1.84115e+07 | bytes  |
+| WIDE rg=1,000                    | files                       |      1           | count  |
+| WIDE rg=1,000                    | ratio_to_raw_bytes          |      0.1884      | ratio  |
+| WIDE rg=1,000                    | ratio_to_raw_blocks         |      0.1884      | ratio  |
+| WIDE rg=1,000                    | ratio_to_gzip9              |      1.678       | ratio  |
+| WIDE rg=8,192                    | bytes                       |      9.95704e+06 | bytes  |
+| WIDE rg=8,192                    | disk_blocks                 |      9.95738e+06 | bytes  |
+| WIDE rg=8,192                    | files                       |      1           | count  |
+| WIDE rg=8,192                    | ratio_to_raw_bytes          |      0.1019      | ratio  |
+| WIDE rg=8,192                    | ratio_to_raw_blocks         |      0.1019      | ratio  |
+| WIDE rg=8,192                    | ratio_to_gzip9              |      0.9075      | ratio  |
+| WIDE rg=122,880                  | bytes                       |      8.74609e+06 | bytes  |
+| WIDE rg=122,880                  | disk_blocks                 |      8.74906e+06 | bytes  |
+| WIDE rg=122,880                  | files                       |      1           | count  |
+| WIDE rg=122,880                  | ratio_to_raw_bytes          |      0.08951     | ratio  |
+| WIDE rg=122,880                  | ratio_to_raw_blocks         |      0.08954     | ratio  |
+| WIDE rg=122,880                  | ratio_to_gzip9              |      0.7971      | ratio  |
+| PER_TEMPLATE rg=1,000            | bytes                       |      9.26977e+06 | bytes  |
+| PER_TEMPLATE rg=1,000            | disk_blocks                 |      9.59693e+06 | bytes  |
+| PER_TEMPLATE rg=1,000            | files                       |    143           | count  |
+| PER_TEMPLATE rg=1,000            | ratio_to_raw_bytes          |      0.09487     | ratio  |
+| PER_TEMPLATE rg=1,000            | ratio_to_raw_blocks         |      0.09822     | ratio  |
+| PER_TEMPLATE rg=1,000            | ratio_to_gzip9              |      0.8448      | ratio  |
+| PER_TEMPLATE rg=8,192            | bytes                       |      8.43898e+06 | bytes  |
+| PER_TEMPLATE rg=8,192            | disk_blocks                 |      8.76544e+06 | bytes  |
+| PER_TEMPLATE rg=8,192            | files                       |    143           | count  |
+| PER_TEMPLATE rg=8,192            | ratio_to_raw_bytes          |      0.08636     | ratio  |
+| PER_TEMPLATE rg=8,192            | ratio_to_raw_blocks         |      0.08971     | ratio  |
+| PER_TEMPLATE rg=8,192            | ratio_to_gzip9              |      0.7691      | ratio  |
+| PER_TEMPLATE rg=122,880          | bytes                       |      8.30124e+06 | bytes  |
+| PER_TEMPLATE rg=122,880          | disk_blocks                 |      8.62618e+06 | bytes  |
+| PER_TEMPLATE rg=122,880          | files                       |    143           | count  |
+| PER_TEMPLATE rg=122,880          | ratio_to_raw_bytes          |      0.08496     | ratio  |
+| PER_TEMPLATE rg=122,880          | ratio_to_raw_blocks         |      0.08828     | ratio  |
+| PER_TEMPLATE rg=122,880          | ratio_to_gzip9              |      0.7566      | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | bytes                       |      8.43898e+06 | bytes  |
+| PER_TEMPLATE_DAY rg=8,192        | disk_blocks                 |      8.76544e+06 | bytes  |
+| PER_TEMPLATE_DAY rg=8,192        | files                       |    143           | count  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_raw_bytes          |      0.08636     | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_raw_blocks         |      0.08971     | ratio  |
+| PER_TEMPLATE_DAY rg=8,192        | ratio_to_gzip9              |      0.7691      | ratio  |
+| SHARED_DAY rg=1,000              | bytes                       |      9.27322e+06 | bytes  |
+| SHARED_DAY rg=1,000              | disk_blocks                 |      1.00475e+07 | bytes  |
+| SHARED_DAY rg=1,000              | files                       |      1           | count  |
+| SHARED_DAY rg=1,000              | ratio_to_raw_bytes          |      0.0949      | ratio  |
+| SHARED_DAY rg=1,000              | ratio_to_raw_blocks         |      0.1028      | ratio  |
+| SHARED_DAY rg=1,000              | ratio_to_gzip9              |      0.8451      | ratio  |
+| SHARED_DAY rg=8,192              | bytes                       |      8.44243e+06 | bytes  |
+| SHARED_DAY rg=8,192              | disk_blocks                 |      9.39213e+06 | bytes  |
+| SHARED_DAY rg=8,192              | files                       |      1           | count  |
+| SHARED_DAY rg=8,192              | ratio_to_raw_bytes          |      0.0864      | ratio  |
+| SHARED_DAY rg=8,192              | ratio_to_raw_blocks         |      0.09612     | ratio  |
+| SHARED_DAY rg=8,192              | ratio_to_gzip9              |      0.7694      | ratio  |
+| SHARED_DAY rg=122,880            | bytes                       |      8.3047e+06  | bytes  |
+| SHARED_DAY rg=122,880            | disk_blocks                 |      9.26106e+06 | bytes  |
+| SHARED_DAY rg=122,880            | files                       |      1           | count  |
+| SHARED_DAY rg=122,880            | ratio_to_raw_bytes          |      0.08499     | ratio  |
+| SHARED_DAY rg=122,880            | ratio_to_raw_blocks         |      0.09478     | ratio  |
+| SHARED_DAY rg=122,880            | ratio_to_gzip9              |      0.7569      | ratio  |
+| PER_TEMPLATE[PER_EVENT] rg=8,192 | bytes                       |      8.52326e+06 | bytes  |
+| PER_TEMPLATE[PER_EVENT] rg=8,192 | disk_blocks                 |      8.5975e+06  | bytes  |
+| PER_TEMPLATE[PER_EVENT] rg=8,192 | files                       |     43           | count  |
+| PER_TEMPLATE[PER_EVENT] rg=8,192 | ratio_to_raw_bytes          |      0.08723     | ratio  |
+| PER_TEMPLATE[PER_EVENT] rg=8,192 | ratio_to_raw_blocks         |      0.08799     | ratio  |
+| PER_TEMPLATE[PER_EVENT] rg=8,192 | ratio_to_gzip9              |      0.7768      | ratio  |
+| SHARED_DAY[PER_EVENT] rg=8,192   | bytes                       |      8.52431e+06 | bytes  |
+| SHARED_DAY[PER_EVENT] rg=8,192   | disk_blocks                 |      9.3225e+06  | bytes  |
+| SHARED_DAY[PER_EVENT] rg=8,192   | files                       |      1           | count  |
+| SHARED_DAY[PER_EVENT] rg=8,192   | ratio_to_raw_bytes          |      0.08724     | ratio  |
+| SHARED_DAY[PER_EVENT] rg=8,192   | ratio_to_raw_blocks         |      0.09541     | ratio  |
+| SHARED_DAY[PER_EVENT] rg=8,192   | ratio_to_gzip9              |      0.7769      | ratio  |
+| PER_TEMPLATE[J70] rg=8,192       | bytes                       |      7.98845e+06 | bytes  |
+| PER_TEMPLATE[J70] rg=8,192       | disk_blocks                 |      8.10598e+06 | bytes  |
+| PER_TEMPLATE[J70] rg=8,192       | files                       |     60           | count  |
+| PER_TEMPLATE[J70] rg=8,192       | ratio_to_raw_bytes          |      0.08175     | ratio  |
+| PER_TEMPLATE[J70] rg=8,192       | ratio_to_raw_blocks         |      0.08296     | ratio  |
+| PER_TEMPLATE[J70] rg=8,192       | ratio_to_gzip9              |      0.728       | ratio  |
+| SHARED_DAY[J70] rg=8,192         | bytes                       |      7.98991e+06 | bytes  |
+| SHARED_DAY[J70] rg=8,192         | disk_blocks                 |      9.02758e+06 | bytes  |
+| SHARED_DAY[J70] rg=8,192         | files                       |      1           | count  |
+| SHARED_DAY[J70] rg=8,192         | ratio_to_raw_bytes          |      0.08177     | ratio  |
+| SHARED_DAY[J70] rg=8,192         | ratio_to_raw_blocks         |      0.09239     | ratio  |
+| SHARED_DAY[J70] rg=8,192         | ratio_to_gzip9              |      0.7282      | ratio  |
+| window rg=1000                   | rows                        |  57786           | count  |
+| window rg=1000                   | row_groups                  |     58           | count  |
+| window rg=1000                   | groups_touched              |      2           | count  |
+| window rg=1000                   | file_bytes                  |      2.65148e+06 | bytes  |
+| window rg=1000                   | bytes_read                  |  91951           | bytes  |
+| window rg=1000                   | read_share_pct              |      3.468       | count  |
+| window rg=1000                   | matching_rows               |    283           | count  |
+| window rg=1000                   | rows_scanned                |   2000           | count  |
+| window rg=8192                   | rows                        |  57786           | count  |
+| window rg=8192                   | row_groups                  |      8           | count  |
+| window rg=8192                   | groups_touched              |      1           | count  |
+| window rg=8192                   | file_bytes                  |      2.36578e+06 | bytes  |
+| window rg=8192                   | bytes_read                  | 332853           | bytes  |
+| window rg=8192                   | read_share_pct              |     14.07        | count  |
+| window rg=8192                   | matching_rows               |    283           | count  |
+| window rg=8192                   | rows_scanned                |   8192           | count  |
+| window rg=122880                 | rows                        |  57786           | count  |
+| window rg=122880                 | row_groups                  |      1           | count  |
+| window rg=122880                 | groups_touched              |      1           | count  |
+| window rg=122880                 | file_bytes                  |      2.28763e+06 | bytes  |
+| window rg=122880                 | bytes_read                  |      2.28763e+06 | bytes  |
+| window rg=122880                 | read_share_pct              |    100           | count  |
+| window rg=122880                 | matching_rows               |    283           | count  |
+| window rg=122880                 | rows_scanned                |  57786           | count  |
+| verdict                          | per_template_vs_gzip9_bytes |      0.7691      | ratio  |
+| verdict                          | smallest_by_bytes           |      5.99535e+06 | bytes  |
+| verdict                          | smallest_by_blocks          |      6.31603e+06 | bytes  |
 
 ### `02_split_vs_wide` / dataset `flat30`
 
@@ -1106,11 +1649,15 @@ Run 2026-09-19T09:47:57+00:00, git `90152d2`, 492 rows.
 - C zstd, level 19
 - what TrieDB does today
 - per-template bytes without per-file block rounding
+- 43 merged templates, from script 04
+- 60 merged templates, from script 04
+- 5-minute window over the busiest dated template (16949071483150859787); row groups are skipped on their ts statistics
+- below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 0.7961 over 143 files
+- zstd -19
 - 68 merged templates, from script 04
 - 125 merged templates, from script 04
 - 5-minute window over the busiest dated template (1055466456870197778); row groups are skipped on their ts statistics
 - below 1 means per-template Parquet spends fewer bytes than gzip -9; the blocks ratio is 1.2384 over 870 files
-- zstd -19
 - 66 merged templates, from script 04
 - 33 merged templates, from script 04
 - 5-minute window over the busiest dated template (3977316063236355336); row groups are skipped on their ts statistics
@@ -1869,7 +2416,174 @@ Run 2026-09-19T10:01:36+00:00, git `90152d2`, 690 rows.
 
 _Which merging rule_
 
-Run 2026-09-19T09:42:11+00:00, git `90152d2`, 495 rows.
+Run 2026-09-22T15:52:17+00:00, git `90152d2`, 657 rows.
+
+### `04_merge_rules` / dataset `farm`
+
+| variant                    | metric                       | value         | unit    |
+|----------------------------|------------------------------|---------------|---------|
+| NONE                       | templates                    | 143           | count   |
+| NONE                       | rows_per_template_min        | 1             | count   |
+| NONE                       | rows_per_template_median     | 70            | count   |
+| NONE                       | rows_per_template_p90        | 2,212         | count   |
+| NONE                       | rows_per_template_max        | 57,786        | count   |
+| NONE                       | null_cell_share_pct          | 0             | percent |
+| NONE                       | columns_widened_to_string    | 29            | count   |
+| NONE                       | columns_widened_share_pct    | 1.453         | percent |
+| NONE                       | distinct_keys_widened        | 8             | count   |
+| NONE                       | rows_under_a_widened_column  | 108,583       | count   |
+| NONE                       | mixed_promoted_groups        | 0             | count   |
+| NONE                       | rows_in_mixed_promoted_group | 0             | count   |
+| NONE                       | template_count_min           | 143           | count   |
+| NONE                       | template_count_max           | 143           | count   |
+| NONE                       | template_count_spread        | 0             | count   |
+| NONE                       | moved_share_pct_max          | 0             | percent |
+| NONE                       | moved_share_pct_mean         | 0             | percent |
+| NONE                       | search_rows_scanned          | 131,948       | rows    |
+| NONE                       | search_scan_amplification    | 1             | ratio   |
+| J70                        | templates                    | 60            | count   |
+| J70                        | rows_per_template_min        | 3             | count   |
+| J70                        | rows_per_template_median     | 385           | count   |
+| J70                        | rows_per_template_p90        | 4,299         | count   |
+| J70                        | rows_per_template_max        | 86,627        | count   |
+| J70                        | null_cell_share_pct          | 8.795         | percent |
+| J70                        | columns_widened_to_string    | 18            | count   |
+| J70                        | columns_widened_share_pct    | 2.151         | percent |
+| J70                        | distinct_keys_widened        | 8             | count   |
+| J70                        | rows_under_a_widened_column  | 117,418       | count   |
+| J70                        | mixed_promoted_groups        | 0             | count   |
+| J70                        | rows_in_mixed_promoted_group | 0             | count   |
+| J70                        | template_count_min           | 57            | count   |
+| J70                        | template_count_max           | 59            | count   |
+| J70                        | template_count_spread        | 2             | count   |
+| J70                        | moved_share_pct_max          | 0.0055        | percent |
+| J70                        | moved_share_pct_mean         | 0.0046        | percent |
+| J70                        | search_rows_scanned          | 148,667       | rows    |
+| J70                        | search_scan_amplification    | 1.127         | ratio   |
+| J80                        | templates                    | 77            | count   |
+| J80                        | rows_per_template_min        | 2             | count   |
+| J80                        | rows_per_template_median     | 202           | count   |
+| J80                        | rows_per_template_p90        | 2,492         | count   |
+| J80                        | rows_per_template_max        | 86,627        | count   |
+| J80                        | null_cell_share_pct          | 6.707         | percent |
+| J80                        | columns_widened_to_string    | 24            | count   |
+| J80                        | columns_widened_share_pct    | 2.36          | percent |
+| J80                        | distinct_keys_widened        | 8             | count   |
+| J80                        | rows_under_a_widened_column  | 117,415       | count   |
+| J80                        | mixed_promoted_groups        | 0             | count   |
+| J80                        | rows_in_mixed_promoted_group | 0             | count   |
+| J80                        | template_count_min           | 77            | count   |
+| J80                        | template_count_max           | 78            | count   |
+| J80                        | template_count_spread        | 1             | count   |
+| J80                        | moved_share_pct_max          | 4.767         | percent |
+| J80                        | moved_share_pct_mean         | 2.735         | percent |
+| J80                        | search_rows_scanned          | 147,606       | rows    |
+| J80                        | search_scan_amplification    | 1.119         | ratio   |
+| J90                        | templates                    | 92            | count   |
+| J90                        | rows_per_template_min        | 1             | count   |
+| J90                        | rows_per_template_median     | 102           | count   |
+| J90                        | rows_per_template_p90        | 2,388         | count   |
+| J90                        | rows_per_template_max        | 57,786        | count   |
+| J90                        | null_cell_share_pct          | 2.541         | percent |
+| J90                        | columns_widened_to_string    | 24            | count   |
+| J90                        | columns_widened_share_pct    | 1.98          | percent |
+| J90                        | distinct_keys_widened        | 8             | count   |
+| J90                        | rows_under_a_widened_column  | 115,620       | count   |
+| J90                        | mixed_promoted_groups        | 0             | count   |
+| J90                        | rows_in_mixed_promoted_group | 0             | count   |
+| J90                        | template_count_min           | 89            | count   |
+| J90                        | template_count_max           | 91            | count   |
+| J90                        | template_count_spread        | 2             | count   |
+| J90                        | moved_share_pct_max          | 2.308         | percent |
+| J90                        | moved_share_pct_mean         | 1.474         | percent |
+| J90                        | search_rows_scanned          | 137,305       | rows    |
+| J90                        | search_scan_amplification    | 1.041         | ratio   |
+| J80_GROWN                  | templates                    | 80            | count   |
+| J80_GROWN                  | rows_per_template_min        | 2             | count   |
+| J80_GROWN                  | rows_per_template_median     | 202           | count   |
+| J80_GROWN                  | rows_per_template_p90        | 2,964         | count   |
+| J80_GROWN                  | rows_per_template_max        | 86,627        | count   |
+| J80_GROWN                  | null_cell_share_pct          | 5.646         | percent |
+| J80_GROWN                  | columns_widened_to_string    | 23            | count   |
+| J80_GROWN                  | columns_widened_share_pct    | 2.172         | percent |
+| J80_GROWN                  | distinct_keys_widened        | 8             | count   |
+| J80_GROWN                  | rows_under_a_widened_column  | 109,884       | count   |
+| J80_GROWN                  | mixed_promoted_groups        | 0             | count   |
+| J80_GROWN                  | rows_in_mixed_promoted_group | 0             | count   |
+| J80_GROWN                  | template_count_min           | 79            | count   |
+| J80_GROWN                  | template_count_max           | 80            | count   |
+| J80_GROWN                  | template_count_spread        | 1             | count   |
+| J80_GROWN                  | moved_share_pct_max          | 1.085         | percent |
+| J80_GROWN                  | moved_share_pct_mean         | 0.8754        | percent |
+| J80_GROWN                  | search_rows_scanned          | 139,702       | rows    |
+| J80_GROWN                  | search_scan_amplification    | 1.059         | ratio   |
+| J80_SPEC                   | templates                    | 45            | count   |
+| J80_SPEC                   | rows_per_template_min        | 2             | count   |
+| J80_SPEC                   | rows_per_template_median     | 772           | count   |
+| J80_SPEC                   | rows_per_template_p90        | 5,831         | count   |
+| J80_SPEC                   | rows_per_template_max        | 86,627        | count   |
+| J80_SPEC                   | null_cell_share_pct          | 11.59         | percent |
+| J80_SPEC                   | columns_widened_to_string    | 22            | count   |
+| J80_SPEC                   | columns_widened_share_pct    | 3.655         | percent |
+| J80_SPEC                   | distinct_keys_widened        | 8             | count   |
+| J80_SPEC                   | rows_under_a_widened_column  | 125,360       | count   |
+| J80_SPEC                   | mixed_promoted_groups        | 21            | count   |
+| J80_SPEC                   | rows_in_mixed_promoted_group | 78,996        | count   |
+| J80_SPEC                   | template_count_min           | 42            | count   |
+| J80_SPEC                   | template_count_max           | 45            | count   |
+| J80_SPEC                   | template_count_spread        | 3             | count   |
+| J80_SPEC                   | moved_share_pct_max          | 2.329         | percent |
+| J80_SPEC                   | moved_share_pct_mean         | 1.39          | percent |
+| J80_SPEC                   | search_rows_scanned          | 338,963       | rows    |
+| J80_SPEC                   | search_scan_amplification    | 2.569         | ratio   |
+| PER_EVENT                  | templates                    | 43            | count   |
+| PER_EVENT                  | rows_per_template_min        | 3             | count   |
+| PER_EVENT                  | rows_per_template_median     | 142           | count   |
+| PER_EVENT                  | rows_per_template_p90        | 5,048         | count   |
+| PER_EVENT                  | rows_per_template_max        | 108,563       | count   |
+| PER_EVENT                  | null_cell_share_pct          | 66.61         | percent |
+| PER_EVENT                  | columns_widened_to_string    | 20            | count   |
+| PER_EVENT                  | columns_widened_share_pct    | 2.865         | percent |
+| PER_EVENT                  | distinct_keys_widened        | 11            | count   |
+| PER_EVENT                  | rows_under_a_widened_column  | 774,955       | count   |
+| PER_EVENT                  | mixed_promoted_groups        | 0             | count   |
+| PER_EVENT                  | rows_in_mixed_promoted_group | 0             | count   |
+| PER_EVENT                  | template_count_min           | 43            | count   |
+| PER_EVENT                  | template_count_max           | 43            | count   |
+| PER_EVENT                  | template_count_spread        | 0             | count   |
+| PER_EVENT                  | moved_share_pct_max          | 0             | percent |
+| PER_EVENT                  | moved_share_pct_mean         | 0             | percent |
+| PER_EVENT                  | search_rows_scanned          | 182,911       | rows    |
+| PER_EVENT                  | search_scan_amplification    | 1.386         | ratio   |
+| all                        | keys_with_more_than_one_type | 7             | count   |
+| promote=nothing/NONE       | templates                    | 135           | count   |
+| promote=nothing/NONE       | rows_scanned_event_search    | 91,437        | rows    |
+| promote=nothing/NONE       | rows_scanned_service_search  | 0             | rows    |
+| promote=nothing/J80        | templates                    | 45            | count   |
+| promote=nothing/J80        | rows_scanned_event_search    | 91,437        | rows    |
+| promote=nothing/J80        | rows_scanned_service_search  | 0             | rows    |
+| promote=event/NONE         | templates                    | 143           | count   |
+| promote=event/NONE         | rows_scanned_event_search    | 50,108        | rows    |
+| promote=event/NONE         | rows_scanned_service_search  | 0             | rows    |
+| promote=event/J80          | templates                    | 77            | count   |
+| promote=event/J80          | rows_scanned_event_search    | 50,108        | rows    |
+| promote=event/J80          | rows_scanned_service_search  | 0             | rows    |
+| promote=event+service/NONE | templates                    | 143           | count   |
+| promote=event+service/NONE | rows_scanned_event_search    | 50,108        | rows    |
+| promote=event+service/NONE | rows_scanned_service_search  | 0             | rows    |
+| promote=event+service/J80  | templates                    | 77            | count   |
+| promote=event+service/J80  | rows_scanned_event_search    | 50,108        | rows    |
+| promote=event+service/J80  | rows_scanned_service_search  | 0             | rows    |
+| promote=binary/NONE        | templates                    | 143           | count   |
+| promote=binary/NONE        | rows_scanned_event_search    | 50,108        | rows    |
+| promote=binary/NONE        | rows_scanned_service_search  | 0             | rows    |
+| promote=binary/J80         | templates                    | 77            | count   |
+| promote=binary/J80         | rows_scanned_event_search    | 50,108        | rows    |
+| promote=binary/J80         | rows_scanned_service_search  | 0             | rows    |
+| J80 cap=100                | leftover_rows                | 0             | rows    |
+| J80 cap=500                | leftover_rows                | 0             | rows    |
+| J80 cap=2000               | leftover_rows                | 0             | rows    |
+| verdict                    | best_two_rules               | PER_EVENT J70 | name    |
 
 ### `04_merge_rules` / dataset `flat30`
 
@@ -2383,13 +3097,14 @@ Run 2026-09-19T09:42:11+00:00, git `90152d2`, 495 rows.
 
 **Notes**
 
-- 20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost
+- 20 searches of 'one promoted value plus one optional key is present'; 131,948 rows actually match, so this is the scan cost
 - rows scanned divided by rows that match
 - the type join can only widen a column where one key carries two types; at zero, every columns->String figure above is vacuous
 - one value of `event`; a promoted key is one trie edge, an unpromoted one is a scan of every template holding the column
-- lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target
 - the cap was never reached
 - written to lab/out/04/best_rules.json for script 02 to pick up
+- 20 searches of 'one promoted value plus one optional key is present'; 137,439 rows actually match, so this is the scan cost
+- lines that would have created a template past the cap go into one shared leftover template, which is never itself a merge target
 - 20 searches of 'one promoted value plus one optional key is present'; 74,093 rows actually match, so this is the scan cost
 - 20 searches of 'one promoted value plus one optional key is present'; 54,159 rows actually match, so this is the scan cost
 
@@ -2397,7 +3112,569 @@ Run 2026-09-19T09:42:11+00:00, git `90152d2`, 495 rows.
 
 _What each encoding saves_
 
-Run 2026-09-19T10:04:05+00:00, git `90152d2`, 889 rows.
+Run 2026-09-22T15:55:51+00:00, git `90152d2`, 1441 rows.
+
+### `05_encodings` / dataset `farm`
+
+| variant                    | metric                        | value        | unit    |
+|----------------------------|-------------------------------|--------------|---------|
+| units                      | templates chunked             | 143          | count   |
+| arrival/Bool               | bits                          | 337          | bytes   |
+| arrival/Bool               | bits+zstd3                    | 365          | bytes   |
+| arrival/Bool               | const                         | 2,418        | bytes   |
+| arrival/Bool               | const+zstd3                   | 524          | bytes   |
+| arrival/Bool               | delta_varint                  | 2,665        | bytes   |
+| arrival/Bool               | delta_varint+zstd3            | 528          | bytes   |
+| arrival/Bool               | dict                          | 2,708        | bytes   |
+| arrival/Bool               | dict+zstd3                    | 560          | bytes   |
+| arrival/Bool               | ip_bin                        | 2,665        | bytes   |
+| arrival/Bool               | ip_bin+zstd3                  | 528          | bytes   |
+| arrival/Bool               | plain                         | 2,665        | bytes   |
+| arrival/Bool               | plain+zstd3                   | 528          | bytes   |
+| arrival/Bool               | uuid16                        | 2,665        | bytes   |
+| arrival/Bool               | uuid16+zstd3                  | 528          | bytes   |
+| arrival/Bool               | varint                        | 2,665        | bytes   |
+| arrival/Bool               | varint+zstd3                  | 528          | bytes   |
+| arrival/Datetime           | bits                          | 1,655,832    | bytes   |
+| arrival/Datetime           | bits+zstd3                    | 897,092      | bytes   |
+| arrival/Datetime           | const                         | 1,655,864    | bytes   |
+| arrival/Datetime           | const+zstd3                   | 897,124      | bytes   |
+| arrival/Datetime           | delta_varint                  | 904,646      | bytes   |
+| arrival/Datetime           | delta_varint+zstd3            | 512,681      | bytes   |
+| arrival/Datetime           | dict                          | 1,568,213    | bytes   |
+| arrival/Datetime           | dict+zstd3                    | 1,066,225    | bytes   |
+| arrival/Datetime           | ip_bin                        | 1,655,832    | bytes   |
+| arrival/Datetime           | ip_bin+zstd3                  | 897,092      | bytes   |
+| arrival/Datetime           | plain                         | 1,655,832    | bytes   |
+| arrival/Datetime           | plain+zstd3                   | 897,092      | bytes   |
+| arrival/Datetime           | uuid16                        | 1,655,832    | bytes   |
+| arrival/Datetime           | uuid16+zstd3                  | 897,092      | bytes   |
+| arrival/Datetime           | varint                        | 1,862,811    | bytes   |
+| arrival/Datetime           | varint+zstd3                  | 739,198      | bytes   |
+| arrival/Float64            | bits                          | 2,398,248    | bytes   |
+| arrival/Float64            | bits+zstd3                    | 1,213,038    | bytes   |
+| arrival/Float64            | const                         | 2,398,224    | bytes   |
+| arrival/Float64            | const+zstd3                   | 1,213,062    | bytes   |
+| arrival/Float64            | delta_varint                  | 2,398,248    | bytes   |
+| arrival/Float64            | delta_varint+zstd3            | 1,213,038    | bytes   |
+| arrival/Float64            | dict                          | 1,974,376    | bytes   |
+| arrival/Float64            | dict+zstd3                    | 1,369,995    | bytes   |
+| arrival/Float64            | ip_bin                        | 2,398,248    | bytes   |
+| arrival/Float64            | ip_bin+zstd3                  | 1,213,038    | bytes   |
+| arrival/Float64            | plain                         | 2,398,248    | bytes   |
+| arrival/Float64            | plain+zstd3                   | 1,213,038    | bytes   |
+| arrival/Float64            | uuid16                        | 2,398,248    | bytes   |
+| arrival/Float64            | uuid16+zstd3                  | 1,213,038    | bytes   |
+| arrival/Float64            | varint                        | 2,398,248    | bytes   |
+| arrival/Float64            | varint+zstd3                  | 1,213,038    | bytes   |
+| arrival/Int64              | bits                          | 3,292,328    | bytes   |
+| arrival/Int64              | bits+zstd3                    | 499,080      | bytes   |
+| arrival/Int64              | const                         | 3,033,892    | bytes   |
+| arrival/Int64              | const+zstd3                   | 498,953      | bytes   |
+| arrival/Int64              | delta_varint                  | 725,326      | bytes   |
+| arrival/Int64              | delta_varint+zstd3            | 501,351      | bytes   |
+| arrival/Int64              | dict                          | 1,325,684    | bytes   |
+| arrival/Int64              | dict+zstd3                    | 578,625      | bytes   |
+| arrival/Int64              | ip_bin                        | 3,292,328    | bytes   |
+| arrival/Int64              | ip_bin+zstd3                  | 499,080      | bytes   |
+| arrival/Int64              | plain                         | 3,292,328    | bytes   |
+| arrival/Int64              | plain+zstd3                   | 499,080      | bytes   |
+| arrival/Int64              | uuid16                        | 3,292,328    | bytes   |
+| arrival/Int64              | uuid16+zstd3                  | 499,080      | bytes   |
+| arrival/Int64              | varint                        | 844,763      | bytes   |
+| arrival/Int64              | varint+zstd3                  | 457,398      | bytes   |
+| arrival/Ip                 | bits                          | 2,642,633    | bytes   |
+| arrival/Ip                 | bits+zstd3                    | 469,772      | bytes   |
+| arrival/Ip                 | const                         | 2,618,269    | bytes   |
+| arrival/Ip                 | const+zstd3                   | 469,772      | bytes   |
+| arrival/Ip                 | delta_varint                  | 2,642,633    | bytes   |
+| arrival/Ip                 | delta_varint+zstd3            | 469,772      | bytes   |
+| arrival/Ip                 | dict                          | 763,774      | bytes   |
+| arrival/Ip                 | dict+zstd3                    | 350,310      | bytes   |
+| arrival/Ip                 | ip_bin                        | 817,330      | bytes   |
+| arrival/Ip                 | ip_bin+zstd3                  | 261,422      | bytes   |
+| arrival/Ip                 | plain                         | 2,642,633    | bytes   |
+| arrival/Ip                 | plain+zstd3                   | 469,772      | bytes   |
+| arrival/Ip                 | uuid16                        | 2,642,633    | bytes   |
+| arrival/Ip                 | uuid16+zstd3                  | 469,772      | bytes   |
+| arrival/Ip                 | varint                        | 2,642,633    | bytes   |
+| arrival/Ip                 | varint+zstd3                  | 469,772      | bytes   |
+| arrival/String             | bits                          | 45,418,700   | bytes   |
+| arrival/String             | bits+zstd3                    | 4,894,456    | bytes   |
+| arrival/String             | const                         | 39,305,943   | bytes   |
+| arrival/String             | const+zstd3                   | 4,892,113    | bytes   |
+| arrival/String             | delta_varint                  | 45,418,700   | bytes   |
+| arrival/String             | delta_varint+zstd3            | 4,894,456    | bytes   |
+| arrival/String             | dict                          | 9,763,521    | bytes   |
+| arrival/String             | dict+zstd3                    | 3,777,292    | bytes   |
+| arrival/String             | ip_bin                        | 45,418,700   | bytes   |
+| arrival/String             | ip_bin+zstd3                  | 4,894,456    | bytes   |
+| arrival/String             | plain                         | 45,418,700   | bytes   |
+| arrival/String             | plain+zstd3                   | 4,894,456    | bytes   |
+| arrival/String             | uuid16                        | 45,418,700   | bytes   |
+| arrival/String             | uuid16+zstd3                  | 4,894,456    | bytes   |
+| arrival/String             | varint                        | 45,418,700   | bytes   |
+| arrival/String             | varint+zstd3                  | 4,894,456    | bytes   |
+| arrival/Uuid               | bits                          | 709,800      | bytes   |
+| arrival/Uuid               | bits+zstd3                    | 357,554      | bytes   |
+| arrival/Uuid               | const                         | 709,800      | bytes   |
+| arrival/Uuid               | const+zstd3                   | 357,554      | bytes   |
+| arrival/Uuid               | delta_varint                  | 709,800      | bytes   |
+| arrival/Uuid               | delta_varint+zstd3            | 357,554      | bytes   |
+| arrival/Uuid               | dict                          | 719,164      | bytes   |
+| arrival/Uuid               | dict+zstd3                    | 380,374      | bytes   |
+| arrival/Uuid               | ip_bin                        | 709,800      | bytes   |
+| arrival/Uuid               | ip_bin+zstd3                  | 357,554      | bytes   |
+| arrival/Uuid               | plain                         | 709,800      | bytes   |
+| arrival/Uuid               | plain+zstd3                   | 357,554      | bytes   |
+| arrival/Uuid               | uuid16                        | 283,920      | bytes   |
+| arrival/Uuid               | uuid16+zstd3                  | 283,034      | bytes   |
+| arrival/Uuid               | varint                        | 709,800      | bytes   |
+| arrival/Uuid               | varint+zstd3                  | 357,554      | bytes   |
+| sorted/Bool                | bits                          | 337          | bytes   |
+| sorted/Bool                | bits+zstd3                    | 105          | bytes   |
+| sorted/Bool                | const                         | 2,418        | bytes   |
+| sorted/Bool                | const+zstd3                   | 107          | bytes   |
+| sorted/Bool                | delta_varint                  | 2,665        | bytes   |
+| sorted/Bool                | delta_varint+zstd3            | 111          | bytes   |
+| sorted/Bool                | dict                          | 2,708        | bytes   |
+| sorted/Bool                | dict+zstd3                    | 150          | bytes   |
+| sorted/Bool                | ip_bin                        | 2,665        | bytes   |
+| sorted/Bool                | ip_bin+zstd3                  | 111          | bytes   |
+| sorted/Bool                | plain                         | 2,665        | bytes   |
+| sorted/Bool                | plain+zstd3                   | 111          | bytes   |
+| sorted/Bool                | uuid16                        | 2,665        | bytes   |
+| sorted/Bool                | uuid16+zstd3                  | 111          | bytes   |
+| sorted/Bool                | varint                        | 2,665        | bytes   |
+| sorted/Bool                | varint+zstd3                  | 111          | bytes   |
+| sorted/Datetime            | bits                          | 1,655,832    | bytes   |
+| sorted/Datetime            | bits+zstd3                    | 1,115,645    | bytes   |
+| sorted/Datetime            | const                         | 1,655,864    | bytes   |
+| sorted/Datetime            | const+zstd3                   | 1,115,677    | bytes   |
+| sorted/Datetime            | delta_varint                  | 1,300,446    | bytes   |
+| sorted/Datetime            | delta_varint+zstd3            | 1,045,349    | bytes   |
+| sorted/Datetime            | dict                          | 1,568,213    | bytes   |
+| sorted/Datetime            | dict+zstd3                    | 1,265,223    | bytes   |
+| sorted/Datetime            | ip_bin                        | 1,655,832    | bytes   |
+| sorted/Datetime            | ip_bin+zstd3                  | 1,115,645    | bytes   |
+| sorted/Datetime            | plain                         | 1,655,832    | bytes   |
+| sorted/Datetime            | plain+zstd3                   | 1,115,645    | bytes   |
+| sorted/Datetime            | uuid16                        | 1,655,832    | bytes   |
+| sorted/Datetime            | uuid16+zstd3                  | 1,115,645    | bytes   |
+| sorted/Datetime            | varint                        | 1,862,811    | bytes   |
+| sorted/Datetime            | varint+zstd3                  | 1,072,998    | bytes   |
+| sorted/Float64             | bits                          | 2,398,248    | bytes   |
+| sorted/Float64             | bits+zstd3                    | 1,306,063    | bytes   |
+| sorted/Float64             | const                         | 2,398,224    | bytes   |
+| sorted/Float64             | const+zstd3                   | 1,306,087    | bytes   |
+| sorted/Float64             | delta_varint                  | 2,398,248    | bytes   |
+| sorted/Float64             | delta_varint+zstd3            | 1,306,063    | bytes   |
+| sorted/Float64             | dict                          | 1,974,376    | bytes   |
+| sorted/Float64             | dict+zstd3                    | 1,467,632    | bytes   |
+| sorted/Float64             | ip_bin                        | 2,398,248    | bytes   |
+| sorted/Float64             | ip_bin+zstd3                  | 1,306,063    | bytes   |
+| sorted/Float64             | plain                         | 2,398,248    | bytes   |
+| sorted/Float64             | plain+zstd3                   | 1,306,063    | bytes   |
+| sorted/Float64             | uuid16                        | 2,398,248    | bytes   |
+| sorted/Float64             | uuid16+zstd3                  | 1,306,063    | bytes   |
+| sorted/Float64             | varint                        | 2,398,248    | bytes   |
+| sorted/Float64             | varint+zstd3                  | 1,306,063    | bytes   |
+| sorted/Int64               | bits                          | 3,292,328    | bytes   |
+| sorted/Int64               | bits+zstd3                    | 429,911      | bytes   |
+| sorted/Int64               | const                         | 3,033,892    | bytes   |
+| sorted/Int64               | const+zstd3                   | 429,784      | bytes   |
+| sorted/Int64               | delta_varint                  | 650,373      | bytes   |
+| sorted/Int64               | delta_varint+zstd3            | 404,328      | bytes   |
+| sorted/Int64               | dict                          | 1,325,684    | bytes   |
+| sorted/Int64               | dict+zstd3                    | 525,203      | bytes   |
+| sorted/Int64               | ip_bin                        | 3,292,328    | bytes   |
+| sorted/Int64               | ip_bin+zstd3                  | 429,911      | bytes   |
+| sorted/Int64               | plain                         | 3,292,328    | bytes   |
+| sorted/Int64               | plain+zstd3                   | 429,911      | bytes   |
+| sorted/Int64               | uuid16                        | 3,292,328    | bytes   |
+| sorted/Int64               | uuid16+zstd3                  | 429,911      | bytes   |
+| sorted/Int64               | varint                        | 844,763      | bytes   |
+| sorted/Int64               | varint+zstd3                  | 399,515      | bytes   |
+| sorted/Ip                  | bits                          | 2,642,633    | bytes   |
+| sorted/Ip                  | bits+zstd3                    | 520,827      | bytes   |
+| sorted/Ip                  | const                         | 2,618,269    | bytes   |
+| sorted/Ip                  | const+zstd3                   | 520,827      | bytes   |
+| sorted/Ip                  | delta_varint                  | 2,642,633    | bytes   |
+| sorted/Ip                  | delta_varint+zstd3            | 520,827      | bytes   |
+| sorted/Ip                  | dict                          | 763,774      | bytes   |
+| sorted/Ip                  | dict+zstd3                    | 349,261      | bytes   |
+| sorted/Ip                  | ip_bin                        | 817,330      | bytes   |
+| sorted/Ip                  | ip_bin+zstd3                  | 281,956      | bytes   |
+| sorted/Ip                  | plain                         | 2,642,633    | bytes   |
+| sorted/Ip                  | plain+zstd3                   | 520,827      | bytes   |
+| sorted/Ip                  | uuid16                        | 2,642,633    | bytes   |
+| sorted/Ip                  | uuid16+zstd3                  | 520,827      | bytes   |
+| sorted/Ip                  | varint                        | 2,642,633    | bytes   |
+| sorted/Ip                  | varint+zstd3                  | 520,827      | bytes   |
+| sorted/String              | bits                          | 45,418,700   | bytes   |
+| sorted/String              | bits+zstd3                    | 3,922,942    | bytes   |
+| sorted/String              | const                         | 39,305,943   | bytes   |
+| sorted/String              | const+zstd3                   | 3,920,599    | bytes   |
+| sorted/String              | delta_varint                  | 45,418,700   | bytes   |
+| sorted/String              | delta_varint+zstd3            | 3,922,942    | bytes   |
+| sorted/String              | dict                          | 9,763,521    | bytes   |
+| sorted/String              | dict+zstd3                    | 3,479,707    | bytes   |
+| sorted/String              | ip_bin                        | 45,418,700   | bytes   |
+| sorted/String              | ip_bin+zstd3                  | 3,922,942    | bytes   |
+| sorted/String              | plain                         | 45,418,700   | bytes   |
+| sorted/String              | plain+zstd3                   | 3,922,942    | bytes   |
+| sorted/String              | uuid16                        | 45,418,700   | bytes   |
+| sorted/String              | uuid16+zstd3                  | 3,922,942    | bytes   |
+| sorted/String              | varint                        | 45,418,700   | bytes   |
+| sorted/String              | varint+zstd3                  | 3,922,942    | bytes   |
+| sorted/Uuid                | bits                          | 709,800      | bytes   |
+| sorted/Uuid                | bits+zstd3                    | 357,522      | bytes   |
+| sorted/Uuid                | const                         | 709,800      | bytes   |
+| sorted/Uuid                | const+zstd3                   | 357,522      | bytes   |
+| sorted/Uuid                | delta_varint                  | 709,800      | bytes   |
+| sorted/Uuid                | delta_varint+zstd3            | 357,522      | bytes   |
+| sorted/Uuid                | dict                          | 719,164      | bytes   |
+| sorted/Uuid                | dict+zstd3                    | 380,224      | bytes   |
+| sorted/Uuid                | ip_bin                        | 709,800      | bytes   |
+| sorted/Uuid                | ip_bin+zstd3                  | 357,522      | bytes   |
+| sorted/Uuid                | plain                         | 709,800      | bytes   |
+| sorted/Uuid                | plain+zstd3                   | 357,522      | bytes   |
+| sorted/Uuid                | uuid16                        | 283,920      | bytes   |
+| sorted/Uuid                | uuid16+zstd3                  | 284,180      | bytes   |
+| sorted/Uuid                | varint                        | 709,800      | bytes   |
+| sorted/Uuid                | varint+zstd3                  | 357,522      | bytes   |
+| coverage/plain             | applies_to_pct_of_plain_bytes | 100          | percent |
+| coverage/const             | applies_to_pct_of_plain_bytes | 11.43        | percent |
+| coverage/dict              | applies_to_pct_of_plain_bytes | 87.97        | percent |
+| coverage/delta_varint      | applies_to_pct_of_plain_bytes | 8.82         | percent |
+| coverage/varint            | applies_to_pct_of_plain_bytes | 8.82         | percent |
+| coverage/bits              | applies_to_pct_of_plain_bytes | 0            | percent |
+| coverage/uuid16            | applies_to_pct_of_plain_bytes | 1.26         | percent |
+| coverage/ip_bin            | applies_to_pct_of_plain_bytes | 4.71         | percent |
+| zstd level 1               | bytes                         | 8,499,653    | bytes   |
+| zstd level 1               | compress_MBps                 | 929.2        | MB/s    |
+| zstd level 3               | bytes                         | 8,071,494    | bytes   |
+| zstd level 3               | compress_MBps                 | 691.8        | MB/s    |
+| zstd level 9               | bytes                         | 7,097,167    | bytes   |
+| zstd level 9               | compress_MBps                 | 141.6        | MB/s    |
+| zstd level 19              | bytes                         | 6,414,585    | bytes   |
+| zstd level 19              | compress_MBps                 | 4.84         | MB/s    |
+| wordlist per_chunk         | bytes                         | 16,117,440   | bytes   |
+| wordlist per_file          | bytes                         | 15,367,733   | bytes   |
+| column:http_user_agent     | plain_bytes                   | 10,319,845   | bytes   |
+| column:http_user_agent     | best_encoding                 | dict+zstd3   | name    |
+| column:user_agent.original | plain_bytes                   | 5,463,611    | bytes   |
+| column:user_agent.original | best_encoding                 | dict+zstd3   | name    |
+| column:request_id          | plain_bytes                   | 2,952,180    | bytes   |
+| column:request_id          | best_encoding                 | plain+zstd3  | name    |
+| column:http_referer        | plain_bytes                   | 2,494,361    | bytes   |
+| column:http_referer        | best_encoding                 | dict+zstd3   | name    |
+| column:request_uri         | plain_bytes                   | 2,408,205    | bytes   |
+| column:request_uri         | best_encoding                 | dict+zstd3   | name    |
+| column:http.request.id     | plain_bytes                   | 1,879,488    | bytes   |
+| column:http.request.id     | best_encoding                 | plain+zstd3  | name    |
+| column:host.name           | plain_bytes                   | 1,789,453    | bytes   |
+| column:host.name           | best_encoding                 | dict+zstd3   | name    |
+| column:message             | plain_bytes                   | 1,703,325    | bytes   |
+| column:message             | best_encoding                 | dict+zstd3   | name    |
+| column:remote_addr         | plain_bytes                   | 1,442,010    | bytes   |
+| column:remote_addr         | best_encoding                 | ip_bin+zstd3 | name    |
+| column:url.path            | plain_bytes                   | 1,255,575    | bytes   |
+| column:url.path            | best_encoding                 | dict+zstd3   | name    |
+| column:http_user_agent     | clp_split_bytes               | 105,279      | bytes   |
+| column:user_agent.original | clp_split_bytes               | 85,282       | bytes   |
+| column:request_id          | clp_split_bytes               | 1,477,252    | bytes   |
+| column:http_referer        | clp_split_bytes               | 86,918       | bytes   |
+| column:request_uri         | clp_split_bytes               | 321,831      | bytes   |
+| BEST_PER_CHUNK arrival     | bytes                         | 6,372,460    | bytes   |
+| BEST_PER_CHUNK arrival     | ratio_to_raw                  | 0.06535      | ratio   |
+| BEST_PER_CHUNK arrival     | ratio_to_gzip9                | 0.5808       | ratio   |
+| BEST_PER_CHUNK sorted      | bytes                         | 6,665,725    | bytes   |
+| BEST_PER_CHUNK sorted      | ratio_to_raw                  | 0.06836      | ratio   |
+| BEST_PER_CHUNK sorted      | ratio_to_gzip9                | 0.6075       | ratio   |
+| plain                      | bytes                         | 56,120,206   | bytes   |
+| verdict                    | sort_saving_pct               | -4.602       | percent |
+
+### `05_encodings` / dataset `farm[J80]`
+
+| variant                    | metric                        | value        | unit    |
+|----------------------------|-------------------------------|--------------|---------|
+| units                      | templates chunked             | 77           | count   |
+| arrival/Bool               | bits                          | 580          | bytes   |
+| arrival/Bool               | bits+zstd3                    | 536          | bytes   |
+| arrival/Bool               | const                         | 2,652        | bytes   |
+| arrival/Bool               | const+zstd3                   | 685          | bytes   |
+| arrival/Bool               | delta_varint                  | 2,909        | bytes   |
+| arrival/Bool               | delta_varint+zstd3            | 696          | bytes   |
+| arrival/Bool               | dict                          | 2,940        | bytes   |
+| arrival/Bool               | dict+zstd3                    | 709          | bytes   |
+| arrival/Bool               | ip_bin                        | 2,909        | bytes   |
+| arrival/Bool               | ip_bin+zstd3                  | 696          | bytes   |
+| arrival/Bool               | plain                         | 2,909        | bytes   |
+| arrival/Bool               | plain+zstd3                   | 696          | bytes   |
+| arrival/Bool               | uuid16                        | 2,909        | bytes   |
+| arrival/Bool               | uuid16+zstd3                  | 696          | bytes   |
+| arrival/Bool               | varint                        | 2,909        | bytes   |
+| arrival/Bool               | varint+zstd3                  | 696          | bytes   |
+| arrival/Datetime           | bits                          | 1,655,834    | bytes   |
+| arrival/Datetime           | bits+zstd3                    | 816,097      | bytes   |
+| arrival/Datetime           | const                         | 1,655,834    | bytes   |
+| arrival/Datetime           | const+zstd3                   | 816,097      | bytes   |
+| arrival/Datetime           | delta_varint                  | 854,195      | bytes   |
+| arrival/Datetime           | delta_varint+zstd3            | 484,647      | bytes   |
+| arrival/Datetime           | dict                          | 1,524,978    | bytes   |
+| arrival/Datetime           | dict+zstd3                    | 1,001,580    | bytes   |
+| arrival/Datetime           | ip_bin                        | 1,655,834    | bytes   |
+| arrival/Datetime           | ip_bin+zstd3                  | 816,097      | bytes   |
+| arrival/Datetime           | plain                         | 1,655,834    | bytes   |
+| arrival/Datetime           | plain+zstd3                   | 816,097      | bytes   |
+| arrival/Datetime           | uuid16                        | 1,655,834    | bytes   |
+| arrival/Datetime           | uuid16+zstd3                  | 816,097      | bytes   |
+| arrival/Datetime           | varint                        | 1,862,813    | bytes   |
+| arrival/Datetime           | varint+zstd3                  | 677,101      | bytes   |
+| arrival/Float64            | bits                          | 2,411,035    | bytes   |
+| arrival/Float64            | bits+zstd3                    | 1,212,544    | bytes   |
+| arrival/Float64            | const                         | 2,410,967    | bytes   |
+| arrival/Float64            | const+zstd3                   | 1,212,545    | bytes   |
+| arrival/Float64            | delta_varint                  | 2,411,035    | bytes   |
+| arrival/Float64            | delta_varint+zstd3            | 1,212,544    | bytes   |
+| arrival/Float64            | dict                          | 2,038,345    | bytes   |
+| arrival/Float64            | dict+zstd3                    | 1,424,650    | bytes   |
+| arrival/Float64            | ip_bin                        | 2,411,035    | bytes   |
+| arrival/Float64            | ip_bin+zstd3                  | 1,212,544    | bytes   |
+| arrival/Float64            | plain                         | 2,411,035    | bytes   |
+| arrival/Float64            | plain+zstd3                   | 1,212,544    | bytes   |
+| arrival/Float64            | uuid16                        | 2,411,035    | bytes   |
+| arrival/Float64            | uuid16+zstd3                  | 1,212,544    | bytes   |
+| arrival/Float64            | varint                        | 2,411,035    | bytes   |
+| arrival/Float64            | varint+zstd3                  | 1,212,544    | bytes   |
+| arrival/Int64              | bits                          | 3,300,959    | bytes   |
+| arrival/Int64              | bits+zstd3                    | 501,036      | bytes   |
+| arrival/Int64              | const                         | 3,178,847    | bytes   |
+| arrival/Int64              | const+zstd3                   | 500,928      | bytes   |
+| arrival/Int64              | delta_varint                  | 740,890      | bytes   |
+| arrival/Int64              | delta_varint+zstd3            | 508,755      | bytes   |
+| arrival/Int64              | dict                          | 1,329,313    | bytes   |
+| arrival/Int64              | dict+zstd3                    | 580,057      | bytes   |
+| arrival/Int64              | ip_bin                        | 3,300,959    | bytes   |
+| arrival/Int64              | ip_bin+zstd3                  | 501,036      | bytes   |
+| arrival/Int64              | plain                         | 3,300,959    | bytes   |
+| arrival/Int64              | plain+zstd3                   | 501,036      | bytes   |
+| arrival/Int64              | uuid16                        | 3,300,959    | bytes   |
+| arrival/Int64              | uuid16+zstd3                  | 501,036      | bytes   |
+| arrival/Int64              | varint                        | 854,047      | bytes   |
+| arrival/Int64              | varint+zstd3                  | 455,186      | bytes   |
+| arrival/Ip                 | bits                          | 2,642,633    | bytes   |
+| arrival/Ip                 | bits+zstd3                    | 463,889      | bytes   |
+| arrival/Ip                 | const                         | 2,642,633    | bytes   |
+| arrival/Ip                 | const+zstd3                   | 463,889      | bytes   |
+| arrival/Ip                 | delta_varint                  | 2,642,633    | bytes   |
+| arrival/Ip                 | delta_varint+zstd3            | 463,889      | bytes   |
+| arrival/Ip                 | dict                          | 667,256      | bytes   |
+| arrival/Ip                 | dict+zstd3                    | 309,961      | bytes   |
+| arrival/Ip                 | ip_bin                        | 817,330      | bytes   |
+| arrival/Ip                 | ip_bin+zstd3                  | 253,474      | bytes   |
+| arrival/Ip                 | plain                         | 2,642,633    | bytes   |
+| arrival/Ip                 | plain+zstd3                   | 463,889      | bytes   |
+| arrival/Ip                 | uuid16                        | 2,642,633    | bytes   |
+| arrival/Ip                 | uuid16+zstd3                  | 463,889      | bytes   |
+| arrival/Ip                 | varint                        | 2,642,633    | bytes   |
+| arrival/Ip                 | varint+zstd3                  | 463,889      | bytes   |
+| arrival/String             | bits                          | 45,469,255   | bytes   |
+| arrival/String             | bits+zstd3                    | 5,014,202    | bytes   |
+| arrival/String             | const                         | 40,835,205   | bytes   |
+| arrival/String             | const+zstd3                   | 5,012,713    | bytes   |
+| arrival/String             | delta_varint                  | 45,469,255   | bytes   |
+| arrival/String             | delta_varint+zstd3            | 5,014,202    | bytes   |
+| arrival/String             | dict                          | 9,482,635    | bytes   |
+| arrival/String             | dict+zstd3                    | 3,871,592    | bytes   |
+| arrival/String             | ip_bin                        | 45,469,255   | bytes   |
+| arrival/String             | ip_bin+zstd3                  | 5,014,202    | bytes   |
+| arrival/String             | plain                         | 45,469,255   | bytes   |
+| arrival/String             | plain+zstd3                   | 5,014,202    | bytes   |
+| arrival/String             | uuid16                        | 45,469,255   | bytes   |
+| arrival/String             | uuid16+zstd3                  | 5,014,202    | bytes   |
+| arrival/String             | varint                        | 45,469,255   | bytes   |
+| arrival/String             | varint+zstd3                  | 5,014,202    | bytes   |
+| arrival/Uuid               | bits                          | 709,800      | bytes   |
+| arrival/Uuid               | bits+zstd3                    | 358,011      | bytes   |
+| arrival/Uuid               | const                         | 709,800      | bytes   |
+| arrival/Uuid               | const+zstd3                   | 358,011      | bytes   |
+| arrival/Uuid               | delta_varint                  | 709,800      | bytes   |
+| arrival/Uuid               | delta_varint+zstd3            | 358,011      | bytes   |
+| arrival/Uuid               | dict                          | 719,227      | bytes   |
+| arrival/Uuid               | dict+zstd3                    | 381,109      | bytes   |
+| arrival/Uuid               | ip_bin                        | 709,800      | bytes   |
+| arrival/Uuid               | ip_bin+zstd3                  | 358,011      | bytes   |
+| arrival/Uuid               | plain                         | 709,800      | bytes   |
+| arrival/Uuid               | plain+zstd3                   | 358,011      | bytes   |
+| arrival/Uuid               | uuid16                        | 283,920      | bytes   |
+| arrival/Uuid               | uuid16+zstd3                  | 282,929      | bytes   |
+| arrival/Uuid               | varint                        | 709,800      | bytes   |
+| arrival/Uuid               | varint+zstd3                  | 358,011      | bytes   |
+| sorted/Bool                | bits                          | 580          | bytes   |
+| sorted/Bool                | bits+zstd3                    | 115          | bytes   |
+| sorted/Bool                | const                         | 2,652        | bytes   |
+| sorted/Bool                | const+zstd3                   | 128          | bytes   |
+| sorted/Bool                | delta_varint                  | 2,909        | bytes   |
+| sorted/Bool                | delta_varint+zstd3            | 123          | bytes   |
+| sorted/Bool                | dict                          | 2,940        | bytes   |
+| sorted/Bool                | dict+zstd3                    | 158          | bytes   |
+| sorted/Bool                | ip_bin                        | 2,909        | bytes   |
+| sorted/Bool                | ip_bin+zstd3                  | 123          | bytes   |
+| sorted/Bool                | plain                         | 2,909        | bytes   |
+| sorted/Bool                | plain+zstd3                   | 123          | bytes   |
+| sorted/Bool                | uuid16                        | 2,909        | bytes   |
+| sorted/Bool                | uuid16+zstd3                  | 123          | bytes   |
+| sorted/Bool                | varint                        | 2,909        | bytes   |
+| sorted/Bool                | varint+zstd3                  | 123          | bytes   |
+| sorted/Datetime            | bits                          | 1,655,834    | bytes   |
+| sorted/Datetime            | bits+zstd3                    | 1,059,855    | bytes   |
+| sorted/Datetime            | const                         | 1,655,834    | bytes   |
+| sorted/Datetime            | const+zstd3                   | 1,059,855    | bytes   |
+| sorted/Datetime            | delta_varint                  | 1,267,824    | bytes   |
+| sorted/Datetime            | delta_varint+zstd3            | 984,514      | bytes   |
+| sorted/Datetime            | dict                          | 1,524,978    | bytes   |
+| sorted/Datetime            | dict+zstd3                    | 1,215,410    | bytes   |
+| sorted/Datetime            | ip_bin                        | 1,655,834    | bytes   |
+| sorted/Datetime            | ip_bin+zstd3                  | 1,059,855    | bytes   |
+| sorted/Datetime            | plain                         | 1,655,834    | bytes   |
+| sorted/Datetime            | plain+zstd3                   | 1,059,855    | bytes   |
+| sorted/Datetime            | uuid16                        | 1,655,834    | bytes   |
+| sorted/Datetime            | uuid16+zstd3                  | 1,059,855    | bytes   |
+| sorted/Datetime            | varint                        | 1,862,813    | bytes   |
+| sorted/Datetime            | varint+zstd3                  | 1,008,149    | bytes   |
+| sorted/Float64             | bits                          | 2,411,035    | bytes   |
+| sorted/Float64             | bits+zstd3                    | 1,314,544    | bytes   |
+| sorted/Float64             | const                         | 2,410,967    | bytes   |
+| sorted/Float64             | const+zstd3                   | 1,314,544    | bytes   |
+| sorted/Float64             | delta_varint                  | 2,411,035    | bytes   |
+| sorted/Float64             | delta_varint+zstd3            | 1,314,544    | bytes   |
+| sorted/Float64             | dict                          | 2,038,345    | bytes   |
+| sorted/Float64             | dict+zstd3                    | 1,528,941    | bytes   |
+| sorted/Float64             | ip_bin                        | 2,411,035    | bytes   |
+| sorted/Float64             | ip_bin+zstd3                  | 1,314,544    | bytes   |
+| sorted/Float64             | plain                         | 2,411,035    | bytes   |
+| sorted/Float64             | plain+zstd3                   | 1,314,544    | bytes   |
+| sorted/Float64             | uuid16                        | 2,411,035    | bytes   |
+| sorted/Float64             | uuid16+zstd3                  | 1,314,544    | bytes   |
+| sorted/Float64             | varint                        | 2,411,035    | bytes   |
+| sorted/Float64             | varint+zstd3                  | 1,314,544    | bytes   |
+| sorted/Int64               | bits                          | 3,300,959    | bytes   |
+| sorted/Int64               | bits+zstd3                    | 431,972      | bytes   |
+| sorted/Int64               | const                         | 3,178,847    | bytes   |
+| sorted/Int64               | const+zstd3                   | 431,863      | bytes   |
+| sorted/Int64               | delta_varint                  | 662,318      | bytes   |
+| sorted/Int64               | delta_varint+zstd3            | 410,834      | bytes   |
+| sorted/Int64               | dict                          | 1,329,313    | bytes   |
+| sorted/Int64               | dict+zstd3                    | 525,504      | bytes   |
+| sorted/Int64               | ip_bin                        | 3,300,959    | bytes   |
+| sorted/Int64               | ip_bin+zstd3                  | 431,972      | bytes   |
+| sorted/Int64               | plain                         | 3,300,959    | bytes   |
+| sorted/Int64               | plain+zstd3                   | 431,972      | bytes   |
+| sorted/Int64               | uuid16                        | 3,300,959    | bytes   |
+| sorted/Int64               | uuid16+zstd3                  | 431,972      | bytes   |
+| sorted/Int64               | varint                        | 854,047      | bytes   |
+| sorted/Int64               | varint+zstd3                  | 404,461      | bytes   |
+| sorted/Ip                  | bits                          | 2,642,633    | bytes   |
+| sorted/Ip                  | bits+zstd3                    | 512,147      | bytes   |
+| sorted/Ip                  | const                         | 2,642,633    | bytes   |
+| sorted/Ip                  | const+zstd3                   | 512,147      | bytes   |
+| sorted/Ip                  | delta_varint                  | 2,642,633    | bytes   |
+| sorted/Ip                  | delta_varint+zstd3            | 512,147      | bytes   |
+| sorted/Ip                  | dict                          | 667,256      | bytes   |
+| sorted/Ip                  | dict+zstd3                    | 308,058      | bytes   |
+| sorted/Ip                  | ip_bin                        | 817,330      | bytes   |
+| sorted/Ip                  | ip_bin+zstd3                  | 266,511      | bytes   |
+| sorted/Ip                  | plain                         | 2,642,633    | bytes   |
+| sorted/Ip                  | plain+zstd3                   | 512,147      | bytes   |
+| sorted/Ip                  | uuid16                        | 2,642,633    | bytes   |
+| sorted/Ip                  | uuid16+zstd3                  | 512,147      | bytes   |
+| sorted/Ip                  | varint                        | 2,642,633    | bytes   |
+| sorted/Ip                  | varint+zstd3                  | 512,147      | bytes   |
+| sorted/String              | bits                          | 45,469,255   | bytes   |
+| sorted/String              | bits+zstd3                    | 4,026,470    | bytes   |
+| sorted/String              | const                         | 40,835,205   | bytes   |
+| sorted/String              | const+zstd3                   | 4,024,981    | bytes   |
+| sorted/String              | delta_varint                  | 45,469,255   | bytes   |
+| sorted/String              | delta_varint+zstd3            | 4,026,470    | bytes   |
+| sorted/String              | dict                          | 9,482,635    | bytes   |
+| sorted/String              | dict+zstd3                    | 3,514,987    | bytes   |
+| sorted/String              | ip_bin                        | 45,469,255   | bytes   |
+| sorted/String              | ip_bin+zstd3                  | 4,026,470    | bytes   |
+| sorted/String              | plain                         | 45,469,255   | bytes   |
+| sorted/String              | plain+zstd3                   | 4,026,470    | bytes   |
+| sorted/String              | uuid16                        | 45,469,255   | bytes   |
+| sorted/String              | uuid16+zstd3                  | 4,026,470    | bytes   |
+| sorted/String              | varint                        | 45,469,255   | bytes   |
+| sorted/String              | varint+zstd3                  | 4,026,470    | bytes   |
+| sorted/Uuid                | bits                          | 709,800      | bytes   |
+| sorted/Uuid                | bits+zstd3                    | 357,985      | bytes   |
+| sorted/Uuid                | const                         | 709,800      | bytes   |
+| sorted/Uuid                | const+zstd3                   | 357,985      | bytes   |
+| sorted/Uuid                | delta_varint                  | 709,800      | bytes   |
+| sorted/Uuid                | delta_varint+zstd3            | 357,985      | bytes   |
+| sorted/Uuid                | dict                          | 719,227      | bytes   |
+| sorted/Uuid                | dict+zstd3                    | 380,989      | bytes   |
+| sorted/Uuid                | ip_bin                        | 709,800      | bytes   |
+| sorted/Uuid                | ip_bin+zstd3                  | 357,985      | bytes   |
+| sorted/Uuid                | plain                         | 709,800      | bytes   |
+| sorted/Uuid                | plain+zstd3                   | 357,985      | bytes   |
+| sorted/Uuid                | uuid16                        | 283,920      | bytes   |
+| sorted/Uuid                | uuid16+zstd3                  | 284,075      | bytes   |
+| sorted/Uuid                | varint                        | 709,800      | bytes   |
+| sorted/Uuid                | varint+zstd3                  | 357,985      | bytes   |
+| coverage/plain             | applies_to_pct_of_plain_bytes | 100          | percent |
+| coverage/const             | applies_to_pct_of_plain_bytes | 8.48         | percent |
+| coverage/dict              | applies_to_pct_of_plain_bytes | 89.13        | percent |
+| coverage/delta_varint      | applies_to_pct_of_plain_bytes | 8.82         | percent |
+| coverage/varint            | applies_to_pct_of_plain_bytes | 8.82         | percent |
+| coverage/bits              | applies_to_pct_of_plain_bytes | 0.01         | percent |
+| coverage/uuid16            | applies_to_pct_of_plain_bytes | 1.26         | percent |
+| coverage/ip_bin            | applies_to_pct_of_plain_bytes | 4.7          | percent |
+| zstd level 1               | bytes                         | 8,378,524    | bytes   |
+| zstd level 1               | compress_MBps                 | 873.8        | MB/s    |
+| zstd level 3               | bytes                         | 8,088,445    | bytes   |
+| zstd level 3               | compress_MBps                 | 469.1        | MB/s    |
+| zstd level 9               | bytes                         | 7,089,447    | bytes   |
+| zstd level 9               | compress_MBps                 | 130.1        | MB/s    |
+| zstd level 19              | bytes                         | 6,436,300    | bytes   |
+| zstd level 19              | compress_MBps                 | 5.29         | MB/s    |
+| wordlist per_chunk         | bytes                         | 15,764,694   | bytes   |
+| wordlist per_file          | bytes                         | 14,958,826   | bytes   |
+| column:http_user_agent     | plain_bytes                   | 10,319,845   | bytes   |
+| column:http_user_agent     | best_encoding                 | dict+zstd3   | name    |
+| column:user_agent.original | plain_bytes                   | 5,463,611    | bytes   |
+| column:user_agent.original | best_encoding                 | dict+zstd3   | name    |
+| column:request_id          | plain_bytes                   | 2,964,141    | bytes   |
+| column:request_id          | best_encoding                 | plain+zstd3  | name    |
+| column:http_referer        | plain_bytes                   | 2,494,361    | bytes   |
+| column:http_referer        | best_encoding                 | dict+zstd3   | name    |
+| column:request_uri         | plain_bytes                   | 2,408,205    | bytes   |
+| column:request_uri         | best_encoding                 | dict+zstd3   | name    |
+| column:http.request.id     | plain_bytes                   | 1,879,488    | bytes   |
+| column:http.request.id     | best_encoding                 | plain+zstd3  | name    |
+| column:host.name           | plain_bytes                   | 1,789,453    | bytes   |
+| column:host.name           | best_encoding                 | dict+zstd3   | name    |
+| column:message             | plain_bytes                   | 1,703,325    | bytes   |
+| column:message             | best_encoding                 | dict+zstd3   | name    |
+| column:remote_addr         | plain_bytes                   | 1,442,010    | bytes   |
+| column:remote_addr         | best_encoding                 | ip_bin+zstd3 | name    |
+| column:url.path            | plain_bytes                   | 1,255,575    | bytes   |
+| column:url.path            | best_encoding                 | dict+zstd3   | name    |
+| column:http_user_agent     | clp_split_bytes               | 85,822       | bytes   |
+| column:user_agent.original | clp_split_bytes               | 82,830       | bytes   |
+| column:request_id          | clp_split_bytes               | 1,599,621    | bytes   |
+| column:http_referer        | clp_split_bytes               | 61,867       | bytes   |
+| column:request_uri         | clp_split_bytes               | 304,946      | bytes   |
+| BEST_PER_CHUNK arrival     | bytes                         | 6,426,378    | bytes   |
+| BEST_PER_CHUNK arrival     | ratio_to_raw                  | 0.0659       | ratio   |
+| BEST_PER_CHUNK arrival     | ratio_to_gzip9                | 0.5857       | ratio   |
+| BEST_PER_CHUNK sorted      | bytes                         | 6,630,279    | bytes   |
+| BEST_PER_CHUNK sorted      | ratio_to_raw                  | 0.06799      | ratio   |
+| BEST_PER_CHUNK sorted      | ratio_to_gzip9                | 0.6043       | ratio   |
+| plain                      | bytes                         | 56,192,425   | bytes   |
+| verdict                    | sort_saving_pct               | -3.173       | percent |
 
 ### `05_encodings` / dataset `flat30`
 
@@ -3311,12 +4588,39 @@ Run 2026-09-19T10:04:05+00:00, git `90152d2`, 889 rows.
 - median of 3 runs; zstd is a C library and this is its speed, not TrieDB's
 - a per-file word list stores each distinct value once for the whole column; a per-chunk one repeats it, but indexes into a smaller list
 - type String
+- 105,279 bytes, 0.0102 of plain
+- 85,394 bytes, 0.0156 of plain
+- 1,477,261 bytes, 0.5004 of plain
+- 86,918 bytes, 0.0348 of plain
+- 321,871 bytes, 0.1337 of plain
+- 959,275 bytes, 0.5104 of plain
+- 24,745 bytes, 0.0138 of plain
+- 30,439 bytes, 0.0179 of plain
+- type Ip
+- 135,947 bytes, 0.0943 of plain
+- 165,212 bytes, 0.1316 of plain
+- fixed part through a word list, each changing part its own column; 1.0000 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.9987 of the best encoding above
+- fixed part through a word list, each changing part its own column; 0.9999 of the best encoding above
+- the smallest applicable encoding for every chunk of every column
+- section 6.2 chunk sizes, no codec
+- BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
+- 85,822 bytes, 0.0083 of plain
+- 82,864 bytes, 0.0152 of plain
+- 1,599,621 bytes, 0.5397 of plain
+- 61,867 bytes, 0.0248 of plain
+- 304,946 bytes, 0.1266 of plain
+- 947,820 bytes, 0.5043 of plain
+- 25,657 bytes, 0.0143 of plain
+- 33,826 bytes, 0.0199 of plain
+- 112,160 bytes, 0.0778 of plain
+- 172,472 bytes, 0.1374 of plain
+- fixed part through a word list, each changing part its own column; 0.9996 of the best encoding above
 - 16,848 bytes, 0.0065 of plain
 - 149,477 bytes, 0.0880 of plain
 - type Uuid
 - 535,600 bytes, 0.4000 of plain
 - 528,288 bytes, 0.4000 of plain
-- type Ip
 - 321,990 bytes, 0.2786 of plain
 - 227,805 bytes, 0.2355 of plain
 - 171,263 bytes, 0.1796 of plain
@@ -3324,14 +4628,10 @@ Run 2026-09-19T10:04:05+00:00, git `90152d2`, 889 rows.
 - 825,456 bytes, 0.8838 of plain
 - 52,942 bytes, 0.0593 of plain
 - 80,096 bytes, 0.0932 of plain
-- fixed part through a word list, each changing part its own column; 1.0000 of the best encoding above
 - fixed part through a word list, each changing part its own column; 0.9887 of the best encoding above
 - fixed part through a word list, each changing part its own column; 0.8759 of the best encoding above
 - fixed part through a word list, each changing part its own column; 0.7953 of the best encoding above
 - fixed part through a word list, each changing part its own column; 0.9991 of the best encoding above
-- the smallest applicable encoding for every chunk of every column
-- section 6.2 chunk sizes, no codec
-- BEST_PER_CHUNK sorted against BEST_PER_CHUNK in arrival order
 - 4,195,048 bytes, 0.5281 of plain
 - 210,958 bytes, 0.0487 of plain
 - 1,364,235 bytes, 0.3966 of plain

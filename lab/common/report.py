@@ -136,7 +136,7 @@ def findings(kept: dict) -> list:
                 "(bound: 10%)."
             )
 
-    for ds in ("uneven", "flat30", "oneday"):
+    for ds in ("uneven", "flat30", "oneday", "farm"):
         small = _pick(kept, "02_split_vs_wide", ds, "verdict", "smallest_by_bytes")
         vs = _pick(kept, "02_split_vs_wide", ds, "verdict", "per_template_vs_gzip9_bytes")
         ptd = _pick(kept, "02_split_vs_wide", ds, "PER_TEMPLATE_DAY rg=8,192",
@@ -156,7 +156,7 @@ def findings(kept: dict) -> list:
                 )
             out.append(line + ".")
 
-    for ds in ("flat30", "uneven"):
+    for ds in ("flat30", "uneven", "farm", "farm[J80]"):
         b = _pick(kept, "05_encodings", ds, "BEST_PER_CHUNK sorted", "ratio_to_gzip9")
         raw = _pick(kept, "05_encodings", ds, "BEST_PER_CHUNK sorted", "ratio_to_raw")
         sort = _pick(kept, "05_encodings", ds, "verdict", "sort_saving_pct")
