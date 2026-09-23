@@ -110,6 +110,18 @@ impl ColValue {
             ColValue::Null => Value::Null,
         }
     }
+
+    /// The value as a query prints it when nothing records how it was written: `to_json`,
+    /// except a `Datetime`, which is RFC 3339 through the one renderer in `fmt`.
+    ///
+    /// A row carries the JSON its line wrote only where this would not give it back, so
+    /// this is also what "the line wrote exactly this" is checked against.
+    pub fn printed(&self) -> serde_json::Value {
+        match self {
+            ColValue::Datetime(ns) => serde_json::Value::String(crate::fmt::rfc3339(*ns)),
+            other => other.to_json(),
+        }
+    }
 }
 
 /// Which rung of the ladder read a `Datetime`, so a later widening can be undone.
@@ -130,56 +142,6 @@ pub enum DtForm {
     Rfc3339,
     EpochSecs,
     EpochMillis,
-}
-
-impl DtForm {
-    /// The `.col` header byte, in the order the storage format lists them.
-    pub fn byte(self) -> u8 {
-        match self {
-            DtForm::Mixed => 0,
-            DtForm::Rfc3339 => 1,
-            DtForm::EpochSecs => 2,
-            DtForm::EpochMillis => 3,
-        }
-    }
-
-    pub fn from_byte(b: u8) -> Option<Self> {
-        match b {
-            0 => Some(DtForm::Mixed),
-            1 => Some(DtForm::Rfc3339),
-            2 => Some(DtForm::EpochSecs),
-            3 => Some(DtForm::EpochMillis),
-            _ => None,
-        }
-    }
-
-    /// The form of a whole partition, folded one row at a time.
-    ///
-    /// Set only where every row came from the same rung: two rungs in one partition is
-    /// `Mixed`, and `Mixed` absorbs everything after it. `None` is the identity, as it is
-    /// in the type lattice - a column with no datetimes yet claims nothing.
-    pub fn merge(a: Option<DtForm>, b: Option<DtForm>) -> Option<DtForm> {
-        match (a, b) {
-            (None, other) | (other, None) => other,
-            (Some(x), Some(y)) if x == y => Some(x),
-            _ => Some(DtForm::Mixed),
-        }
-    }
-
-    /// The text a promotion to `String` should write, inverting the rung.
-    ///
-    /// The RFC 3339 case is *canonical*, not original: the offset the sender wrote and any
-    /// sub-second digits beyond what chrono renders are already gone. Accepted - the
-    /// alternative is keeping the raw text beside every timestamp, which is the column
-    /// store this one exists instead of.
-    pub fn render(self, ns: i64) -> String {
-        match self {
-            DtForm::EpochSecs => (ns / 1_000_000_000).to_string(),
-            DtForm::EpochMillis => (ns / 1_000_000).to_string(),
-            DtForm::Rfc3339 | DtForm::Mixed => chrono::DateTime::from_timestamp_nanos(ns)
-                .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
-        }
-    }
 }
 
 /// One value on one line: the type the type ladder chose, plus the decoded value.

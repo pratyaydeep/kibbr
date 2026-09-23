@@ -68,6 +68,10 @@ pub struct ParsedLog {
     pub values: HashMap<String, String>,
     /// Inferred, for the keys that stayed values.
     pub typed_values: HashMap<String, Typed>,
+    /// The JSON value the line wrote, for each key whose stored value would not print it
+    /// back: `"0045000012"` beside the `Int64`, `1705312200` beside the `Datetime`. Every
+    /// other key's value prints as written, and is not repeated here.
+    pub written: HashMap<String, Value>,
     /// Keys promoted into the fingerprint, in fingerprint order.
     pub promoted: Vec<String>,
     pub fingerprint: String,
@@ -456,6 +460,7 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
     let mut keys = Vec::with_capacity(pairs.len());
     let mut values = HashMap::with_capacity(pairs.len());
     let mut typed_values = HashMap::new();
+    let mut written = HashMap::new();
     let mut promoted = Vec::new();
     let mut tokens = Vec::with_capacity(pairs.len());
 
@@ -475,7 +480,24 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
             infer(&raw)
         };
 
-        if is_promotable(path.last().unwrap_or_default(), &typed, &raw) {
+        // What the line said, beside the value the row will hold for this key - a
+        // promoted key holds its text. An array is text: it is stored as its JSON and comes
+        // back as that string.
+        let said = match leaf {
+            Value::Array(_) | Value::Object(_) => Value::String(raw.clone()),
+            other => other,
+        };
+        let promote = is_promotable(path.last().unwrap_or_default(), &typed, &raw);
+        let held = if promote {
+            ColValue::String(raw.clone())
+        } else {
+            typed.value.clone()
+        };
+        if held.printed() != said {
+            written.insert(key.clone(), said);
+        }
+
+        if promote {
             tokens.push(Token::Promoted {
                 key: key.clone(),
                 value: raw.clone(),
@@ -515,6 +537,7 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
         keys,
         values,
         typed_values,
+        written,
         promoted,
         fingerprint,
         // Filled in by the caller, which is the only thing that knows what it has

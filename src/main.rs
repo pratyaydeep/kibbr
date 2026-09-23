@@ -9,6 +9,7 @@ mod error;
 mod farm;
 mod flatten;
 mod fmt;
+mod frame;
 mod gen;
 mod infer;
 mod key;

@@ -26,22 +26,21 @@
 //! failed start: the same reasoning `triefile` gives - an operator cannot repair this by
 //! hand, and a crash loop is worse than a warning.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::store::segment::crc32c;
+use crate::frame::{self, Log, LogError};
 use crate::types::ColumnType;
 
 /// The file, inside the data directory so one path moves everything.
 pub const CATALOG_FILE_NAME: &str = "catalog.log";
 
 /// `payload_len` + `crc`.
-const HEADER: usize = 8;
+#[cfg(test)]
+const HEADER: usize = frame::HEADER;
 
 /// A payload longer than this is a bad length, not a record. A template record is a few
 /// hundred bytes; a length field reading in the megabytes is a torn or foreign write,
@@ -77,6 +76,16 @@ pub enum CatalogError {
         #[source]
         source: std::io::Error,
     },
+}
+
+impl From<LogError> for CatalogError {
+    fn from(e: LogError) -> Self {
+        match e {
+            LogError::Io { path, source } => CatalogError::Io { path, source },
+            LogError::Torn { path, offset } => CatalogError::Torn { path, offset },
+            LogError::SyncDir { path, source, .. } => CatalogError::SyncDir { path, source },
+        }
+    }
 }
 
 // ── Records ────────────────────────────────────────────────────────────────────────
@@ -153,62 +162,46 @@ pub struct Parsed {
 }
 
 /// The frame for one record.
+#[cfg(test)]
 pub fn frame(record: &Record) -> Result<Vec<u8>, serde_json::Error> {
-    let payload = serde_json::to_vec(record)?;
-    let mut out = Vec::with_capacity(HEADER + payload.len());
-    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    out.extend_from_slice(&crc32c(&payload).to_le_bytes());
-    out.extend_from_slice(&payload);
-    Ok(out)
+    Ok(frame::frame(&serde_json::to_vec(record)?))
 }
 
 /// Every intact record from the start of `bytes`, stopping at the first tear.
 ///
 /// Never panics and never fails: the worst input is a file that reads as empty. The
 /// restart test truncates a catalog at every byte offset and asks for the intact prefix.
+#[cfg(test)]
 pub fn parse(bytes: &[u8]) -> Parsed {
-    let mut parsed = Parsed::default();
-    let mut at = 0usize;
-    loop {
-        let Some(header) = bytes.get(at..at + HEADER) else {
-            if at < bytes.len() {
-                parsed.torn_at = Some(at as u64);
-            }
-            return parsed;
-        };
-        let len = u32::from_le_bytes(header[..4].try_into().unwrap_or([0; 4]));
-        let want = u32::from_le_bytes(header[4..].try_into().unwrap_or([0; 4]));
-        if len > MAX_PAYLOAD {
-            parsed.torn_at = Some(at as u64);
-            return parsed;
-        }
-        let start = at + HEADER;
-        let Some(payload) = bytes.get(start..start + len as usize) else {
-            parsed.torn_at = Some(at as u64);
-            return parsed;
-        };
-        if crc32c(payload) != want {
-            parsed.torn_at = Some(at as u64);
-            return parsed;
-        }
-        match serde_json::from_slice::<Record>(payload) {
-            Ok(record) => parsed.records.push(record),
-            Err(e) => {
-                // The CRC held, so these are the bytes that were written. Look for the
-                // kind before calling it malformed: a kind this build does not know is
-                // the one case the format promises to step over quietly.
-                let kind = serde_json::from_slice::<KindOnly>(payload)
-                    .ok()
-                    .and_then(|k| k.kind);
-                match kind {
-                    Some(kind) if !KNOWN_KINDS.contains(&kind.as_str()) => {
-                        parsed.unknown.push((at as u64, kind));
-                    }
-                    _ => parsed.malformed.push((at as u64, e.to_string())),
+    let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
+    let mut parsed = Parsed {
+        torn_at,
+        ..Parsed::default()
+    };
+    for (at, payload) in frames {
+        decode(&mut parsed, at, payload);
+    }
+    parsed
+}
+
+/// One intact payload into `parsed`: a record, an unknown kind, or a malformed one.
+fn decode(parsed: &mut Parsed, at: u64, payload: &[u8]) {
+    match serde_json::from_slice::<Record>(payload) {
+        Ok(record) => parsed.records.push(record),
+        Err(e) => {
+            // The CRC held, so these are the bytes that were written. Look for the kind
+            // before calling it malformed: a kind this build does not know is the one
+            // case the format promises to step over quietly.
+            let kind = serde_json::from_slice::<KindOnly>(payload)
+                .ok()
+                .and_then(|k| k.kind);
+            match kind {
+                Some(kind) if !KNOWN_KINDS.contains(&kind.as_str()) => {
+                    parsed.unknown.push((at, kind));
                 }
+                _ => parsed.malformed.push((at, e.to_string())),
             }
         }
-        at = start + len as usize;
     }
 }
 
@@ -218,18 +211,13 @@ const KNOWN_KINDS: &[&str] = &["template", "column", "time_source"];
 struct KindOnly {
     kind: Option<String>,
 }
-
 // ── The file ───────────────────────────────────────────────────────────────────────
 
-/// An open catalog, positioned at its end.
+/// An open catalog, positioned at its end. The file mechanics - truncating a torn tail,
+/// fsyncing a new file's directory, rolling back a failed append - are `frame::Log`'s,
+/// shared with `manifest.log`.
 pub struct Catalog {
-    path: PathBuf,
-    file: File,
-    /// The byte the next record starts at. Kept here rather than asked of the file so a
-    /// failed append can be rolled back to a known boundary.
-    end: u64,
-    /// Set when a rollback failed. See `CatalogError::Torn`.
-    torn: Option<u64>,
+    log: Log,
 }
 
 impl Catalog {
@@ -243,36 +231,24 @@ impl Catalog {
         path: &Path,
         warn: &mut dyn FnMut(String),
     ) -> Result<(Self, Vec<Record>), CatalogError> {
-        Self::open_with(path, warn, &mut sync_dir)
+        Self::open_with(path, warn, &mut frame::sync_dir)
     }
 
     /// `open`, with the directory fsync handed in so a test can count it and fail it.
-    ///
-    /// **A file this call creates has its directory fsynced before anything is appended.**
-    /// `sync_all` on the file makes its bytes durable and says nothing about the entry
-    /// naming it: after a crash the first record can be on disk in a file that is not in
-    /// the directory, and the line that record let in was counted as ingested. Once, on
-    /// creation - an existing file's entry was made durable by the start that created it.
-    ///
-    /// If that fsync fails the new file is removed before the error is returned. Left in
-    /// place, the next start would find a catalog and skip the one-time `trie.json`
-    /// migration, and every leaf would be an orphan beside an empty catalog.
     fn open_with(
         path: &Path,
         warn: &mut dyn FnMut(String),
         sync_dir: &mut dyn FnMut(&Path) -> std::io::Result<()>,
     ) -> Result<(Self, Vec<Record>), CatalogError> {
         let display = path.display().to_string();
-        let io = |source| CatalogError::Io {
-            path: display.clone(),
-            source,
+        let (log, opened) = Log::open_with(path, MAX_PAYLOAD, sync_dir)?;
+        let mut parsed = Parsed {
+            torn_at: opened.torn_at,
+            ..Parsed::default()
         };
-        let (bytes, creating) = match fs::read(path) {
-            Ok(bytes) => (bytes, false),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), true),
-            Err(e) => return Err(io(e)),
-        };
-        let parsed = parse(&bytes);
+        for (at, payload) in opened.payloads() {
+            decode(&mut parsed, at, payload);
+        }
         for (offset, kind) in &parsed.unknown {
             warn(format!(
                 "{display}: record at offset {offset} has kind `{kind}`, which this build does \
@@ -285,76 +261,26 @@ impl Catalog {
                  skipped"
             ));
         }
-        let end = match parsed.torn_at {
-            Some(offset) => {
-                warn(format!(
-                    "{display}: torn record at offset {offset} of {}; truncated to the {} \
-                     intact record(s) before it",
-                    bytes.len(),
-                    parsed.records.len()
-                ));
-                offset
-            }
-            None => bytes.len() as u64,
-        };
-
-        // Not `append(true)`: an append-mode handle ignores `set_len` + seek for the
-        // rollback in `append`, and `O_APPEND` writes land wherever the file ends, which
-        // after a failed rollback is not a record boundary.
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(io)?;
-        if creating {
-            let dir = parent_of(path);
-            if let Err(source) = sync_dir(dir) {
-                drop(file);
-                let _ = fs::remove_file(path);
-                return Err(CatalogError::SyncDir {
-                    path: dir.display().to_string(),
-                    source,
-                });
-            }
+        if let Some(offset) = parsed.torn_at {
+            warn(format!(
+                "{display}: torn record at offset {offset} of {}; truncated to the {} \
+                 intact record(s) before it",
+                opened.bytes.len(),
+                parsed.records.len()
+            ));
         }
-        if end < bytes.len() as u64 {
-            file.set_len(end).map_err(io)?;
-            file.sync_all().map_err(io)?;
-        }
-        file.seek(SeekFrom::Start(end)).map_err(io)?;
-
-        Ok((
-            Self {
-                path: path.to_path_buf(),
-                file,
-                end,
-                torn: None,
-            },
-            parsed.records,
-        ))
+        Ok((Self { log }, parsed.records))
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.log.path()
     }
 
-    /// A catalog whose every append fails: the handle is read-only, so `write_all` is
-    /// refused by the kernel. What a full disk or a dead mount looks like from here.
+    /// A catalog whose every append fails: what a full disk or a dead mount looks like.
     #[cfg(test)]
     pub fn read_only(path: &Path) -> Result<Self, CatalogError> {
-        let io = |source| CatalogError::Io {
-            path: path.display().to_string(),
-            source,
-        };
-        fs::write(path, b"").map_err(io)?;
-        let file = File::open(path).map_err(io)?;
         Ok(Self {
-            path: path.to_path_buf(),
-            file,
-            end: 0,
-            torn: None,
+            log: Log::read_only(path)?,
         })
     }
 
@@ -370,51 +296,22 @@ impl Catalog {
     /// a tear is a record the next start cannot see, and rejecting the line now is the
     /// honest answer.
     pub fn append(&mut self, records: &[Record]) -> Result<(), CatalogError> {
-        let display = self.path.display().to_string();
-        if let Some(offset) = self.torn {
-            return Err(CatalogError::Torn {
-                path: display,
-                offset,
-            });
-        }
-        let mut bytes = Vec::new();
+        let mut payloads = Vec::with_capacity(records.len());
         for record in records {
-            bytes.extend(frame(record).map_err(|source| CatalogError::Serialize {
-                path: display.clone(),
-                kind: record.kind(),
-                source,
+            payloads.push(serde_json::to_vec(record).map_err(|source| {
+                CatalogError::Serialize {
+                    path: self.log.path().display().to_string(),
+                    kind: record.kind(),
+                    source,
+                }
             })?);
         }
-        let start = self.end;
-        let written = self
-            .file
-            .write_all(&bytes)
-            .and_then(|()| self.file.sync_all());
-        match written {
-            Ok(()) => {
-                self.end = start + bytes.len() as u64;
-                Ok(())
-            }
-            Err(source) => {
-                let rolled_back = self
-                    .file
-                    .set_len(start)
-                    .and_then(|()| self.file.seek(SeekFrom::Start(start)))
-                    .is_ok();
-                if !rolled_back {
-                    self.torn = Some(start);
-                }
-                Err(CatalogError::Io {
-                    path: display,
-                    source,
-                })
-            }
-        }
+        Ok(self.log.append(&payloads)?)
     }
 
     /// Bytes on disk, as of the last successful append.
     pub fn len(&self) -> u64 {
-        self.end
+        self.log.len()
     }
 }
 
@@ -423,22 +320,10 @@ pub fn path_in(data_dir: &Path) -> PathBuf {
     data_dir.join(CATALOG_FILE_NAME)
 }
 
-/// The directory holding `path`; `.` for a bare file name.
-fn parent_of(path: &Path) -> &Path {
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    }
-}
-
-/// fsync a directory, so the entries in it survive a crash.
-fn sync_dir(dir: &Path) -> std::io::Result<()> {
-    File::open(dir).and_then(|handle| handle.sync_all())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::{self, File};
 
     fn template(id: u64) -> Record {
         Record::Template {
@@ -505,7 +390,7 @@ mod tests {
         let payload = &bytes[HEADER..];
         assert_eq!(
             u32::from_le_bytes(bytes[4..8].try_into().expect("4 bytes")),
-            crc32c(payload)
+            frame::crc32c(payload)
         );
         let json: serde_json::Value = serde_json::from_slice(payload).expect("json");
         assert_eq!(json["kind"], "template");
@@ -584,7 +469,7 @@ mod tests {
         let foreign = br#"{"kind":"merge","template_id":101,"into":102}"#;
         let skip_at = bytes.len();
         bytes.extend_from_slice(&(foreign.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&crc32c(foreign).to_le_bytes());
+        bytes.extend_from_slice(&frame::crc32c(foreign).to_le_bytes());
         bytes.extend_from_slice(foreign);
         bytes.extend(bytes_of(&[template(102)]));
 

@@ -34,34 +34,142 @@
 // predicate from a `Match` that still has its key. See `engine::execute`.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
 use crate::infer::infer;
-use crate::types::{ColValue, DtForm};
+use crate::types::ColValue;
 
 pub mod disk;
+pub mod manifest;
 pub mod memory;
-pub mod segment;
+pub mod v3;
 
 pub use disk::DiskStore;
 pub use memory::MemoryStore;
 
+/// One row: each key's value as the ladder read it, and - only where printing that value
+/// would not give back what the line said - the JSON value the line said.
+///
+/// **What goes in comes back out.** A query returns the JSON value that was ingested: a
+/// string character for character, a number as the same number. `"0045000012"` is an
+/// `Int64` to every comparison and the ten characters to every answer; `1705312200` is a
+/// `Datetime` to the time window and a JSON number to the answer. The value is what a
+/// query compares against, and folding the spelling into it would change what
+/// `ts=1705314600` matches; so the spelling rides beside it, and is kept only for the few
+/// values whose canonical print differs - a plain string or a JSON integer costs nothing.
+///
 /// Absence on a line is `ColValue::Null`, not a missing entry - the row is built from the
 /// leaf's key set, and the key set is the path.
-pub type Row = std::collections::HashMap<String, ColValue>;
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Row {
+    values: HashMap<String, ColValue>,
+    written: HashMap<String, serde_json::Value>,
+}
+
+impl std::ops::Deref for Row {
+    type Target = HashMap<String, ColValue>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+
+impl<'a> IntoIterator for &'a Row {
+    type Item = (&'a String, &'a ColValue);
+    type IntoIter = std::collections::hash_map::Iter<'a, String, ColValue>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.iter()
+    }
+}
+
+impl FromIterator<(String, ColValue)> for Row {
+    fn from_iter<I: IntoIterator<Item = (String, ColValue)>>(iter: I) -> Self {
+        Self {
+            values: iter.into_iter().collect(),
+            written: HashMap::new(),
+        }
+    }
+}
+
+impl Row {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_capacity(n: usize) -> Self {
+        Self {
+            values: HashMap::with_capacity(n),
+            written: HashMap::new(),
+        }
+    }
+
+    /// A value whose canonical print is what the line said.
+    pub fn insert(&mut self, key: String, value: ColValue) -> Option<ColValue> {
+        self.written.remove(&key);
+        self.values.insert(key, value)
+    }
+
+    /// A value, and the JSON the line said where that differs from its canonical print.
+    /// Passing JSON equal to the canonical print keeps nothing, so every source of rows -
+    /// the parser, the stores, the oracle - ends with the same row for the same line.
+    pub fn insert_written(
+        &mut self,
+        key: String,
+        value: ColValue,
+        written: Option<serde_json::Value>,
+    ) {
+        match written {
+            Some(json) if json != value.printed() => {
+                self.written.insert(key.clone(), json);
+            }
+            _ => {
+                self.written.remove(&key);
+            }
+        }
+        self.values.insert(key, value);
+    }
+
+    /// Replace the value a query compares against and keep what the line said - the text a
+    /// widened date column is matched as, over the JSON the answer still prints.
+    pub fn set_value(&mut self, key: &str, value: ColValue) {
+        if let Some(slot) = self.values.get_mut(key) {
+            let before = std::mem::replace(slot, value);
+            if !self.written.contains_key(key) {
+                self.written.insert(key.to_string(), before.printed());
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.values.clear();
+        self.written.clear();
+    }
+
+    /// The JSON the line said for `key`, when it is not the value's canonical print.
+    pub fn written(&self, key: &str) -> Option<&serde_json::Value> {
+        self.written.get(key)
+    }
+
+    /// The JSON value the line said for `key`: what an answer prints.
+    pub fn json(&self, key: &str) -> Option<serde_json::Value> {
+        let value = self.values.get(key)?;
+        Some(
+            self.written
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| value.printed()),
+        )
+    }
+}
 
 /// Passed beside `ScanOptions` rather than inside it: `Box<dyn Fn>` is not `Clone`, which
 /// would cost `ScanOptions` its `Default`.
 pub type Predicate = Box<dyn Fn(&Row) -> bool + Send + Sync>;
-
-/// The `dt_form` evidence one row carries, per Datetime column. Beside the `Row` rather
-/// than inside it, because `ColValue` is what a query compares against and a rung tag in
-/// there would change what `ts=1705314600` matches. See `types::DtForm`.
-pub type DtForms = [(String, DtForm)];
 
 /// The column a time filter reads when none is named. A fallback for a `_leaf.json` that
 /// predates the time source; every current caller names the column.
@@ -97,8 +205,7 @@ pub struct ScanOptions {
     /// back to `RECEIVED_AT_COLUMN` on a row where it holds no `Datetime`.
     pub ts_column: Option<String>,
     /// Columns whose type is now `String`. A value stored as a `Datetime` in one of them
-    /// is rendered back to the text it arrived as, through the chunk's own `dt_form`
-    /// before anything reads the row.
+    /// is compared as the text it arrived as, before anything reads the row.
     pub text_columns: Vec<String>,
 }
 
@@ -112,21 +219,27 @@ pub enum StoreError {
         #[source]
         source: std::io::Error,
     },
+    /// A leaf's rows could not be written: the leaf, then why.
+    #[error("leaf {template_id}: {source}")]
+    Leaf {
+        template_id: u64,
+        #[source]
+        source: Box<StoreError>,
+    },
     #[error(transparent)]
-    Segment(#[from] segment::SegError),
-    /// A row group with no segment to go in. Not reachable: the write path opens one
-    /// where there is none, and nothing between the two can close it. Here because it was
-    /// a panic on an unreachable branch, and an assumption that turns out to be wrong
-    /// should cost one flush rather than the process.
-    #[error("leaf {template_id}: partition {partition} has rows to write and no open segment")]
-    NoOpenSegment { template_id: u64, partition: String },
-    /// One file per (template, day, column), which this build does not read. There is no
-    /// upgrade path and no migration: the path is named and the process exits non-zero,
-    /// rather than reading bytes it would have to guess the meaning of.
+    Format(#[from] v3::FormatError),
+    #[error(transparent)]
+    Build(#[from] v3::build::BuildError),
+    #[error(transparent)]
+    Manifest(#[from] manifest::ManifestError),
+    /// A layout from before format v3 - a `leaf_<id>` directory, or a segment of another
+    /// version. There is no upgrade path and no migration: the path is named and the
+    /// process exits non-zero, rather than reading bytes it would have to guess the
+    /// meaning of.
     #[error(
-        "{path}: this data directory was written by the per-column layout, which this \
-         build cannot read. There is no migration - point --data-dir somewhere else, or \
-         remove it and re-ingest."
+        "{path}: this data directory holds an earlier storage layout, which this build \
+         cannot read. There is no migration - point --data-dir somewhere else, or remove it \
+         and re-ingest."
     )]
     LegacyLayout { path: std::path::PathBuf },
 }
@@ -166,125 +279,27 @@ pub struct Scan {
     pub matched: u64,
 }
 
-// ── The cap on open segment files ──────────────────────────────────────────────────
+// ── The cap on open data files ─────────────────────────────────────────────────────
 
-/// How many segment files may be open for writing at once, across every leaf.
-///
-/// A segment stays open after its row group closes, so on the as-built store the count is
-/// "partitions that have taken a row and not been sealed" - one per (template, day), with
-/// nothing bounding it. 20,000 generated lines are 823 templates over 31 days, which is
-/// about 20,000 of them; the operating system's descriptor limit arrives long before
-/// that, and what arrives with it is a flush that fails, a half-created file that makes
-/// every retry fail with `File exists`, and rows that never leave memory.
+/// How many data files may be open for writing at once. One is open per UTC day that has
+/// taken a row since it was last sealed, so this bounds the days a burst of late rows can
+/// keep open; past it the least recently written day's file is sealed, and the next row
+/// for that day opens the next file number.
 pub const DEFAULT_MAX_OPEN_SEGMENTS: usize = 512;
-
-/// One open segment file: the leaf, and the partition inside it.
-///
-/// `day` is `Some(days since the epoch)` or `None` for the undated partition - the two
-/// shapes the disk store has. `Copy`, because the most recently written segment moves to
-/// the back of the order once per row group and an allocation there would buy nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SegmentKey {
-    pub template_id: u64,
-    pub day: Option<i64>,
-}
-
-/// The open segments, in least recently written order, and the cap on how many there may
-/// be.
-///
-/// **It counts and orders; it does not seal.** Sealing needs `&mut` on the leaf that owns
-/// the segment, and a registry that held the writers would have to hand the sealed index
-/// back to that leaf for a query to find its rows. So the registry answers "which leaf
-/// holds the oldest one" and the two callers that can act on that do:
-///
-/// - a leaf about to open a segment seals **its own** oldest first, which is always
-///   possible once it has one and is what keeps a single leaf's flush from overshooting
-///   while it works through thirty-one days;
-/// - `StoreManager::flush_all` reaps between leaves, where it has `&mut` on all of them.
-///
-/// A `Vec` and a linear scan rather than a heap: it holds at most `max` entries and is
-/// touched once per row group, not once per row.
-pub struct OpenSegments {
-    max: usize,
-    order: std::sync::Mutex<Vec<SegmentKey>>,
-}
-
-impl OpenSegments {
-    pub fn new(max: usize) -> Self {
-        Self {
-            max,
-            order: std::sync::Mutex::new(Vec::new()),
-        }
-    }
-
-    pub fn max(&self) -> usize {
-        self.max
-    }
-
-    /// A poisoned lock is recovered from rather than propagated, as every other lock in
-    /// this crate is: the contents are an ordering hint, and there is no torn state in a
-    /// `Vec` of `Copy` keys to inherit.
-    fn order(&self) -> std::sync::MutexGuard<'_, Vec<SegmentKey>> {
-        self.order.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    pub fn len(&self) -> usize {
-        self.order().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Would one more pass the cap?
-    pub fn full(&self) -> bool {
-        self.len() >= self.max
-    }
-
-    /// Record a write to this segment - the first one, which opened it, or a later one.
-    /// Either way it becomes the most recently written.
-    pub fn wrote(&self, key: SegmentKey) {
-        let mut order = self.order();
-        order.retain(|held| *held != key);
-        order.push(key);
-    }
-
-    pub fn closed(&self, key: SegmentKey) {
-        self.order().retain(|held| *held != key);
-    }
-
-    /// The least recently written open segment.
-    pub fn oldest(&self) -> Option<SegmentKey> {
-        self.order().first().copied()
-    }
-
-    /// The least recently written open segment belonging to one leaf.
-    ///
-    /// Which is also the global victim whenever the global victim is that leaf's: the
-    /// leaf's own order is a subsequence of this one.
-    pub fn oldest_of(&self, template_id: u64) -> Option<SegmentKey> {
-        self.order()
-            .iter()
-            .find(|key| key.template_id == template_id)
-            .copied()
-    }
-}
 
 /// What a flush is being asked to do.
 ///
 /// **Closing a row group and sealing a segment are two different events**: this is the
 /// difference between "close whatever a threshold fired on" and "close everything, seal".
 ///
-/// Not a durability switch, and that changed with the format. The per-column layout could
-/// not afford an fsync per tick - one per column file is tens of milliseconds, and a
-/// half-second tick over a few hundred templates spent minutes in the kernel and never
-/// caught up. A row group is one fsync for up to 8,192 rows of every column at once, so
-/// closing always fsyncs and the only question left is whether it is time to close.
+/// Not a durability switch: a row group is one fsync for up to 8,192 rows of every column
+/// at once, so closing always fsyncs and the only question left is whether it is time to
+/// close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlushKind {
     /// The interval. Closes a row group only where a threshold says so.
     Tick,
-    /// Graceful shutdown. Closes every buffer and seals every open segment.
+    /// Graceful shutdown. Closes every buffer and seals every open file.
     Final,
 }
 
@@ -383,25 +398,10 @@ pub trait LeafStore: Send + Sync {
     ///
     /// No I/O and no clock: this half has to stay synchronous and cheap, because it runs
     /// once per ingested line.
-    fn append(&mut self, row: Row, forms: &DtForms) -> u64;
+    fn append(&mut self, row: Row) -> u64;
 
     /// Write the buffer out. Synchronous, and called by whoever owns the clock.
     fn flush(&mut self, kind: FlushKind) -> Result<Flushed, StoreError>;
-
-    /// Seal this leaf's least recently written open segment, and say whether there was
-    /// one. What `StoreManager` calls to get back under `OpenSegments::max`.
-    ///
-    /// **Always safe**, which is what makes the cap a cap rather than a refusal: the next
-    /// row for that partition opens the next segment number, and a sealed file is a
-    /// complete file. The cost is one more file, paid where the alternative is a
-    /// descriptor the process does not have.
-    ///
-    /// Defaulted to "there was none" for a store that holds no files. That is not a
-    /// guess about a second implementation - the memory store is the second
-    /// implementation, and it has no segments to seal.
-    fn seal_lru(&mut self) -> Result<bool, StoreError> {
-        Ok(false)
-    }
 
     /// Hand every surviving row to `v`. The one place filtering happens, so the count,
     /// fetch and group-by paths cannot drift.
@@ -450,11 +450,20 @@ pub trait Store: Send + Sync {
     /// For the banner and `/stats`.
     fn kind(&self) -> &'static str;
     fn base_path(&self) -> Option<&Path>;
-    /// The registry every leaf this backend makes shares. A backend that holds no files
-    /// hands back an empty one rather than an `Option`, so the manager has one thing to
-    /// read rather than two cases.
-    fn open_segments(&self) -> std::sync::Arc<OpenSegments> {
-        std::sync::Arc::new(OpenSegments::new(0))
+    /// Data files open for writing, and the cap they are held under. A backend that holds
+    /// no files has none.
+    fn open_files(&self) -> (usize, usize) {
+        (0, 0)
+    }
+    /// Seal every open file: the last step of a final flush, once every leaf has closed
+    /// its buffers. Nothing to do for a backend that holds no files.
+    fn seal(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+    /// Template ids that stored rows already name, whether or not a template knows them:
+    /// what a restart must not hand out again.
+    fn claimed(&self) -> Vec<u64> {
+        Vec::new()
     }
 }
 
@@ -495,8 +504,7 @@ impl WriteHealth {
         *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(detail);
     }
 
-    /// A write failed outside a flush tick - a leaf that could not be opened, a reap that
-    /// could not seal. Set here and cleared only by a tick, so the clearing rule stays in
+    /// A write failed outside a flush tick - a leaf that could not be opened. Set here and cleared only by a tick, so the clearing rule stays in
     /// one place.
     fn degrade(&self) {
         self.degraded
@@ -536,22 +544,17 @@ pub struct StoreManager {
     /// on. Retried every flush, and while any is still here the store is degraded: see
     /// `retry_unopened`.
     unopened: BTreeMap<u64, String>,
-    /// The open segment files, shared with every leaf the backend makes. The manager is
-    /// the only thing that can seal one leaf's segment to make room for another's.
-    open_segments: std::sync::Arc<OpenSegments>,
     health: std::sync::Arc<WriteHealth>,
 }
 
 impl StoreManager {
     pub fn new(backend: Box<dyn Store>) -> Self {
-        let open_segments = backend.open_segments();
         Self {
             backend,
             stores: BTreeMap::new(),
             write_failures: 0,
             rows_dropped: 0,
             unopened: BTreeMap::new(),
-            open_segments,
             health: std::sync::Arc::new(WriteHealth::default()),
         }
     }
@@ -563,12 +566,14 @@ impl StoreManager {
     pub fn disk(
         base: std::path::PathBuf,
         limits: RowGroupLimits,
-        max_open_segments: usize,
+        max_open_files: usize,
+        segment_max_bytes: u64,
     ) -> Result<Self, StoreError> {
-        Ok(Self::new(Box::new(DiskStore::new(
+        Ok(Self::new(Box::new(DiskStore::open(
             base,
             limits,
-            max_open_segments,
+            max_open_files,
+            segment_max_bytes,
         )?)))
     }
 
@@ -577,9 +582,14 @@ impl StoreManager {
         std::sync::Arc::clone(&self.health)
     }
 
-    /// Segment files open for writing, and the cap they are held under.
-    pub fn open_segments(&self) -> (usize, usize) {
-        (self.open_segments.len(), self.open_segments.max())
+    /// Data files open for writing, and the cap they are held under.
+    pub fn open_files(&self) -> (usize, usize) {
+        self.backend.open_files()
+    }
+
+    /// Template ids stored rows already name. See `Store::claimed`.
+    pub fn claimed_template_ids(&self) -> Vec<u64> {
+        self.backend.claimed()
     }
 
     /// Open the store on first write, then buffer the row.
@@ -599,7 +609,6 @@ impl StoreManager {
         template_id: u64,
         time_column: &str,
         row: Row,
-        forms: &DtForms,
     ) -> Result<(), StoreError> {
         if !self.stores.contains_key(&template_id) {
             match self.backend.open(template_id, time_column) {
@@ -616,7 +625,7 @@ impl StoreManager {
             }
         }
         if let Some(store) = self.stores.get_mut(&template_id) {
-            store.append(row, forms);
+            store.append(row);
         }
         Ok(())
     }
@@ -627,10 +636,10 @@ impl StoreManager {
         &mut self,
         template_id: u64,
         time_column: &str,
-        rows: impl IntoIterator<Item = (Row, Vec<(String, DtForm)>)>,
+        rows: impl IntoIterator<Item = Row>,
     ) -> Result<(), StoreError> {
-        for (row, forms) in rows {
-            self.append(template_id, time_column, row, &forms)?;
+        for row in rows {
+            self.append(template_id, time_column, row)?;
         }
         Ok(())
     }
@@ -688,45 +697,40 @@ impl StoreManager {
         self.stores.get(&template_id).map(AsRef::as_ref)
     }
 
-    /// Write every open store's buffer, and get back under the open-segment cap.
+    /// Write every open store's buffer; on a final flush, then seal every open file.
     ///
     /// Never returns `Err`: one leaf failing is collected into the summary and the rest
     /// are still written.
-    ///
-    /// **Iterated over a snapshot of the ids rather than over the map.** Reaping between
-    /// leaves needs `&mut` on a leaf other than the one just flushed, which a
-    /// `&mut self.stores` iterator would not allow - and reaping only at the end would let
-    /// a pass of five hundred leaves overshoot the cap by five hundred before anything
-    /// noticed.
     pub fn flush_all(&mut self, kind: FlushKind) -> FlushSummary {
         let mut summary = FlushSummary::default();
         let mut failures = Vec::new();
-        // Counted apart from `summary.failed`, which is leaves whose flush failed and is
-        // what the shutdown reports rows against. A reap that could not seal is still a
-        // store that cannot write, so it reaches the verdict below - without that, a pass
-        // whose only failure was a reap would end by *clearing* `degraded`.
-        let mut reap_failures = 0usize;
-        let ids: Vec<u64> = self.stores.keys().copied().collect();
-        for id in ids {
-            if let Some(store) = self.stores.get_mut(&id) {
-                match store.flush(kind) {
-                    Ok(done) => {
-                        summary.rows += done.rows;
-                        summary.partitions += done.partitions;
-                        summary.bytes += done.bytes;
-                    }
-                    Err(e) => {
-                        summary.failed += 1;
-                        failures.push((id, e));
-                    }
+        for (id, store) in self.stores.iter_mut() {
+            match store.flush(kind) {
+                Ok(done) => {
+                    summary.rows += done.rows;
+                    summary.partitions += done.partitions;
+                    summary.bytes += done.bytes;
+                }
+                Err(e) => {
+                    summary.failed += 1;
+                    failures.push((*id, e));
                 }
             }
-            reap_failures += self.reap_open_segments();
+        }
+        // Counted apart from `summary.failed`, which is leaves whose rows could not be
+        // written and is what the shutdown reports rows against. A seal that failed has
+        // lost no row - the file recovers on the next start - but it is still a store
+        // that could not write, so it reaches the verdict below.
+        let mut seal_failures = 0usize;
+        if kind.is_final() {
+            if let Err(e) = self.backend.seal() {
+                seal_failures += 1;
+                failures.push((0, e));
+            }
         }
         let unopened = self.retry_unopened();
-        for (id, e) in &failures {
+        for (_, e) in &failures {
             crate::error::report(e);
-            let _ = id;
         }
         if let Some((_, e)) = failures.first() {
             self.write_failures += failures.len() as u64;
@@ -734,7 +738,7 @@ impl StoreManager {
         }
         // The verdict `/health` and `/ingest` read. A final flush sets it too: a shutdown
         // that could not write is degraded for whatever is left of the process.
-        self.health.tick(summary.failed + reap_failures + unopened);
+        self.health.tick(summary.failed + seal_failures + unopened);
         summary
     }
 
@@ -756,7 +760,7 @@ impl StoreManager {
     /// is a full `DiskLeaf::open` under the store lock each tick: nothing for a directory
     /// that will not list, a footer read per segment before the bad one for a corrupt leaf.
     ///
-    /// Counted apart from `summary.failed` for the reason reap failures are: that is leaves
+    /// Counted apart from `summary.failed` for the reason seal failures are: that is leaves
     /// whose buffered rows could not be written, which the shutdown reports as lost, and
     /// these hold none. Their rows were refused by line and are in `rows_dropped`.
     fn retry_unopened(&mut self) -> usize {
@@ -775,48 +779,6 @@ impl StoreManager {
                     self.note_failure(&e);
                     self.unopened.insert(template_id, time_column);
                 }
-            }
-        }
-        failed
-    }
-
-    /// Seal least recently written open segments until the count is back under the cap.
-    ///
-    /// **A failed seal does not stop this, and cannot make it spin.** Every path through
-    /// `seal_lru` takes the entry out of the registry - a seal that fails has still closed
-    /// the file - so each turn removes one and the loop is bounded by the overshoot. The
-    /// earlier shape returned on the first error, which left the count above the cap and
-    /// let the rest of the pass add one more per leaf, unbounded, which is the descriptor
-    /// exhaustion the cap exists to prevent.
-    ///
-    /// Each failure is counted once, where it happened, and not once per leaf afterwards.
-    /// The count comes back so the pass's verdict includes it: a reap that could not seal
-    /// is a store that cannot write, and a pass that only failed there must not end by
-    /// clearing `degraded`.
-    fn reap_open_segments(&mut self) -> usize {
-        let mut failed = 0;
-        while self.open_segments.len() > self.open_segments.max() {
-            let Some(key) = self.open_segments.oldest() else {
-                return failed;
-            };
-            let Some(store) = self.stores.get_mut(&key.template_id) else {
-                // A key for a leaf the registry no longer has. Dropped rather than left
-                // to be chosen again on every pass.
-                self.open_segments.closed(key);
-                continue;
-            };
-            match store.seal_lru() {
-                Ok(_) => {}
-                Err(e) => {
-                    failed += 1;
-                    self.note_failure(&e);
-                }
-            }
-            // Whatever happened, that entry has to be gone or this loop is the spin the
-            // early return was avoiding. `seal_lru` clears it on every path; this is the
-            // belt for a future implementation that forgets to.
-            if self.open_segments.oldest() == Some(key) {
-                self.open_segments.closed(key);
             }
         }
         failed
@@ -925,31 +887,52 @@ pub fn in_window(ts: Option<i64>, since: Option<i64>, until: Option<i64>) -> boo
     since.is_none_or(|from| ns >= from) && until.is_none_or(|to| ns < to)
 }
 
-/// A row as a query shows it: the system column under its query name, unless the row has
-/// an ingested key of that name, in which case the ingested one is shown and the system
-/// value is left out. A null system value - a segment column the row never had -
-/// is left out too.
-pub fn present(row: &Row) -> BTreeMap<String, &ColValue> {
-    let mut out: BTreeMap<String, &ColValue> = row
-        .iter()
-        .filter(|(key, _)| key.as_str() != RECEIVED_AT_COLUMN)
-        .map(|(key, value)| (key.clone(), value))
+/// A row as a query shows it, as `(name shown, key in the row)`: the system column under
+/// its query name, unless the row has an ingested key of that name, in which case the
+/// ingested one is shown and the system value is left out. A null system value - a column
+/// the row never had - is left out too.
+pub fn present(row: &Row) -> BTreeMap<String, &str> {
+    let mut out: BTreeMap<String, &str> = row
+        .keys()
+        .filter(|key| key.as_str() != RECEIVED_AT_COLUMN)
+        .map(|key| (key.clone(), key.as_str()))
         .collect();
     if let Some(system) = row.get(RECEIVED_AT_COLUMN) {
         if !matches!(system, ColValue::Null) && !out.contains_key(RECEIVED_AT_NAME) {
-            out.insert(RECEIVED_AT_NAME.to_string(), system);
+            out.insert(RECEIVED_AT_NAME.to_string(), RECEIVED_AT_COLUMN);
         }
     }
     out
 }
 
-/// A `Datetime` stored in a column that is now text, rendered back to what was ingested
-/// through the rung that read it. Every other value is returned as it is.
-pub fn render_text(value: ColValue, form: Option<DtForm>) -> ColValue {
-    match value {
-        ColValue::Datetime(ns) => ColValue::String(form.unwrap_or(DtForm::Mixed).render(ns)),
-        other => other,
+/// A `Datetime` stored in a column that is now text, as the text a query compares it
+/// against: the JSON the line said, which for a date the ladder read is its own text or
+/// its digits. Every other value is returned as it is.
+pub fn render_text(value: &ColValue, written: Option<&serde_json::Value>) -> Option<ColValue> {
+    let ColValue::Datetime(ns) = value else {
+        return None;
+    };
+    Some(ColValue::String(match written {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+        None => crate::fmt::rfc3339(*ns),
+    }))
+}
+
+/// A row with every text column's `Datetime` rendered back to the text it arrived as,
+/// or `None` when nothing in it needs rendering.
+pub fn render_row(row: &Row, text_columns: &[String]) -> Option<Row> {
+    let mut out: Option<Row> = None;
+    for column in text_columns {
+        let Some(value) = row.get(column) else {
+            continue;
+        };
+        if let Some(text) = render_text(value, row.written(column)) {
+            out.get_or_insert_with(|| row.clone())
+                .set_value(column, text);
+        }
     }
+    out
 }
 
 /// Unix nanoseconds, saturating at both ends. i64 nanos run 1677-2262; a bound outside
@@ -976,10 +959,13 @@ pub fn project(row: &Row, columns: &[String]) -> Row {
     if columns.is_empty() {
         return row.clone();
     }
-    columns
-        .iter()
-        .filter_map(|name| row.get(name).map(|v| (name.clone(), v.clone())))
-        .collect()
+    let mut out = Row::with_capacity(columns.len());
+    for name in columns {
+        if let Some(value) = row.get(name) {
+            out.insert_written(name.clone(), value.clone(), row.written(name).cloned());
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1019,7 +1005,7 @@ mod tests {
         let shut = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         let mut stores = StoreManager::new(Box::new(Shut(std::sync::Arc::clone(&shut))));
         for n in 0..3 {
-            let refused = stores.append(7, DEFAULT_TS_COLUMN, Row::new(), &[]);
+            let refused = stores.append(7, DEFAULT_TS_COLUMN, Row::new());
             assert!(
                 matches!(refused, Err(StoreError::Io { template_id: 7, .. })),
                 "row {n} was not refused: {refused:?}"
@@ -1050,7 +1036,7 @@ mod tests {
         // The count is never cleared: those rows are still gone.
         assert_eq!(stores.rows_dropped(), 3);
         stores
-            .append(7, DEFAULT_TS_COLUMN, Row::new(), &[])
+            .append(7, DEFAULT_TS_COLUMN, Row::new())
             .expect("the leaf is open now");
         assert_eq!(stores.rows(), 1);
     }
@@ -1059,7 +1045,7 @@ mod tests {
     fn a_row_the_store_takes_is_not_counted_as_dropped() {
         let mut stores = StoreManager::memory();
         stores
-            .append(7, DEFAULT_TS_COLUMN, Row::new(), &[])
+            .append(7, DEFAULT_TS_COLUMN, Row::new())
             .expect("the memory store always opens");
         assert_eq!(stores.rows_dropped(), 0);
         assert_eq!(stores.rows(), 1);

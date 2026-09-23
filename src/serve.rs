@@ -53,7 +53,6 @@ use crate::engine;
 use crate::error::{self, CliError, DetectorError, DetectorErrorKind, ServeError};
 use crate::fmt::{commas, rfc3339_at};
 use crate::query;
-use crate::store::segment::SegError;
 use crate::store::{FlushKind, StoreError, StoreManager};
 use crate::trie::Trie;
 
@@ -166,11 +165,19 @@ impl Server {
                 let data_dir = storage.data_dir();
                 let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir, &schema)?;
 
+                let mut stores = StoreManager::disk(
+                    base,
+                    storage.row_group_limits(),
+                    storage.max_open_segments,
+                    storage.segment_max_bytes,
+                )
+                .map_err(storage_fatal)?;
+
                 // Applied whatever the snapshot said, including when it parsed cleanly:
-                // the hazard is a trie that does not know about a directory, and a stale
+                // the hazard is a trie that does not know about stored rows, and a stale
                 // or hand-edited snapshot that parses is as unaware as one that did not.
                 // See `Trie::reserve_template_ids_through` for what reissuing an id costs.
-                let claimed = crate::store::disk::claimed_template_ids(&base);
+                let claimed = stores.claimed_template_ids();
                 if let Some(highest) = claimed.last() {
                     trie.reserve_template_ids_through(*highest);
                 }
@@ -187,49 +194,20 @@ impl Server {
                 let orphans = claimed.iter().filter(|id| !known.contains(id)).count();
                 if orphans > 0 {
                     log(&format!(
-                        "WARN storage - {} leaf director(ies) on disk that no template \
+                        "WARN storage - {} template id(s) with rows on disk that no template \
                          refers to; those rows are not queryable, and new templates take \
                          fresh ids rather than reusing them",
                         commas(orphans as u64)
                     ));
                 }
-                let mut stores = StoreManager::disk(
-                    base,
-                    storage.row_group_limits(),
-                    storage.max_open_segments,
-                )
-                .map_err(|e| match e {
-                        // The old layout is not a disk that failed; it is a disk holding
-                        // something this build must not read. Named and fatal.
-                        crate::store::StoreError::LegacyLayout { path } => {
-                            ServeError::LegacyLayout { path }
-                        }
-                        e => ServeError::Storage {
-                            detail: error::chain(&e),
-                        },
-                    })?;
                 for leaf in trie.all_leaves() {
                     let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
                         slot.as_ref()
                             .map(|meta| (meta.template_id, meta.time_source.column().to_string()))
                     });
                     if let Some((id, time_column)) = placed {
-                        match stores.open_existing(id, &time_column) {
-                            Ok(()) => {}
-                            // `refuse_other_versions` has already read every header before
-                            // the bind; this is a file that changed since. Fatal all the
-                            // same: the bytes are intact and this build cannot read them,
-                            // and answering 0 for that leaf would be a guess served as a
-                            // count.
-                            Err(StoreError::Segment(SegError::BadVersion { path, found })) => {
-                                return Err(ServeError::SegmentVersion { path, found });
-                            }
-                            // One unreadable leaf directory is one template answering
-                            // empty, not a server that will not start. Not ingest that
-                            // goes on around it, though: that template's first line
-                            // refuses every body until the leaf opens - see
-                            // `StoreManager::retry_unopened`.
-                            Err(e) => log(&format!("WARN leaf {id} - {}", error::chain(&e))),
+                        if let Err(e) = stores.open_existing(id, &time_column) {
+                            log(&format!("WARN leaf {id} - {}", error::chain(&e)));
                         }
                     }
                 }
@@ -285,6 +263,21 @@ impl Server {
     /// a buffer and into a row group holds this for the whole of both steps.
     fn write_stores(&self) -> RwLockWriteGuard<'_, StoreManager> {
         self.stores.write().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// A store that will not open, as the error startup exits on. An earlier layout or another
+/// format version is not a disk that failed; it is a disk holding something this build
+/// must not read, and it is named.
+fn storage_fatal(e: StoreError) -> ServeError {
+    match e {
+        StoreError::LegacyLayout { path } => ServeError::LegacyLayout { path },
+        StoreError::Format(crate::store::v3::FormatError::Version { path, found }) => {
+            ServeError::SegmentVersion { path, found }
+        }
+        e => ServeError::Storage {
+            detail: error::chain(&e),
+        },
     }
 }
 
@@ -1114,7 +1107,7 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
 /// outcome available here, so it gets a counter.
 async fn get_stats(State(server): State<Arc<Server>>) -> Response {
     let stores = server.read_stores();
-    let (open_segments, max_open_segments) = stores.open_segments();
+    let (open_segments, max_open_segments) = stores.open_files();
     let uptime = server.started.elapsed().as_secs_f64();
     let ingested = server.lines_ingested.load(Ordering::Relaxed);
     let queries = server.queries.load(Ordering::Relaxed);
@@ -1126,7 +1119,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "kind": stores.kind(),
             "durable": server.storage.is_durable(),
             "note": if server.storage.is_durable() {
-                "day partitions of segments on disk; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments files are open for writing at once, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
+                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
@@ -1144,9 +1137,8 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // costs until the write-ahead log lands.
             "row_group_timeout_ms": server.storage.row_group_timeout.as_millis() as u64,
             "stores_open": stores.open(),
-            // Segment files held open for writing, and the cap they are held under. Past
-            // it the least recently written one is sealed, so this is also how close the
-            // process is to spending a descriptor it does not have.
+            // Day files held open for writing, and the cap they are held under. Past it the
+            // least recently written one is sealed.
             "open_segments": open_segments,
             "max_open_segments": max_open_segments,
             "rows": stores.rows(),
@@ -1273,14 +1265,7 @@ async fn serve(
     // segment recovery - stays behind the bind, where a second server started on a port in
     // use fails before touching the files the first one is appending to.
     if let Some(base) = storage.base_path.as_deref() {
-        crate::store::disk::refuse_other_versions(base).map_err(|e| match e {
-            StoreError::Segment(SegError::BadVersion { path, found }) => {
-                ServeError::SegmentVersion { path, found }
-            }
-            e => ServeError::Storage {
-                detail: error::chain(&e),
-            },
-        })?;
+        crate::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
     }
 
     let addr = format!("{host}:{port}");

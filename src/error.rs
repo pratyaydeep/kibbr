@@ -266,8 +266,8 @@ pub enum ServeError {
     /// see `store::StoreError::LegacyLayout` - so this is fatal at startup rather than a
     /// warning, and it names the path so an operator can act on it without reading source.
     #[error(
-        "{path}: this data directory was written by the per-column layout (one file per \
-         template, day and column), which this build cannot read. There is no migration: \
+        "{path}: this data directory holds a storage layout from before format v3 (a \
+         directory per template), which this build cannot read. There is no migration: \
          point --data-dir at a new directory, or remove this one and re-ingest."
     )]
     LegacyLayout { path: std::path::PathBuf },
@@ -279,8 +279,8 @@ pub enum ServeError {
     #[error(
         "{path}: segment format version {found}; this build reads version {} only and \
          does not guess at the rest. Nothing was served. Start the build that wrote it, or \
-         move the leaf directory holding it out of the data directory.",
-        crate::store::segment::VERSION
+         move that file out of the data directory.",
+        crate::store::v3::VERSION
     )]
     SegmentVersion { path: std::path::PathBuf, found: u8 },
 

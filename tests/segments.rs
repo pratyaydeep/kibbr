@@ -1,10 +1,10 @@
-//! What the segment format is observable as, from outside the process.
+//! What the storage format is observable as, from outside the process.
 //!
-//! The bytes are checked where they are written - `src/store/segment.rs` - and what the
-//! leaf does with them in `src/store/disk.rs`. This file asks only what a client can ask:
-//! is a row in the answer before it is on disk, does a schema change cost anything, does a
-//! query say what it pruned, and does a data directory from the old layout stop the server
-//! rather than being half-read.
+//! The bytes are checked where they are written - `src/store/v3/` - and what the store
+//! does with them in `src/store/disk.rs`. This file asks only what a client can ask: is a
+//! row in the answer before it is on disk, does a schema change cost anything, does a
+//! query say what it pruned, and does a data directory from an earlier layout stop the
+//! server rather than being half-read.
 //!
 //! HTTP over a bare `TcpStream`, as in `serve.rs` and `restart.rs` and for the same
 //! reason: the contract is a status line and a JSON body.
@@ -237,15 +237,15 @@ fn one_line_is_queryable_before_any_row_group_closes() {
 
 // ── A schema change ────────────────────────────────────────────────────────────────
 
-/// The footer names one type per column for a whole segment, so a widening column cannot
-/// stay in one. Both segments must stay queryable, and each row must keep the type it
-/// arrived with rather than the first thousand being rewritten as text.
+/// A row group records the type each of its columns actually used, so a column that
+/// widens costs nothing: no file is sealed and none is opened, and each row keeps the type
+/// and the spelling it arrived with rather than the first ones being rewritten as text.
 #[test]
-fn a_widening_column_seals_the_segment_and_both_stay_queryable() {
+fn a_widening_column_costs_no_file_and_each_row_keeps_its_type() {
     let db = Db::new();
     let first = db.start();
 
-    // One key set, so one template and one leaf - and two types in the `code` column.
+    // One key set, so one template - and two types in the `code` column.
     first.ingest(
         b"{\"ts\":\"2024-01-15T10:00:00Z\",\"event\":\"w\",\"code\":7}\n\
           {\"ts\":\"2024-01-15T10:00:01Z\",\"event\":\"w\",\"code\":8}\n",
@@ -255,14 +255,14 @@ fn a_widening_column_seals_the_segment_and_both_stay_queryable() {
 
     assert_eq!(
         db.segments().len(),
-        2,
-        "the widening did not seal a segment: {:?}",
+        1,
+        "one day's rows are in more than one file: {:?}",
         db.segments()
     );
 
     let second = db.start();
     let rows = second.query(r#"MATCH LOG { "event": "w" } LIMIT 10"#);
-    assert_eq!(rows["count"], 3, "a segment was lost: {rows}");
+    assert_eq!(rows["count"], 3, "a row was lost: {rows}");
 
     // Newest first, so the string is row 0 and the two integers follow it.
     let codes: Vec<String> = rows["rows"]
@@ -273,7 +273,6 @@ fn a_widening_column_seals_the_segment_and_both_stay_queryable() {
         .collect();
     assert_eq!(codes, vec!["\"N/A\"", "8", "7"], "types did not survive");
 
-    // And the filtered query finds its row through the segment that holds it.
     assert_eq!(second.query(r#"COUNT LOG { "code": "7" }"#)["count"], 1);
     assert_eq!(second.query(r#"COUNT LOG { "code": "N/A" }"#)["count"], 1);
 }
@@ -341,18 +340,18 @@ fn naming_one_column_reads_far_fewer_bytes_than_the_whole_row() {
 
 // ── The layout this replaces ───────────────────────────────────────────────────────
 
-/// A data directory from the per-column layout stops the server, by path.
+/// A data directory from before format v3 - a directory per template - is refused, by
+/// path, with a non-zero exit.
 ///
 /// There is no migration, so the alternative to refusing is reading bytes whose meaning
 /// has to be guessed. Non-zero exit: a server that starts and answers `count: 0` over
 /// somebody's data is the worse outcome.
 #[test]
-fn a_per_column_data_directory_is_refused_by_path() {
+fn a_per_template_data_directory_is_refused_by_path() {
     let db = Db::new();
     let day = db.dir.join("leaf_101").join("2024-01-15");
     fs::create_dir_all(&day).expect("create the day directory");
-    fs::write(day.join("ts.col"), b"TRDB\x03\x00\x00\x00").expect("write a per-column file");
-    fs::write(day.join("_columns.json"), b"{\"row_count\":1}").expect("write a manifest");
+    fs::write(day.join("seg_000001.col"), b"TRDB\x02\x00\x00\x00").expect("write a v2 segment");
 
     let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
         .args(["serve", "--port", "0"])
@@ -362,16 +361,42 @@ fn a_per_column_data_directory_is_refused_by_path() {
 
     assert!(
         !out.status.success(),
-        "a per-column data directory started anyway"
+        "a per-template data directory started anyway"
     );
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(
-        text.contains("per-column layout"),
+        text.contains("before format v3"),
         "the error does not say what it found:\n{text}"
     );
     assert!(
-        text.contains("leaf_101") && text.contains("2024-01-15"),
+        text.contains("leaf_101"),
         "the error does not name the path:\n{text}"
+    );
+}
+
+/// A data file of another format version, where a v3 one belongs, is refused by path
+/// before anything is served.
+#[test]
+fn a_data_file_of_another_version_is_refused_by_path() {
+    let db = Db::new();
+    let day = db.dir.join("data").join("2024-01-15");
+    fs::create_dir_all(&day).expect("create the day directory");
+    fs::write(day.join("seg_0_000001.col"), b"TRDB\x02\x00\x00\x00").expect("write");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+        .args(["serve", "--port", "0"])
+        .args(["--data-dir", &db.dir.display().to_string()])
+        .output()
+        .expect("failed to run triedb serve");
+
+    assert!(
+        !out.status.success(),
+        "a version 2 data file started anyway"
+    );
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        text.contains("version 2") && text.contains("seg_0_000001.col"),
+        "the error does not name the file and its version:\n{text}"
     );
 }
 
