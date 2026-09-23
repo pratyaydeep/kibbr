@@ -4,7 +4,7 @@
 #
 # curl proves the endpoint answers. It has no retry policy, no buffer, no adaptive
 # concurrency and no opinion about a 503, so it cannot say whether the answers are ones a
-# shipper acts on correctly - which is what the deployment plan is betting on.
+# shipper acts on correctly - which is what putting TrieDB behind a shipper is betting on.
 #
 # Vector 0.37.1 is the pinned version. Downloaded into testdata/ and run from there:
 # nothing installed, nothing on PATH, and the version is the one being claimed rather than
@@ -138,9 +138,9 @@ type    = "prometheus_exporter"
 inputs  = ["metrics"]
 address = "$METRICS"
 
-# The deployment plan's sink, with two changes:
+# The sink a deployment points at TrieDB, with two changes:
 #   compression        turned on - the point of the exercise
-#   encoding/framing   \`codec = "ndjson"\` as the plan spells it does not load on 0.37.1;
+#   encoding/framing   \`codec = "ndjson"\`, the obvious spelling, does not load on 0.37.1;
 #                      the codec is \`json\` and the newlines come from \`framing\`.
 [sinks.triedb]
 type               = "http"
@@ -248,10 +248,10 @@ cat "$RUN/triedb.log"
 #
 # Two runs, because the first one has a finding in it that looks like a failure.
 #
-#   B1  Vector as the plan configures it, against a server with one ingest permit. Little
-#       is shed, and that is adaptive concurrency working rather than the shed failing:
-#       Vector holds few requests in flight, so it rarely asks for a second permit. B1
-#       proves the slow server does not make Vector queue without bound.
+#   B1  Vector with its own adaptive concurrency, against a server with one ingest permit.
+#       Little is shed, and that is adaptive concurrency working rather than the shed
+#       failing: Vector holds few requests in flight, so it rarely asks for a second
+#       permit. B1 proves the slow server does not make Vector queue without bound.
 #
 #   B2  the same, with `request.concurrency` pinned above the permit count, which is what a
 #       fleet of shippers arriving at one server looks like from the server's side. This is

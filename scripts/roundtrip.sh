@@ -11,11 +11,11 @@
 #
 # The input is generated lines - the hostile profile, every shape the parser must survive,
 # and the farm, shaped like real traffic - and testdata/roundtrip.ndjson, written by hand
-# to hold every spelling the data model names: leading zeros, a `+`, "-0", a string and a
-# number that parse alike, RFC 3339 at an offset and at "-00:00", a lower-case `t` and `z`
-# and a space, an epoch as a number and as a string, "True" and "TRUE", upper- and
-# mixed-case UUIDs, IPv6 in each spelling, an integer past i64, 1.50 and 1e3, the edges of
-# the nanosecond range, leap seconds, a tenth fraction digit - and the same values mixed
+# to hold every spelling that must come back as it went in: leading zeros, a `+`, "-0", a
+# string and a number that parse alike, RFC 3339 at an offset and at "-00:00", a lower-case
+# `t` and `z` and a space, an epoch as a number and as a string, "True" and "TRUE", upper-
+# and mixed-case UUIDs, IPv6 in each spelling, an integer past i64, 1.50 and 1e3, the edges
+# of the nanosecond range, leap seconds, a tenth fraction digit - and the same values mixed
 # in one column, where the column widens to text and each row must still come back as
 # itself.
 #

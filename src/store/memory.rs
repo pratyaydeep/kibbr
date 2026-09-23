@@ -5,21 +5,26 @@
 //! that checks the disk store: two implementations of one interface that must return the
 //! same answers, so a disagreement is a bug found with no hand-written assertion.
 //!
-//! It has no partitions, so `Visitor::wants_partition` is never consulted, and its
-//! `flush()` is the honest no-op rather than an error - "written" and "never needed
-//! writing" are the same state here. It has no row groups either, so the three counters
-//! the disk store fills stay zero: reporting work it did not do would make the two
-//! implementations agree about the wrong thing.
+//! It has no partitions, so `Visitor::wants_partition` is never consulted, and it takes
+//! `Store::flush`'s no-op rather than an error - "written" and "never needed writing" are
+//! the same state here. It has no row groups either, so the three counters the disk store
+//! fills stay zero: reporting work it did not do would make the two implementations agree
+//! about the wrong thing.
+//!
+//! **A query holds its leaf's read lock while it scans.** These rows are only ever in
+//! memory, so there is no disk to hold it across; an append to the leaf being read waits
+//! for the scan of that one leaf, and no other.
 //!
 //! Each row keeps the JSON its line wrote wherever that differs from the value's canonical
 //! print, as `Row` does everywhere: an answer prints what was ingested, and a `Datetime`
 //! in a column that later widens to `String` is compared as the text it arrived as.
 
 use std::path::Path;
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use super::{
-    effective_ts, in_window, render_row, value_bytes, FlushKind, Flushed, LeafStore, Predicate,
-    Row, Scan, ScanOptions, Store, StoreError, Visitor, DEFAULT_TS_COLUMN,
+    effective_ts, in_window, render_row, value_bytes, LeafStore, Predicate, Row, Scan, ScanOptions,
+    Store, StoreError, Visitor, DEFAULT_TS_COLUMN,
 };
 
 pub struct MemoryStore;
@@ -37,8 +42,8 @@ impl Default for MemoryStore {
 }
 
 impl Store for MemoryStore {
-    fn open(&self, template_id: u64, _time_column: &str) -> Result<Box<dyn LeafStore>, StoreError> {
-        Ok(Box::new(MemoryLeaf::new(template_id)))
+    fn open(&self, template_id: u64, _time_column: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
+        Ok(Arc::new(MemoryLeaf::new(template_id)))
     }
 
     fn kind(&self) -> &'static str {
@@ -52,15 +57,19 @@ impl Store for MemoryStore {
 
 pub struct MemoryLeaf {
     template_id: u64,
-    rows: Vec<Row>,
+    rows: RwLock<Vec<Row>>,
 }
 
 impl MemoryLeaf {
     pub fn new(template_id: u64) -> Self {
         Self {
             template_id,
-            rows: Vec::new(),
+            rows: RwLock::new(Vec::new()),
         }
+    }
+
+    fn rows(&self) -> RwLockReadGuard<'_, Vec<Row>> {
+        self.rows.read().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -72,14 +81,10 @@ impl LeafStore for MemoryLeaf {
     /// The ordinal is the `Vec` index, which is the order the row arrived in. Nothing
     /// deletes, so it is stable for the life of the process - and this store has no next
     /// process to be stable into.
-    fn append(&mut self, row: Row) -> u64 {
-        let seq = self.rows.len() as u64;
-        self.rows.push(row);
-        seq
-    }
-
-    fn flush(&mut self, _kind: FlushKind) -> Result<Flushed, StoreError> {
-        Ok(Flushed::default())
+    fn append(&self, row: Row) -> u64 {
+        let mut rows = self.rows.write().unwrap_or_else(|e| e.into_inner());
+        rows.push(row);
+        rows.len() as u64 - 1
     }
 
     /// `scanned` counts rows looked at, so a time window that rejects everything still
@@ -102,7 +107,7 @@ impl LeafStore for MemoryLeaf {
         let windowed = since.is_some() || until.is_some();
 
         let mut out = Scan::default();
-        for (seq, stored) in self.rows.iter().enumerate() {
+        for (seq, stored) in self.rows().iter().enumerate() {
             out.scanned += 1;
             // A column that has widened to text since this row arrived: its `Datetime`
             // is compared as the text it was ingested as, before the predicates see it,
@@ -126,7 +131,7 @@ impl LeafStore for MemoryLeaf {
     }
 
     fn len(&self) -> u64 {
-        self.rows.len() as u64
+        self.rows().len() as u64
     }
 
     /// Everything and nothing: these rows are only ever in memory, so none of them is
@@ -147,7 +152,7 @@ impl LeafStore for MemoryLeaf {
     /// slack and the `HashMap` table are excluded, so the true resident size is larger.
     /// It is labelled an estimate on the endpoint for exactly that reason.
     fn approx_bytes(&self) -> u64 {
-        self.rows
+        self.rows()
             .iter()
             .map(|row| {
                 row.iter()

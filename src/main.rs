@@ -167,6 +167,17 @@ enum Command {
         /// Overrides `TRIEDB__STORAGE__MAX_OPEN_SEGMENTS`.
         #[arg(long, value_name = "N")]
         max_open_segments: Option<usize>,
+        /// A day's data file is sealed at this many bytes and the next one opened.
+        /// Overrides `TRIEDB__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
+        #[arg(long, value_name = "BYTES")]
+        segment_max_bytes: Option<usize>,
+        /// Memory every buffer together may hold before the largest are closed early - an
+        /// emergency brake - and at twice which `/ingest` answers 503 until the flush
+        /// catches up. Estimated per row, hash tables and allocations included, which is
+        /// about eight times a row's keys and values.
+        /// Overrides `TRIEDB__STORAGE__MAX_BUFFER_BYTES`. [default: 512 MiB]
+        #[arg(long, value_name = "BYTES")]
+        max_buffer_bytes: Option<usize>,
         /// The key names a new template's time column is chosen from, in order; the
         /// first one the template holds as a Datetime wins, and a template holding none
         /// takes its rows' arrival time. Comma-separated.
@@ -347,6 +358,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
             flush_interval_ms,
             row_group_timeout_ms,
             max_open_segments,
+            segment_max_bytes,
+            max_buffer_bytes,
             time_columns,
         } => serve::run(
             &host,
@@ -360,6 +373,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 flush_interval_ms,
                 row_group_timeout_ms,
                 max_open_segments,
+                segment_max_bytes,
+                max_buffer_bytes,
             )?,
             config::Schema::load(time_columns),
         ),

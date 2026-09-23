@@ -85,6 +85,36 @@ pub fn build(
     times: &[i64],
     source: Source,
 ) -> Result<RowGroup, BuildError> {
+    Ok(encode(template_id, columns, rows, times, source)?.frame(schema_id))
+}
+
+/// A row group with every column encoded and no schema number yet: `build` less the one
+/// field only a file's writer can fill.
+///
+/// **Split off so a flush can encode side by side.** Encoding is nearly all of what a row
+/// group costs, and it needs nothing from the file; the schema number does, and a schema
+/// record has to go into the file before the first row group that names it. So a flush
+/// encodes every row group it has to write at once, on as many threads as it has, and then
+/// numbers and frames them one at a time as it appends them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Encoded {
+    template_id: u64,
+    row_count: u32,
+    min_time: i64,
+    max_time: i64,
+    source: Source,
+    directory: Vec<u8>,
+    chunks: Vec<u8>,
+}
+
+/// The expensive half of `build`: every check, and every column encoded.
+pub fn encode(
+    template_id: u64,
+    columns: &[String],
+    rows: &[&Row],
+    times: &[i64],
+    source: Source,
+) -> Result<Encoded, BuildError> {
     if rows.is_empty() {
         return Err(BuildError::NoRows);
     }
@@ -116,34 +146,50 @@ pub fn build(
         directory.extend_from_slice(&chunk.entry);
         chunks.extend_from_slice(&chunk.body);
     }
-    let chunks_len =
-        u32::try_from(chunks.len()).map_err(|_| BuildError::TooLong(columns.join(",")))?;
-
-    let (source_byte, stream, first, last) = source.bytes();
-    let mut payload = Vec::with_capacity(64 + directory.len());
-    payload.push(KIND_ROW_GROUP);
-    payload.extend_from_slice(&template_id.to_le_bytes());
-    payload.extend_from_slice(&schema_id.to_le_bytes());
-    payload.extend_from_slice(&row_count.to_le_bytes());
-    payload.extend_from_slice(&min_time.to_le_bytes());
-    payload.extend_from_slice(&max_time.to_le_bytes());
-    payload.push(source_byte);
-    payload.extend_from_slice(&stream.to_le_bytes());
-    payload.extend_from_slice(&first.to_le_bytes());
-    payload.extend_from_slice(&last.to_le_bytes());
-    payload.extend_from_slice(&chunks_len.to_le_bytes());
-    payload.extend_from_slice(&directory);
-    // No sections: bloom filters are a later milestone's, and a file without them simply
-    // has none.
-    payload.extend_from_slice(&0u16.to_le_bytes());
-
-    Ok(RowGroup {
-        frame: crate::frame::frame(&payload),
-        chunks,
+    u32::try_from(chunks.len()).map_err(|_| BuildError::TooLong(columns.join(",")))?;
+    Ok(Encoded {
+        template_id,
         row_count,
         min_time,
         max_time,
+        source,
+        directory,
+        chunks,
     })
+}
+
+impl Encoded {
+    /// The row group whole, as schema `schema_id` of its file: the header frame written
+    /// around the directory, and its CRC - which covers the header alone, so framing is
+    /// cheap however large the chunks are.
+    pub fn frame(self, schema_id: u32) -> RowGroup {
+        let (source_byte, stream, first, last) = self.source.bytes();
+        let mut payload = Vec::with_capacity(64 + self.directory.len());
+        payload.push(KIND_ROW_GROUP);
+        payload.extend_from_slice(&self.template_id.to_le_bytes());
+        payload.extend_from_slice(&schema_id.to_le_bytes());
+        payload.extend_from_slice(&self.row_count.to_le_bytes());
+        payload.extend_from_slice(&self.min_time.to_le_bytes());
+        payload.extend_from_slice(&self.max_time.to_le_bytes());
+        payload.push(source_byte);
+        payload.extend_from_slice(&stream.to_le_bytes());
+        payload.extend_from_slice(&first.to_le_bytes());
+        payload.extend_from_slice(&last.to_le_bytes());
+        // Checked against a `u32` when it was encoded.
+        payload.extend_from_slice(&(self.chunks.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&self.directory);
+        // No sections: bloom filters are not built yet, and a file without them simply has
+        // none.
+        payload.extend_from_slice(&0u16.to_le_bytes());
+
+        RowGroup {
+            frame: crate::frame::frame(&payload),
+            chunks: self.chunks,
+            row_count: self.row_count,
+            min_time: self.min_time,
+            max_time: self.max_time,
+        }
+    }
 }
 
 // ── One column ─────────────────────────────────────────────────────────────────────

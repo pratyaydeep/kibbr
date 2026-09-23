@@ -440,8 +440,10 @@ impl Form {
         }
     }
 
-    /// A form read back, and every field held to its range and to the combinations 6.6.6
-    /// allows. `at` is where the form starts, for the error.
+    /// A form read back, every field held to its range, and none of the combinations no
+    /// writer makes: spelling fields on the form of a JSON number or bool, RFC 3339 for
+    /// anything but a JSON string, RFC 3339 fields on an epoch, a `Uuid` or an `Ip` that was
+    /// not a string. `at` is where the form starts, for the error.
     pub fn read(ty: ColumnType, r: &mut Bytes<'_>) -> Result<Self, Bad> {
         let at = r.offset();
         let kind_byte = r.u8("form json_kind")?;

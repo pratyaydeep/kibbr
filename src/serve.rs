@@ -26,7 +26,7 @@ use std::borrow::Cow;
 use std::io::{Cursor, Read};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
@@ -41,7 +41,7 @@ use chrono::{DateTime, Utc};
 use flate2::read::MultiGzDecoder;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use std::path::Path;
@@ -102,18 +102,26 @@ const VIEWER: &str = include_str!("viewer.html");
 
 /// Everything the handlers share.
 ///
-/// `Trie` is not behind a lock: it synchronises itself per node, so an ingest and a walk
-/// can proceed together. The store registry is, because `append` and `flush` need `&mut`
-/// and `engine::execute` needs `&`.
+/// **Nothing here is behind a lock of the server's.** `Trie` synchronises itself per node,
+/// so an ingest and a walk proceed together; `StoreManager` locks each leaf on its own, and
+/// a flush holds no lock an append or a query waits on while it writes. There used to be
+/// one `RwLock` over the whole registry, taken for writing by every ingest body and by the
+/// flush tick across every fsync, and for reading by every query for the whole of its run:
+/// with queries running, ingest fell from 44,800 lines a second to 1,645, and a count by a
+/// promoted value went from 33ms to 1.1s.
 ///
-/// The write lock is taken **once per body**, not once per line. That makes a body atomic
-/// to anything reading rows - a client that ingests 500 lines and then queries cannot
-/// observe 200 of them - and it costs a long body blocking readers for its duration.
-/// Worth it while a body is bounded by `MAX_INGEST_BYTES` and the alternative is a
-/// half-applied batch, which is the harder thing for an operator to reason about.
+/// **What that gave up: a body is no longer atomic to a query running beside it.** Each
+/// row is visible from the moment its leaf takes it, so a query that runs while a body is
+/// applied can count part of it. A client that ingests and then queries still sees all of
+/// what it sent - the response goes out after the last line is applied - and no query ever
+/// sees a row twice or loses one it could see before.
 pub struct Server {
     trie: Trie,
-    stores: RwLock<StoreManager>,
+    stores: StoreManager,
+    /// Wakes the flush before its next tick: an ingest body that left the buffers past
+    /// their memory limit rings it, so the limit is enforced within a body and not within
+    /// half a second of bodies.
+    flush_now: Notify,
     started: Instant,
     started_at: DateTime<Utc>,
     lines_read: AtomicU64,
@@ -122,8 +130,9 @@ pub struct Server {
     queries: AtomicU64,
     /// Requests currently in a handler. Read at shutdown, to say what is being waited on.
     in_flight: AtomicU64,
-    /// Bodies refused for want of a permit. In no other counter - `lines_read` never saw
-    /// them - and the only number that says the shed is firing rather than merely present.
+    /// Bodies refused for want of a permit, or while the buffers were past twice their
+    /// limit. In no other counter - `lines_read` never saw them - and the only number that
+    /// says the shed is firing rather than merely present.
     requests_shed: AtomicU64,
     /// The caps, held on the server and not negotiated per request: all clients get the
     /// same limits, because a client that could override one could sidestep the
@@ -165,13 +174,8 @@ impl Server {
                 let data_dir = storage.data_dir();
                 let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir, &schema)?;
 
-                let mut stores = StoreManager::disk(
-                    base,
-                    storage.row_group_limits(),
-                    storage.max_open_segments,
-                    storage.segment_max_bytes,
-                )
-                .map_err(storage_fatal)?;
+                let stores =
+                    StoreManager::disk(base, storage.disk_options()).map_err(storage_fatal)?;
 
                 // Applied whatever the snapshot said, including when it parsed cleanly:
                 // the hazard is a trie that does not know about stored rows, and a stale
@@ -222,7 +226,8 @@ impl Server {
         let write_health = stores.health();
         Ok(Self {
             trie,
-            stores: RwLock::new(stores),
+            stores,
+            flush_now: Notify::new(),
             started: Instant::now(),
             started_at: now,
             lines_read: AtomicU64::new(0),
@@ -237,32 +242,6 @@ impl Server {
             ingest_permits: Arc::new(Semaphore::new(api.ingest_concurrency)),
             write_health,
         })
-    }
-
-    /// Take the stores lock, recovering from a poisoning rather than propagating it.
-    ///
-    /// A poisoned lock means some handler panicked while holding it. `Stores::append` is
-    /// a map insert and a counter bump, so there is no torn state to inherit, and
-    /// refusing every later request would turn one bad line into a dead server. This is
-    /// `PoisonError::into_inner`, not `.unwrap()`: nothing here can end the
-    /// process.
-    /// **The invariant this lock carries, and it is not the obvious one.**
-    ///
-    /// A query reads a leaf's segments *and* its unwritten buffer - a row group closes on
-    /// size now, so a quiet leaf's rows would otherwise be invisible for up to the row
-    /// group timeout. Double counting is impossible by construction rather than by
-    /// deduplicating: **a row leaves the buffer only after the row group holding it is
-    /// fsynced, and that swap happens under this same lock.** Write the rows, release the
-    /// lock, then drain, and a row is briefly in both - a count occasionally too high,
-    /// which nothing reports and nobody reproduces.
-    fn read_stores(&self) -> RwLockReadGuard<'_, StoreManager> {
-        self.stores.read().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// The other side of the invariant at `read_stores`: the flush that moves rows out of
-    /// a buffer and into a row group holds this for the whole of both steps.
-    fn write_stores(&self) -> RwLockWriteGuard<'_, StoreManager> {
-        self.stores.write().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -593,19 +572,20 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
         }
     })?;
 
-    // ── Half two: apply them, in order, under the lock ─────────────────────────────
+    // ── Half two: apply them, in order ─────────────────────────────────────────────
     //
-    // One lock for the whole body, as before: a client that ingests 500 lines and then
-    // queries must not observe 200 of them.
+    // No lock over the stores: each append takes its own leaf's, for as long as it takes
+    // to push one row. Every line is applied before the response is sent, so a client
+    // that ingests 500 lines and then queries sees all 500.
     let mut apply_errors = Vec::new();
     let mut ingested = 0u64;
     let mut rejected = stats.rejected;
     let mut not_stored = 0u64;
     let mut store_error = None;
     {
-        let mut stores = server.write_stores();
+        let stores = &server.stores;
         for (line, parsed, prepared) in parsed {
-            match db::ingest_prepared(&server.trie, Some(&mut stores), &parsed, prepared, now) {
+            match db::ingest_prepared(&server.trie, Some(stores), &parsed, prepared, now) {
                 Ok(()) => ingested += 1,
                 // The line parsed and still did not land. Counted and reported exactly as
                 // a line that did not parse: to the client both are "this one is not in
@@ -646,6 +626,11 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
     server.lines_read.fetch_add(stats.read, Ordering::Relaxed);
     server.lines_ingested.fetch_add(ingested, Ordering::Relaxed);
     server.lines_rejected.fetch_add(rejected, Ordering::Relaxed);
+    // Past the memory limit the flush runs now, not at its next tick: a burst that filled
+    // the buffers in one body should not get half a second more to fill them further.
+    if server.stores.over_buffer_limit() {
+        server.flush_now.notify_one();
+    }
 
     Ok(IngestReport {
         ingested,
@@ -829,7 +814,7 @@ async fn post_ingest(
         .map(str::to_owned);
 
     let held = Arc::clone(&server);
-    // The parse and the trie walk are CPU work, and the appends after them hold a `std`
+    // The parse and the trie walk are CPU work, and each append after them takes a `std`
     // lock, so none of it belongs on a runtime thread that also answers `/health`.
     // Inflating joins them rather than running above: a gzip bomb is seconds of CPU, and
     // spending it on a runtime thread would stall every other endpoint while the server
@@ -945,6 +930,14 @@ async fn admit(State(server): State<Arc<Server>>, request: Request, next: Next) 
             .unwrap_or_else(|| "the last flush could not write".to_string());
         return cannot_write(&detail);
     }
+    // Past twice the buffer limit the flush is falling behind what arrives, even closing
+    // the largest buffers early, and a body taken now is memory the process may not have.
+    // Refused like a shed - a shipper told to come back in a second keeps its batch - and
+    // counted as one.
+    if server.stores.buffers_full() {
+        server.requests_shed.fetch_add(1, Ordering::Relaxed);
+        return buffers_full(server.stores.buffer_bytes());
+    }
 
     let permits = Arc::clone(&server.ingest_permits);
     // `acquire_owned`, so the permit outlives this scope and covers the blocking task,
@@ -959,6 +952,25 @@ async fn admit(State(server): State<Arc<Server>>, request: Request, next: Next) 
         }
     };
     next.run(request).await
+}
+
+/// The refusal while the buffers are past twice their limit: the shed's shape, with what
+/// is held against what may be.
+fn buffers_full((held, limit): (u64, u64)) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(json!({
+            "ok": false,
+            "error": format!(
+                "the buffers hold {} bytes of memory, past twice the {} byte limit: the \
+                 flush is behind what is arriving; retry in {RETRY_AFTER_SECONDS}s",
+                commas(held),
+                commas(limit)
+            ),
+        })),
+    )
+        .into_response()
 }
 
 /// The shed response: 503, a `Retry-After`, and the same error shape as everything else.
@@ -1003,8 +1015,7 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
 
     let held = Arc::clone(&server);
     let done = tokio::task::spawn_blocking(move || {
-        let stores = held.read_stores();
-        let result = engine::execute(&held.trie, &stores, &query)?;
+        let result = engine::execute(&held.trie, &held.stores, &query)?;
         held.queries.fetch_add(1, Ordering::Relaxed);
         Ok::<Value, engine::ExecError>(query::result_json(&query, &result))
     })
@@ -1048,7 +1059,7 @@ async fn get_viewer() -> Response {
 /// differently would print identically. `Trie::leaf_paths` carries the tokens for that
 /// reason, as `PlannedLeaf::path` does in the engine.
 async fn get_templates(State(server): State<Arc<Server>>) -> Response {
-    let stores = server.read_stores();
+    let stores = &server.stores;
     let mut templates = Vec::new();
 
     for (path, leaf) in server.trie.leaf_paths() {
@@ -1106,8 +1117,9 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
 /// reaches a file. A silent write failure behind a successful response is the worst
 /// outcome available here, so it gets a counter.
 async fn get_stats(State(server): State<Arc<Server>>) -> Response {
-    let stores = server.read_stores();
+    let stores = &server.stores;
     let (open_segments, max_open_segments) = stores.open_files();
+    let (buffered_bytes, max_buffer_bytes) = stores.buffer_bytes();
     let uptime = server.started.elapsed().as_secs_f64();
     let ingested = server.lines_ingested.load(Ordering::Relaxed);
     let queries = server.queries.load(Ordering::Relaxed);
@@ -1119,7 +1131,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "kind": stores.kind(),
             "durable": server.storage.is_durable(),
             "note": if server.storage.is_durable() {
-                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
+                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that goes into today's, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
@@ -1141,8 +1153,15 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // least recently written one is sealed.
             "open_segments": open_segments,
             "max_open_segments": max_open_segments,
+            "segment_max_bytes": server.storage.segment_max_bytes,
             "rows": stores.rows(),
             "buffered_rows": stores.buffered(),
+            // Memory the buffered rows hold - estimated, hash tables and allocations
+            // included - against the limit past which the largest are closed early; and
+            // how many have been, which is nonzero only when the buffers could not keep up.
+            "buffered_bytes": buffered_bytes,
+            "max_buffer_bytes": max_buffer_bytes,
+            "forced_closes": stores.forced_closes(),
             "write_failures": stores.write_failures(),
             "last_write_error": stores.last_write_error(),
             // True while the last flush tick failed, which is also while /ingest answers
@@ -1315,9 +1334,9 @@ async fn serve(
     // `axum::serve` returns once every connection it accepted has finished, so reaching
     // this line *is* "in-flight requests complete first".
     //
-    // The flush task is joined before the wind-down and not after: the final flush and the
-    // trie snapshot both take the same lock, and a tick arriving between them would write
-    // rows the snapshot does not describe.
+    // The flush task is joined before the wind-down and not after: a tick arriving between
+    // the final flush and the trie snapshot would write rows the snapshot does not
+    // describe, and a tick beside the final flush would only queue behind it.
     let _ = flusher.await;
     shutdown_sequence(&server)
 }
@@ -1327,14 +1346,16 @@ async fn serve(
 ///
 /// **The tick no longer writes on its own account.** A row group closes at 8,192 rows,
 /// 8MB or the row group timeout, and the tick is what notices - so most ticks on a quiet
-/// server do nothing, and on a busy one the first tick after the 8,192nd row writes them
-/// all in a single fsync.
+/// server do nothing, and on a busy one the first tick after the 8,192nd row writes every
+/// row group then due and flushes each file it wrote to once.
+///
+/// It is also woken early, by an ingest body that left the buffers past their memory limit.
 ///
 /// Two details that are not decoration:
 ///
-/// - **`spawn_blocking`.** The guard is a `std::sync::RwLock` and the work under it is
-///   file I/O. On a runtime worker that blocks the whole executor, including `/health`,
-///   which is the endpoint an orchestrator reads to decide whether to kill the process.
+/// - **`spawn_blocking`.** The flush is file I/O. On a runtime worker that blocks the
+///   whole executor, including `/health`, which is the endpoint an orchestrator reads to
+///   decide whether to kill the process.
 /// - **`MissedTickBehavior::Delay`.** The default fires catch-up ticks back to back after
 ///   a slow flush, which turns one stall into a burst of them at exactly the moment the
 ///   disk is already behind.
@@ -1347,21 +1368,45 @@ async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
     // The first tick completes immediately; consumed here so the loop's first real wait is
     // a whole interval rather than none.
     tick.tick().await;
+    // Whether the last flush was closing buffers early for the memory limit: said once when
+    // it starts and once when it stops, not on every tick in between.
+    let mut forcing = false;
     loop {
         tokio::select! {
             () = token.cancelled() => return,
             _ = tick.tick() => {}
+            () = server.flush_now.notified() => {}
         }
         let held = Arc::clone(&server);
-        let flushed =
-            tokio::task::spawn_blocking(move || held.write_stores().flush_all(FlushKind::Tick));
+        let flushed = tokio::task::spawn_blocking(move || held.stores.flush_all(FlushKind::Tick));
         match flushed.await {
-            Ok(summary) if summary.failed > 0 => log(&format!(
-                "WARN flush - {} leaf/leaves could not be written; their rows stay buffered \
-                 and the next tick retries",
-                summary.failed
-            )),
-            Ok(_) => {}
+            Ok(summary) => {
+                if summary.failed > 0 {
+                    log(&format!(
+                        "WARN flush - {} leaf/leaves could not be written; their rows stay \
+                         buffered and the next tick retries",
+                        summary.failed
+                    ));
+                }
+                if (summary.forced > 0) != forcing {
+                    forcing = summary.forced > 0;
+                    let (_, limit) = server.stores.buffer_bytes();
+                    log(&if forcing {
+                        format!(
+                            "WARN buffers - past the {} byte limit; closing the largest early \
+                             ({} this flush), which makes small row groups",
+                            commas(limit),
+                            summary.forced
+                        )
+                    } else {
+                        format!(
+                            "buffers - back under the {} byte limit; {} closed early in all",
+                            commas(limit),
+                            commas(server.stores.forced_closes())
+                        )
+                    });
+                }
+            }
             Err(join) => log(&format!("WARN flush task failed: {join}")),
         }
     }
@@ -1423,22 +1468,26 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     let mut lost: Option<(usize, u64)> = None;
 
     if server.storage.is_durable() {
-        let summary = {
-            let mut stores = server.write_stores();
-            let summary = stores.flush_all(FlushKind::Final);
-            // Rows still in a buffer once the final flush has done all it can. **This is
-            // the honest count of what was lost**: with no write-ahead log a buffered row
-            // has never been anywhere but memory, and this process is about to end.
-            if summary.failed > 0 {
-                lost = Some((summary.failed, stores.buffered()));
-            }
-            summary
-        };
+        let summary = server.stores.flush_all(FlushKind::Final);
+        // Rows still in a buffer once the final flush has done all it can. **This is the
+        // honest count of what was lost**: with no write-ahead log a buffered row has never
+        // been anywhere but memory, and this process is about to end.
+        if summary.failed > 0 {
+            lost = Some((summary.failed, server.stores.buffered()));
+        }
+        // Bounded by the open days and not by the templates: one flush and one seal per day
+        // file, however many templates' row groups went into it. Sealing a file per
+        // template per day took 349 seconds for 200,000 rows, where Kubernetes sends
+        // SIGKILL after 30.
         log(&format!(
-            "final flush - {} row(s) into {} partition(s), {} byte(s){}",
+            "final flush - {} row(s) into {} row group(s) in {} file(s), {} sealed, {} \
+             byte(s), {:.2}s{}",
             commas(summary.rows),
-            summary.partitions,
+            commas(summary.row_groups as u64),
+            summary.syncs,
+            summary.sealed,
             commas(summary.bytes),
+            summary.took.as_secs_f64(),
             // Nought rows against a failed leaf is a real outcome and not a rounding: a
             // leaf whose row groups all landed and whose `_leaf.json` would not write has
             // failed without losing anything. Said in as many words, because "0 row(s)
@@ -1477,7 +1526,7 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
         None => log("trie.json - skipped, storage is memory"),
     }
 
-    let stores = server.read_stores();
+    let stores = &server.stores;
     // Rows still buffered are rows that never reached a file, so they do not belong in a
     // count of what was written. The line used to be `stores.rows()` whole, which after a
     // failed final flush claimed 90,000 written where 85,000 were - the shutdown log
@@ -1500,7 +1549,6 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
             (false, _) => String::new(),
         },
     ));
-    drop(stores);
 
     log("close WAL - skipped, there is no WAL yet");
 
@@ -1567,10 +1615,11 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20             segments  a row is queryable the moment it is ingested; it\n\
                  \x20                       reaches disk when its row group closes - 8,192\n\
                  \x20                       rows, 8MB, or {}ms, whichever comes first. The\n\
-                 \x20                       thresholds are checked every {}ms. At most {} are\n\
-                 \x20                       open for writing at once; past that the least\n\
-                 \x20                       recently written is sealed, which costs a file and\n\
-                 \x20                       loses nothing. Keep it under `ulimit -n`.\n\
+                 \x20                       thresholds are checked every {}ms. At most {} day\n\
+                 \x20                       files are open for writing at once; past that a\n\
+                 \x20                       row for a day with none open goes into today's,\n\
+                 \x20                       as a row group of its own day. Keep it under\n\
+                 \x20                       `ulimit -n`.\n\
                  \x20                       SIGTERM closes and seals everything before exiting.\n\
                  \x20             catalog   {}/catalog.log - a template is written here, and\n\
                  \x20                       fsynced, before the line that made it counts as\n\
