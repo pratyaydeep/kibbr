@@ -150,7 +150,7 @@ fn unknown_and_empty_stay_different_answers() {
 /// the ladder threw any away.
 ///
 /// `parse --json`'s `typed_values` is the deliberate exception and still carries the
-/// epoch nanoseconds: `tests/fixture.rs` pins the saturation boundaries there as exact
+/// epoch nanoseconds: `tests/fixture.rs` pins both ends of the range there as exact
 /// instants.
 #[test]
 fn renders_datetimes_as_rfc3339() {
