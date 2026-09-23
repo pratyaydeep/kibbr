@@ -641,6 +641,21 @@ pub fn recover(path: &Path) -> Result<Recovered, FormatError> {
 
 // ── Writing ────────────────────────────────────────────────────────────────────────
 
+/// Where a writer was: what `Writer::rollback` cuts the file and its index back to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mark {
+    len: u64,
+    schemas: usize,
+    entries: usize,
+}
+
+impl Mark {
+    /// Schema ids from here on were written after the mark.
+    pub fn schemas(&self) -> usize {
+        self.schemas
+    }
+}
+
 /// A file being written: append only. A schema record goes before the first row group
 /// that names it; row groups follow as they close; the footer and trailer go once, at
 /// seal.
@@ -705,13 +720,7 @@ impl Writer {
     /// Bytes are written whole or the file is cut back to where they began.
     fn write(&mut self, bytes: &[u8]) -> Result<(), FormatError> {
         if self.torn {
-            return Err(FormatError::Io {
-                path: self.path.clone(),
-                source: std::io::Error::other(
-                    "an earlier write could not be cut back; nothing more is appended until a \
-                     restart recovers the file",
-                ),
-            });
+            return Err(self.torn_error());
         }
         let start = self.len;
         match self.file.write_all(bytes) {
@@ -783,6 +792,61 @@ impl Writer {
             path: self.path.clone(),
             source,
         })
+    }
+
+    pub fn mark(&self) -> Mark {
+        Mark {
+            len: self.len,
+            schemas: self.index.schemas.len(),
+            entries: self.index.entries.len(),
+        }
+    }
+
+    /// Cut the file back to `mark` and forget every schema record and row group written
+    /// since.
+    ///
+    /// What a close does when a row group or a flush fails: the rows go back to their
+    /// buffer to be written again, so what was written of them here has to go, or the file
+    /// would hold them twice once the retry lands. A flush that failed has made nothing
+    /// after the mark durable, so there is nothing to keep. A cut that fails leaves the
+    /// writer torn - it appends nothing more, and the next start's recovery cuts the file
+    /// at the tear.
+    pub fn rollback(&mut self, mark: Mark) -> Result<(), FormatError> {
+        if self.torn {
+            return Err(self.torn_error());
+        }
+        let cut = self
+            .file
+            .set_len(mark.len)
+            .and_then(|()| self.file.seek(SeekFrom::Start(mark.len)).map(|_| ()));
+        if let Err(source) = cut {
+            self.torn = true;
+            return Err(FormatError::Io {
+                path: self.path.clone(),
+                source,
+            });
+        }
+        self.len = mark.len;
+        self.index.schemas.truncate(mark.schemas);
+        self.schema_ids
+            .retain(|_, id| (*id as usize) < mark.schemas);
+        self.index.entries.truncate(mark.entries);
+        Ok(())
+    }
+
+    /// Whether a write could not be cut back, so the file takes nothing more.
+    pub fn is_torn(&self) -> bool {
+        self.torn
+    }
+
+    fn torn_error(&self) -> FormatError {
+        FormatError::Io {
+            path: self.path.clone(),
+            source: std::io::Error::other(
+                "an earlier write could not be cut back; nothing more is appended until a \
+                 restart recovers the file",
+            ),
+        }
     }
 
     /// Append the footer and trailer and flush. The file is sealed once this returns.
@@ -893,5 +957,66 @@ impl Reader {
             );
         }
         Ok((out, read))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::v3::build::{build, schema_of};
+    use crate::store::v3::Source;
+    use crate::store::Row;
+    use crate::types::ColValue;
+
+    const T0: i64 = 1_705_314_600_000_000_000;
+
+    /// One row group of one row keyed `key`, and a schema record first if its column set is
+    /// new to the file.
+    fn group(w: &mut Writer, key: &str, n: i64) {
+        let mut row = Row::new();
+        row.insert("ts".into(), ColValue::Datetime(T0 + n));
+        row.insert(key.into(), ColValue::Int64(n));
+        let columns = schema_of([&row]);
+        let schema_id = w.schema_id(&columns).expect("schema");
+        let rg = build(
+            7,
+            schema_id,
+            &columns,
+            &[&row],
+            &[T0 + n],
+            Source::NotRecorded,
+        )
+        .expect("build");
+        w.append(7, &rg).expect("append");
+    }
+
+    /// A rollback takes back the bytes, the schema records and the row groups written since
+    /// the mark: the file reads as if they had never been, and the next schema takes the
+    /// number the forgotten one had.
+    #[test]
+    fn a_rollback_forgets_everything_written_since_the_mark() {
+        let dir = std::env::temp_dir().join(format!("triedb-rollback-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("seg_0_000001.col");
+        let mut w = Writer::create(&path).expect("create");
+        group(&mut w, "a", 1);
+        let (mark, len) = (w.mark(), w.len());
+        group(&mut w, "b", 2);
+        assert_eq!((w.index().schemas.len(), w.index().entries.len()), (2, 2));
+        w.rollback(mark).expect("rollback");
+        assert_eq!(
+            (w.index().schemas.len(), w.index().entries.len(), w.len()),
+            (1, 1, len)
+        );
+        assert_eq!(fs::metadata(&path).expect("stat").len(), len);
+
+        group(&mut w, "c", 3);
+        let written = w.seal().expect("seal");
+        let read = open_sealed(&path).expect("readable").expect("sealed");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(read.schemas, written.schemas);
+        assert_eq!(read.schemas[1], vec!["c".to_string(), "ts".to_string()]);
+        assert_eq!(read.entries.len(), 2);
     }
 }

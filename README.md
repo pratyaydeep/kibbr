@@ -304,7 +304,11 @@ cap rather than after it. Either one is a `413`.
 **Past capacity, `/ingest` says 503 - it does not go quiet.** `--ingest-concurrency`
 bodies are parsed at once, one per core by default. A body that waits longer than
 100ms for a slot is answered `503` with a `Retry-After: 1` rather than left to
-run long, and `/stats` counts it as `ingest.requests_shed`.
+run long, and `/stats` counts it as `ingest.requests_shed`. So is a body that
+arrives while the rows waiting in memory hold more than twice `--max-buffer-bytes`
+(512 MiB by default): past the limit the largest buffers are written early, and
+past twice it the flush is behind what is arriving, so a body taken then would be
+memory the process may not have.
 
 The status is the point. A shipper that gets no answer keeps the batch, times
 out, and opens *another* connection - so a server that is merely slow gathers

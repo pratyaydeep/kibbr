@@ -338,9 +338,12 @@ fn a_built_file_cut_at_every_byte_offset_recovers_the_whole_row_groups_before_th
 
 // ── What goes in comes back out ────────────────────────────────────────────────────
 
-/// Every case the data model names, and the seam audit's: through the real parser, the
-/// builder and the reader, each value comes back as the JSON value that was ingested - a
-/// string character for character, a number as the same number.
+/// Every spelling a value must come back in - zero-padded and signed integers, each RFC 3339
+/// variation, epochs as numbers and as strings, a boolean's case, UUIDs and IPv6 in each
+/// spelling, integers past `i64`, floats that do not print back, an array, null and the
+/// empty string: through the real parser, the builder and the reader, each value comes back
+/// as the JSON value that was ingested - a string character for character, a number as the
+/// same number.
 #[test]
 fn every_named_spelling_comes_back_as_it_was_ingested() {
     let values = [
