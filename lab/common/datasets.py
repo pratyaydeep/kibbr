@@ -410,9 +410,9 @@ def _build_real(size: str) -> Dataset:
 # answer one question the lab needs: a column's type is the join of every type its key
 # has shown and a column never narrows, so one bad value pins a column to String for the
 # life of the template. Across flat30, oneday, uneven, sample.ndjson and
-# testdata/m2/1m.ndjson, zero keys carry two types - so `columns widened to String` came
-# back 0 for every merge rule, which is a fact about the generator rather than a verdict
-# on merging.
+# testdata/query-timing/1m.ndjson, zero keys carry two types - so `columns widened to
+# String` came back 0 for every merge rule, which is a fact about the generator rather
+# than a verdict on merging.
 #
 # The faults below are the ones production logs actually have, at rates in the range
 # real streams show. Each is listed so a reader can scale the result or disagree with it.
