@@ -119,9 +119,9 @@ impl ColValue {
 /// that rung 2 mistook for a timestamp as `2112-08-16T...` is not the string that was
 /// ingested. Recording the rung makes the promotion invert the rung instead.
 ///
-/// Leading zeros are lost in every case - `0012345678` parses to the same nanoseconds as
-/// `12345678` and no tag brings it back. That loss happens at parse time, which is why
-/// this has to travel from the ladder rather than be worked out at write time.
+/// The rung is known only where the text is, at parse time, which is why this has to
+/// travel from the ladder rather than be worked out at write time. Rung 2 never reads
+/// digits that start with a zero, so inverting it has no leading zero to lose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DtForm {
     /// Rows in this partition came from more than one rung. Promotion falls back to

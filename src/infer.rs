@@ -1,9 +1,11 @@
 //! Type inference. First match wins; the order is the contract.
 //!
 //! ```text
-//! 1.  parses as RFC 3339                          -> Datetime
-//! 2.  exactly 10 or 13 ASCII digits, naming a
-//!     moment inside the epoch window              -> Datetime  (seconds / millis)
+//! 1.  parses as RFC 3339, and the type holds
+//!     that instant exactly                        -> Datetime
+//! 2.  exactly 10 or 13 ASCII digits, no leading
+//!     zero, naming a moment inside the epoch
+//!     window that the type holds                  -> Datetime  (seconds / millis)
 //! 3.  matches the UUID pattern                    -> Uuid
 //! 4.  parses as IpAddr (v4 or v6)                 -> Ip
 //! 5.  contains @ and matches email                -> String
@@ -19,6 +21,11 @@
 //! order id naming 2112 falls through to rule 6. One naming a moment this century is
 //! still taken for a date - the accepted trade, and the column join corrects it the first
 //! time an id of another shape arrives.
+//!
+//! A value the typed form cannot hold exactly is not a member of that type: it falls
+//! through to the rungs below, and for anything shaped like a date that means text.
+//! Nothing is clamped, rounded, rolled forward or truncated, because each of those can
+//! store a different value from the one ingested, not a different spelling of it.
 
 use std::net::IpAddr;
 use std::sync::OnceLock;
@@ -30,18 +37,8 @@ use crate::types::{ColValue, ColumnType, DtForm, Typed};
 /// Run the ladder against a raw value. Every rung is written out separately and in
 /// order; do not collapse them, the order is the thing being specified.
 pub fn infer(raw: &str) -> Typed {
-    // 1. RFC 3339.
-    if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
-        // i64 nanoseconds run from 1677 to 2262; RFC 3339 runs from year 0 to 9999. Both
-        // ends overflow, and `timestamp_nanos_opt` reports them alike, so the direction
-        // has to come from the seconds - in range for every datetime chrono can hold.
-        // Clamping both ends to `i64::MAX` would file the pre-1677 era in 2262, the far
-        // end of the range it fell off.
-        let ns = dt.timestamp_nanos_opt().unwrap_or(if dt.timestamp() < 0 {
-            i64::MIN
-        } else {
-            i64::MAX
-        });
+    // 1. RFC 3339, where the instant it names is one the type holds exactly.
+    if let Some(ns) = rfc3339_nanos(raw) {
         return dated(ColValue::Datetime(ns), DtForm::Rfc3339);
     }
 
@@ -61,13 +58,12 @@ pub fn infer(raw: &str) -> Typed {
             (1_000_000, DtForm::EpochMillis)
         };
         if epoch_window().contains(digits, per_unit) {
-            // 9_999_999_999 seconds in nanoseconds overflows i64 (nanos run out in
-            // 2262), which only a window reaching past 2262 admits. Saturate rather than
-            // wrap: the type call stands, nothing silently becomes a negative timestamp,
-            // and every value past that end lands on the same clamped instant - the price
-            // of a window wider than the type the instant is stored in.
-            let ns = digits.saturating_mul(per_unit);
-            return dated(ColValue::Datetime(ns), form);
+            // Nanoseconds run out in 2262, which only a window reaching past it admits.
+            // Past that the digits fall through like any outside the window: a clamped
+            // instant would be another moment, and every such value the same one.
+            if let Some(ns) = digits.checked_mul(per_unit) {
+                return dated(ColValue::Datetime(ns), form);
+            }
         }
     }
 
@@ -129,16 +125,52 @@ fn dated(value: ColValue, form: DtForm) -> Typed {
     }
 }
 
+/// The instant an RFC 3339 value names, in the `i64` nanoseconds a `Datetime` holds, or
+/// `None` when it is not RFC 3339 or the type cannot hold that instant exactly.
+///
+/// The parser accepts three things the type cannot keep, each of which would store
+/// another value rather than another spelling of this one:
+///
+/// - a second of 60, held as a full second past `:59`, which comes back as the next
+///   minute - on any day, leap second or not;
+/// - more than nine fraction digits, the ones past the ninth dropped. Dropping zeros
+///   loses nothing, but the rule counts digits rather than reading them, so whether a
+///   value is a `Datetime` never turns on which digit would have been lost;
+/// - any year from 0 to 9999, where i64 nanoseconds run only from 1677 to 2262.
+fn rfc3339_nanos(raw: &str) -> Option<i64> {
+    let dt = DateTime::parse_from_rfc3339(raw).ok()?;
+    // How chrono holds a leap second: a sub-second part of a full second or more.
+    if dt.timestamp_subsec_nanos() >= 1_000_000_000 {
+        return None;
+    }
+    // The fraction is the only `.` in a value that parsed: the offset is `Z` or `+hh:mm`.
+    let fraction = raw
+        .split_once('.')
+        .map_or(0, |(_, rest)| rest.bytes().take_while(u8::is_ascii_digit).count());
+    if fraction > 9 {
+        return None;
+    }
+    dt.timestamp_nanos_opt()
+}
+
+/// Ten or thirteen ASCII digits, the first of them not a zero.
+///
+/// A count of seconds or milliseconds since 1970 is not written with a leading zero; ten
+/// digits that start with one are an id kept at a fixed width, and read as an epoch they
+/// come back as a date nobody wrote. They land on rule 6 instead. Under the default window
+/// the ones it would have admitted name 2000-01-01 to 2001-09-09, so its lower edge is
+/// out of reach of ten and thirteen digits.
 fn is_epoch_digits(s: &str) -> bool {
-    (s.len() == 10 || s.len() == 13) && s.bytes().all(|b| b.is_ascii_digit())
+    (s.len() == 10 || s.len() == 13)
+        && !s.starts_with('0')
+        && s.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// The moments rule 2 may read ten or thirteen digits as: `[start, end)`.
 ///
 /// By default 2000-01-01 up to but not including 2100-01-01, which costs real timestamps
 /// nothing - no log line is stamped before 2000 or after 2100 - and sends most ten-digit
-/// ids to `Int64`: an order id naming 2112, a phone number naming 2282, ten digits with a
-/// leading zero naming the 1970s.
+/// ids to `Int64`: an order id naming 2112, a phone number naming 2282.
 ///
 /// It decides what type is *stored*, and a column never narrows: a window turned on over
 /// data typed without one makes every misread id column `Datetime` joined with `Int64`,

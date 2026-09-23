@@ -32,7 +32,7 @@ pub fn col_text(value: &ColValue) -> String {
 ///
 /// `ColValue::to_json` is the deliberate exception and keeps the nanoseconds. It feeds
 /// `parse --json`'s `typed_values`, a view of what the type ladder decided: the boundary
-/// cases there - year 9999, `i64::MAX`, epoch 0 - are only checkable as exact instants
+/// cases there - `i64::MIN`, `i64::MAX`, epoch 0 - are only checkable as exact instants
 /// (`tests/fixture.rs`).
 ///
 /// AutoSi, not Secs: a value carrying sub-second precision keeps it, so the rendering
