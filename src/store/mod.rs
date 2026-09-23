@@ -7,13 +7,23 @@
 //!
 //! The split is three ways and it matters:
 //!
-//! - **`LeafStore`** holds one leaf's rows and a synchronous `flush()`. It has **no
-//!   clock**. It cannot know when it should be written, and giving it a timer would make
-//!   it untestable without a runtime.
-//! - **`StoreManager`** owns the registry of open stores. The interval that calls
+//! - **`LeafStore`** holds one leaf's rows. **`Store`** makes leaves and writes their rows
+//!   out with a synchronous `flush()`: the rows of every template share a day's file, so
+//!   the flush that closes their row groups belongs to the store that owns the files and
+//!   not to any one leaf. Neither has **a clock**. Neither can know when it should write,
+//!   and giving one a timer would make it untestable without a runtime.
+//! - **`StoreManager`** owns the registry of open leaves. The interval that calls
 //!   `flush()` lives in `serve`, watching the same cancellation token as everything else,
 //!   because the clock belongs to the process lifecycle and not to storage.
 //! - **The ingest path** has neither. It calls `append` and returns.
+//!
+//! **There is no lock over all of it.** Each leaf locks itself, the registry is locked
+//! only to find or add a leaf, and a flush holds no lock an append or a query waits on
+//! while it touches the disk - `disk::DiskLeaf::state` has the invariant that makes that
+//! safe. One `RwLock` over every leaf of every template, held by the flush across the
+//! encode, the write and the fsync of every row group it closed, measured ingest falling
+//! from 44,800 lines a second to 1,645 with queries running, and a count by a promoted
+//! value going from 33ms to 1.1s.
 //!
 //! `StoreManager` is a concrete struct and not a trait, which is a deliberate reading of
 //! the rule above: the registry, the lazy open and the flush loop
@@ -34,9 +44,11 @@
 // predicate from a `Match` that still has its key. See `engine::execute`.
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
@@ -165,6 +177,46 @@ impl Row {
                 .unwrap_or_else(|| value.printed()),
         )
     }
+
+    /// Roughly the memory this row holds: its two hash tables, and an allocation for every
+    /// key and every string value, rounded up as the allocator rounds them.
+    ///
+    /// **Several times its payload, which is why this exists.** A generated line of 182
+    /// bytes of keys and values is 1,537 here and held 1.8KB of resident size as a buffered
+    /// row: a hash table of sixteen slots for eight keys, and an allocation per string. A
+    /// limit on memory that counted payload would let eight times its figure in.
+    pub fn held_bytes(&self) -> usize {
+        fn table<K, V>(map: &HashMap<K, V>) -> usize {
+            match map.capacity() {
+                0 => 0,
+                // A table holds seven items for every eight slots, in a power of two, and
+                // a control byte a slot beside them.
+                n => (n * 8 / 7).next_power_of_two() * (std::mem::size_of::<(K, V)>() + 1),
+            }
+        }
+        fn heap(len: usize) -> usize {
+            len.div_ceil(16) * 16
+        }
+        let keys: usize = self
+            .values
+            .keys()
+            .chain(self.written.keys())
+            .map(|key| heap(key.len()))
+            .sum();
+        let strings: usize = self
+            .values
+            .values()
+            .map(|value| match value {
+                ColValue::String(text) => heap(text.len()),
+                _ => 0,
+            })
+            .chain(self.written.values().map(|json| match json {
+                serde_json::Value::String(text) => heap(text.len()),
+                _ => 0,
+            }))
+            .sum();
+        std::mem::size_of::<Self>() + table(&self.values) + table(&self.written) + keys + strings
+    }
 }
 
 /// Passed beside `ScanOptions` rather than inside it: `Box<dyn Fn>` is not `Clone`, which
@@ -283,9 +335,56 @@ pub struct Scan {
 
 /// How many data files may be open for writing at once. One is open per UTC day that has
 /// taken a row since it was last sealed, so this bounds the days a burst of late rows can
-/// keep open; past it the least recently written day's file is sealed, and the next row
-/// for that day opens the next file number.
+/// keep open. Past it a row whose day has no open file goes into today's file, in a row
+/// group of its own day, and the least recently written file is sealed to make room for
+/// today's when it needs opening.
 pub const DEFAULT_MAX_OPEN_SEGMENTS: usize = 512;
+
+/// The memory every buffer together may hold before the largest are closed early - and
+/// twice it, before `/ingest` refuses bodies until the flush catches up.
+///
+/// **An emergency brake, not a threshold the normal run of things reaches.** Closing a
+/// buffer early makes a small row group, and a small row group compresses badly and costs
+/// a header like a full one: modelled on a burst, a 256MB limit cut the peak from 689MB to
+/// 423MB and forced 33,880 closes where 870 were needed. It fires when there are too many
+/// buffers for the row group thresholds - 8,192 rows or 8MB per template and day - to close
+/// them before the timeout, as there are when rows arrive across hundreds of templates and
+/// a month of days at once.
+///
+/// **Closing early is not enough on its own.** Measured with nothing behind it: 108,000
+/// lines a second across 27,000 template-days outran the flush, the buffers reached
+/// 5,200,000 rows on an 8GB machine, and the process swapped until a query took minutes.
+/// So past twice the limit the door sheds bodies with a `503`, and memory is bounded by the
+/// limit and not by how fast the shippers are.
+///
+/// **Memory, as `Row::held_bytes` estimates it, and not payload** - a buffered row holds
+/// eight times its keys and values. Measured on 200,000 generated lines: 182 bytes of
+/// payload a row, 1,537 by the estimate, 1.8KB of resident size.
+pub const DEFAULT_MAX_BUFFER_BYTES: u64 = 512 * 1024 * 1024;
+
+/// What the disk store is held to: when a row group closes, how many files may be open,
+/// how large one may grow, and how much may wait in memory.
+#[derive(Debug, Clone, Copy)]
+pub struct DiskOptions {
+    pub row_groups: RowGroupLimits,
+    /// The cap on day files open for writing: see `DEFAULT_MAX_OPEN_SEGMENTS`.
+    pub max_open_files: usize,
+    /// A day's file is sealed once it is this long, and the next number opened.
+    pub segment_max_bytes: u64,
+    /// See `DEFAULT_MAX_BUFFER_BYTES`.
+    pub max_buffer_bytes: u64,
+}
+
+impl Default for DiskOptions {
+    fn default() -> Self {
+        Self {
+            row_groups: RowGroupLimits::default(),
+            max_open_files: DEFAULT_MAX_OPEN_SEGMENTS,
+            segment_max_bytes: disk::DEFAULT_SEGMENT_MAX_BYTES,
+            max_buffer_bytes: DEFAULT_MAX_BUFFER_BYTES,
+        }
+    }
+}
 
 /// What a flush is being asked to do.
 ///
@@ -332,23 +431,43 @@ impl Default for RowGroupLimits {
     }
 }
 
-/// What one `flush()` wrote.
-#[derive(Debug, Default, Clone, Copy)]
+/// What one `Store::flush` wrote, and what it could not.
+#[derive(Debug, Default)]
 pub struct Flushed {
     pub rows: u64,
+    /// Buffers closed - one template's rows of one UTC day each.
     pub partitions: usize,
+    pub row_groups: usize,
     pub bytes: u64,
+    /// Files flushed: once each, however many row groups went into them.
+    pub syncs: usize,
+    pub sealed: usize,
+    /// Buffers closed before a threshold fired, because together they were past the
+    /// memory limit.
+    pub forced: usize,
+    /// Templates whose rows could not be written, each with why. Their rows are back in
+    /// their buffers, and the next flush tries them again. One failing is never fatal to
+    /// the others: a single unwritable directory must not stop every other template's rows
+    /// being persisted.
+    pub failed: Vec<(u64, StoreError)>,
+    /// Seals that failed. They cost no row - the file is recovered on the next start - but
+    /// they are still a store that could not write.
+    pub seal_failed: Vec<StoreError>,
 }
 
-/// What one pass over every open store wrote, and what it could not.
+/// What one flush wrote, and what it could not, as the process reports it.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FlushSummary {
     pub rows: u64,
     pub partitions: usize,
+    pub row_groups: usize,
     pub bytes: u64,
-    /// Leaves whose flush failed. One store failing is logged, never fatal to the others:
-    /// a single unwritable directory must not stop every other leaf being persisted.
+    pub syncs: usize,
+    pub sealed: usize,
+    pub forced: usize,
+    /// Leaves whose rows could not be written: what the shutdown reports rows against.
     pub failed: usize,
+    pub took: Duration,
 }
 
 // ── The scan interface ─────────────────────────────────────────────────────────────
@@ -388,9 +507,9 @@ impl<F: FnMut(&Row, u64)> Visitor for Rows<F> {
 
 /// One leaf's rows. Append-only; nothing deletes.
 ///
-/// `Send + Sync` because the server shares the registry across handler threads; `visit`
-/// takes `&self` so a query and an append can be told apart by the lock rather than by
-/// convention.
+/// `Send + Sync`, and every method takes `&self`: a leaf locks itself, so an append, a
+/// query and a flush on it are told apart by its own lock, and none of them waits on a
+/// lock over any other leaf.
 pub trait LeafStore: Send + Sync {
     fn template_id(&self) -> u64;
 
@@ -398,10 +517,7 @@ pub trait LeafStore: Send + Sync {
     ///
     /// No I/O and no clock: this half has to stay synchronous and cheap, because it runs
     /// once per ingested line.
-    fn append(&mut self, row: Row) -> u64;
-
-    /// Write the buffer out. Synchronous, and called by whoever owns the clock.
-    fn flush(&mut self, kind: FlushKind) -> Result<Flushed, StoreError>;
+    fn append(&self, row: Row) -> u64;
 
     /// Hand every surviving row to `v`. The one place filtering happens, so the count,
     /// fetch and group-by paths cannot drift.
@@ -441,12 +557,21 @@ pub trait LeafStore: Send + Sync {
     }
 }
 
-/// Where leaves come from. A factory and nothing else - the registry lives on
+/// Where leaves come from, and where their rows are written. The registry lives on
 /// `StoreManager`, so this trait is the whole of what memory and disk actually differ by.
 pub trait Store: Send + Sync {
     /// `time_column` is the template's time column: what the leaf partitions,
     /// orders and prunes on.
-    fn open(&self, template_id: u64, time_column: &str) -> Result<Box<dyn LeafStore>, StoreError>;
+    fn open(&self, template_id: u64, time_column: &str) -> Result<Arc<dyn LeafStore>, StoreError>;
+
+    /// Close every buffer a threshold says is due into row groups - every buffer, on a
+    /// final flush, which then seals every open file. Synchronous, and called by whoever
+    /// owns the clock. Nothing to do for a backend whose rows never leave memory.
+    fn flush(&self, kind: FlushKind) -> Flushed {
+        let _ = kind;
+        Flushed::default()
+    }
+
     /// For the banner and `/stats`.
     fn kind(&self) -> &'static str;
     fn base_path(&self) -> Option<&Path>;
@@ -455,15 +580,14 @@ pub trait Store: Send + Sync {
     fn open_files(&self) -> (usize, usize) {
         (0, 0)
     }
-    /// Seal every open file: the last step of a final flush, once every leaf has closed
-    /// its buffers. Nothing to do for a backend that holds no files.
-    fn seal(&self) -> Result<(), StoreError> {
-        Ok(())
-    }
     /// Template ids that stored rows already name, whether or not a template knows them:
     /// what a restart must not hand out again.
     fn claimed(&self) -> Vec<u64> {
         Vec::new()
+    }
+    /// Memory held by buffered rows, and the limit past which the largest are closed early.
+    fn buffer_bytes(&self) -> (u64, u64) {
+        (0, 0)
     }
 }
 
@@ -522,40 +646,53 @@ impl WriteHealth {
 
 // ── The registry ───────────────────────────────────────────────────────────────────
 
-/// The open stores, and the backend that makes them.
+/// Take a lock, recovering from a poisoning rather than propagating it.
+///
+/// A poisoned lock means something panicked while holding it. What these locks guard is
+/// changed under them in steps that do not stop halfway - a push, a take, a swap - so there
+/// is no torn state to inherit, and refusing every later request would turn one bad line
+/// into a dead server. `PoisonError::into_inner`, never `.unwrap()`: nothing here can end the
+/// process.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The open leaves, and the backend that makes them and writes their rows.
 ///
 /// `BTreeMap`, so `open` order is template order and two runs over one file report the
 /// same leaves in the same sequence.
 ///
-/// **No double-checked locking inside here, deliberately.** The obvious shape is a read
-/// lock, a miss, a write lock and a re-check - but the server already takes the
-/// `RwLock<StoreManager>` write lock once per ingest body, so `entry().or_insert_with()`
-/// under that lock *is* the check-and-create, atomically. A second lock in here would
-/// guard against a race the caller has already excluded.
+/// **Every method takes `&self`**, and the server holds this with no lock around it. The
+/// map has its own, held only to find a leaf or to add one - never across a leaf's rows,
+/// and never across the disk. A leaf locks itself, and a flush takes no lock an append or a
+/// query waits on while it writes.
 pub struct StoreManager {
     backend: Box<dyn Store>,
-    stores: BTreeMap<u64, Box<dyn LeafStore>>,
-    write_failures: u64,
+    stores: RwLock<BTreeMap<u64, Arc<dyn LeafStore>>>,
+    write_failures: AtomicU64,
     /// Rows `append` refused. Apart from `write_failures`, which also counts flushes that
     /// failed and later succeeded: these rows are gone for good, and the shutdown exits
     /// non-zero on them.
-    rows_dropped: u64,
+    rows_dropped: AtomicU64,
+    /// Buffers closed early by the memory limit, over the life of the process.
+    forced_closes: AtomicU64,
     /// Leaves `append` could not open, by template id, with the time column to open them
     /// on. Retried every flush, and while any is still here the store is degraded: see
     /// `retry_unopened`.
-    unopened: BTreeMap<u64, String>,
-    health: std::sync::Arc<WriteHealth>,
+    unopened: Mutex<BTreeMap<u64, String>>,
+    health: Arc<WriteHealth>,
 }
 
 impl StoreManager {
     pub fn new(backend: Box<dyn Store>) -> Self {
         Self {
             backend,
-            stores: BTreeMap::new(),
-            write_failures: 0,
-            rows_dropped: 0,
-            unopened: BTreeMap::new(),
-            health: std::sync::Arc::new(WriteHealth::default()),
+            stores: RwLock::new(BTreeMap::new()),
+            write_failures: AtomicU64::new(0),
+            rows_dropped: AtomicU64::new(0),
+            forced_closes: AtomicU64::new(0),
+            unopened: Mutex::new(BTreeMap::new()),
+            health: Arc::new(WriteHealth::default()),
         }
     }
 
@@ -563,23 +700,13 @@ impl StoreManager {
         Self::new(Box::new(MemoryStore::new()))
     }
 
-    pub fn disk(
-        base: std::path::PathBuf,
-        limits: RowGroupLimits,
-        max_open_files: usize,
-        segment_max_bytes: u64,
-    ) -> Result<Self, StoreError> {
-        Ok(Self::new(Box::new(DiskStore::open(
-            base,
-            limits,
-            max_open_files,
-            segment_max_bytes,
-        )?)))
+    pub fn disk(base: std::path::PathBuf, options: DiskOptions) -> Result<Self, StoreError> {
+        Ok(Self::new(Box::new(DiskStore::open(base, options)?)))
     }
 
-    /// Shared out at startup and read from `/health` and `/ingest` without this lock.
-    pub fn health(&self) -> std::sync::Arc<WriteHealth> {
-        std::sync::Arc::clone(&self.health)
+    /// Shared out at startup and read from `/health` and `/ingest` without any lock here.
+    pub fn health(&self) -> Arc<WriteHealth> {
+        Arc::clone(&self.health)
     }
 
     /// Data files open for writing, and the cap they are held under.
@@ -604,36 +731,51 @@ impl StoreManager {
     ///
     /// Counted as well as returned - `write_failures` for `/stats`, `rows_dropped` for the
     /// exit code - and it marks the store degraded.
-    pub fn append(
-        &mut self,
+    pub fn append(&self, template_id: u64, time_column: &str, row: Row) -> Result<(), StoreError> {
+        let leaf = match self.lookup(template_id) {
+            Some(leaf) => leaf,
+            None => self.open_for_write(template_id, time_column)?,
+        };
+        leaf.append(row);
+        Ok(())
+    }
+
+    /// The first row of a template this process has not opened a leaf for.
+    ///
+    /// **Double-checked**: the read in `append` missed, but another body carrying the same
+    /// new template can have opened the leaf since, so the write lock looks again before the
+    /// backend is asked. Two opens would give one template two leaves, and its rows would
+    /// split between them - each query reading one of the two.
+    fn open_for_write(
+        &self,
         template_id: u64,
         time_column: &str,
-        row: Row,
-    ) -> Result<(), StoreError> {
-        if !self.stores.contains_key(&template_id) {
-            match self.backend.open(template_id, time_column) {
-                Ok(store) => {
-                    self.stores.insert(template_id, store);
-                    self.unopened.remove(&template_id);
-                }
-                Err(e) => {
-                    self.note_failure(&e);
-                    self.rows_dropped += 1;
-                    self.unopened.insert(template_id, time_column.to_string());
-                    return Err(e);
-                }
+    ) -> Result<Arc<dyn LeafStore>, StoreError> {
+        let mut stores = self.stores.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(leaf) = stores.get(&template_id) {
+            return Ok(Arc::clone(leaf));
+        }
+        match self.backend.open(template_id, time_column) {
+            Ok(leaf) => {
+                stores.insert(template_id, Arc::clone(&leaf));
+                drop(stores);
+                lock(&self.unopened).remove(&template_id);
+                Ok(leaf)
+            }
+            Err(e) => {
+                drop(stores);
+                self.note_failure(&e);
+                self.rows_dropped.fetch_add(1, Ordering::Relaxed);
+                lock(&self.unopened).insert(template_id, time_column.to_string());
+                Err(e)
             }
         }
-        if let Some(store) = self.stores.get_mut(&template_id) {
-            store.append(row);
-        }
-        Ok(())
     }
 
     /// The batch entry point: the ingest path calls this and owns neither buffer nor clock.
     /// Stops at the first row the store refuses; the rows after it are not appended.
     pub fn append_batch_to(
-        &mut self,
+        &self,
         template_id: u64,
         time_column: &str,
         rows: impl IntoIterator<Item = Row>,
@@ -646,14 +788,15 @@ impl StoreManager {
 
     /// Open a leaf the trie already knows about, without writing to it.
     ///
-    /// The restart path. A leaf whose directory is absent opens empty, which is a known
+    /// The restart path. A template with no stored rows opens empty, which is a known
     /// template holding no rows - the second of the two empty answers, not an error.
-    pub fn open_existing(&mut self, template_id: u64, time_column: &str) -> Result<(), StoreError> {
-        if self.stores.contains_key(&template_id) {
+    pub fn open_existing(&self, template_id: u64, time_column: &str) -> Result<(), StoreError> {
+        let mut stores = self.stores.write().unwrap_or_else(|e| e.into_inner());
+        if stores.contains_key(&template_id) {
             return Ok(());
         }
         let store = self.backend.open(template_id, time_column)?;
-        self.stores.insert(template_id, store);
+        stores.insert(template_id, store);
         Ok(())
     }
 
@@ -668,78 +811,80 @@ impl StoreManager {
     /// **It also marks the store degraded**, and not only the flush tick does.
     ///
     /// The rule is written around the tick because that is where a full disk shows up
-    /// first, but a leaf that cannot even be *opened* - a directory `create_dir_all` could
-    /// not make - is a store that cannot write by any reading. `append` refuses that row
-    /// to its line; this is what refuses the *next* body at the door, before it is read.
+    /// first, but a leaf that cannot even be *opened* is a store that cannot write by any
+    /// reading. `append` refuses that row to its line; this is what refuses the *next*
+    /// body at the door, before it is read.
     ///
     /// The clearing rule is still the tick's: the next pass that writes everything clears
     /// it, and a pass has not written everything while a leaf `append` could not open
     /// still will not open - `retry_unopened` is in the pass. So the refusal lasts exactly
     /// as long as the leaf will not open: until the first tick after a disk fault is
     /// fixed, and for bytes the format rejects, until an operator moves them.
-    fn note_failure(&mut self, e: &StoreError) {
-        if self.write_failures == 0 {
+    fn note_failure(&self, e: &StoreError) {
+        if self.write_failures.fetch_add(1, Ordering::Relaxed) == 0 {
             crate::error::report(e);
         }
-        self.write_failures += 1;
         self.health.set_error(crate::error::chain(e));
         self.health.degrade();
     }
 
-    pub fn get(&self, template_id: u64) -> Result<&dyn LeafStore, StoreError> {
+    pub fn get(&self, template_id: u64) -> Result<Arc<dyn LeafStore>, StoreError> {
         self.lookup(template_id)
             .ok_or(StoreError::NotOpen { template_id })
     }
 
     /// A leaf with no store is a template that exists and holds no rows - the second of
     /// the two empty answers, and not an error.
-    pub fn lookup(&self, template_id: u64) -> Option<&dyn LeafStore> {
-        self.stores.get(&template_id).map(AsRef::as_ref)
+    pub fn lookup(&self, template_id: u64) -> Option<Arc<dyn LeafStore>> {
+        self.stores
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&template_id)
+            .map(Arc::clone)
     }
 
-    /// Write every open store's buffer; on a final flush, then seal every open file.
+    /// Close every buffer that is due - every one on a final flush, which then seals every
+    /// open file - and try again to open every leaf `append` could not.
     ///
     /// Never returns `Err`: one leaf failing is collected into the summary and the rest
-    /// are still written.
-    pub fn flush_all(&mut self, kind: FlushKind) -> FlushSummary {
-        let mut summary = FlushSummary::default();
-        let mut failures = Vec::new();
-        for (id, store) in self.stores.iter_mut() {
-            match store.flush(kind) {
-                Ok(done) => {
-                    summary.rows += done.rows;
-                    summary.partitions += done.partitions;
-                    summary.bytes += done.bytes;
-                }
-                Err(e) => {
-                    summary.failed += 1;
-                    failures.push((*id, e));
-                }
-            }
-        }
-        // Counted apart from `summary.failed`, which is leaves whose rows could not be
-        // written and is what the shutdown reports rows against. A seal that failed has
-        // lost no row - the file recovers on the next start - but it is still a store
-        // that could not write, so it reaches the verdict below.
-        let mut seal_failures = 0usize;
-        if kind.is_final() {
-            if let Err(e) = self.backend.seal() {
-                seal_failures += 1;
-                failures.push((0, e));
-            }
-        }
+    /// are still written. One at a time: the backend's own lock makes a second caller wait
+    /// for the first, and nothing else - no append, no query - waits on either.
+    pub fn flush_all(&self, kind: FlushKind) -> FlushSummary {
+        let started = Instant::now();
+        let done = self.backend.flush(kind);
+        let failed: BTreeSet<u64> = done.failed.iter().map(|(id, _)| *id).collect();
+        let mut failures: Vec<StoreError> = done.failed.into_iter().map(|(_, e)| e).collect();
+        // Counted apart from `failed`, which is leaves whose rows could not be written and is
+        // what the shutdown reports rows against. A seal that failed has lost no row - the
+        // file recovers on the next start - but it is still a store that could not write, so
+        // it reaches the verdict below.
+        let seal_failures = done.seal_failed.len();
+        failures.extend(done.seal_failed);
         let unopened = self.retry_unopened();
-        for (_, e) in &failures {
+        for e in &failures {
             crate::error::report(e);
         }
-        if let Some((_, e)) = failures.first() {
-            self.write_failures += failures.len() as u64;
+        if let Some(e) = failures.first() {
+            self.write_failures
+                .fetch_add(failures.len() as u64, Ordering::Relaxed);
             self.health.set_error(crate::error::chain(e));
         }
+        self.forced_closes
+            .fetch_add(done.forced as u64, Ordering::Relaxed);
         // The verdict `/health` and `/ingest` read. A final flush sets it too: a shutdown
         // that could not write is degraded for whatever is left of the process.
-        self.health.tick(summary.failed + seal_failures + unopened);
-        summary
+        self.health.tick(failed.len() + seal_failures + unopened);
+        FlushSummary {
+            rows: done.rows,
+            partitions: done.partitions,
+            row_groups: done.row_groups,
+            bytes: done.bytes,
+            syncs: done.syncs,
+            sealed: done.sealed,
+            forced: done.forced,
+            failed: failed.len(),
+            took: started.elapsed(),
+        }
     }
 
     /// Try again to open every leaf `append` could not, and count the ones that still fail.
@@ -756,36 +901,49 @@ impl StoreManager {
     /// tell which bodies need the leaf without parsing them, so while it will not open no
     /// body is taken, and a leaf whose bytes the format rejects never opens by itself.
     /// That is the stance a full disk already gets, and the alternative is the unbounded
-    /// duplication above. `/health` says degraded and names the error meanwhile. The retry
-    /// is a full `DiskLeaf::open` under the store lock each tick: nothing for a directory
-    /// that will not list, a footer read per segment before the bad one for a corrupt leaf.
+    /// duplication above. `/health` says degraded and names the error meanwhile.
     ///
     /// Counted apart from `summary.failed` for the reason seal failures are: that is leaves
     /// whose buffered rows could not be written, which the shutdown reports as lost, and
     /// these hold none. Their rows were refused by line and are in `rows_dropped`.
-    fn retry_unopened(&mut self) -> usize {
-        let pending: Vec<(u64, String)> = std::mem::take(&mut self.unopened).into_iter().collect();
+    fn retry_unopened(&self) -> usize {
+        let pending: Vec<(u64, String)> = std::mem::take(&mut *lock(&self.unopened))
+            .into_iter()
+            .collect();
         let mut failed = 0;
         for (template_id, time_column) in pending {
-            if self.stores.contains_key(&template_id) {
+            let mut stores = self.stores.write().unwrap_or_else(|e| e.into_inner());
+            if stores.contains_key(&template_id) {
                 continue;
             }
             match self.backend.open(template_id, &time_column) {
                 Ok(store) => {
-                    self.stores.insert(template_id, store);
+                    stores.insert(template_id, store);
                 }
                 Err(e) => {
+                    drop(stores);
                     failed += 1;
                     self.note_failure(&e);
-                    self.unopened.insert(template_id, time_column);
+                    lock(&self.unopened).insert(template_id, time_column);
                 }
             }
         }
         failed
     }
 
+    /// Every open leaf, in template order, as they stand now. Copied out so that nothing
+    /// done with them holds the map's lock.
+    fn leaves(&self) -> Vec<(u64, Arc<dyn LeafStore>)> {
+        self.stores
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(id, leaf)| (*id, Arc::clone(leaf)))
+            .collect()
+    }
+
     pub fn open(&self) -> usize {
-        self.stores.len()
+        self.stores.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Rows held across every open store.
@@ -793,21 +951,41 @@ impl StoreManager {
     /// Summed rather than counted on the way in: an append counter reads 0 after a
     /// restart, while the rows it counted are sitting on disk.
     pub fn rows(&self) -> u64 {
-        self.stores.values().map(|s| s.len()).sum()
+        self.leaves().iter().map(|(_, s)| s.len()).sum()
     }
 
     pub fn buffered(&self) -> u64 {
-        self.stores.values().map(|s| s.buffered()).sum()
+        self.leaves().iter().map(|(_, s)| s.buffered()).sum()
     }
 
     /// Every open store's `approx_bytes`, summed. `/stats`'s storage size.
     pub fn approx_bytes(&self) -> u64 {
-        self.stores.values().map(|s| s.approx_bytes()).sum()
+        self.leaves().iter().map(|(_, s)| s.approx_bytes()).sum()
+    }
+
+    /// Memory held by buffered rows, and the limit past which the largest are closed early.
+    pub fn buffer_bytes(&self) -> (u64, u64) {
+        self.backend.buffer_bytes()
+    }
+
+    /// Whether the buffers are past their limit, so the flush should not wait for its
+    /// next tick. Read on the ingest path: an atomic, and no lock.
+    pub fn over_buffer_limit(&self) -> bool {
+        let (held, limit) = self.backend.buffer_bytes();
+        limit > 0 && held > limit
+    }
+
+    /// Whether the buffers are past twice their limit: the flush, closing the largest
+    /// early, is still falling behind what arrives, and the door should take nothing more
+    /// until it catches up. See `DEFAULT_MAX_BUFFER_BYTES`.
+    pub fn buffers_full(&self) -> bool {
+        let (held, limit) = self.backend.buffer_bytes();
+        limit > 0 && held > limit.saturating_mul(2)
     }
 
     /// Open stores in template order, for `/templates` and `/stats`.
-    pub fn iter(&self) -> impl Iterator<Item = (u64, &dyn LeafStore)> {
-        self.stores.iter().map(|(id, store)| (*id, store.as_ref()))
+    pub fn iter(&self) -> impl Iterator<Item = (u64, Arc<dyn LeafStore>)> {
+        self.leaves().into_iter()
     }
 
     pub fn kind(&self) -> &'static str {
@@ -819,12 +997,16 @@ impl StoreManager {
     }
 
     pub fn write_failures(&self) -> u64 {
-        self.write_failures
+        self.write_failures.load(Ordering::Relaxed)
     }
 
     /// Rows `append` refused over the life of this manager. Never cleared.
     pub fn rows_dropped(&self) -> u64 {
-        self.rows_dropped
+        self.rows_dropped.load(Ordering::Relaxed)
+    }
+
+    pub fn forced_closes(&self) -> u64 {
+        self.forced_closes.load(Ordering::Relaxed)
     }
 
     pub fn last_write_error(&self) -> Option<String> {
@@ -977,7 +1159,7 @@ mod tests {
     struct Shut(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
     impl Store for Shut {
-        fn open(&self, template_id: u64, t: &str) -> Result<Box<dyn LeafStore>, StoreError> {
+        fn open(&self, template_id: u64, t: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
             if self.0.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err(StoreError::Io {
                     template_id,
@@ -1003,7 +1185,7 @@ mod tests {
     #[test]
     fn a_row_whose_leaf_will_not_open_is_refused_and_the_store_stays_degraded() {
         let shut = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let mut stores = StoreManager::new(Box::new(Shut(std::sync::Arc::clone(&shut))));
+        let stores = StoreManager::new(Box::new(Shut(std::sync::Arc::clone(&shut))));
         for n in 0..3 {
             let refused = stores.append(7, DEFAULT_TS_COLUMN, Row::new());
             assert!(
@@ -1043,11 +1225,232 @@ mod tests {
 
     #[test]
     fn a_row_the_store_takes_is_not_counted_as_dropped() {
-        let mut stores = StoreManager::memory();
+        let stores = StoreManager::memory();
         stores
             .append(7, DEFAULT_TS_COLUMN, Row::new())
             .expect("the memory store always opens");
         assert_eq!(stores.rows_dropped(), 0);
         assert_eq!(stores.rows(), 1);
+    }
+
+    /// Past twice the buffer limit the buffers are full - what `/ingest` refuses bodies on -
+    /// and a flush, closing the largest early, empties them again.
+    #[test]
+    fn the_buffers_are_full_past_twice_their_limit_until_a_flush() {
+        let dir = std::env::temp_dir().join(format!("triedb-full-{}", std::process::id()));
+        let row = |n: i64| {
+            let mut row = Row::new();
+            row.insert(
+                "ts".into(),
+                ColValue::Datetime(1_705_314_600_000_000_000 + n),
+            );
+            row.insert("n".into(), ColValue::Int64(n));
+            row
+        };
+        // What one such row holds, by the store's own count.
+        let _ = std::fs::remove_dir_all(&dir);
+        let probe = StoreManager::disk(dir.clone(), DiskOptions::default()).expect("open");
+        probe.append(7, "ts", row(0)).expect("append");
+        let each = probe.buffer_bytes().0;
+        drop(probe);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let options = DiskOptions {
+            max_buffer_bytes: 5 * each,
+            ..DiskOptions::default()
+        };
+        let stores = StoreManager::disk(dir.clone(), options).expect("open");
+        for n in 0..6 {
+            stores.append(7, "ts", row(n)).expect("append");
+        }
+        assert!(stores.over_buffer_limit() && !stores.buffers_full());
+        for n in 6..11 {
+            stores.append(7, "ts", row(n)).expect("append");
+        }
+        assert!(stores.buffers_full(), "{:?}", stores.buffer_bytes());
+        let done = stores.flush_all(FlushKind::Tick);
+        assert_eq!((done.forced, done.rows), (1, 11));
+        assert!(!stores.over_buffer_limit() && !stores.buffers_full());
+        drop(stores);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Four threads snapshot one template while it takes rows and closes row groups the
+    /// whole time. Every snapshot must hold every row appended before it began, each once
+    /// and in the place it was given: the invariant at `disk::DiskLeaf::state`, under load.
+    /// A row seen twice is a publish and a drop split across two holds of the leaf's lock;
+    /// a row missing is the drop done first.
+    ///
+    /// Each snapshot reads the newest 2,048 rows through a time window, so it costs the
+    /// same at the end of the run as at the start and the four threads take thousands; the
+    /// whole leaf is read once at the end, and once more after a restart.
+    ///
+    /// `TRIEDB_SNAPSHOT_SECONDS` sets how long it runs; 10 by default.
+    #[test]
+    fn every_snapshot_sees_every_row_exactly_once_while_row_groups_close() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+
+        const ID: u64 = 7;
+        const T0: i64 = 1_705_314_600_000_000_000;
+        const WINDOW: u64 = 2_048;
+        let seconds: u64 = std::env::var("TRIEDB_SNAPSHOT_SECONDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
+        let dir = std::env::temp_dir().join(format!("triedb-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Every flush closes whatever is buffered, in row groups of 64: a close is always
+        // under way, and a snapshot meets rows in row groups, moved aside and buffered.
+        let options = DiskOptions {
+            row_groups: RowGroupLimits {
+                rows: 64,
+                bytes: 1 << 20,
+                age: Duration::ZERO,
+            },
+            ..DiskOptions::default()
+        };
+        let stores = StoreManager::disk(dir.clone(), options).expect("open");
+
+        let appended = AtomicU64::new(0);
+        let stop = AtomicBool::new(false);
+        let closes = AtomicU64::new(0);
+        let row_groups = AtomicU64::new(0);
+        let flushes = AtomicU64::new(0);
+        let snapshots = AtomicU64::new(0);
+        let twice = AtomicU64::new(0);
+        let missing = AtomicU64::new(0);
+        let misplaced = AtomicU64::new(0);
+
+        /// One snapshot's rows, `(n, position)`, against every row from `lo` up to at
+        /// least `floor`: rows seen twice, rows missing, rows out of place.
+        fn check(mut seen: Vec<(i64, u64)>, lo: u64, floor: u64) -> (u64, u64, u64) {
+            seen.sort_unstable();
+            let (mut twice, mut missing, mut misplaced) = (0, 0, 0);
+            let mut next = lo;
+            for (n, seq) in seen {
+                let n = n as u64;
+                if n < next {
+                    twice += 1;
+                    continue;
+                }
+                missing += n - next;
+                // A single day, so a row's position is its place among all of them.
+                if seq != n {
+                    misplaced += 1;
+                }
+                next = n + 1;
+            }
+            missing += floor.saturating_sub(next);
+            (twice, missing, misplaced)
+        }
+
+        let row = |n: i64| {
+            let mut row = Row::new();
+            row.insert("ts".into(), ColValue::Datetime(T0 + n));
+            row.insert("n".into(), ColValue::Int64(n));
+            row
+        };
+        let snapshot = |since: Option<u64>| {
+            let leaf = stores.lookup(ID)?;
+            let opts = ScanOptions {
+                ts_column: Some("ts".into()),
+                since: since.map(|n| UNIX_EPOCH + Duration::from_nanos((T0 + n as i64) as u64)),
+                ..ScanOptions::default()
+            };
+            let mut seen = Vec::new();
+            leaf.visit(
+                &opts,
+                &[],
+                &mut Rows(|row: &Row, seq: u64| {
+                    if let Some(ColValue::Int64(n)) = row.get("n") {
+                        seen.push((*n, seq));
+                    }
+                }),
+            )
+            .expect("visit");
+            Some(seen)
+        };
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut n = 0i64;
+                while !stop.load(Relaxed) {
+                    for _ in 0..32 {
+                        stores.append(ID, "ts", row(n)).expect("append");
+                        n += 1;
+                        appended.store(n as u64, Release);
+                    }
+                    std::thread::sleep(Duration::from_micros(250));
+                }
+            });
+            scope.spawn(|| {
+                while !stop.load(Relaxed) {
+                    let done = stores.flush_all(FlushKind::Tick);
+                    assert_eq!(done.failed, 0, "a flush failed");
+                    closes.fetch_add(done.partitions as u64, Relaxed);
+                    row_groups.fetch_add(done.row_groups as u64, Relaxed);
+                    flushes.fetch_add(done.syncs as u64, Relaxed);
+                }
+            });
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    while !stop.load(Relaxed) {
+                        let floor = appended.load(Acquire);
+                        let lo = floor.saturating_sub(WINDOW);
+                        let Some(seen) = snapshot(Some(lo)) else {
+                            continue;
+                        };
+                        let (t, m, p) = check(seen, lo, floor);
+                        twice.fetch_add(t, Relaxed);
+                        missing.fetch_add(m, Relaxed);
+                        misplaced.fetch_add(p, Relaxed);
+                        snapshots.fetch_add(1, Relaxed);
+                    }
+                });
+            }
+            std::thread::sleep(Duration::from_secs(seconds));
+            stop.store(true, Relaxed);
+        });
+
+        // The whole leaf, once nothing is moving; then written and sealed, and read back.
+        let rows = appended.load(Acquire);
+        let whole = check(snapshot(None).expect("the leaf"), 0, rows);
+        let done = stores.flush_all(FlushKind::Final);
+        assert_eq!(done.failed, 0, "the final flush failed");
+        drop(stores);
+        let reopened = StoreManager::disk(dir.clone(), options).expect("reopen");
+        reopened.open_existing(ID, "ts").expect("leaf");
+        let after = reopened.lookup(ID).map_or(0, |leaf| leaf.len());
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let (twice, missing, misplaced) = (
+            twice.load(Relaxed),
+            missing.load(Relaxed),
+            misplaced.load(Relaxed),
+        );
+        eprintln!(
+            "snapshots under closes: {seconds}s, {rows} rows appended, {} closes into {} row \
+             groups under {} flushes, {} snapshots by 4 threads; {twice} rows seen twice, \
+             {missing} missing, {misplaced} out of place; the whole leaf at the end {:?}; \
+             {after} rows after a restart",
+            closes.load(Relaxed),
+            row_groups.load(Relaxed),
+            flushes.load(Relaxed),
+            snapshots.load(Relaxed),
+            whole,
+        );
+        assert!(
+            snapshots.load(Relaxed) > 0 && closes.load(Relaxed) > 0,
+            "nothing ran"
+        );
+        assert_eq!(
+            (twice, missing, misplaced),
+            (0, 0, 0),
+            "snapshots saw rows twice, missed them, or out of place"
+        );
+        assert_eq!(whole, (0, 0, 0), "the whole leaf is not every row once");
+        assert_eq!(after, rows, "a restart does not hold every row");
     }
 }

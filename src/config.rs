@@ -88,6 +88,8 @@ const TRIE_FILE_ENV: &str = "TRIEDB__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "TRIEDB__INGESTOR__FLUSH_INTERVAL_MS";
 const ROW_GROUP_TIMEOUT_ENV: &str = "TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS";
 const MAX_OPEN_SEGMENTS_ENV: &str = "TRIEDB__STORAGE__MAX_OPEN_SEGMENTS";
+const SEGMENT_MAX_BYTES_ENV: &str = "TRIEDB__STORAGE__SEGMENT_MAX_BYTES";
+const MAX_BUFFER_BYTES_ENV: &str = "TRIEDB__STORAGE__MAX_BUFFER_BYTES";
 const TIME_COLUMNS_ENV: &str = "TRIEDB__SCHEMA__TIME_COLUMNS";
 const EPOCH_WINDOW_ENV: &str = "TRIEDB__SCHEMA__EPOCH_WINDOW";
 
@@ -157,6 +159,11 @@ pub enum ConfigError {
     /// buffer would never drain.
     #[error("max open segments must be at least 1; 0 would leave nowhere for a row group to go")]
     NoOpenSegments,
+
+    /// A file sealed before it holds anything would seal on every flush; a limit of 0 on
+    /// the buffers would close every buffer on every tick, the thresholds unread.
+    #[error("{what} must be at least 1 byte; 0 is not a size anything can be held to")]
+    NoBytes { what: &'static str },
 
     /// Refused rather than defaulted: the window decides what type a value is stored as,
     /// and an operator who set one would believe it was in force.
@@ -280,6 +287,8 @@ pub struct Storage {
     pub max_open_segments: usize,
     /// A day's data file is sealed at this size and the next number opened.
     pub segment_max_bytes: u64,
+    /// Memory every buffer together may hold before the largest are closed early.
+    pub max_buffer_bytes: u64,
 }
 
 impl Default for Storage {
@@ -291,6 +300,7 @@ impl Default for Storage {
             row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
             max_open_segments: crate::store::DEFAULT_MAX_OPEN_SEGMENTS,
             segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            max_buffer_bytes: crate::store::DEFAULT_MAX_BUFFER_BYTES,
         }
     }
 }
@@ -301,6 +311,7 @@ impl Storage {
     /// `durable` is the `--storage` choice rather than a path being present, so that
     /// `--storage memory --data-dir /x` is a clear instruction and not a contradiction
     /// resolved by whichever flag the code happened to read first.
+    #[allow(clippy::too_many_arguments)]
     pub fn load(
         durable: bool,
         data_dir: Option<PathBuf>,
@@ -308,6 +319,8 @@ impl Storage {
         flush_ms: Option<usize>,
         row_group_ms: Option<usize>,
         max_open_segments: Option<usize>,
+        segment_max_bytes: Option<usize>,
+        max_buffer_bytes: Option<usize>,
     ) -> Result<Self, ConfigError> {
         let flush_ms = resolve(flush_ms, FLUSH_INTERVAL_ENV, DEFAULT_FLUSH_INTERVAL_MS)?;
         if flush_ms == 0 {
@@ -333,6 +346,22 @@ impl Storage {
         if max_open_segments == 0 {
             return Err(ConfigError::NoOpenSegments);
         }
+        let bytes = |flag, var, default: u64, what| match resolve(flag, var, default as usize)? {
+            0 => Err(ConfigError::NoBytes { what }),
+            n => Ok(n as u64),
+        };
+        let segment_max_bytes = bytes(
+            segment_max_bytes,
+            SEGMENT_MAX_BYTES_ENV,
+            crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            "segment max bytes",
+        )?;
+        let max_buffer_bytes = bytes(
+            max_buffer_bytes,
+            MAX_BUFFER_BYTES_ENV,
+            crate::store::DEFAULT_MAX_BUFFER_BYTES,
+            "max buffer bytes",
+        )?;
 
         if !durable {
             return Ok(Self {
@@ -341,7 +370,8 @@ impl Storage {
                 flush_interval,
                 row_group_timeout,
                 max_open_segments,
-                segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+                segment_max_bytes,
+                max_buffer_bytes,
             });
         }
 
@@ -366,7 +396,8 @@ impl Storage {
             flush_interval,
             row_group_timeout,
             max_open_segments,
-            segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            segment_max_bytes,
+            max_buffer_bytes,
         })
     }
 
@@ -380,6 +411,16 @@ impl Storage {
         crate::store::RowGroupLimits {
             age: self.row_group_timeout,
             ..crate::store::RowGroupLimits::default()
+        }
+    }
+
+    /// What the disk store is held to.
+    pub fn disk_options(&self) -> crate::store::DiskOptions {
+        crate::store::DiskOptions {
+            row_groups: self.row_group_limits(),
+            max_open_files: self.max_open_segments,
+            segment_max_bytes: self.segment_max_bytes,
+            max_buffer_bytes: self.max_buffer_bytes,
         }
     }
 

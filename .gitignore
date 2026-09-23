@@ -77,3 +77,7 @@ sample.ndjson
 /testdata/epoch-window/
 
 /testdata/type-inference-seams
+
+# The corpora, the prepared data directory and the builds the live-door measurements
+# (search_under_load, shutdown_time) were run against - scratch, and the scripts rebuild them.
+/testdata/live-door/

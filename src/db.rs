@@ -98,7 +98,7 @@ pub fn row_of(parsed: &ParsedLog) -> Row {
 /// to fix the clock.
 pub fn ingest_line(
     trie: &Trie,
-    stores: Option<&mut StoreManager>,
+    stores: Option<&StoreManager>,
     parsed: &ParsedLog,
     now: DateTime<Utc>,
 ) -> Result<(), SinkError> {
@@ -108,9 +108,9 @@ pub fn ingest_line(
 
 /// A line's row, built before anything is locked.
 ///
-/// Splitting this off is what lets `/ingest` build five hundred rows without the store
-/// lock and then only take it to append them. It does not need the trie: a row is built
-/// from the line's own keys and values.
+/// Splitting this off is what lets `/ingest` build five hundred rows before it touches a
+/// leaf, and then only append them. It does not need the trie: a row is built from the
+/// line's own keys and values.
 pub struct Prepared {
     pub row: Row,
 }
@@ -126,7 +126,7 @@ impl Prepared {
 /// The rest of `ingest_line`, with the row already built.
 pub fn ingest_prepared(
     trie: &Trie,
-    stores: Option<&mut StoreManager>,
+    stores: Option<&StoreManager>,
     parsed: &ParsedLog,
     prepared: Prepared,
     now: DateTime<Utc>,
@@ -189,10 +189,10 @@ pub fn load<R: BufRead>(
     schema: &crate::config::Schema,
 ) -> Result<Db, CliError> {
     let trie = Trie::new().with_time_columns(schema.time_columns.clone());
-    let mut stores = StoreManager::memory();
+    let stores = StoreManager::memory();
     let stats = read_lines(
         input,
-        &mut |_, parsed| ingest_line(&trie, with_rows.then_some(&mut stores), &parsed, now),
+        &mut |_, parsed| ingest_line(&trie, with_rows.then_some(&stores), &parsed, now),
         &mut report_rejected,
     )?;
     Ok(Db {
@@ -211,9 +211,9 @@ pub fn load_lines<R: BufRead>(input: R) -> Result<(Vec<ParsedLog>, LoadStats), C
 /// Split and parse, taking no lock and touching no trie.
 ///
 /// **This is the first half of the write path**, and it is a separate function because
-/// `/ingest` has to run it before it takes the store lock. Parsing is most of the cost of
-/// a line, and running it under one global write lock is why ingest measured flat at
-/// 30,000 lines a second from one sender to eight.
+/// `/ingest` runs it before it touches a leaf. Parsing is most of the cost of a line, and
+/// running it under the one global write lock the stores used to have is why ingest
+/// measured flat at 30,000 lines a second from one sender to eight.
 ///
 /// The line number comes back beside each `ParsedLog` rather than inside it. A rejection
 /// found in the second half has to be reported against the number an operator would count
@@ -242,8 +242,8 @@ pub type PreparedLine = (usize, ParsedLog, Prepared);
 
 /// The same, with each line's row built as well.
 ///
-/// What `/ingest` uses: a row is an allocation per key, and five hundred of them under one
-/// global write lock is five hundred allocations nothing else in the process may overlap.
+/// What `/ingest` uses: a row is an allocation per key, built here with the parse so the
+/// second half has nothing left to do but walk the trie and append.
 pub fn parse_and_prepare<R: BufRead>(
     input: R,
     on_error: &mut dyn FnMut(DetectorError),
