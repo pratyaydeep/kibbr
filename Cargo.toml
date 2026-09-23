@@ -7,6 +7,9 @@ edition = "2021"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
+# CRC-32C for every frame, chunk and log record. Takes the CPU's CRC instruction (SSE 4.2,
+# ARMv8) where there is one, which a hand-written table does not.
+crc32c = "0.6.8"
 # Default features, so the inflater is `miniz_oxide` - pure Rust, no C toolchain in the
 # build and nothing new to audit for memory safety on a path that decodes hostile input.
 flate2 = "1.1"

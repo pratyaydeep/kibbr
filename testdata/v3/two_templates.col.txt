@@ -1,0 +1,421 @@
+# two_templates.col - a sealed v3 file
+#
+# Two templates, three row groups, sealed. The nine lines it holds, in WAL order, are
+# two_templates.ndjson beside this file; a reader must return each as the same JSON
+# value, key by key: strings character for character, numbers as numbers, null as null.
+#
+# Template 101 (keys http.status, level, order_id, ts; time from ts) has row groups 0
+# and 2; template 102 (@timestamp, client.ip, latency, ok, req.id, ts_ms; time from
+# @timestamp) has row group 1. The footer groups 101's two entries together although
+# 102's row group sits between them in the file.
+#
+# Flagged finished and naming two replaced files, as compaction labels its output. A
+# compactor would also have rebuilt 101's two row groups into one; they are kept apart
+# here so the dump stays short and still has a template with two entries.
+#
+# Three parts no reader knows, each with the high bit of its kind set, so each must be
+# skipped: section 0xff in row group 1, frame 0xff after it, footer part 0xff. 0xff is
+# never assigned; it exists for vectors like this one.
+#
+# What each row group exercises:
+#   rg 0  one piece per column; a kind bitmap (200, "404", 503); a zero-padded string
+#         integer (width 10); RFC 3339 at +05:30 with three fraction digits
+#   rg 1  per-row fraction digits (.5, .25, none), Z; IPv4 and IPv6 in two pieces;
+#         JSON-number floats; bools as true and "True" in one piece; upper-case UUIDs;
+#         epoch milliseconds as JSON numbers; an optional section
+#   rg 2  a null (presence bitmap); two pieces where one row is text ("N/A"); '+'
+#         integers with "-0", which no Int64 form prints, as text; two rows with the
+#         same effective time, ordered by their position (6.6.10)
+#
+# Rows as a reader renders them:
+#   template 101, schema 0: {"http.status":200,"level":"INFO","order_id":"0045000012","ts":"2024-01-15T16:00:00.120+05:30"}
+#   template 101, schema 0: {"http.status":"404","level":"WARN","order_id":"0045000013","ts":"2024-01-15T16:00:01.000+05:30"}
+#   template 101, schema 0: {"http.status":503,"level":"ERROR","order_id":"0045000014","ts":"2024-01-15T16:00:01.250+05:30"}
+#   template 102, schema 1: {"@timestamp":"2024-01-15T10:30:00.5Z","client.ip":"10.0.0.1","latency":0.25,"ok":true,"req.id":"550E8400-E29B-41D4-A716-446655440000","ts_ms":1705314600500}
+#   template 102, schema 1: {"@timestamp":"2024-01-15T10:30:00.25Z","client.ip":"2001:db8::1","latency":1.5,"ok":"True","req.id":"6BA7B810-9DAD-11D1-80B4-00C04FD430C8","ts_ms":1705314600250}
+#   template 102, schema 1: {"@timestamp":"2024-01-15T10:30:02Z","client.ip":"10.0.0.2","latency":12.75,"ok":false,"req.id":"F47AC10B-58CC-4372-A567-0E02B2C3D479","ts_ms":1705314602000}
+#   template 101, schema 0: {"http.status":200,"level":"INFO","order_id":"+4500000120","ts":"2024-01-15T16:05:00+05:30"}
+#   template 101, schema 0: {"http.status":201,"level":null,"order_id":"+4500000121","ts":"2024-01-15T16:05:00+05:30"}
+#   template 101, schema 0: {"http.status":"N/A","level":"INFO","order_id":"-0","ts":"2024-01-15T16:05:01+05:30"}
+#
+# offset    bytes                                              field
+#
+# -- header, 24 bytes
+00000000  54 52 44 42                                       header.magic  'TRDB'
+00000004  03                                                header.version  3
+00000005  00 00 00                                          header.reserved  zero
+00000008  76 33 20 74 77 6f 20 74 65 6d 70 6c 61 74 65 73   header.file_id  'v3 two templates'
+#
+# -- schema record 0: frame of 59 bytes
+00000018  33 00 00 00                                       schema.payload_len  51
+0000001c  6f 27 5e 8e                                       schema.crc  0x8e5e276f, CRC-32C of the payload
+00000020  01                                                schema.kind  1 = schema record
+00000021  00 00 00 00                                       schema.schema_id  0
+00000025  04 00 00 00                                       schema.column_count  4
+00000029  0b 00 00 00                                       schema.column[0].name_len  11
+0000002d  68 74 74 70 2e 73 74 61 74 75 73                  schema.column[0].name  'http.status'
+00000038  05 00 00 00                                       schema.column[1].name_len  5
+0000003c  6c 65 76 65 6c                                    schema.column[1].name  'level'
+00000041  08 00 00 00                                       schema.column[2].name_len  8
+00000045  6f 72 64 65 72 5f 69 64                           schema.column[2].name  'order_id'
+0000004d  02 00 00 00                                       schema.column[3].name_len  2
+00000051  74 73                                             schema.column[3].name  'ts'
+#
+# -- row group 0: header frame of 134 bytes
+00000053  7e 00 00 00                                       rg.payload_len  126
+00000057  b4 d9 ee ce                                       rg.crc  0xceeed9b4, CRC-32C of the payload
+0000005b  02                                                rg.kind  2 = row group
+0000005c  65 00 00 00 00 00 00 00                           rg.template_id  101
+00000064  00 00 00 00                                       rg.schema_id  0
+00000068  03 00 00 00                                       rg.row_count  3
+0000006c  00 9e 70 fa 97 7e aa 17                           rg.min_time  1705314600120000000 = 2024-01-15T10:30:00.120000000Z
+00000074  80 0c cb 3d 98 7e aa 17                           rg.max_time  1705314601250000000 = 2024-01-15T10:30:01.250000000Z
+0000007c  01                                                rg.source  1 = the WAL
+0000007d  57 41 4c 31 32 33 34 35                           rg.stream  0x35343332314c4157 (b'WAL12345')
+00000085  0a 00 00 00 00 00 00 00                           rg.first  10
+0000008d  0e 00 00 00 00 00 00 00                           rg.last  14
+00000095  62 00 00 00                                       rg.chunks_len  98
+00000099  00                                                rg.dir[0] http.status.layout  0x00 - one piece, no nulls
+0000009a  00                                                rg.dir[0] http.status.compression  0 = none
+0000009b  19 00 00 00                                       rg.dir[0] http.status.stored_len  25
+0000009f  24 c3 58 5f                                       rg.dir[0] http.status.stored_crc  0x5f58c324
+000000a3  01                                                rg.dir[0] http.status.piece A.type  1 = Int64
+000000a4  00                                                rg.dir[0] http.status.piece A.encoding  0 = plain
+000000a5  02                                                rg.dir[0] http.status.piece A.form.json_kind  2 = per row: a kind bitmap leads the piece
+000000a6  00                                                rg.dir[0] http.status.piece A.form.plus  0
+000000a7  00                                                rg.dir[0] http.status.piece A.form.width  0 - no padding
+000000a8  00                                                rg.dir[1] level.layout  0x00 - one piece, no nulls
+000000a9  00                                                rg.dir[1] level.compression  0 = none
+000000aa  19 00 00 00                                       rg.dir[1] level.stored_len  25
+000000ae  66 61 6f a2                                       rg.dir[1] level.stored_crc  0xa26f6166
+000000b2  00                                                rg.dir[1] level.piece A.type  0 = String
+000000b3  00                                                rg.dir[1] level.piece A.encoding  0 = plain
+000000b4  00                                                rg.dir[1] level.piece A.form.json_kind  0 = every row a JSON string
+000000b5  00                                                rg.dir[2] order_id.layout  0x00 - one piece, no nulls
+000000b6  00                                                rg.dir[2] order_id.compression  0 = none
+000000b7  18 00 00 00                                       rg.dir[2] order_id.stored_len  24
+000000bb  bd 88 53 5d                                       rg.dir[2] order_id.stored_crc  0x5d5388bd
+000000bf  01                                                rg.dir[2] order_id.piece A.type  1 = Int64
+000000c0  00                                                rg.dir[2] order_id.piece A.encoding  0 = plain
+000000c1  00                                                rg.dir[2] order_id.piece A.form.json_kind  0 = every row a JSON string
+000000c2  00                                                rg.dir[2] order_id.piece A.form.plus  0
+000000c3  0a                                                rg.dir[2] order_id.piece A.form.width  10 - zero-padded to this many digits
+000000c4  00                                                rg.dir[3] ts.layout  0x00 - one piece, no nulls
+000000c5  00                                                rg.dir[3] ts.compression  0 = none
+000000c6  18 00 00 00                                       rg.dir[3] ts.stored_len  24
+000000ca  5e 3e 97 bf                                       rg.dir[3] ts.stored_crc  0xbf973e5e
+000000ce  03                                                rg.dir[3] ts.piece A.type  3 = Datetime
+000000cf  00                                                rg.dir[3] ts.piece A.encoding  0 = plain
+000000d0  00                                                rg.dir[3] ts.piece A.form.json_kind  0 = every row a JSON string
+000000d1  00                                                rg.dir[3] ts.piece A.form.unit  0 = RFC 3339
+000000d2  54                                                rg.dir[3] ts.piece A.form.separator  0x54 = 'T'
+000000d3  2b                                                rg.dir[3] ts.piece A.form.zone  0x2b = '+'
+000000d4  4a 01                                             rg.dir[3] ts.piece A.form.offset  330 minutes = 05:30
+000000d6  03                                                rg.dir[3] ts.piece A.form.digits  3 fraction digits
+000000d7  00 00                                             rg.section_count  0
+#
+# -- row group chunk area: 98 bytes, the chunks in schema order, then the sections
+000000d9  05                                                chunk[0] http.status.kinds  101 (1 = number or true/false)
+000000da  c8 00 00 00 00 00 00 00                           chunk[0] http.status.value[0]  200 -> 200
+000000e2  94 01 00 00 00 00 00 00                           chunk[0] http.status.value[1]  404 -> "404"
+000000ea  f7 01 00 00 00 00 00 00                           chunk[0] http.status.value[2]  503 -> 503
+000000f2  04 00 00 00 49 4e 46 4f                           chunk[1] level.value[0]  "INFO"
+000000fa  04 00 00 00 57 41 52 4e                           chunk[1] level.value[1]  "WARN"
+00000102  05 00 00 00 45 52 52 4f 52                        chunk[1] level.value[2]  "ERROR"
+0000010b  4c a5 ae 02 00 00 00 00                           chunk[2] order_id.value[0]  45000012 -> "0045000012"
+00000113  4d a5 ae 02 00 00 00 00                           chunk[2] order_id.value[1]  45000013 -> "0045000013"
+0000011b  4e a5 ae 02 00 00 00 00                           chunk[2] order_id.value[2]  45000014 -> "0045000014"
+00000123  00 9e 70 fa 97 7e aa 17                           chunk[3] ts.value[0]  1705314600120000000 = 2024-01-15T10:30:00.120000000Z -> "2024-01-15T16:00:00.120+05:30"
+0000012b  00 5a e4 2e 98 7e aa 17                           chunk[3] ts.value[1]  1705314601000000000 = 2024-01-15T10:30:01.000000000Z -> "2024-01-15T16:00:01.000+05:30"
+00000133  80 0c cb 3d 98 7e aa 17                           chunk[3] ts.value[2]  1705314601250000000 = 2024-01-15T10:30:01.250000000Z -> "2024-01-15T16:00:01.250+05:30"
+#
+# -- schema record 1: frame of 80 bytes
+0000013b  48 00 00 00                                       schema.payload_len  72
+0000013f  10 30 0b f0                                       schema.crc  0xf00b3010, CRC-32C of the payload
+00000143  01                                                schema.kind  1 = schema record
+00000144  01 00 00 00                                       schema.schema_id  1
+00000148  06 00 00 00                                       schema.column_count  6
+0000014c  0a 00 00 00                                       schema.column[0].name_len  10
+00000150  40 74 69 6d 65 73 74 61 6d 70                     schema.column[0].name  '@timestamp'
+0000015a  09 00 00 00                                       schema.column[1].name_len  9
+0000015e  63 6c 69 65 6e 74 2e 69 70                        schema.column[1].name  'client.ip'
+00000167  07 00 00 00                                       schema.column[2].name_len  7
+0000016b  6c 61 74 65 6e 63 79                              schema.column[2].name  'latency'
+00000172  02 00 00 00                                       schema.column[3].name_len  2
+00000176  6f 6b                                             schema.column[3].name  'ok'
+00000178  06 00 00 00                                       schema.column[4].name_len  6
+0000017c  72 65 71 2e 69 64                                 schema.column[4].name  'req.id'
+00000182  05 00 00 00                                       schema.column[5].name_len  5
+00000186  74 73 5f 6d 73                                    schema.column[5].name  'ts_ms'
+#
+# -- row group 1: header frame of 183 bytes
+0000018b  af 00 00 00                                       rg.payload_len  175
+0000018f  1c 22 00 b4                                       rg.crc  0xb400221c, CRC-32C of the payload
+00000193  02                                                rg.kind  2 = row group
+00000194  66 00 00 00 00 00 00 00                           rg.template_id  102
+0000019c  01 00 00 00                                       rg.schema_id  1
+000001a0  03 00 00 00                                       rg.row_count  3
+000001a4  80 42 30 02 98 7e aa 17                           rg.min_time  1705314600250000000 = 2024-01-15T10:30:00.250000000Z
+000001ac  00 24 7f 6a 98 7e aa 17                           rg.max_time  1705314602000000000 = 2024-01-15T10:30:02.000000000Z
+000001b4  01                                                rg.source  1 = the WAL
+000001b5  57 41 4c 31 32 33 34 35                           rg.stream  0x35343332314c4157 (b'WAL12345')
+000001bd  0b 00 00 00 00 00 00 00                           rg.first  11
+000001c5  13 00 00 00 00 00 00 00                           rg.last  19
+000001cd  b5 00 00 00                                       rg.chunks_len  181
+000001d1  00                                                rg.dir[0] @timestamp.layout  0x00 - one piece, no nulls
+000001d2  00                                                rg.dir[0] @timestamp.compression  0 = none
+000001d3  1b 00 00 00                                       rg.dir[0] @timestamp.stored_len  27
+000001d7  49 1c fd ac                                       rg.dir[0] @timestamp.stored_crc  0xacfd1c49
+000001db  03                                                rg.dir[0] @timestamp.piece A.type  3 = Datetime
+000001dc  00                                                rg.dir[0] @timestamp.piece A.encoding  0 = plain
+000001dd  00                                                rg.dir[0] @timestamp.piece A.form.json_kind  0 = every row a JSON string
+000001de  00                                                rg.dir[0] @timestamp.piece A.form.unit  0 = RFC 3339
+000001df  54                                                rg.dir[0] @timestamp.piece A.form.separator  0x54 = 'T'
+000001e0  5a                                                rg.dir[0] @timestamp.piece A.form.zone  0x5a = 'Z'
+000001e1  00 00                                             rg.dir[0] @timestamp.piece A.form.offset  0 minutes
+000001e3  ff                                                rg.dir[0] @timestamp.piece A.form.digits  255 = per row
+000001e4  02                                                rg.dir[1] client.ip.layout  0x02 - two pieces
+000001e5  00                                                rg.dir[1] client.ip.compression  0 = none
+000001e6  1d 00 00 00                                       rg.dir[1] client.ip.stored_len  29
+000001ea  8b 0b f2 fc                                       rg.dir[1] client.ip.stored_crc  0xfcf20b8b
+000001ee  06                                                rg.dir[1] client.ip.piece A.type  6 = Ip
+000001ef  00                                                rg.dir[1] client.ip.piece A.encoding  0 = plain
+000001f0  00                                                rg.dir[1] client.ip.piece A.form.json_kind  0 = every row a JSON string
+000001f1  04                                                rg.dir[1] client.ip.piece A.form.spelling  4 = IPv4 dotted decimal
+000001f2  06                                                rg.dir[1] client.ip.piece B.type  6 = Ip
+000001f3  00                                                rg.dir[1] client.ip.piece B.encoding  0 = plain
+000001f4  00                                                rg.dir[1] client.ip.piece B.form.json_kind  0 = every row a JSON string
+000001f5  06                                                rg.dir[1] client.ip.piece B.form.spelling  6 = IPv6, RFC 5952, lower case
+000001f6  00                                                rg.dir[2] latency.layout  0x00 - one piece, no nulls
+000001f7  00                                                rg.dir[2] latency.compression  0 = none
+000001f8  18 00 00 00                                       rg.dir[2] latency.stored_len  24
+000001fc  a1 4a fd 1d                                       rg.dir[2] latency.stored_crc  0x1dfd4aa1
+00000200  02                                                rg.dir[2] latency.piece A.type  2 = Float64
+00000201  00                                                rg.dir[2] latency.piece A.encoding  0 = plain
+00000202  01                                                rg.dir[2] latency.piece A.form.json_kind  1 = every row a JSON number or true/false
+00000203  00                                                rg.dir[2] latency.piece A.form.digits  0 fraction digits
+00000204  00                                                rg.dir[3] ok.layout  0x00 - one piece, no nulls
+00000205  00                                                rg.dir[3] ok.compression  0 = none
+00000206  04 00 00 00                                       rg.dir[3] ok.stored_len  4
+0000020a  85 da e3 58                                       rg.dir[3] ok.stored_crc  0x58e3da85
+0000020e  04                                                rg.dir[3] ok.piece A.type  4 = Bool
+0000020f  00                                                rg.dir[3] ok.piece A.encoding  0 = plain
+00000210  02                                                rg.dir[3] ok.piece A.form.json_kind  2 = per row: a kind bitmap leads the piece
+00000211  01                                                rg.dir[3] ok.piece A.form.case  1 = capitalised (True/False)
+00000212  00                                                rg.dir[4] req.id.layout  0x00 - one piece, no nulls
+00000213  00                                                rg.dir[4] req.id.compression  0 = none
+00000214  30 00 00 00                                       rg.dir[4] req.id.stored_len  48
+00000218  e2 89 f3 0d                                       rg.dir[4] req.id.stored_crc  0x0df389e2
+0000021c  05                                                rg.dir[4] req.id.piece A.type  5 = Uuid
+0000021d  00                                                rg.dir[4] req.id.piece A.encoding  0 = plain
+0000021e  00                                                rg.dir[4] req.id.piece A.form.json_kind  0 = every row a JSON string
+0000021f  01                                                rg.dir[4] req.id.piece A.form.case  1 = upper
+00000220  00                                                rg.dir[5] ts_ms.layout  0x00 - one piece, no nulls
+00000221  00                                                rg.dir[5] ts_ms.compression  0 = none
+00000222  18 00 00 00                                       rg.dir[5] ts_ms.stored_len  24
+00000226  6e b4 c1 cb                                       rg.dir[5] ts_ms.stored_crc  0xcbc1b46e
+0000022a  03                                                rg.dir[5] ts_ms.piece A.type  3 = Datetime
+0000022b  00                                                rg.dir[5] ts_ms.piece A.encoding  0 = plain
+0000022c  01                                                rg.dir[5] ts_ms.piece A.form.json_kind  1 = every row a JSON number or true/false
+0000022d  02                                                rg.dir[5] ts_ms.piece A.form.unit  2 = epoch milliseconds
+0000022e  00                                                rg.dir[5] ts_ms.piece A.form.separator  0 - unused
+0000022f  00                                                rg.dir[5] ts_ms.piece A.form.zone  0 - unused
+00000230  00 00                                             rg.dir[5] ts_ms.piece A.form.offset  0 minutes
+00000232  00                                                rg.dir[5] ts_ms.piece A.form.digits  0 fraction digits
+00000233  01 00                                             rg.section_count  1
+00000235  ff                                                rg.section[0].kind  0xff - optional, unknown: skip
+00000236  00 00 00 00                                       rg.section[0].column  0
+0000023a  19 00 00 00                                       rg.section[0].len  25
+0000023e  9b ea 12 6f                                       rg.section[0].crc  0x6f12ea9b
+#
+# -- row group chunk area: 181 bytes, the chunks in schema order, then the sections
+00000242  01 02 00                                          chunk[0] @timestamp.digits  1 2 0 (per row)
+00000245  00 f5 16 11 98 7e aa 17                           chunk[0] @timestamp.value[0]  1705314600500000000 = 2024-01-15T10:30:00.500000000Z -> "2024-01-15T10:30:00.5Z"
+0000024d  80 42 30 02 98 7e aa 17                           chunk[0] @timestamp.value[1]  1705314600250000000 = 2024-01-15T10:30:00.250000000Z -> "2024-01-15T10:30:00.25Z"
+00000255  00 24 7f 6a 98 7e aa 17                           chunk[0] @timestamp.value[2]  1705314602000000000 = 2024-01-15T10:30:02.000000000Z -> "2024-01-15T10:30:02Z"
+0000025d  02                                                chunk[1] client.ip.selector  010 (1 = piece B)
+0000025e  08 00 00 00                                       chunk[1] client.ip.piece_a_len  8
+00000262  0a 00 00 01                                       chunk[1] client.ip A.value[0]  "10.0.0.1"
+00000266  0a 00 00 02                                       chunk[1] client.ip A.value[1]  "10.0.0.2"
+0000026a  20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 01   chunk[1] client.ip B.value[0]  "2001:db8::1"
+0000027a  00 00 00 00 00 00 d0 3f                           chunk[2] latency.value[0]  0.25 -> 0.25
+00000282  00 00 00 00 00 00 f8 3f                           chunk[2] latency.value[1]  1.5 -> 1.5
+0000028a  00 00 00 00 00 80 29 40                           chunk[2] latency.value[2]  12.75 -> 12.75
+00000292  05                                                chunk[3] ok.kinds  101 (1 = number or true/false)
+00000293  01                                                chunk[3] ok.value[0]  true
+00000294  01                                                chunk[3] ok.value[1]  "True"
+00000295  00                                                chunk[3] ok.value[2]  false
+00000296  55 0e 84 00 e2 9b 41 d4 a7 16 44 66 55 44 00 00   chunk[4] req.id.value[0]  "550E8400-E29B-41D4-A716-446655440000"
+000002a6  6b a7 b8 10 9d ad 11 d1 80 b4 00 c0 4f d4 30 c8   chunk[4] req.id.value[1]  "6BA7B810-9DAD-11D1-80B4-00C04FD430C8"
+000002b6  f4 7a c1 0b 58 cc 43 72 a5 67 0e 02 b2 c3 d4 79   chunk[4] req.id.value[2]  "F47AC10B-58CC-4372-A567-0E02B2C3D479"
+000002c6  00 f5 16 11 98 7e aa 17                           chunk[5] ts_ms.value[0]  1705314600500000000 = 2024-01-15T10:30:00.500000000Z -> 1705314600500
+000002ce  80 42 30 02 98 7e aa 17                           chunk[5] ts_ms.value[1]  1705314600250000000 = 2024-01-15T10:30:00.250000000Z -> 1705314600250
+000002d6  00 24 7f 6a 98 7e aa 17                           chunk[5] ts_ms.value[2]  1705314602000000000 = 2024-01-15T10:30:02.000000000Z -> 1705314602000
+000002de  6f 70 74 69 6f 6e 61 6c 20 73 65 63 74 69 6f 6e   section[0] bytes  'optional section: skip me'
+          3a 20 73 6b 69 70 20 6d 65
+#
+# -- frame of kind 0xff: optional, unknown to every reader, skipped
+000002f7  18 00 00 00                                       frame.payload_len  24
+000002fb  9e 92 48 53                                       frame.crc  0x5348929e, CRC-32C of the payload
+000002ff  ff                                                frame.kind  0xff - optional, unknown: skip
+00000300  6f 70 74 69 6f 6e 61 6c 20 66 72 61 6d 65 3a 20   frame.bytes  'optional frame: skip me'
+          73 6b 69 70 20 6d 65
+#
+# -- row group 2: header frame of 140 bytes
+00000317  84 00 00 00                                       rg.payload_len  132
+0000031b  54 31 0c d3                                       rg.crc  0xd30c3154, CRC-32C of the payload
+0000031f  02                                                rg.kind  2 = row group
+00000320  65 00 00 00 00 00 00 00                           rg.template_id  101
+00000328  00 00 00 00                                       rg.schema_id  0
+0000032c  03 00 00 00                                       rg.row_count  3
+00000330  00 48 ae cc dd 7e aa 17                           rg.min_time  1705314900000000000 = 2024-01-15T10:35:00.000000000Z
+00000338  00 12 49 08 de 7e aa 17                           rg.max_time  1705314901000000000 = 2024-01-15T10:35:01.000000000Z
+00000340  01                                                rg.source  1 = the WAL
+00000341  57 41 4c 31 32 33 34 35                           rg.stream  0x35343332314c4157 (b'WAL12345')
+00000349  14 00 00 00 00 00 00 00                           rg.first  20
+00000351  1b 00 00 00 00 00 00 00                           rg.last  27
+00000359  60 00 00 00                                       rg.chunks_len  96
+0000035d  02                                                rg.dir[0] http.status.layout  0x02 - two pieces
+0000035e  00                                                rg.dir[0] http.status.compression  0 = none
+0000035f  1c 00 00 00                                       rg.dir[0] http.status.stored_len  28
+00000363  c9 97 0c 49                                       rg.dir[0] http.status.stored_crc  0x490c97c9
+00000367  01                                                rg.dir[0] http.status.piece A.type  1 = Int64
+00000368  00                                                rg.dir[0] http.status.piece A.encoding  0 = plain
+00000369  01                                                rg.dir[0] http.status.piece A.form.json_kind  1 = every row a JSON number or true/false
+0000036a  00                                                rg.dir[0] http.status.piece A.form.plus  0
+0000036b  00                                                rg.dir[0] http.status.piece A.form.width  0 - no padding
+0000036c  00                                                rg.dir[0] http.status.piece B.type  0 = String
+0000036d  00                                                rg.dir[0] http.status.piece B.encoding  0 = plain
+0000036e  00                                                rg.dir[0] http.status.piece B.form.json_kind  0 = every row a JSON string
+0000036f  01                                                rg.dir[1] level.layout  0x01 - presence bitmap
+00000370  00                                                rg.dir[1] level.compression  0 = none
+00000371  11 00 00 00                                       rg.dir[1] level.stored_len  17
+00000375  0e 54 3a 65                                       rg.dir[1] level.stored_crc  0x653a540e
+00000379  00                                                rg.dir[1] level.piece A.type  0 = String
+0000037a  00                                                rg.dir[1] level.piece A.encoding  0 = plain
+0000037b  00                                                rg.dir[1] level.piece A.form.json_kind  0 = every row a JSON string
+0000037c  02                                                rg.dir[2] order_id.layout  0x02 - two pieces
+0000037d  00                                                rg.dir[2] order_id.compression  0 = none
+0000037e  1b 00 00 00                                       rg.dir[2] order_id.stored_len  27
+00000382  3a 1f 0d bd                                       rg.dir[2] order_id.stored_crc  0xbd0d1f3a
+00000386  01                                                rg.dir[2] order_id.piece A.type  1 = Int64
+00000387  00                                                rg.dir[2] order_id.piece A.encoding  0 = plain
+00000388  00                                                rg.dir[2] order_id.piece A.form.json_kind  0 = every row a JSON string
+00000389  01                                                rg.dir[2] order_id.piece A.form.plus  1 - '+' before a value >= 0
+0000038a  00                                                rg.dir[2] order_id.piece A.form.width  0 - no padding
+0000038b  00                                                rg.dir[2] order_id.piece B.type  0 = String
+0000038c  00                                                rg.dir[2] order_id.piece B.encoding  0 = plain
+0000038d  00                                                rg.dir[2] order_id.piece B.form.json_kind  0 = every row a JSON string
+0000038e  00                                                rg.dir[3] ts.layout  0x00 - one piece, no nulls
+0000038f  00                                                rg.dir[3] ts.compression  0 = none
+00000390  18 00 00 00                                       rg.dir[3] ts.stored_len  24
+00000394  3a 26 69 df                                       rg.dir[3] ts.stored_crc  0xdf69263a
+00000398  03                                                rg.dir[3] ts.piece A.type  3 = Datetime
+00000399  00                                                rg.dir[3] ts.piece A.encoding  0 = plain
+0000039a  00                                                rg.dir[3] ts.piece A.form.json_kind  0 = every row a JSON string
+0000039b  00                                                rg.dir[3] ts.piece A.form.unit  0 = RFC 3339
+0000039c  54                                                rg.dir[3] ts.piece A.form.separator  0x54 = 'T'
+0000039d  2b                                                rg.dir[3] ts.piece A.form.zone  0x2b = '+'
+0000039e  4a 01                                             rg.dir[3] ts.piece A.form.offset  330 minutes = 05:30
+000003a0  00                                                rg.dir[3] ts.piece A.form.digits  0 fraction digits
+000003a1  00 00                                             rg.section_count  0
+#
+# -- row group chunk area: 96 bytes, the chunks in schema order, then the sections
+000003a3  04                                                chunk[0] http.status.selector  001 (1 = piece B)
+000003a4  10 00 00 00                                       chunk[0] http.status.piece_a_len  16
+000003a8  c8 00 00 00 00 00 00 00                           chunk[0] http.status A.value[0]  200 -> 200
+000003b0  c9 00 00 00 00 00 00 00                           chunk[0] http.status A.value[1]  201 -> 201
+000003b8  03 00 00 00 4e 2f 41                              chunk[0] http.status B.value[0]  "N/A"
+000003bf  05                                                chunk[1] level.presence  101 (row 0 first; 0 = null)
+000003c0  04 00 00 00 49 4e 46 4f                           chunk[1] level.value[0]  "INFO"
+000003c8  04 00 00 00 49 4e 46 4f                           chunk[1] level.value[1]  "INFO"
+000003d0  04                                                chunk[2] order_id.selector  001 (1 = piece B)
+000003d1  10 00 00 00                                       chunk[2] order_id.piece_a_len  16
+000003d5  78 8d 38 0c 01 00 00 00                           chunk[2] order_id A.value[0]  4500000120 -> "+4500000120"
+000003dd  79 8d 38 0c 01 00 00 00                           chunk[2] order_id A.value[1]  4500000121 -> "+4500000121"
+000003e5  02 00 00 00 2d 30                                 chunk[2] order_id B.value[0]  "-0"
+000003eb  00 48 ae cc dd 7e aa 17                           chunk[3] ts.value[0]  1705314900000000000 = 2024-01-15T10:35:00.000000000Z -> "2024-01-15T16:05:00+05:30"
+000003f3  00 48 ae cc dd 7e aa 17                           chunk[3] ts.value[1]  1705314900000000000 = 2024-01-15T10:35:00.000000000Z -> "2024-01-15T16:05:00+05:30"
+000003fb  00 12 49 08 de 7e aa 17                           chunk[3] ts.value[2]  1705314901000000000 = 2024-01-15T10:35:01.000000000Z -> "2024-01-15T16:05:01+05:30"
+#
+# -- footer frame
+00000403  c7 01 00 00                                       footer.payload_len  455
+00000407  71 77 2f 72                                       footer.crc  0x722f7771, CRC-32C of the payload
+0000040b  03                                                footer.kind  3 = footer
+0000040c  01                                                footer.flags  0x01 - finished
+0000040d  09 00 00 00 00 00 00 00                           footer.row_count  9
+00000415  00 9e 70 fa 97 7e aa 17                           footer.min_time  1705314600120000000 = 2024-01-15T10:30:00.120000000Z
+0000041d  00 12 49 08 de 7e aa 17                           footer.max_time  1705314901000000000 = 2024-01-15T10:35:01.000000000Z
+00000425  02 00 00 00                                       footer.schema_count  2
+00000429  04 00 00 00                                       footer.schema[0].column_count  4
+0000042d  0b 00 00 00                                       footer.schema[0].column[0].name_len  11
+00000431  68 74 74 70 2e 73 74 61 74 75 73                  footer.schema[0].column[0].name  'http.status'
+0000043c  05 00 00 00                                       footer.schema[0].column[1].name_len  5
+00000440  6c 65 76 65 6c                                    footer.schema[0].column[1].name  'level'
+00000445  08 00 00 00                                       footer.schema[0].column[2].name_len  8
+00000449  6f 72 64 65 72 5f 69 64                           footer.schema[0].column[2].name  'order_id'
+00000451  02 00 00 00                                       footer.schema[0].column[3].name_len  2
+00000455  74 73                                             footer.schema[0].column[3].name  'ts'
+00000457  06 00 00 00                                       footer.schema[1].column_count  6
+0000045b  0a 00 00 00                                       footer.schema[1].column[0].name_len  10
+0000045f  40 74 69 6d 65 73 74 61 6d 70                     footer.schema[1].column[0].name  '@timestamp'
+00000469  09 00 00 00                                       footer.schema[1].column[1].name_len  9
+0000046d  63 6c 69 65 6e 74 2e 69 70                        footer.schema[1].column[1].name  'client.ip'
+00000476  07 00 00 00                                       footer.schema[1].column[2].name_len  7
+0000047a  6c 61 74 65 6e 63 79                              footer.schema[1].column[2].name  'latency'
+00000481  02 00 00 00                                       footer.schema[1].column[3].name_len  2
+00000485  6f 6b                                             footer.schema[1].column[3].name  'ok'
+00000487  06 00 00 00                                       footer.schema[1].column[4].name_len  6
+0000048b  72 65 71 2e 69 64                                 footer.schema[1].column[4].name  'req.id'
+00000491  05 00 00 00                                       footer.schema[1].column[5].name_len  5
+00000495  74 73 5f 6d 73                                    footer.schema[1].column[5].name  'ts_ms'
+0000049a  02 00 00 00                                       footer.replaced_count  2
+0000049e  1b 00                                             footer.replaced[0].path_len  27
+000004a0  32 30 32 34 2d 30 31 2d 31 35 2f 73 65 67 5f 30   footer.replaced[0].path  '2024-01-15/seg_0_000001.col'
+          5f 30 30 30 30 30 31 2e 63 6f 6c
+000004bb  72 65 70 6c 61 63 65 64 20 66 69 6c 65 20 30 31   footer.replaced[0].file_id  'replaced file 01'
+000004cb  1b 00                                             footer.replaced[1].path_len  27
+000004cd  32 30 32 34 2d 30 31 2d 31 35 2f 73 65 67 5f 30   footer.replaced[1].path  '2024-01-15/seg_0_000002.col'
+          5f 30 30 30 30 30 32 2e 63 6f 6c
+000004e8  72 65 70 6c 61 63 65 64 20 66 69 6c 65 20 30 32   footer.replaced[1].file_id  'replaced file 02'
+000004f8  02 00 00 00                                       footer.template_count  2
+000004fc  65 00 00 00 00 00 00 00                           footer.template[0].template_id  101
+00000504  00 00 00 00                                       footer.template[0].first  0
+00000508  02 00 00 00                                       footer.template[0].count  2
+0000050c  00 9e 70 fa 97 7e aa 17                           footer.template[0].min_time  1705314600120000000 = 2024-01-15T10:30:00.120000000Z
+00000514  00 12 49 08 de 7e aa 17                           footer.template[0].max_time  1705314901000000000 = 2024-01-15T10:35:01.000000000Z
+0000051c  66 00 00 00 00 00 00 00                           footer.template[1].template_id  102
+00000524  02 00 00 00                                       footer.template[1].first  2
+00000528  01 00 00 00                                       footer.template[1].count  1
+0000052c  80 42 30 02 98 7e aa 17                           footer.template[1].min_time  1705314600250000000 = 2024-01-15T10:30:00.250000000Z
+00000534  00 24 7f 6a 98 7e aa 17                           footer.template[1].max_time  1705314602000000000 = 2024-01-15T10:30:02.000000000Z
+0000053c  03 00 00 00                                       footer.entry_count  3
+00000540  53 00 00 00 00 00 00 00                           footer.entry[0].offset  83 = 0x53
+00000548  86 00 00 00                                       footer.entry[0].frame_len  134
+0000054c  00 00 00 00                                       footer.entry[0].schema_id  0
+00000550  03 00 00 00                                       footer.entry[0].row_count  3
+00000554  00 9e 70 fa 97 7e aa 17                           footer.entry[0].min_time  1705314600120000000 = 2024-01-15T10:30:00.120000000Z
+0000055c  80 0c cb 3d 98 7e aa 17                           footer.entry[0].max_time  1705314601250000000 = 2024-01-15T10:30:01.250000000Z
+00000564  17 03 00 00 00 00 00 00                           footer.entry[1].offset  791 = 0x317
+0000056c  8c 00 00 00                                       footer.entry[1].frame_len  140
+00000570  00 00 00 00                                       footer.entry[1].schema_id  0
+00000574  03 00 00 00                                       footer.entry[1].row_count  3
+00000578  00 48 ae cc dd 7e aa 17                           footer.entry[1].min_time  1705314900000000000 = 2024-01-15T10:35:00.000000000Z
+00000580  00 12 49 08 de 7e aa 17                           footer.entry[1].max_time  1705314901000000000 = 2024-01-15T10:35:01.000000000Z
+00000588  8b 01 00 00 00 00 00 00                           footer.entry[2].offset  395 = 0x18b
+00000590  b7 00 00 00                                       footer.entry[2].frame_len  183
+00000594  01 00 00 00                                       footer.entry[2].schema_id  1
+00000598  03 00 00 00                                       footer.entry[2].row_count  3
+0000059c  80 42 30 02 98 7e aa 17                           footer.entry[2].min_time  1705314600250000000 = 2024-01-15T10:30:00.250000000Z
+000005a4  00 24 7f 6a 98 7e aa 17                           footer.entry[2].max_time  1705314602000000000 = 2024-01-15T10:30:02.000000000Z
+000005ac  01 00 00 00                                       footer.part_count  1
+000005b0  ff                                                footer.part[0].kind  0xff - optional, unknown: skip
+000005b1  1d 00 00 00                                       footer.part[0].len  29
+000005b5  6f 70 74 69 6f 6e 61 6c 20 66 6f 6f 74 65 72 20   footer.part[0].bytes  'optional footer part: skip me'
+          70 61 72 74 3a 20 73 6b 69 70 20 6d 65
+#
+# -- trailer, 8 bytes
+000005d2  cf 01 00 00                                       trailer.footer_len  463 = the footer frame, 8 + payload_len
+000005d6  54 52 44 42                                       trailer.magic  'TRDB'
+#
+# 1498 bytes

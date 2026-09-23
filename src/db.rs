@@ -48,7 +48,7 @@ impl From<TrieError> for SinkError {
         }
     }
 }
-use crate::types::{ColValue, ColumnType, DtForm};
+use crate::types::ColValue;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LoadStats {
@@ -68,36 +68,18 @@ pub struct Db {
 ///
 /// Every key on the path gets an entry, so a row's key set is the leaf's key set. A
 /// promoted key carries its value in the path rather than in `typed_values`, and
-/// promotion already required the ladder to say `String`.
+/// promotion already required the ladder to say `String`. Each value keeps the JSON its
+/// line wrote wherever that would not print back from the value alone.
 pub fn row_of(parsed: &ParsedLog) -> Row {
-    parsed
-        .keys
-        .iter()
-        .map(|key| {
-            let value = match parsed.typed_values.get(key) {
-                Some(typed) => typed.value.clone(),
-                None => ColValue::String(parsed.values.get(key).cloned().unwrap_or_default()),
-            };
-            (key.clone(), value)
-        })
-        .collect()
-}
-
-/// Which rung read each of this line's datetimes.
-///
-/// Beside the `Row` rather than inside it: a `Row` holds `ColValue`, and a query compares
-/// a stored `ColValue` against one the ladder just built from the query's own text. Tagging
-/// the value with its rung would stop `ts=1705314600` matching a row ingested as RFC 3339.
-///
-/// Datetime columns only, so this is empty for most lines and one entry for most of the
-/// rest. The column store folds them per partition; see `types::DtForm`.
-pub fn dt_forms_of(parsed: &ParsedLog) -> Vec<(String, DtForm)> {
-    parsed
-        .typed_values
-        .iter()
-        .filter(|(_, typed)| typed.ty == Some(ColumnType::Datetime))
-        .filter_map(|(key, typed)| typed.dt_form.map(|form| (key.clone(), form)))
-        .collect()
+    let mut row = Row::with_capacity(parsed.keys.len());
+    for key in &parsed.keys {
+        let value = match parsed.typed_values.get(key) {
+            Some(typed) => typed.value.clone(),
+            None => ColValue::String(parsed.values.get(key).cloned().unwrap_or_default()),
+        };
+        row.insert_written(key.clone(), value, parsed.written.get(key).cloned());
+    }
+    row
 }
 
 /// One parsed line into the trie, and into its leaf's store unless `stores` is `None`.
@@ -124,21 +106,19 @@ pub fn ingest_line(
     ingest_prepared(trie, stores, parsed, prepared, now)
 }
 
-/// A line's row and datetime rungs, built before anything is locked.
+/// A line's row, built before anything is locked.
 ///
 /// Splitting this off is what lets `/ingest` build five hundred rows without the store
-/// lock and then only take it to append them. Neither half needs the trie: a row is
-/// built from the line's own keys, and the rungs from its own values.
+/// lock and then only take it to append them. It does not need the trie: a row is built
+/// from the line's own keys and values.
 pub struct Prepared {
     pub row: Row,
-    pub forms: Vec<(String, DtForm)>,
 }
 
 impl Prepared {
     pub fn of(parsed: &ParsedLog) -> Self {
         Self {
             row: row_of(parsed),
-            forms: dt_forms_of(parsed),
         }
     }
 }
@@ -162,7 +142,7 @@ pub fn ingest_prepared(
     // `ingest` just wrote the meta, so `None` is a poisoned lock and nothing else.
     // Dropping the row is the only option left and it is counted nowhere.
     if let Some((id, source)) = placed {
-        let Prepared { mut row, mut forms } = prepared;
+        let Prepared { mut row } = prepared;
         // The effective time: the time column where it holds an instant, and
         // otherwise the arrival time - stored in the system column, **after**
         // fingerprinting, so it is not a key and makes no template. A row with its own
@@ -175,19 +155,16 @@ pub fn ingest_prepared(
                 RECEIVED_AT_COLUMN.to_string(),
                 ColValue::Datetime(crate::store::nanos_of(crate::query::system_time(now))),
             );
-            forms.push((RECEIVED_AT_COLUMN.to_string(), DtForm::Rfc3339));
         }
         // Refused by line, as a catalog append that fails is: the template exists, the row
         // is nowhere, and the line must not be counted as ingested. `to_string` and not
         // `error::chain`: every `StoreError` already prints its cause, and a chain would
         // print it twice.
-        stores
-            .append(id, source.column(), row, &forms)
-            .map_err(|e| {
-                SinkError::Line(DetectorErrorKind::NotStored {
-                    detail: e.to_string(),
-                })
-            })?;
+        stores.append(id, source.column(), row).map_err(|e| {
+            SinkError::Line(DetectorErrorKind::NotStored {
+                detail: e.to_string(),
+            })
+        })?;
     }
     Ok(())
 }

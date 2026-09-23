@@ -269,15 +269,17 @@ pub struct Storage {
     pub flush_interval: Duration,
     /// What a row group closes on, when no size threshold got there first.
     pub row_group_timeout: Duration,
-    /// The cap on segment files open for writing, across every leaf. Past it, the least
-    /// recently written one is sealed - always safe, because the next row for that
-    /// partition opens the next segment number.
+    /// The cap on data files open for writing - one per UTC day being written. Past it,
+    /// the least recently written one is sealed - always safe, because the next row for
+    /// that day opens the next file number.
     ///
     /// The number and what goes wrong without it are at `store::DEFAULT_MAX_OPEN_SEGMENTS`.
     /// What belongs here is why it is a **setting and not a constant**: it is really a
     /// statement about the process's descriptor limit, which the process does not choose,
     /// so an operator running under a tight `ulimit -n` has to be able to say so.
     pub max_open_segments: usize,
+    /// A day's data file is sealed at this size and the next number opened.
+    pub segment_max_bytes: u64,
 }
 
 impl Default for Storage {
@@ -288,6 +290,7 @@ impl Default for Storage {
             flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
             row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
             max_open_segments: crate::store::DEFAULT_MAX_OPEN_SEGMENTS,
+            segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
         }
     }
 }
@@ -338,6 +341,7 @@ impl Storage {
                 flush_interval,
                 row_group_timeout,
                 max_open_segments,
+                segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
             });
         }
 
@@ -362,6 +366,7 @@ impl Storage {
             flush_interval,
             row_group_timeout,
             max_open_segments,
+            segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
         })
     }
 

@@ -1,0 +1,37 @@
+# empty.col - a sealed v3 file that holds no rows
+#
+# What recovery writes for a file cut right after its header, and what a live file
+# sealed before its first row group looks like: header, footer, trailer and nothing
+# else. 86 bytes is the smallest valid v3 file.
+#
+# A reader must: accept it as sealed, find no templates and no row groups, and skip it
+# for every time window - the footer's time range is the empty one (min i64::MAX,
+# max i64::MIN), which no window intersects.
+#
+# offset    bytes                                              field
+#
+# -- header, 24 bytes
+00000000  54 52 44 42                                       header.magic  'TRDB'
+00000004  03                                                header.version  3
+00000005  00 00 00                                          header.reserved  zero
+00000008  76 33 20 65 6d 70 74 79 20 73 65 61 6c 65 64 2e   header.file_id  'v3 empty sealed.'
+#
+# -- footer frame
+00000018  2e 00 00 00                                       footer.payload_len  46
+0000001c  0c 38 3c 15                                       footer.crc  0x153c380c, CRC-32C of the payload
+00000020  03                                                footer.kind  3 = footer
+00000021  00                                                footer.flags  0x00 - not finished
+00000022  00 00 00 00 00 00 00 00                           footer.row_count  0
+0000002a  ff ff ff ff ff ff ff 7f                           footer.min_time  i64::MAX - no rows
+00000032  00 00 00 00 00 00 00 80                           footer.max_time  i64::MIN - no rows
+0000003a  00 00 00 00                                       footer.schema_count  0
+0000003e  00 00 00 00                                       footer.replaced_count  0
+00000042  00 00 00 00                                       footer.template_count  0
+00000046  00 00 00 00                                       footer.entry_count  0
+0000004a  00 00 00 00                                       footer.part_count  0
+#
+# -- trailer, 8 bytes
+0000004e  36 00 00 00                                       trailer.footer_len  54 = the footer frame, 8 + payload_len
+00000052  54 52 44 42                                       trailer.magic  'TRDB'
+#
+# 86 bytes

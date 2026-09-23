@@ -27,7 +27,6 @@ use crate::engine::{
 use crate::error::{CliError, QueryError};
 use crate::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
 use crate::trieql;
-use crate::types::ColValue;
 
 /// Blank columns between two cells of a rendered table.
 const GUTTER: usize = 2;
@@ -746,28 +745,17 @@ pub fn result_json(query: &Query, result: &QueryResult) -> Value {
 ///
 /// Through `store::present`, so the system column leaves as `_received_at` - or
 /// not at all, on a row that ingested a key of that name.
+///
+/// **Each value is the JSON value that was ingested**: `Row::json`, which is the line's own
+/// spelling wherever the stored value would print another - `"0045000012"`, `1705312200`,
+/// `"2024-01-15T16:00:00+05:30"` - and the value's canonical print everywhere else. The
+/// system column was not ingested, and prints as RFC 3339.
 fn row_json(row: &crate::store::Row) -> Value {
     let mut obj = Map::new();
-    for (key, value) in crate::store::present(row) {
-        obj.insert(key, value_json(value));
+    for (name, key) in crate::store::present(row) {
+        obj.insert(name, row.json(key).unwrap_or(Value::Null));
     }
     Value::Object(obj)
-}
-
-/// A row's value as JSON.
-///
-/// `ColValue::to_json` everywhere except a `Datetime`, which is spelled RFC 3339 through
-/// the one renderer in `fmt`. A row leaving here is a log line: it goes to something that
-/// will read `ts` as a time, and it re-ingests through the type ladder as a `Datetime`
-/// rather than as the 19-digit integer raw nanoseconds would be read as.
-///
-/// That leaves `parse --json`'s `typed_values` as the only surface still carrying the
-/// machine instant, which is what it is for - see `fmt::rfc3339`.
-fn value_json(value: &ColValue) -> Value {
-    match value {
-        ColValue::Datetime(ns) => Value::String(rfc3339(*ns)),
-        other => other.to_json(),
-    }
 }
 
 /// One JSON object per line and nothing else on stdout.
@@ -930,8 +918,15 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&crate::store::Row]) -> Result<(),
         return Ok(());
     }
     // The same presentation `row_json` gives: the system column under its query name.
-    let shown: Vec<BTreeMap<String, &ColValue>> =
-        rows.iter().map(|row| crate::store::present(row)).collect();
+    let shown: Vec<BTreeMap<String, String>> = rows
+        .iter()
+        .map(|row| {
+            crate::store::present(row)
+                .into_iter()
+                .map(|(name, key)| (name, cell_text(row, key)))
+                .collect()
+        })
+        .collect();
     let mut columns: Vec<&String> = shown.iter().flat_map(|row| row.keys()).collect();
     columns.sort_unstable();
     columns.dedup();
@@ -943,11 +938,21 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&crate::store::Row]) -> Result<(),
                 .iter()
                 // `-` is "this template has no such column", which is not the same fact
                 // as `(null)` - a column the template has and this row left empty.
-                .map(|c| row.get(*c).map_or_else(|| "-".to_string(), |v| col_text(v)))
+                .map(|c| row.get(*c).cloned().unwrap_or_else(|| "-".to_string()))
                 .collect(),
         );
     }
     grid_write(out, &grid)
+}
+
+/// A value as the table shows it: as the line wrote it where the row records that, and
+/// through `col_text` otherwise.
+fn cell_text(row: &crate::store::Row, key: &str) -> String {
+    match row.written(key) {
+        Some(Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+        None => row.get(key).map_or_else(String::new, col_text),
+    }
 }
 
 /// Left-aligned columns, widths from the content. Row 0 is the header.

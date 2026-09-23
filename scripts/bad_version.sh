@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# A segment whose header version this build does not write must stop the start.
+# A data file whose header version this build does not write must stop the start.
 #
 # As built the server WARNs about it and serves on, answering `count 0` for the leaf that
 # holds it - a guess about bytes it cannot read, delivered as an answer. A segment whose
-# header version is not 2 is logged as an error naming the path, and the process exits
+# header version is not 3 is logged as an error naming the path, and the process exits
 # non-zero, before the listener opens.
 #
 # What this asserts:
 #
-#   1. With byte 4 of one segment set to 3, `triedb serve` exits non-zero within 5s and
+#   1. With byte 4 of one segment set to 2, `triedb serve` exits non-zero within 5s and
 #      its stderr names that segment's path.
 #   2. It exits that way, naming the segment, even when its port is already held by
 #      another process - so the check ran before the listener was opened. A server that
 #      bound first would fail on the port instead and never name the segment.
-#   3. With the byte set back to 2, the server starts and every row is there.
+#   3. With the byte set back to 3, the server starts and every row is there.
 #
 #   NLINES=100 scripts/bad_version.sh
 
@@ -111,8 +111,8 @@ SEGMENT=$(find "$DATA" -name 'seg_*.col' | sort | head -1)
 [ -n "$SEGMENT" ] || { echo "FAIL no segment was written"; exit 1; }
 echo "segment              ${SEGMENT#"$WORK"/}"
 
-# ── Version 3 ────────────────────────────────────────────────────────────────────────
-flip "$SEGMENT" '\x03'
+# ── Version 2 ────────────────────────────────────────────────────────────────────────
+flip "$SEGMENT" '\x02'
 echo "byte 4               $(xxd -s 4 -l 1 -p "$SEGMENT")"
 start_expecting_refusal "$WORK/run2.log" 0
 REFUSED=$EXITED
@@ -152,8 +152,8 @@ wait "$HOLDER" 2>/dev/null
 HOLDER=""
 echo "port $HELD_PORT held      exit $HELD_EXIT, path named $HELD_NAMED, bind error $HELD_BIND"
 
-# ── Version 2 again ──────────────────────────────────────────────────────────────────
-flip "$SEGMENT" '\x02'
+# ── Version 3 again ──────────────────────────────────────────────────────────────────
+flip "$SEGMENT" '\x03'
 RESTORED=no
 if start "$WORK/run4.log"; then
   RESTORED=yes
@@ -165,9 +165,9 @@ echo "restored             started $RESTORED, COUNT LOG {} ${AFTER:-?}, exit ${S
 echo
 FAIL=0
 if [ "$REFUSED" = "running" ]; then
-  echo "FAIL the server was still running ${EXIT_WITHIN_S}s after starting on a version 3 segment"; FAIL=1
+  echo "FAIL the server was still running ${EXIT_WITHIN_S}s after starting on a version 2 segment"; FAIL=1
 elif [ "$REFUSED" = "0" ]; then
-  echo "FAIL the server exited 0 on a version 3 segment"; FAIL=1
+  echo "FAIL the server exited 0 on a version 2 segment"; FAIL=1
 fi
 [ "$NAMED" = "yes" ] || { echo "FAIL stderr did not name $SEGMENT"; FAIL=1; }
 [ -n "$HELD_PORT" ] || { echo "FAIL could not hold a port for the before-the-listener check"; FAIL=1; }
@@ -178,7 +178,7 @@ fi
 [ "${AFTER:-}" = "$BEFORE" ] || { echo "FAIL COUNT LOG {} is ${AFTER:-nothing} after the restore, want $BEFORE"; FAIL=1; }
 [ "${STOP_CODE:-}" = "0" ] || { echo "FAIL the stop after the restore exited ${STOP_CODE:-?}"; FAIL=1; }
 if [ "$FAIL" = "0" ]; then
-  echo "PASS a version 3 segment stopped the start before the listener, by path, and version 2 starts clean"
+  echo "PASS a version 2 segment stopped the start before the listener, by path, and version 3 starts clean"
   exit 0
 fi
 exit 1

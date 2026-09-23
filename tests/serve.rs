@@ -937,6 +937,24 @@ fn wait_for_stats(
     panic!("timed out waiting for {what}; last /stats was {last}");
 }
 
+/// `data/` and every day directory in it read-only, returned so they can be unlocked.
+#[cfg(unix)]
+fn lock_data(base: &Path) -> Vec<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let data = base.join("data");
+    let mut locked: Vec<PathBuf> = fs::read_dir(&data)
+        .expect("data dir")
+        .flatten()
+        .map(|day| day.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    locked.push(data);
+    for path in &locked {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o555)).expect("chmod");
+    }
+    locked
+}
+
 /// A store that cannot write says so, on three surfaces, and the exit code is one of them.
 ///
 /// **Why this matters more than it looks.** With no write-ahead log a `200` means
@@ -946,10 +964,10 @@ fn wait_for_stats(
 /// to keep its lines.
 ///
 /// The disk here is made unwritable rather than full, which is the same errno's worth of
-/// difference: the day directory is set read-only after its first segment is open, and the
-/// second line widens a column - which seals that segment and needs a new file in a
-/// directory that will not take one. `scripts/disk_full.sh` does it the other way, on a
-/// RAM disk that is actually filled.
+/// difference: `data/` and its day directories are set read-only after the first day's file
+/// is open, and the second line is of the next day - whose file needs a new directory in
+/// `data/`, which will not take one. `scripts/disk_full.sh` does it the other way, on a RAM
+/// disk that is actually filled.
 #[test]
 #[cfg(unix)]
 fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
@@ -968,26 +986,13 @@ fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
     assert_eq!(stats["storage"]["degraded"], false);
     assert_eq!(json(&server.get("/health").1)["status"], "ok");
 
-    // Every day directory read-only. The open segment's descriptor still works; what
-    // cannot happen any more is *creating* the next segment file in there.
-    let base = server.data_dir().to_path_buf();
-    let mut locked = Vec::new();
-    for leaf in fs::read_dir(&base).expect("data dir").flatten() {
-        if !leaf.path().is_dir() {
-            continue;
-        }
-        for day in fs::read_dir(leaf.path()).expect("leaf dir").flatten() {
-            if day.path().is_dir() {
-                fs::set_permissions(day.path(), fs::Permissions::from_mode(0o555))
-                    .expect("chmod the day directory");
-                locked.push(day.path());
-            }
-        }
-    }
-    assert!(!locked.is_empty(), "no day directory was written");
+    // `data/` and every day directory read-only. The open file's descriptor still works;
+    // what cannot happen any more is *creating* another day's file.
+    let locked = lock_data(server.data_dir());
+    assert!(locked.len() > 1, "no day directory was written");
 
-    // `x` widens to text, which seals the open segment and asks for a new file.
-    let second = br#"{"ts": 1705314601, "x": "N/A"}"#;
+    // The next day, which has no file and needs a directory `data/` will not take.
+    let second = br#"{"ts": 1705401001, "x": "N/A"}"#;
     assert_eq!(
         server.post("/ingest", second).0,
         200,
@@ -1037,7 +1042,11 @@ fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
     for path in &locked {
         let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
     }
-    assert_eq!(code, Some(1), "a shutdown that lost rows exited {code:?}\n{log}");
+    assert_eq!(
+        code,
+        Some(1),
+        "a shutdown that lost rows exited {code:?}\n{log}"
+    );
     assert!(
         log.contains("NOT written") && log.contains("exit 1"),
         "the shutdown log does not say how many rows it lost:\n{log}"
@@ -1051,29 +1060,28 @@ fn the_first_successful_tick_clears_the_refusal() {
     use std::os::unix::fs::PermissionsExt;
 
     let server = Server::start_with(&["--row-group-timeout-ms", "500"]);
-    assert_eq!(server.post("/ingest", br#"{"ts": 1705314600, "x": 1}"#).0, 200);
+    assert_eq!(
+        server.post("/ingest", br#"{"ts": 1705314600, "x": 1}"#).0,
+        200
+    );
     wait_for_stats(&server, "the first line to reach a segment", |s| {
         s["storage"]["buffered_rows"] == 0
     });
 
-    let base = server.data_dir().to_path_buf();
-    let mut locked = Vec::new();
-    for leaf in fs::read_dir(&base).expect("data dir").flatten() {
-        for day in fs::read_dir(leaf.path()).into_iter().flatten().flatten() {
-            if day.path().is_dir() {
-                fs::set_permissions(day.path(), fs::Permissions::from_mode(0o555)).expect("chmod");
-                locked.push(day.path());
-            }
-        }
-    }
+    let locked = lock_data(server.data_dir());
     assert_eq!(
-        server.post("/ingest", br#"{"ts": 1705314601, "x": "N/A"}"#).0,
+        server
+            .post("/ingest", br#"{"ts": 1705401001, "x": "N/A"}"#)
+            .0,
         200
     );
     wait_for_stats(&server, "the flush tick to fail", |s| {
         s["storage"]["degraded"] == true
     });
-    assert_eq!(server.post("/ingest", br#"{"ts": 1705314602, "x": 3}"#).0, 503);
+    assert_eq!(
+        server.post("/ingest", br#"{"ts": 1705314602, "x": 3}"#).0,
+        503
+    );
 
     // The disk comes back.
     for path in &locked {
@@ -1097,7 +1105,11 @@ fn the_first_successful_tick_clears_the_refusal() {
     );
     server.signal("-TERM");
     let (code, log) = server.wait();
-    assert_eq!(code, Some(0), "a shutdown that lost nothing exited {code:?}\n{log}");
+    assert_eq!(
+        code,
+        Some(0),
+        "a shutdown that lost nothing exited {code:?}\n{log}"
+    );
 }
 
 /// The cap on open segment files is a setting, and `/stats` reports both halves of it.
@@ -1111,7 +1123,9 @@ fn the_open_segment_cap_is_reported() {
         s["storage"]["buffered_rows"] == 0
     });
     assert_eq!(stats["storage"]["max_open_segments"], 4);
-    let open = stats["storage"]["open_segments"].as_u64().expect("a number");
+    let open = stats["storage"]["open_segments"]
+        .as_u64()
+        .expect("a number");
     assert!(
         open <= 4,
         "{open} segment files open against a cap of 4: {stats}"
@@ -1144,7 +1158,9 @@ fn files_opened_counts_segment_files_and_leaves_opened_takes_the_old_meaning() {
     );
     assert_eq!(
         leaves,
-        meta["templates_matched"].as_u64().expect("templates_matched"),
+        meta["templates_matched"]
+            .as_u64()
+            .expect("templates_matched"),
         "every matched template has rows here, so the two should agree"
     );
 }

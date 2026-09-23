@@ -1,0 +1,9 @@
+{"ts":"2024-01-15T16:00:00.120+05:30","level":"INFO","http.status":200,"order_id":"0045000012"}
+{"@timestamp":"2024-01-15T10:30:00.5Z","client.ip":"10.0.0.1","latency":0.25,"ok":true,"req.id":"550E8400-E29B-41D4-A716-446655440000","ts_ms":1705314600500}
+{"ts":"2024-01-15T16:00:01.000+05:30","level":"WARN","http.status":"404","order_id":"0045000013"}
+{"@timestamp":"2024-01-15T10:30:00.25Z","client.ip":"2001:db8::1","latency":1.5,"ok":"True","req.id":"6BA7B810-9DAD-11D1-80B4-00C04FD430C8","ts_ms":1705314600250}
+{"ts":"2024-01-15T16:00:01.250+05:30","level":"ERROR","http.status":503,"order_id":"0045000014"}
+{"@timestamp":"2024-01-15T10:30:02Z","client.ip":"10.0.0.2","latency":12.75,"ok":false,"req.id":"F47AC10B-58CC-4372-A567-0E02B2C3D479","ts_ms":1705314602000}
+{"ts":"2024-01-15T16:05:00+05:30","level":"INFO","http.status":200,"order_id":"+4500000120"}
+{"ts":"2024-01-15T16:05:00+05:30","level":null,"http.status":201,"order_id":"+4500000121"}
+{"ts":"2024-01-15T16:05:01+05:30","level":"INFO","http.status":"N/A","order_id":"-0"}

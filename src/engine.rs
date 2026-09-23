@@ -920,7 +920,7 @@ pub struct Cursor {
 /// `decode`: a cursor from an older layout would resolve against a layout it never
 /// described and answer confidently with the wrong rows. Nothing reads a superseded version
 /// and nothing translates one - this check is the whole compatibility story.
-const CURSOR_VERSION: &str = "v2";
+const CURSOR_VERSION: &str = "v3";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CursorError {

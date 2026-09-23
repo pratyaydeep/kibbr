@@ -11,17 +11,16 @@
 //! the disk store fills stay zero: reporting work it did not do would make the two
 //! implementations agree about the wrong thing.
 //!
-//! It keeps each row's `dt_form` evidence beside the row for the same reason the disk
-//! store writes it: a `Datetime` in a column that later widens to `String` has to come
-//! back as the text it arrived as, and the rung is the only way to spell it.
+//! Each row keeps the JSON its line wrote wherever that differs from the value's canonical
+//! print, as `Row` does everywhere: an answer prints what was ingested, and a `Datetime`
+//! in a column that later widens to `String` is compared as the text it arrived as.
 
 use std::path::Path;
 
 use super::{
-    effective_ts, in_window, render_text, value_bytes, DtForms, FlushKind, Flushed, LeafStore,
-    Predicate, Row, Scan, ScanOptions, Store, StoreError, Visitor, DEFAULT_TS_COLUMN,
+    effective_ts, in_window, render_row, value_bytes, FlushKind, Flushed, LeafStore, Predicate,
+    Row, Scan, ScanOptions, Store, StoreError, Visitor, DEFAULT_TS_COLUMN,
 };
-use crate::types::DtForm;
 
 pub struct MemoryStore;
 
@@ -53,7 +52,7 @@ impl Store for MemoryStore {
 
 pub struct MemoryLeaf {
     template_id: u64,
-    rows: Vec<(Row, Vec<(String, DtForm)>)>,
+    rows: Vec<Row>,
 }
 
 impl MemoryLeaf {
@@ -73,9 +72,9 @@ impl LeafStore for MemoryLeaf {
     /// The ordinal is the `Vec` index, which is the order the row arrived in. Nothing
     /// deletes, so it is stable for the life of the process - and this store has no next
     /// process to be stable into.
-    fn append(&mut self, row: Row, forms: &DtForms) -> u64 {
+    fn append(&mut self, row: Row) -> u64 {
         let seq = self.rows.len() as u64;
-        self.rows.push((row, forms.to_vec()));
+        self.rows.push(row);
         seq
     }
 
@@ -103,28 +102,14 @@ impl LeafStore for MemoryLeaf {
         let windowed = since.is_some() || until.is_some();
 
         let mut out = Scan::default();
-        let mut rendered = Row::new();
-        for (seq, (stored, forms)) in self.rows.iter().enumerate() {
+        for (seq, stored) in self.rows.iter().enumerate() {
             out.scanned += 1;
             // A column that has widened to text since this row arrived: its `Datetime`
-            // is rendered back through the row's own rung before the predicates see it,
-            // so `order_id=4500000101` matches the text that was ingested and a `MATCH`
-            // returns it. The effective time is read first, off the instant.
-            let row = if opts.text_columns.is_empty() {
-                stored
-            } else {
-                rendered.clear();
-                for (key, value) in stored {
-                    let value = if opts.text_columns.iter().any(|c| c == key) {
-                        let form = forms.iter().find(|(k, _)| k == key).map(|(_, f)| *f);
-                        render_text(value.clone(), form)
-                    } else {
-                        value.clone()
-                    };
-                    rendered.insert(key.clone(), value);
-                }
-                &rendered
-            };
+            // is compared as the text it was ingested as, before the predicates see it,
+            // so `order_id=4500000101` matches and a `MATCH` returns it. The effective
+            // time is read first, off the instant.
+            let rendered = render_row(stored, &opts.text_columns);
+            let row = rendered.as_ref().unwrap_or(stored);
             if windowed && !in_window(effective_ts(stored, ts), since, until) {
                 continue;
             }
@@ -164,7 +149,7 @@ impl LeafStore for MemoryLeaf {
     fn approx_bytes(&self) -> u64 {
         self.rows
             .iter()
-            .map(|(row, _)| {
+            .map(|row| {
                 row.iter()
                     .map(|(key, value)| (key.len() + value_bytes(value)) as u64)
                     .sum::<u64>()

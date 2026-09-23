@@ -31,7 +31,7 @@ use crate::engine::{
 };
 use crate::flatten::ParsedLog;
 use crate::store::Row;
-use crate::types::{ColValue, ColumnType, DtForm};
+use crate::types::{ColValue, ColumnType};
 
 /// The system column, spelled out here rather than imported: a backslash and an
 /// underscore.
@@ -76,17 +76,6 @@ fn effective(line: &ParsedLog, source: &Source, arrival: i64) -> (i64, bool) {
         }
     }
     (arrival, true)
-}
-
-/// A `Datetime` in a column whose type is now `String`, spelled as it was ingested - the
-/// rung inverted by this file's own hand: ten digits for seconds, thirteen for
-/// milliseconds, RFC 3339 for RFC 3339.
-fn text_of(ns: i64, form: Option<DtForm>) -> String {
-    match form {
-        Some(DtForm::EpochSecs) => format!("{}", ns.div_euclid(1_000_000_000)),
-        Some(DtForm::EpochMillis) => format!("{}", ns.div_euclid(1_000_000)),
-        _ => crate::fmt::rfc3339(ns),
-    }
 }
 
 /// `engine::Rank`, spelled again rather than imported - see the note at the top.
@@ -196,10 +185,11 @@ pub fn run(
             if joined != Some(ColumnType::String) {
                 continue;
             }
-            if let Some(ColValue::Datetime(ns)) = row.get(key) {
-                let form = line.typed_values.get(key).and_then(|t| t.dt_form);
-                let text = text_of(*ns, form);
-                row.insert(key.clone(), ColValue::String(text));
+            // The line's own text, read straight off the line: a string's characters, a
+            // number's digits.
+            if let Some(ColValue::Datetime(_)) = row.get(key) {
+                let text = line.values.get(key).cloned().unwrap_or_default();
+                row.set_value(key, ColValue::String(text));
             }
         }
         let key = leaf_key(&line.walk_tokens());
