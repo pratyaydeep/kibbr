@@ -167,31 +167,74 @@ fn parse_under_window(window: &str, input: &str) -> (bool, Vec<String>, String) 
     )
 }
 
-/// The window is a setting, and the fixture's labels are its default: moved to the 1970s,
-/// the same digits swap sides.
+/// The window is a setting, and the fixture's labels are its default: moved to the
+/// twenty-second century, the same digits swap sides.
+///
+/// A leading zero is not an epoch under any window: moved back to the 1970s, where every
+/// ten digits naming a moment inside it start with a zero, rule 2 reads none of them.
 #[test]
 fn the_epoch_window_is_a_setting() {
     let input = concat!(
-        r#"{"v":"0000000000"}"#,
+        r#"{"v":4102444799}"#,
         "\n",
-        r#"{"v":"0946684799"}"#,
+        r#"{"v":4102444800}"#,
         "\n",
-        r#"{"v":"0946684800"}"#,
+        r#"{"v":7258118399}"#,
+        "\n",
+        r#"{"v":7258118400}"#,
         "\n",
         r#"{"v":1700000000}"#,
         "\n",
-        r#"{"v":"0946684799999"}"#,
+        r#"{"v":4102444800000}"#,
         "\n",
         r#"{"v":"2024-01-15T10:30:00Z"}"#,
         "\n",
     );
     let (ok, types, stderr) =
-        parse_under_window("1970-01-01T00:00:00Z, 2000-01-01T00:00:00Z", input);
+        parse_under_window("2100-01-01T00:00:00Z, 2200-01-01T00:00:00Z", input);
     assert!(ok, "stderr: {stderr}");
     assert_eq!(
         types,
-        ["Datetime", "Datetime", "Int64", "Int64", "Datetime", "Datetime"]
+        ["Int64", "Datetime", "Datetime", "Int64", "Int64", "Datetime", "Datetime"]
     );
+
+    let input = concat!(
+        r#"{"v":"0000000000"}"#,
+        "\n",
+        r#"{"v":"0946684799"}"#,
+        "\n",
+        r#"{"v":"0946684799999"}"#,
+        "\n",
+        r#"{"v":1700000000}"#,
+        "\n",
+    );
+    let (ok, types, stderr) =
+        parse_under_window("1970-01-01T00:00:00Z, 2000-01-01T00:00:00Z", input);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(types, ["Int64", "Int64", "Int64", "Int64"]);
+}
+
+/// A window reaching past 2262 admits digits whose moment an `i64` of nanoseconds cannot
+/// hold. They are not a `Datetime` clamped to the last instant it has: they fall through
+/// to rule 6, as digits outside the window do.
+#[test]
+fn digits_past_the_last_nanosecond_are_not_a_datetime_under_any_window() {
+    let input = concat!(
+        r#"{"v":9223372036}"#,
+        "\n",
+        r#"{"v":9223372037}"#,
+        "\n",
+        r#"{"v":9999999999}"#,
+        "\n",
+        r#"{"v":9223372036854}"#,
+        "\n",
+        r#"{"v":9223372036855}"#,
+        "\n",
+    );
+    let (ok, types, stderr) =
+        parse_under_window("2000-01-01T00:00:00Z, 2300-01-01T00:00:00Z", input);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(types, ["Datetime", "Int64", "Int64", "Datetime", "Int64"]);
 }
 
 /// A window that cannot be read stops the process before a line is typed, rather than
@@ -281,28 +324,36 @@ fn json_record(line: &str) -> serde_json::Value {
     serde_json::from_str(line).unwrap_or_else(|e| panic!("record was not JSON: {e}\n{line}"))
 }
 
-/// A datetime that falls off the low end of the range lands at the low end.
+/// An instant a `Datetime` cannot hold is not a `Datetime`: it is text, not the nearest
+/// instant the type does hold.
 ///
 /// `Datetime` is i64 unix nanoseconds, so it spans 1677 to 2262 while RFC 3339 spans
-/// year 0 to 9999. Both ends overflow. Clamping both to `i64::MAX` put every pre-1677
-/// timestamp in 2262: a year-1600 line and a year-9999 line compared equal, and both
-/// sorted after every real one. A time-range query over historical data then returns
-/// the wrong rows rather than none, which is the version of the bug that looks fine.
+/// year 0 to 9999. Clamped, a year-9999 line came back as 2262 and a year-1 line as
+/// 1677 - another value, not another spelling - and every one past an end compared equal
+/// to every other.
 ///
-/// The type label cannot catch this - every value here is `Datetime` either way - so
-/// the assertion has to be on the instant.
+/// The label alone cannot show that the two edges are held exactly rather than clamped
+/// onto themselves, so the instant is checked too.
 #[test]
-fn a_datetime_past_either_end_of_the_range_saturates_towards_that_end() {
+fn an_instant_past_either_end_of_the_range_is_text() {
     let cases = [
-        // Inside the range: exact values, no clamping.
-        ("1677-09-21T00:12:44Z", -9_223_372_036_000_000_000_i64),
-        ("1970-01-01T00:00:00Z", 0),
-        ("2262-04-11T23:47:16Z", 9_223_372_036_000_000_000),
-        // One second past each end, then the far extremes of RFC 3339.
-        ("1677-09-21T00:12:43Z", i64::MIN),
-        ("2262-04-11T23:47:17Z", i64::MAX),
-        ("0001-01-01T00:00:00Z", i64::MIN),
-        ("9999-12-31T23:59:59Z", i64::MAX),
+        // Inside the range: exact values, to the nanosecond at both ends.
+        ("1677-09-21T00:12:44Z", Some(-9_223_372_036_000_000_000_i64)),
+        ("1970-01-01T00:00:00Z", Some(0)),
+        ("2262-04-11T23:47:16Z", Some(9_223_372_036_000_000_000)),
+        ("1677-09-21T00:12:43.145224192Z", Some(i64::MIN)),
+        ("2262-04-11T23:47:16.854775807Z", Some(i64::MAX)),
+        // The same last instant through an offset: the edge is the instant, not the text.
+        ("2262-04-12T05:17:16.854775807+05:30", Some(i64::MAX)),
+        // One nanosecond past each end, the same through an offset, one second past each
+        // end, then the far extremes of RFC 3339.
+        ("1677-09-21T00:12:43.145224191Z", None),
+        ("2262-04-11T23:47:16.854775808Z", None),
+        ("2262-04-12T05:17:16.854775808+05:30", None),
+        ("1677-09-21T00:12:43Z", None),
+        ("2262-04-11T23:47:17Z", None),
+        ("0001-01-01T00:00:00Z", None),
+        ("9999-12-31T23:59:59Z", None),
     ];
 
     let input: String = cases
@@ -314,17 +365,19 @@ fn a_datetime_past_either_end_of_the_range_saturates_towards_that_end() {
     let mut failures = Vec::new();
     for (line, (raw, want)) in stdout.lines().zip(cases) {
         let record = json_record(line);
-        assert_eq!(record["types"]["v"], "Datetime", "{raw} was not a Datetime");
-        let got = record["typed_values"]["v"]
-            .as_i64()
-            .unwrap_or_else(|| panic!("{raw} had no i64 instant"));
-        if got != want {
-            failures.push(format!("{raw}\n    want {want}, got {got}"));
+        let (ty, value) = (&record["types"]["v"], &record["typed_values"]["v"]);
+        let ok = match want {
+            Some(ns) => ty == "Datetime" && value.as_i64() == Some(ns),
+            None => ty == "String" && value == raw,
+        };
+        if !ok {
+            let want = want.map_or_else(|| format!("String {raw}"), |ns| format!("Datetime {ns}"));
+            failures.push(format!("{raw}\n    want {want}, got {ty} {value}"));
         }
     }
     assert!(
         failures.is_empty(),
-        "{} datetimes saturated the wrong way:\n  {}",
+        "{} instants were not held exactly or refused:\n  {}",
         failures.len(),
         failures.join("\n  ")
     );
