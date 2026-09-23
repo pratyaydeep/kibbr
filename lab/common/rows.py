@@ -292,8 +292,7 @@ def arrow_array(values, ty):
 
     at = arrow_type(ty)
     if ty == DATETIME:
-        # Built as int64 then cast: rung 2 saturates at i64::MAX for a thirteen-digit
-        # value near the top of the range, and pyarrow will not take that through its
-        # datetime path.
+        # Built as int64 then cast: the values are already i64 nanoseconds, the form the
+        # ladder stores, and the cast takes them as they are.
         return pa.array(values, type=pa.int64()).cast(at, safe=False)
     return pa.array(values, type=at)

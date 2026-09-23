@@ -117,13 +117,18 @@ def _days_from_civil(y: int, m: int, d: int) -> int:
     return era * 146097 + doe - 719468
 
 
-def _parse_rfc3339(raw: str, saturate: bool = True):
+def _parse_rfc3339(raw: str, exact: bool = True):
     """Unix nanoseconds, or None if this is not RFC 3339.
 
-    Saturating at both ends the way `infer` does: i64 nanoseconds cover 1677..2262 while
-    RFC 3339 covers year 0..9999, so an out-of-range year is pinned by the sign of its
-    seconds rather than both ends landing on i64::MAX. The window's ends are read with
-    `saturate=False`, because the binary holds them in an i128 and compares there.
+    With `exact`, as the ladder's first rung reads it: None as well for what a `Datetime`
+    cannot hold exactly - a second of 60, a moment outside the i64 nanoseconds that run
+    from 1677 to 2262, and more than nine fraction digits, counted rather than read, so a
+    trailing zero is refused too and the type never turns on which digit would be lost.
+    Nothing is clamped, rolled forward or truncated; the value falls through as text.
+
+    The window's ends are read with `exact=False`, the way chrono reads them there: a
+    leap second carried into the next second, fraction digits past the ninth dropped, and
+    no range limit, because the binary holds them in an i128 and compares there.
     """
     m = _RFC3339.match(raw)
     if not m:
@@ -133,6 +138,8 @@ def _parse_rfc3339(raw: str, saturate: bool = True):
         return None
     if ss > 60:  # chrono accepts a leap second as :60
         return None
+    if exact and ss == 60:  # ...and holds it as the next minute, on any day
+        return None
     dmax = _MONTH_DAYS[month - 1]
     if month == 2 and (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)):
         dmax = 29
@@ -140,22 +147,28 @@ def _parse_rfc3339(raw: str, saturate: bool = True):
         return None
 
     frac, offset = m.group(7), m.group(8)
+    if exact and frac and len(frac) - 1 > 9:  # nanoseconds are nine digits
+        return None
     secs = _days_from_civil(year, month, day) * 86400 + hh * 3600 + mm * 60 + min(ss, 59)
     if offset not in ("Z", "z"):
         sign = 1 if offset[0] == "+" else -1
         secs -= sign * (int(offset[1:3]) * 3600 + int(offset[4:6]) * 60)
     nanos = int((frac[1:] + "0" * 9)[:9]) if frac else 0
     # A leap second is carried into the next second rather than clamped to :59: chrono
-    # holds `:60` as the `:59` instant plus a full second of sub-second nanos, and both
-    # the ladder's first rung and the epoch window's ends are read from this.
+    # holds `:60` as the `:59` instant plus a full second of sub-second nanos. Only the
+    # epoch window's ends get here with one; the ladder's first rung refused it above.
     if ss == 60:
         nanos += 1_000_000_000
     total = secs * 1_000_000_000 + nanos
-    return total if not saturate else max(-(2**63), min(2**63 - 1, total))
+    if exact and not -(2**63) <= total <= 2**63 - 1:
+        return None
+    return total
 
 
 def _is_epoch_digits(raw: str) -> bool:
-    return len(raw) in (10, 13) and all("0" <= c <= "9" for c in raw)
+    """Ten or thirteen ASCII digits, the first not a zero: a count since 1970 is not
+    written with one, and zero-padded digits are an id kept at a fixed width."""
+    return len(raw) in (10, 13) and raw[0] != "0" and all("0" <= c <= "9" for c in raw)
 
 
 def _epoch_window() -> tuple:
@@ -172,7 +185,7 @@ def _epoch_window() -> tuple:
     ends = [part.strip() for part in text.split(",")]
     if len(ends) != 2:
         raise ValueError(f"TRIEDB__SCHEMA__EPOCH_WINDOW={text!r}: not two instants")
-    start, end = (_parse_rfc3339(part, saturate=False) for part in ends)
+    start, end = (_parse_rfc3339(part, exact=False) for part in ends)
     if start is None or end is None or start >= end:
         raise ValueError(f"TRIEDB__SCHEMA__EPOCH_WINDOW={text!r}: not a window")
     return (start, end)
@@ -265,10 +278,11 @@ def infer(raw: str) -> Typed:
         )
         moment = int(raw) * per_unit
         start, end = EPOCH_WINDOW
-        if start <= moment < end:  # inside the epoch window, or fall through to rung 6
-            # `saturating_mul`: 9_999_999_999 seconds in nanoseconds overflows i64,
-            # which only a window reaching past 2262 lets through.
-            return Typed(DATETIME, min(moment, 2**63 - 1), form)
+        # Inside the epoch window, or fall through to rung 6. So does a moment past the
+        # last i64 nanosecond, which only a window reaching past 2262 lets through: the
+        # binary's `checked_mul` falls through rather than clamping.
+        if start <= moment < end and moment <= 2**63 - 1:
+            return Typed(DATETIME, moment, form)
 
     if _is_uuid(raw):  # 3
         return Typed(UUID, raw)
