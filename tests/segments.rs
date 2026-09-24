@@ -420,6 +420,8 @@ fn the_banner_states_the_row_group_window_and_not_the_flush_interval() {
         server.banner
     );
     assert_eq!(server.stats()["storage"]["row_group_timeout_ms"], 4000);
+    // One server to a data directory: the second would be refused its lock.
+    drop(server);
 
     // Floored at the flush interval: the tick is what notices the timeout expired.
     let floored = db.start_with(&["--row-group-timeout-ms", "10", "--flush-interval-ms", "700"]);

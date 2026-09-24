@@ -250,6 +250,7 @@ triedb serve
   endpoints   GET  /            the log viewer, in a browser
               POST /ingest      NDJSON body, one log line per line
               POST /query       {"q": "<trieql>"}
+              POST /load        a bulk load job: what `triedb load` sends
               GET  /templates   every template, its columns and row count
               GET  /stats       throughput, template count, storage size
               GET  /health      {"ok":true}
@@ -411,6 +412,52 @@ triedb: exit 0
 Naming the skipped steps is the point. Four of the six are the difference between
 this and a database that survives being restarted.
 
+## Load closed days
+
+`/ingest` is the live door: lines as they happen. `triedb load` is the bulk door: a
+closed day of lines - or six months of them - loaded whole.
+
+```
+triedb load --data-dir triedb-data logs/2024-01-15/          # every file under it
+triedb load --data-dir triedb-data yesterday.ndjson.gz       # gzip, zstd or NDJSON
+zcat archive.gz | triedb load --data-dir triedb-data -       # standard input
+```
+
+- **All or nothing.** The load writes finished files into `staging/`, then publishes
+  every one of them in one `manifest.log` record. A load killed at any moment is either
+  wholly there after the next start or wholly absent - `scripts/load_kill.sh` kills it at
+  random twenty times to check.
+- **Never twice, for the same inputs.** A load's id is a hash, over the whole set of
+  inputs, of each one's file name and decompressed bytes. The same set loaded again under
+  the same names is refused, even if a file was recompressed in place. A renamed file
+  (`day.ndjson` loaded again as `day.ndjson.gz`), the same bytes piped through `-`, or a
+  file loaded again beside new ones is a new load, and its rows are stored twice.
+- **Where it runs.** One process owns a data directory, by an advisory lock on its
+  `LOCK` file. If a server holds it, `load` asks that server to run the load
+  (`POST /load`), and the rows are queryable the moment it commits; if nothing does,
+  `load` takes the directory and runs alone.
+- **One source per day.** TrieDB keeps no row identity, so the two doors cannot remove
+  duplicates between them. `--replace-day 2024-01-15` publishes the load as the whole of
+  that day, retiring what the day held in the same record - how a day that arrived live is
+  swapped for a clean copy from the archive.
+- **Rows with no time of their own** take their arrival time, which for an old file is
+  the wrong day. The load reads the head of its input first and stops if more than 1% of
+  it would; `--proceed` loads anyway.
+- `--max-mb-per-sec` and `--threads` keep a load from crowding out the live door.
+
+`scripts/two_doors.sh` sends the same 200,000 lines through both doors into two data
+directories and asks both `scripts/agree.sh`'s query set: they must answer identically.
+
+**What a file costs to store**, by one command:
+
+```
+triedb bench-storage day.ndjson            # add --es http://localhost:9200 to compare
+```
+
+prints the file's size raw, under `gzip -9` and `zstd -19`, and as TrieDB holds it - data
+files, catalog and manifest, in bytes and in disk blocks, with the data files broken down
+into column data, row group headers, schema records and footers.
+
 ## Look at it in a browser
 
 `GET /` is a log viewer. Open <http://127.0.0.1:7700/> after starting the server.
@@ -496,6 +543,10 @@ src/engine.rs     the walk, the scan, the result
 src/trieql.rs     the query grammar
 src/query.rs      the `query` command, and the result JSON both surfaces answer with
 src/serve.rs      the HTTP surface, the banner, the shutdown sequence
+src/load.rs       `triedb load` - the bulk door: staging, the load id, the commit
+src/lock.rs       the LOCK file: one process owns a data directory
+src/bench.rs      `triedb bench-storage`
+src/http.rs       the small HTTP client `load` and `bench-storage --es` speak
 src/viewer.html   the log viewer served at `/` - one file, compiled into the binary
 tests/fixture.rs  outer-surface tests
 tests/serve.rs    the HTTP contract, over a bare TcpStream

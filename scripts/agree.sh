@@ -13,27 +13,50 @@
 # python3 is used once, to harvest key/value pairs out of `parse --json`. Splitting a
 # JSON object in shell is how a test harness starts lying about what it tested.
 #
+# Two knobs let another script ask this exact query set of something else, rather than keep
+# a copy of the draws that would drift from this one:
+#
+#   INPUT=<file>     harvest from and ask about that file instead of a generated one, so a
+#                    caller holding the same lines draws from them.
+#   PRINT_QUERIES=1  print each combination's flags on one line, TAB between fields, and
+#                    exit 0 without answering or gating. No draw reads an answer, so the
+#                    RANDOM sequence is the one a normal run takes.
+#
+# Which term a line gives is drawn inside `$(term_from ...)`, and bash reseeds RANDOM from
+# the clock in a subshell, so two runs with one SEED still differ there. A caller prints
+# the list once and asks every side that one list.
+#
+# BIN names another build, as in the other scripts; the default is built first.
+#
 #   COMBOS=100 SEED=7 NLINES=2000 scripts/agree.sh
+#   INPUT=testdata/two-doors/200000-seed1.ndjson PRINT_QUERIES=1 scripts/agree.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=${BIN:-./target/release/triedb}
 COMBOS=${COMBOS:-100}
 SEED=${SEED:-7}
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
+PRINT_QUERIES=${PRINT_QUERIES:-}
 
 # The generator's clock: 2024-01-15T10:30:00Z, plus up to 30 days (src/gen.rs).
 BASE=1705314600
 SPAN=2592000
 
-cargo build --release --quiet || exit 1
+[ "$BIN" != ./target/release/triedb ] || cargo build --release --quiet || exit 1
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-INPUT="$WORK/input.ndjson"
-"$BIN" gen-logs --lines "$NLINES" --templates 12 --seed "$GEN_SEED" > "$INPUT"
+# A named file that is not there is refused, not replaced: a generated one in its place
+# would draw a query set the caller never asked for, and nothing downstream could tell.
+if [ -n "${INPUT:-}" ]; then
+  [ -f "$INPUT" ] || { echo "INPUT=$INPUT is not a file" >&2; exit 1; }
+else
+  INPUT="$WORK/input.ndjson"
+  "$BIN" gen-logs --lines "$NLINES" --templates 12 --seed "$GEN_SEED" > "$INPUT"
+fi
 
 # One `L` row per sampled line, holding the line's time key and its shell-safe
 # `key=value` terms, plus a `K` row per distinct key for `--group-by`.
@@ -86,7 +109,9 @@ done
 
 if [ ${#ROWS[@]} -eq 0 ]; then echo "no candidate values harvested" >&2; exit 1; fi
 if [ ${#NONTS[@]} -eq 0 ]; then echo "no sampled line keeps its time under a name other than ts" >&2; exit 1; fi
-echo "input: $NLINES lines, ${#KEYS[@]} distinct keys, ${#ROWS[@]} sampled lines, ${#NONTS[@]} with a time key other than ts"
+summary="input: $NLINES lines, ${#KEYS[@]} distinct keys, ${#ROWS[@]} sampled lines, ${#NONTS[@]} with a time key other than ts"
+# Kept off stdout when printing: there, every stdout line is a combination.
+if [ "$PRINT_QUERIES" = 1 ]; then echo "$summary" >&2; else echo "$summary"; fi
 
 # One `key=value` term off a sampled line, chosen by index so the caller can take several
 # from the same line and be sure a template holds them together.
@@ -200,6 +225,11 @@ for i in $(seq 1 "$COMBOS"); do
        fi ;;
   esac
 
+  if [ "$PRINT_QUERIES" = 1 ]; then
+    (IFS=$'\t'; printf '%s\n' "${ARGS[*]}")
+    continue
+  fi
+
   e=$(answer "${ARGS[@]}");            r=$(answer "${ARGS[@]}" --reference)
   et=$(templates "${ARGS[@]}");        rt=$(templates "${ARGS[@]}" --reference)
 
@@ -220,6 +250,7 @@ for i in $(seq 1 "$COMBOS"); do
   echo "  engine    $et  $e"
   echo "  reference $rt  $r"
 done
+[ "$PRINT_QUERIES" = 1 ] && exit 0
 
 echo
 echo "$COMBOS combinations: $known known template, $unknown unknown template, $nonempty returned rows"

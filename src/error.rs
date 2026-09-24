@@ -305,6 +305,12 @@ pub enum ServeError {
          to its sender with the store error, and none of them is on disk"
     )]
     RowsDropped { rows: u64 },
+
+    /// Another process owns the data directory. Taken before anything is written and
+    /// before the port - only the read-only version check comes first: a second writer of
+    /// the catalog or the manifest would write over the first one's records.
+    #[error(transparent)]
+    Lock(#[from] crate::lock::LockError),
 }
 
 /// Errors surfaced by the CLI itself.
@@ -379,6 +385,8 @@ pub enum CliError {
 
     #[error(transparent)]
     Serve(#[from] ServeError),
+    #[error(transparent)]
+    Load(#[from] crate::load::LoadError),
 }
 
 /// The error and every cause below it on one line.
