@@ -18,6 +18,12 @@ serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 tokio-util = "0.7.19"
+# zstd, for the bulk door's zstd inputs and `bench-storage`'s zstd -19, and for the
+# compressed chunks and finished files to come, whose levels 3 and 9 only libzstd has - a
+# pure-Rust encoder stops short of them. C under the hood, unlike flate2's inflater: the
+# difference is what it reads. `/ingest` decodes bodies from the network and stays gzip on
+# miniz_oxide; this decodes an operator's own files, and the format's own bytes.
+zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 # The `/ingest` tests build the gzip bodies they post, including the bomb. Shelling out to

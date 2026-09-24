@@ -4,7 +4,8 @@
 //! <base>/
 //! ├── catalog.log                 the truth about templates
 //! ├── manifest.log                the truth about files
-//! ├── staging/                    bulk loads in flight; deleted at startup
+//! ├── staging/                    bulk loads in flight; at startup a committed one is
+//! │                               moved into data/ and the rest deleted
 //! └── data/
 //!     └── 2024-01-15/
 //!         ├── seg_0_000001.col    seg_<group>_<number>; group is always 0 for now
@@ -39,16 +40,24 @@
 //! to each leaf as its row groups close: the same entries, template by template, that the
 //! footer will hold. Forgetting them would lose the newest rows from every answer.
 //!
-//! **Startup.** The manifest names the live files. A file it does not name is deleted, and
-//! so is `staging/`. A named file that is sealed opens through its footer and nothing else;
-//! one that is not was left by a crash, and is recovered - walked, cut at the tear, sealed
-//! - and the seal recorded. A directory holding the per-template layout is refused by path.
+//! **Startup.** The manifest names the live files. A file a bulk load committed and a stop
+//! left in `staging/` is moved into place - the commit happened, so it is finished rather
+//! than undone - and then `staging/` is deleted, taking any load that never committed with
+//! it. A file the manifest does not name is deleted. A named file that is sealed opens
+//! through its footer and nothing else; one that is not was left by a crash, and is
+//! recovered - walked, cut at the tear, sealed - and the seal recorded. A directory holding
+//! the per-template layout is refused by path.
+//!
+//! **The bulk door.** A load writes whole, finished files into `staging/<load id>/`, and
+//! `commit_load` publishes them: one manifest record, then the move into `data/`, then the
+//! row groups into the leaves - under the flush's lock, so a load and a flush never
+//! interleave. See `commit_load`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::{Instant, SystemTime};
 
@@ -83,14 +92,14 @@ fn today_utc() -> i64 {
 // ── Names ──────────────────────────────────────────────────────────────────────────
 
 /// `2024-01-15` for a day since the epoch.
-fn day_name(day: i64) -> String {
+pub fn day_name(day: i64) -> String {
     DateTime::from_timestamp(day * 86_400, 0).map_or_else(
         || format!("day_{day}"),
         |dt| dt.format("%Y-%m-%d").to_string(),
     )
 }
 
-fn day_of_name(name: &str) -> Option<i64> {
+pub fn day_of_name(name: &str) -> Option<i64> {
     let date = NaiveDate::parse_from_str(name, "%Y-%m-%d").ok()?;
     Some(
         date.and_hms_opt(0, 0, 0)?
@@ -118,9 +127,9 @@ fn number_of(name: &str) -> Option<u32> {
 /// Refuse a data directory holding an earlier layout, or a data file of another format
 /// version, by path.
 ///
-/// **Header bytes only, and before the port is taken.** This writes nothing, so it can
-/// run before the bind; everything that writes - recovery, deleting unnamed files - waits
-/// until the bind has shown no other server is running here. Paths are checked in order,
+/// **Header bytes only.** This writes nothing, so it can run before the directory's
+/// `LOCK` is taken and before the port; everything that writes - recovery, deleting
+/// unnamed files - waits until the caller holds `LOCK`. Paths are checked in order,
 /// so the one named is the same on every start.
 pub fn refuse_other_versions(base: &Path) -> Result<(), StoreError> {
     let mut leaves: Vec<PathBuf> = fs::read_dir(base)
@@ -169,9 +178,38 @@ fn dirs(dir: &Path) -> Vec<PathBuf> {
 // ── Files ──────────────────────────────────────────────────────────────────────────
 
 /// A data file a row group lives in.
+///
+/// **A retired file is deleted when its last reader lets go.** Replace-a-day takes a file
+/// out of the manifest and out of every leaf in one step, but a query that copied a day's
+/// row groups a moment earlier still holds them, and opens their file only when it reaches
+/// them: unlinked then, that query would fail halfway through an answer. So the file goes
+/// when the last `Arc` naming it drops. A process that stops first leaves it unnamed, and
+/// the next start deletes it.
 #[derive(Debug)]
 pub struct DataFile {
     pub path: PathBuf,
+    retired: AtomicBool,
+}
+
+impl DataFile {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            retired: AtomicBool::new(false),
+        }
+    }
+
+    fn retire(&self) {
+        self.retired.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Drop for DataFile {
+    fn drop(&mut self) {
+        if self.retired.load(Ordering::Relaxed) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 /// One row group a leaf can read: its file, its index entry, and its schema's columns.
@@ -208,12 +246,21 @@ impl Open {
 /// The files being written, and the manifest that names them: one open file per UTC day
 /// that has taken a row since its last was sealed.
 ///
-/// **Behind the flush's own lock.** Only a flush takes it - the tick, the final flush - so
-/// it is held across the encode, the write and the fsync, and no append and no query ever
-/// waits on it.
+/// **Behind the flush's own lock.** A flush takes it - the tick, the final flush - and so
+/// does a load's commit, so a load and a flush never interleave. It is held across the
+/// encode, the write and the fsync, and no append and no query ever waits on it.
 struct Files {
     data: PathBuf,
     manifest: Manifest,
+    /// The manifest's live files, kept current with every record appended: what
+    /// replace-a-day retires, and what it looks through for its day's rows elsewhere.
+    live: BTreeMap<String, FileRecord>,
+    /// Every load a record names as its source. A repeat is refused by its id.
+    loads: BTreeSet<u64>,
+    /// Loads committed whose files could not all be moved out of staging: this process's
+    /// view of the directory is short of their rows until a restart finishes the move, so
+    /// no load commits beside them.
+    unmoved: BTreeSet<u64>,
     open: BTreeMap<i64, Open>,
     /// The next file number per day directory.
     next: BTreeMap<i64, u32>,
@@ -224,6 +271,17 @@ struct Files {
 }
 
 impl Files {
+    /// Append records to the manifest - durable once this returns - and apply them to the
+    /// live set this store keeps.
+    fn record(&mut self, records: Vec<Record>) -> Result<(), manifest::ManifestError> {
+        self.manifest.append(&records)?;
+        self.loads.extend(manifest::load_ids(&records));
+        for record in &records {
+            manifest::apply(&mut self.live, record);
+        }
+        Ok(())
+    }
+
     /// The day directory whose file a row group of `day` goes into.
     ///
     /// Its own day's, when that is open or there is room to open it. **Past the cap on open
@@ -262,7 +320,7 @@ impl Files {
             let writer = Writer::create(&path)?;
             // Named before its first row group, so a crash cannot leave durable row groups
             // in a file the next start would delete as unnamed.
-            let named = self.manifest.append(&[Record::Add {
+            let named = self.record(vec![Record::Add {
                 files: vec![FileRecord::open(rel.clone(), &writer.index().file_id)],
                 source: None,
             }]);
@@ -276,7 +334,7 @@ impl Files {
                 dir,
                 Open {
                     writer,
-                    file: Arc::new(DataFile { path }),
+                    file: Arc::new(DataFile::new(path)),
                     rel,
                     schemas: HashMap::new(),
                     written: self.flushes,
@@ -427,11 +485,88 @@ impl Files {
         if !records.is_empty() {
             // A seal the manifest never heard of is found sealed at the next start, which
             // records it then.
-            if let Err(e) = self.manifest.append(&[Record::Seal { files: records }]) {
+            if let Err(e) = self.record(vec![Record::Seal { files: records }]) {
                 errors.push(e.into());
             }
         }
         (sealed, errors)
+    }
+}
+
+impl Files {
+    /// Every live file in `day`'s directory: what replace-a-day retires.
+    ///
+    /// **Refused, naming the file, when a directory and a day do not coincide.** A row
+    /// group goes into its own day's directory unless the open-day cap was reached, in which
+    /// case it went into today's - so a directory can hold another day's rows, and a day can
+    /// have rows in another directory. Retiring the directory would then take rows of other
+    /// days with it, or leave some of this day's behind beside the new ones: either way the
+    /// day's count would not be what the load holds. Only a store that has run past the
+    /// open-day cap can be in that state, and the file named says where.
+    fn day_files(&self, day: i64) -> Result<Vec<String>, StoreError> {
+        let prefix = format!("{}/", day_name(day));
+        let refuse = |rel: &str, why: String| StoreError::ReplaceRefused {
+            day: day_name(day),
+            path: rel.to_string(),
+            why,
+        };
+        let mut out = Vec::new();
+        for (rel, record) in &self.live {
+            let inside = rel.starts_with(&prefix);
+            // A file's days: its row groups' own, from the writer's index while it is open
+            // and from the footer once sealed. The manifest's range alone cannot say
+            // whether a file spanning three days holds a row of the middle one.
+            let days: BTreeSet<i64> = match self.open.values().find(|o| &o.rel == rel) {
+                Some(open) => open
+                    .writer
+                    .index()
+                    .entries
+                    .iter()
+                    .map(|e| day_of(e.min_time))
+                    .collect(),
+                None if record.rows == Some(0) => BTreeSet::new(),
+                None if inside
+                    && record.min_ts.map(day_of) == Some(day)
+                    && record.max_ts.map(day_of) == Some(day) =>
+                {
+                    BTreeSet::from([day])
+                }
+                None if !inside
+                    && record
+                        .min_ts
+                        .zip(record.max_ts)
+                        .is_some_and(|(lo, hi)| day < day_of(lo) || day > day_of(hi)) =>
+                {
+                    BTreeSet::new()
+                }
+                None => file::open_sealed(&self.data.join(rel))?
+                    .map(|index| index.entries.iter().map(|e| day_of(e.min_time)).collect())
+                    .unwrap_or_default(),
+            };
+            if inside {
+                if let Some(other) = days.iter().find(|d| **d != day) {
+                    return Err(refuse(
+                        rel,
+                        format!(
+                            "it also holds rows of {}, which went into it past the cap on open days; \
+                             retiring it would take them too",
+                            day_name(*other)
+                        ),
+                    ));
+                }
+                out.push(rel.clone());
+            } else if days.contains(&day) {
+                return Err(refuse(
+                    rel,
+                    format!(
+                        "it holds rows of {}, which went into it past the cap on open days; they \
+                         would stay beside the new ones",
+                        day_name(day)
+                    ),
+                ));
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -555,6 +690,34 @@ fn encode_all(moved: &[Moved], jobs: &[Job], threads: usize) -> Vec<EncodedRowGr
         .collect()
 }
 
+// ── What a load hands the store ────────────────────────────────────────────────────
+
+/// A sealed, finished file a load wrote into its staging directory.
+#[derive(Debug)]
+pub struct StagedFile {
+    /// The UTC day its rows are on, as days since the epoch.
+    pub day: i64,
+    pub path: PathBuf,
+    pub index: Index,
+}
+
+/// A load, staged and ready to publish.
+#[derive(Debug)]
+pub struct LoadCommit {
+    pub load_id: u64,
+    /// In storage order: each day's files in the order they were written.
+    pub files: Vec<StagedFile>,
+    /// Retire every other file of this day, as days since the epoch, in the same record.
+    pub replace_day: Option<i64>,
+}
+
+/// What a commit published and retired, by path under `data/`.
+#[derive(Debug, Default)]
+pub struct Committed {
+    pub added: Vec<String>,
+    pub replaced: Vec<String>,
+}
+
 // ── The store ──────────────────────────────────────────────────────────────────────
 
 pub struct DiskStore {
@@ -562,12 +725,14 @@ pub struct DiskStore {
     limits: RowGroupLimits,
     max_open: usize,
     max_buffer_bytes: u64,
+    segment_max_bytes: u64,
     /// Threads a flush encodes row groups on: one per core, up to eight.
     encoders: usize,
     files: Mutex<Files>,
     /// Every leaf this store has opened, for a flush to walk.
     leaves: RwLock<Vec<Arc<DiskLeaf>>>,
-    /// Row groups on disk at startup, by template, in storage order. A leaf takes its own
+    /// Row groups on disk with no leaf open yet - found at startup, or committed by a load
+    /// since - by template, in storage order. A leaf takes its own
     /// when it opens; a template no catalog record names keeps them here, unread.
     stored: Mutex<BTreeMap<u64, Vec<Stored>>>,
     claimed: Vec<u64>,
@@ -583,9 +748,10 @@ pub struct DiskStore {
 }
 
 impl DiskStore {
-    /// Open the data directory: refuse an earlier layout, read the manifest, delete what it
-    /// does not name and any leftover staging, recover every file a crash left unsealed,
-    /// and index every row group by template.
+    /// Open the data directory: refuse an earlier layout, read the manifest, finish moving
+    /// any load it names as committed out of staging, delete what it does not name and the
+    /// rest of staging, recover every file a crash left unsealed, and index every row group
+    /// by template. The caller holds the directory's `LOCK`.
     pub fn open(base: PathBuf, options: DiskOptions) -> Result<Self, StoreError> {
         fs::create_dir_all(&base).map_err(|source| StoreError::Io {
             template_id: 0,
@@ -595,25 +761,46 @@ impl DiskStore {
         let (mut manifest, records) = Manifest::open(&manifest::path_in(&base), &mut |m| {
             warn(format!("manifest.log - {m}"))
         })?;
-        let live = manifest::live(&records);
-
-        let staging = base.join(STAGING_DIR);
-        if staging.exists() {
-            warn(format!(
-                "{}: a bulk load that never committed; deleted",
-                staging.display()
-            ));
-            fs::remove_dir_all(&staging).map_err(|source| FormatError::Io {
-                path: staging.clone(),
-                source,
-            })?;
-        }
+        let mut live = manifest::live(&records);
+        let loads = manifest::load_ids(&records);
 
         let data = base.join(DATA_DIR);
         fs::create_dir_all(&data).map_err(|source| FormatError::Io {
             path: data.clone(),
             source,
         })?;
+        // Finished before `staging/` goes: a load whose record is written is committed,
+        // and its files are the only copy of its rows.
+        let staging = base.join(STAGING_DIR);
+        finish_moves(
+            &staging,
+            &data,
+            &live,
+            &manifest::published_by_load(&records),
+        )?;
+        if staging.exists() {
+            // Every committed file has been moved out by now, so a file still here belongs
+            // to a load that never committed - bar a spool of standard input, which is only
+            // ever a copy of what a load was reading.
+            let uncommitted = files_under(&staging)
+                .map_err(|source| FormatError::Io {
+                    path: staging.clone(),
+                    source,
+                })?
+                .into_iter()
+                .filter(|p| p.extension().is_none_or(|e| e != "spool"))
+                .count();
+            if uncommitted > 0 {
+                warn(format!(
+                    "{}: {uncommitted} file(s) of a bulk load that never committed; deleted",
+                    staging.display()
+                ));
+            }
+            fs::remove_dir_all(&staging).map_err(|source| FormatError::Io {
+                path: staging.clone(),
+                source,
+            })?;
+        }
         delete_unnamed(&data, &live)?;
 
         let mut next: BTreeMap<i64, u32> = BTreeMap::new();
@@ -681,10 +868,12 @@ impl DiskStore {
                 }
                 .into());
             }
-            index_rows(&mut stored, Arc::new(DataFile { path }), &index);
+            index_rows(&mut stored, Arc::new(DataFile::new(path)), &index);
         }
         if !seals.is_empty() {
-            manifest.append(&[Record::Seal { files: seals }])?;
+            let record = Record::Seal { files: seals };
+            manifest.append(std::slice::from_ref(&record))?;
+            manifest::apply(&mut live, &record);
         }
         let claimed = stored.keys().copied().collect();
         Ok(Self {
@@ -692,10 +881,14 @@ impl DiskStore {
             limits: options.row_groups,
             max_open: options.max_open_files,
             max_buffer_bytes: options.max_buffer_bytes,
+            segment_max_bytes: options.segment_max_bytes,
             encoders: std::thread::available_parallelism().map_or(1, |n| n.get().min(8)),
             files: Mutex::new(Files {
                 data,
                 manifest,
+                live,
+                loads,
+                unmoved: BTreeSet::new(),
                 open: BTreeMap::new(),
                 next,
                 max_open: options.max_open_files,
@@ -711,129 +904,237 @@ impl DiskStore {
         })
     }
 
-    /// The same store, with `today` saying which day is today.
-    #[cfg(test)]
-    fn with_today(mut self, today: fn() -> i64) -> Self {
-        self.today = today;
-        self
+    // ── The bulk door ──────────────────────────────────────────────────────────────
+
+    /// When a row group closes: a load closes its own at the same thresholds.
+    pub fn row_group_limits(&self) -> RowGroupLimits {
+        self.limits
     }
 
-    /// Past the memory limit, move aside the largest buffers left as well, largest first,
-    /// until what stays in memory is three quarters of the limit. How many were moved.
+    /// Where a load starts its next file.
+    pub fn segment_max_bytes(&self) -> u64 {
+        self.segment_max_bytes
+    }
+
+    /// The memory a load's batches may hold before the largest close early.
+    pub fn max_buffer_bytes(&self) -> u64 {
+        self.max_buffer_bytes
+    }
+
+    /// Whether the manifest names this load as the source of a commit.
+    pub fn was_loaded(&self, load_id: u64) -> bool {
+        lock(&self.files).loads.contains(&load_id)
+    }
+
+    /// An empty `staging/<load id>/`, durable before a file is written into it: a stop
+    /// after this leaves a directory the next start deletes, and nothing else.
     ///
-    /// To three quarters and not just under: every close forced here makes a row group
-    /// smaller than the thresholds would have, and stopping a hair under the limit would buy
-    /// another round of them on every tick for as long as the burst lasted.
-    fn relieve(&self, leaves: &[Arc<DiskLeaf>], moved: &mut Vec<Moved>) -> usize {
-        let moving: u64 = moved.iter().map(|m| m.batch.held as u64).sum();
-        let mut staying = self.buffered.load(Ordering::Relaxed).saturating_sub(moving);
-        if staying <= self.max_buffer_bytes {
-            return 0;
+    /// **Never over a committed load's files.** A load whose record is written and whose
+    /// move failed has its rows in `staging/<load id>/` and nowhere else; the same inputs
+    /// run again - with `--replace-day`, which a repeat is allowed - would stage into the
+    /// same directory. So while any committed load is unmoved, no load stages at all.
+    pub fn stage(&self, load_id: u64) -> Result<PathBuf, StoreError> {
+        let io = |path: &Path, source| {
+            StoreError::from(FormatError::Io {
+                path: path.to_path_buf(),
+                source,
+            })
+        };
+        let files = lock(&self.files);
+        if let Some(pending) = files.unmoved.iter().next() {
+            return Err(StoreError::MovePending { load_id: *pending });
         }
-        let target = self.max_buffer_bytes / 4 * 3;
-        let mut sizes: Vec<(usize, usize, i64)> = Vec::new();
-        for (at, leaf) in leaves.iter().enumerate() {
-            for (day, bytes) in leaf.buffer_sizes() {
-                sizes.push((bytes, at, day));
+        let staging = self.base.join(STAGING_DIR);
+        let dir = staging.join(format!("{load_id:016x}"));
+        if dir.exists() {
+            if files.loads.contains(&load_id) {
+                return Err(StoreError::MovePending { load_id });
             }
+            fs::remove_dir_all(&dir).map_err(|e| io(&dir, e))?;
         }
-        sizes.sort_unstable_by_key(|(bytes, _, _)| std::cmp::Reverse(*bytes));
-        let mut forced = 0;
-        for (_, at, day) in sizes {
-            if staying <= target {
-                break;
-            }
-            if let Some(m) = leaves[at].move_day(day) {
-                staying = staying.saturating_sub(m.batch.held as u64);
-                moved.push(m);
-                forced += 1;
-            }
-        }
-        forced
+        drop(files);
+        fs::create_dir_all(&dir).map_err(|e| io(&dir, e))?;
+        crate::frame::sync_dir(&staging)
+            .and_then(|()| crate::frame::sync_dir(&self.base))
+            .map_err(|e| io(&staging, e))?;
+        Ok(dir)
     }
-}
 
-/// Every file under `data/` the manifest does not name, deleted; and every directory left
-/// empty. A file nobody named is not part of the database: a crash between creating a file
-/// and naming it, or a load that never committed.
-fn delete_unnamed(data: &Path, live: &BTreeMap<String, FileRecord>) -> Result<(), StoreError> {
-    let io = |path: &Path, source| FormatError::Io {
-        path: path.to_path_buf(),
-        source,
-    };
-    for entry in fs::read_dir(data).map_err(|e| io(data, e))?.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
-            warn(format!(
-                "{}: not named by manifest.log; deleted",
-                path.display()
-            ));
-            fs::remove_file(&path).map_err(|e| io(&path, e))?;
-            continue;
-        }
-        let mut kept = 0;
-        for inner in fs::read_dir(&path).map_err(|e| io(&path, e))?.flatten() {
-            let file = inner.path();
-            let rel = format!("{name}/{}", inner.file_name().to_string_lossy());
-            if live.contains_key(&rel) && inner.file_type().is_ok_and(|t| t.is_file()) {
-                kept += 1;
-                continue;
-            }
-            warn(format!(
-                "{}: not named by manifest.log; deleted",
-                file.display()
-            ));
-            if inner.file_type().is_ok_and(|t| t.is_dir()) {
-                fs::remove_dir_all(&file).map_err(|e| io(&file, e))?;
-            } else {
-                fs::remove_file(&file).map_err(|e| io(&file, e))?;
-            }
-        }
-        if kept == 0 {
-            fs::remove_dir(&path).map_err(|e| io(&path, e))?;
-        }
+    /// Remove a load's staging directory: what a load that will not commit leaves behind.
+    pub fn unstage(&self, load_id: u64) {
+        let _ = fs::remove_dir_all(self.base.join(STAGING_DIR).join(format!("{load_id:016x}")));
     }
-    Ok(())
-}
 
-/// A file's row groups into the per-template lists, in file order.
-fn index_rows(stored: &mut BTreeMap<u64, Vec<Stored>>, file: Arc<DataFile>, index: &Index) {
-    let schemas: Vec<Arc<Vec<String>>> = index.schemas.iter().cloned().map(Arc::new).collect();
-    for entry in &index.entries {
-        stored.entry(entry.template_id).or_default().push(Stored {
-            file: Arc::clone(&file),
-            entry: *entry,
-            schema: Arc::clone(&schemas[entry.schema_id as usize]),
-        });
-    }
-}
-
-impl Store for DiskStore {
-    fn open(&self, template_id: u64, time_column: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
-        let stored = lock(&self.stored).remove(&template_id).unwrap_or_default();
-        let mut days: BTreeMap<i64, Day> = BTreeMap::new();
-        for s in stored {
-            days.entry(day_of(s.entry.min_time)).or_default().note(s);
+    /// Publish a load's staged files: one manifest record, then the move, then the rows.
+    ///
+    /// **The record is the commit.** Every staged file is sealed and flushed before this
+    /// is called, and each is named in the one record - `add`, or with a day to replace,
+    /// `replace` - so a load spanning a hundred days is in the database whole or not at
+    /// all. A stop before the record leaves only `staging/`, which the next start deletes;
+    /// a stop after it leaves files to move, which the next start moves (`finish_moves`).
+    ///
+    /// **Numbered here, under the flush's lock.** A load stages under names of its own and
+    /// takes each file's final number from the same counter the live door opens files by,
+    /// so the two can never want one name - and a load's files come after every file of
+    /// their day, which is where their row groups are in storage order.
+    ///
+    /// **Replace-a-day** first writes the day's rows still in memory into its file and
+    /// seals it, so the day it retires is wholly on disk, then retires every file in the
+    /// day's directory in the same record that adds the new ones. The retired files leave
+    /// every leaf in the same hold that adds the new row groups, and are deleted when the
+    /// last query reading them lets go. A repeated load id is not refused here: the load
+    /// is replacing its day, not adding to it.
+    pub fn commit_load(&self, commit: LoadCommit) -> Result<Committed, StoreError> {
+        let mut files = lock(&self.files);
+        if let Some(pending) = files.unmoved.iter().next() {
+            return Err(StoreError::MovePending { load_id: *pending });
         }
-        let leaf = Arc::new(DiskLeaf {
-            template_id,
-            time_column: time_column.to_string(),
-            limits: self.limits,
-            held: Arc::clone(&self.buffered),
-            state: Mutex::new(LeafState { days, buffered: 0 }),
-        });
-        self.leaves
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(Arc::clone(&leaf));
-        Ok(leaf)
+        if commit.replace_day.is_none() && files.loads.contains(&commit.load_id) {
+            return Err(StoreError::LoadRepeated {
+                load_id: commit.load_id,
+            });
+        }
+        let mut retired = Vec::new();
+        if let Some(day) = commit.replace_day {
+            // The loader refuses a row outside the day before it stages anything; checked
+            // again here because a file of another day published as this day's replacement
+            // would add to that day rather than replace it, and nothing later would say so.
+            if let Some(other) = commit.files.iter().find(|f| f.day != day) {
+                return Err(StoreError::ReplaceRefused {
+                    day: day_name(day),
+                    path: other.path.display().to_string(),
+                    why: format!("it holds rows of {}", day_name(other.day)),
+                });
+            }
+            let flushed = self.flush_locked(&mut files, FlushKind::Final, Some(day));
+            if let Some((_, e)) = flushed.failed.into_iter().next() {
+                return Err(e);
+            }
+            if let Some(e) = flushed.seal_failed.into_iter().next() {
+                return Err(e);
+            }
+            retired = files.day_files(day)?;
+        }
+
+        let mut named = Vec::with_capacity(commit.files.len());
+        for staged in &commit.files {
+            let next = files.next.entry(staged.day).or_insert(1);
+            named.push(format!("{}/{}", day_name(staged.day), file_name(*next)));
+            *next += 1;
+        }
+        let added: Vec<FileRecord> = named
+            .iter()
+            .zip(&commit.files)
+            .map(|(rel, staged)| FileRecord::sealed(rel.clone(), &staged.index))
+            .collect();
+        let source = Some(manifest::load_source(commit.load_id));
+        let recorded = files.record(vec![match commit.replace_day {
+            Some(_) => Record::Replace {
+                add: added,
+                remove: retired.clone(),
+                source,
+            },
+            None => Record::Add {
+                files: added,
+                source,
+            },
+        }]);
+        match recorded {
+            Ok(()) => {}
+            // Refused before a byte was written: nothing is committed.
+            Err(e @ manifest::ManifestError::Serialize { .. })
+            | Err(e @ manifest::ManifestError::Log(crate::frame::LogError::Torn { .. })) => {
+                return Err(e.into())
+            }
+            // A write or a flush failed partway: the record may be on disk whole, and then
+            // it is the commit. Only the next start can tell, so the staged files stay.
+            Err(source) => {
+                files.unmoved.insert(commit.load_id);
+                return Err(StoreError::CommitUncertain {
+                    load_id: commit.load_id,
+                    source,
+                });
+            }
+        }
+
+        // Committed. What fails from here is a move the next start finishes.
+        for (rel, staged) in named.iter().zip(&commit.files) {
+            if let Err(source) = move_into(&staged.path, &files.data, rel) {
+                files.unmoved.insert(commit.load_id);
+                return Err(StoreError::NotMoved {
+                    load_id: commit.load_id,
+                    source,
+                });
+            }
+        }
+        self.unstage(commit.load_id);
+        self.publish_load(&files.data, &named, &commit.files, &retired);
+        Ok(Committed {
+            added: named,
+            replaced: retired,
+        })
+    }
+
+    /// A committed load's row groups into the leaves - and into `stored`, for a template
+    /// with no leaf open - and the retired files' out, in one hold of the leaves' lock.
+    ///
+    /// **Per leaf, one step**: a query of one template sees the day as it was or as the
+    /// load left it, never with the old row groups gone and the new ones not yet there.
+    /// Across templates it is the live door's rule - a query running beside a commit can
+    /// see some templates' rows of it and not yet others' - and a query that starts once
+    /// the load has answered sees all of it.
+    fn publish_load(
+        &self,
+        data: &Path,
+        named: &[String],
+        staged: &[StagedFile],
+        retired: &[String],
+    ) {
+        let gone: BTreeSet<PathBuf> = retired.iter().map(|rel| data.join(rel)).collect();
+        let mut new: BTreeMap<u64, Vec<Stored>> = BTreeMap::new();
+        for (rel, f) in named.iter().zip(staged) {
+            index_rows(&mut new, Arc::new(DataFile::new(data.join(rel))), &f.index);
+        }
+        let mut taken: Vec<Arc<DataFile>> = Vec::new();
+        {
+            let leaves = self.leaves.write().unwrap_or_else(|e| e.into_inner());
+            for leaf in leaves.iter() {
+                let rows = new.remove(&leaf.template_id).unwrap_or_default();
+                if !gone.is_empty() || !rows.is_empty() {
+                    taken.extend(leaf.swap(&gone, rows));
+                }
+            }
+            let mut stored = lock(&self.stored);
+            if !gone.is_empty() {
+                for list in stored.values_mut() {
+                    list.retain(|s| {
+                        let keep = !gone.contains(&s.file.path);
+                        if !keep {
+                            taken.push(Arc::clone(&s.file));
+                        }
+                        keep
+                    });
+                }
+            }
+            for (id, rows) in new {
+                stored.entry(id).or_default().extend(rows);
+            }
+        }
+        let mut marked = BTreeSet::new();
+        for file in taken {
+            file.retire();
+            marked.insert(file.path.clone());
+        }
+        // A file no row group named - one that held no rows - has no reader to wait for.
+        for path in gone.difference(&marked) {
+            let _ = fs::remove_file(path);
+        }
     }
 
     /// One flush, in the three steps the invariant at `DiskLeaf::state` needs, and then the
-    /// seals.
-    fn flush(&self, kind: FlushKind) -> Flushed {
-        let mut files = lock(&self.files);
+    /// seals - of every day, or with `only`, of one day's rows and then its file: what
+    /// replace-a-day does first, so the day it retires holds no row still in memory.
+    fn flush_locked(&self, files: &mut Files, kind: FlushKind, only: Option<i64>) -> Flushed {
         files.flushes += 1;
         let leaves: Vec<Arc<DiskLeaf>> = self
             .leaves
@@ -846,9 +1147,9 @@ impl Store for DiskStore {
         // ── 1. Move the rows that are due aside: one short hold of each leaf's lock ──
         let mut moved: Vec<Moved> = Vec::new();
         for leaf in &leaves {
-            leaf.move_due(kind, now, &mut moved);
+            leaf.move_due(kind, now, only, &mut moved);
         }
-        if !kind.is_final() {
+        if !kind.is_final() && only.is_none() {
             done.forced = self.relieve(&leaves, &mut moved);
         }
 
@@ -922,15 +1223,286 @@ impl Store for DiskStore {
         }
 
         // ── 4. Seal: every file on a final flush, and otherwise those a cap says to ──
-        let (sealed, seal_failed) = if kind.is_final() {
-            files.seal_all()
-        } else {
-            files.settle(today)
+        let (sealed, seal_failed) = match only {
+            Some(day) => files.seal_days(vec![day]),
+            None if kind.is_final() => files.seal_all(),
+            None => files.settle(today),
         };
         done.sealed = sealed;
         done.seal_failed = seal_failed;
         self.open_count.store(files.open.len(), Ordering::Relaxed);
         done
+    }
+
+    /// The same store, with `today` saying which day is today.
+    #[cfg(test)]
+    fn with_today(mut self, today: fn() -> i64) -> Self {
+        self.today = today;
+        self
+    }
+
+    /// Past the memory limit, move aside the largest buffers left as well, largest first,
+    /// until what stays in memory is three quarters of the limit. How many were moved.
+    ///
+    /// To three quarters and not just under: every close forced here makes a row group
+    /// smaller than the thresholds would have, and stopping a hair under the limit would buy
+    /// another round of them on every tick for as long as the burst lasted.
+    fn relieve(&self, leaves: &[Arc<DiskLeaf>], moved: &mut Vec<Moved>) -> usize {
+        let moving: u64 = moved.iter().map(|m| m.batch.held as u64).sum();
+        let mut staying = self.buffered.load(Ordering::Relaxed).saturating_sub(moving);
+        if staying <= self.max_buffer_bytes {
+            return 0;
+        }
+        let target = self.max_buffer_bytes / 4 * 3;
+        let mut sizes: Vec<(usize, usize, i64)> = Vec::new();
+        for (at, leaf) in leaves.iter().enumerate() {
+            for (day, bytes) in leaf.buffer_sizes() {
+                sizes.push((bytes, at, day));
+            }
+        }
+        sizes.sort_unstable_by_key(|(bytes, _, _)| std::cmp::Reverse(*bytes));
+        let mut forced = 0;
+        for (_, at, day) in sizes {
+            if staying <= target {
+                break;
+            }
+            if let Some(m) = leaves[at].move_day(day) {
+                staying = staying.saturating_sub(m.batch.held as u64);
+                moved.push(m);
+                forced += 1;
+            }
+        }
+        forced
+    }
+}
+
+/// Move a sealed file into `data/<rel>`, and make the move durable: the day directory is
+/// made first, and synced with its parent when new, so the rename lands in a directory the
+/// next start will find.
+fn move_into(from: &Path, data: &Path, rel: &str) -> Result<(), FormatError> {
+    let io = |path: &Path, source| FormatError::Io {
+        path: path.to_path_buf(),
+        source,
+    };
+    let to = data.join(rel);
+    let dir = crate::frame::parent_of(&to);
+    if !dir.exists() {
+        fs::create_dir_all(dir).map_err(|e| io(dir, e))?;
+        crate::frame::sync_dir(data).map_err(|e| io(data, e))?;
+    }
+    fs::rename(from, &to).map_err(|e| io(from, e))?;
+    crate::frame::sync_dir(dir).map_err(|e| io(dir, e))
+}
+
+/// Every regular file under `dir`, at any depth, in path order; none when `dir` is absent.
+fn files_under(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(at) = todo.pop() {
+        let entries = match fs::read_dir(&at) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && at == dir => break,
+            Err(e) => return Err(e),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                todo.push(entry.path());
+            } else if kind.is_file() {
+                out.push(entry.path());
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Files a load committed and a stop left in `staging/<load id>/`, moved into place.
+///
+/// A load appends its one manifest record and then moves its files out of staging, so a
+/// stop between the two leaves the manifest naming files that are not in `data/` yet. The
+/// record is the commit: the move is finished here, never undone. A staged file is matched
+/// to its record by the id in its header and not by its name - staging names are the
+/// load's own, and a file's number is only chosen when it is committed.
+///
+/// **Fails closed.** `staging/` is deleted after this returns, and for a committed load it
+/// may hold the only copy of its rows: a file the record names and that is neither in
+/// `data/` with its id nor readable in staging - or a staging directory that cannot be
+/// read - stops the start here, with staging untouched, rather than after the only copy
+/// is gone.
+fn finish_moves(
+    staging: &Path,
+    data: &Path,
+    live: &BTreeMap<String, FileRecord>,
+    published: &BTreeMap<String, u64>,
+) -> Result<(), StoreError> {
+    let io = |path: &Path, source| {
+        StoreError::from(FormatError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    let mut loads: BTreeMap<u64, Vec<(&String, &FileRecord)>> = BTreeMap::new();
+    for (rel, record) in live {
+        if let Some(id) = published.get(rel) {
+            loads.entry(*id).or_default().push((rel, record));
+        }
+    }
+    for (id, named) in loads {
+        let dir = staging.join(format!("{id:016x}"));
+        if !dir.exists() {
+            continue;
+        }
+        // Only a file not already in place is looked for: `staging/<id>/` can also hold a
+        // later run of the same inputs - a `--replace-day` of them, stopped part way - whose
+        // files no record names, and a file of that cut short at its header is no reason
+        // for a start to fail.
+        let mut wanted = Vec::new();
+        for (rel, record) in named {
+            let at = data.join(rel);
+            if !(at.exists() && manifest::hex(&file::file_id_of(&at)?) == record.file_id) {
+                wanted.push((rel, record, at));
+            }
+        }
+        if wanted.is_empty() {
+            continue;
+        }
+        let mut by_id: HashMap<String, PathBuf> = HashMap::new();
+        let mut unreadable = Vec::new();
+        for path in files_under(&dir).map_err(|e| io(&dir, e))? {
+            match file::file_id_of(&path) {
+                Ok(file_id) => {
+                    by_id.insert(manifest::hex(&file_id), path);
+                }
+                Err(e) => unreadable.push(e.to_string()),
+            }
+        }
+        let mut moves = Vec::new();
+        for (rel, record, at) in wanted {
+            match by_id.get(&record.file_id) {
+                Some(from) => moves.push((from, rel)),
+                None => {
+                    return Err(io(
+                        &at,
+                        std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!(
+                                "named by manifest.log as part of load {id:016x}, and neither \
+                                 here with its id nor in {}{}; staging is kept",
+                                dir.display(),
+                                if unreadable.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" (unreadable there: {})", unreadable.join("; "))
+                                }
+                            ),
+                        ),
+                    ))
+                }
+            }
+        }
+        for (from, rel) in &moves {
+            move_into(from, data, rel)?;
+        }
+        if !moves.is_empty() {
+            warn(format!(
+                "load {id:016x} was committed and stopped before its files were moved; moved \
+                 {} file(s) out of {}",
+                moves.len(),
+                dir.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every file under `data/` the manifest does not name, deleted; and every directory left
+/// empty. A file nobody named is not part of the database: a crash between creating a file
+/// and naming it, or a load that never committed.
+fn delete_unnamed(data: &Path, live: &BTreeMap<String, FileRecord>) -> Result<(), StoreError> {
+    let io = |path: &Path, source| FormatError::Io {
+        path: path.to_path_buf(),
+        source,
+    };
+    for entry in fs::read_dir(data).map_err(|e| io(data, e))?.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            warn(format!(
+                "{}: not named by manifest.log; deleted",
+                path.display()
+            ));
+            fs::remove_file(&path).map_err(|e| io(&path, e))?;
+            continue;
+        }
+        let mut kept = 0;
+        for inner in fs::read_dir(&path).map_err(|e| io(&path, e))?.flatten() {
+            let file = inner.path();
+            let rel = format!("{name}/{}", inner.file_name().to_string_lossy());
+            if live.contains_key(&rel) && inner.file_type().is_ok_and(|t| t.is_file()) {
+                kept += 1;
+                continue;
+            }
+            warn(format!(
+                "{}: not named by manifest.log; deleted",
+                file.display()
+            ));
+            if inner.file_type().is_ok_and(|t| t.is_dir()) {
+                fs::remove_dir_all(&file).map_err(|e| io(&file, e))?;
+            } else {
+                fs::remove_file(&file).map_err(|e| io(&file, e))?;
+            }
+        }
+        if kept == 0 {
+            fs::remove_dir(&path).map_err(|e| io(&path, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// A file's row groups into the per-template lists, in file order.
+fn index_rows(stored: &mut BTreeMap<u64, Vec<Stored>>, file: Arc<DataFile>, index: &Index) {
+    let schemas: Vec<Arc<Vec<String>>> = index.schemas.iter().cloned().map(Arc::new).collect();
+    for entry in &index.entries {
+        stored.entry(entry.template_id).or_default().push(Stored {
+            file: Arc::clone(&file),
+            entry: *entry,
+            schema: Arc::clone(&schemas[entry.schema_id as usize]),
+        });
+    }
+}
+
+impl Store for DiskStore {
+    fn open(&self, template_id: u64, time_column: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
+        // Held from taking the row groups to joining the list, so a load committing
+        // meanwhile finds this template's in one place or the other: in `stored` before, in
+        // the leaf after. Between the two, its row groups would go to `stored` and wait
+        // there, unread, until a restart.
+        let mut leaves = self.leaves.write().unwrap_or_else(|e| e.into_inner());
+        let stored = lock(&self.stored).remove(&template_id).unwrap_or_default();
+        let mut days: BTreeMap<i64, Day> = BTreeMap::new();
+        for s in stored {
+            days.entry(day_of(s.entry.min_time)).or_default().note(s);
+        }
+        let leaf = Arc::new(DiskLeaf {
+            template_id,
+            time_column: time_column.to_string(),
+            limits: self.limits,
+            held: Arc::clone(&self.buffered),
+            state: Mutex::new(LeafState { days, buffered: 0 }),
+        });
+        leaves.push(Arc::clone(&leaf));
+        Ok(leaf)
+    }
+
+    fn flush(&self, kind: FlushKind) -> Flushed {
+        let mut files = lock(&self.files);
+        self.flush_locked(&mut files, kind, None)
+    }
+
+    fn as_disk(&self) -> Option<&DiskStore> {
+        Some(self)
     }
 
     fn kind(&self) -> &'static str {
@@ -1127,11 +1699,18 @@ impl DiskLeaf {
                     .is_some_and(|t| now.saturating_duration_since(t) >= self.limits.age))
     }
 
-    /// Move aside every buffer a threshold says is due - every buffer, on a final flush.
-    fn move_due(self: &Arc<Self>, kind: FlushKind, now: Instant, out: &mut Vec<Moved>) {
+    /// Move aside every buffer a threshold says is due - every buffer, on a final flush -
+    /// of every day, or of `only`.
+    fn move_due(
+        self: &Arc<Self>,
+        kind: FlushKind,
+        now: Instant,
+        only: Option<i64>,
+        out: &mut Vec<Moved>,
+    ) {
         let mut state = self.state();
         for (day, part) in state.days.iter_mut() {
-            if self.due(part, kind, now) {
+            if only.is_none_or(|d| d == *day) && self.due(part, kind, now) {
                 out.push(Moved {
                     leaf: Arc::clone(self),
                     day: *day,
@@ -1187,6 +1766,52 @@ impl DiskLeaf {
             batch.held
         };
         self.held.fetch_sub(freed as u64, Ordering::Relaxed);
+    }
+
+    /// A committed load's row groups into their days, and every row group of the files at
+    /// `gone` out, in one hold of the lock - so no query sees the day between the two. The
+    /// files taken out are handed back, for the caller to retire once nothing else names
+    /// them.
+    ///
+    /// The new row groups go after everything stored in their day, and not by path: a day
+    /// whose file is still open has published that file's row groups here already, and the
+    /// load's files - numbered after it - come after them in the list as they will by path
+    /// once it is sealed. Only row groups the open file takes after this moment sort
+    /// differently across a restart, and so only the position between two rows of one
+    /// template, one day and one timestamp, one live and one loaded - which one source per
+    /// day rules out.
+    fn swap(&self, gone: &BTreeSet<PathBuf>, stored: Vec<Stored>) -> Vec<Arc<DataFile>> {
+        let mut out = Vec::new();
+        let mut state = self.state();
+        if !gone.is_empty() {
+            for part in state.days.values_mut() {
+                if !part.stored.iter().any(|s| gone.contains(&s.file.path)) {
+                    continue;
+                }
+                let (left, taken): (Vec<Stored>, Vec<Stored>) = part
+                    .stored
+                    .iter()
+                    .cloned()
+                    .partition(|s| !gone.contains(&s.file.path));
+                out.extend(taken.into_iter().map(|s| s.file));
+                // A query holding the old list keeps it; this leaf starts a new one.
+                part.stored = Arc::new(Vec::new());
+                part.stored_rows = 0;
+                part.stored_bytes = 0;
+                part.stored_span = None;
+                for s in left {
+                    part.note(s);
+                }
+            }
+        }
+        for s in stored {
+            state
+                .days
+                .entry(day_of(s.entry.min_time))
+                .or_default()
+                .note(s);
+        }
+        out
     }
 
     /// The flush could not write a day's moved rows: put them back at the head of the
@@ -1471,6 +2096,7 @@ pub fn data_files(base: &Path) -> BTreeSet<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::v3::Source;
     use crate::store::Rows;
     use crate::types::ColValue;
     use std::time::Duration;
@@ -1817,6 +2443,334 @@ mod tests {
         for (n, seq) in seqs {
             assert_eq!(n, Some(ColValue::Int64(seq as i64)));
         }
+    }
+
+    /// A load's file for template `id`, rows `ns` on T0's day: staged under the load's own
+    /// name, sealed and flagged finished, as the loader leaves one.
+    fn staged(dir: &Path, name: &str, id: u64, ns: std::ops::Range<i64>) -> StagedFile {
+        let path = dir.join(name);
+        let mut writer = Writer::create(&path).expect("create");
+        writer.finish();
+        let rows: Vec<Row> = ns.clone().map(|n| row(T0 + n, n)).collect();
+        let refs: Vec<&Row> = rows.iter().collect();
+        let times: Vec<i64> = ns.clone().map(|n| T0 + n).collect();
+        let columns = schema_of(refs.iter().copied());
+        let encoded = build::encode(
+            id,
+            &columns,
+            &refs,
+            &times,
+            Source::Load {
+                stream: 9,
+                first: ns.start as u64 + 1,
+                last: ns.end as u64,
+            },
+        )
+        .expect("encode");
+        let schema_id = writer.schema_id(&columns).expect("schema");
+        writer
+            .append(id, &encoded.frame(schema_id))
+            .expect("append");
+        StagedFile {
+            day: day_of(T0),
+            path,
+            index: writer.seal().expect("seal"),
+        }
+    }
+
+    /// A commit lands in an open leaf at once, behind its live rows; a second commit of the
+    /// same load is refused by its id; and it is all there after a restart.
+    #[test]
+    fn a_committed_load_is_read_at_once_and_after_a_restart() {
+        let scratch = Scratch::new("commit");
+        {
+            let s = store(&scratch);
+            let leaf = s.open(7, "ts").expect("leaf");
+            leaf.append(row(T0 + 100, 100));
+            let dir = s.stage(9).expect("stage");
+            let file = staged(&dir, "a.col", 7, 0..5);
+            assert!(!s.was_loaded(9));
+            let done = s
+                .commit_load(LoadCommit {
+                    load_id: 9,
+                    files: vec![file],
+                    replace_day: None,
+                })
+                .expect("commit");
+            assert_eq!(
+                done.added,
+                vec![format!("{}/seg_0_000001.col", day_name(day_of(T0)))]
+            );
+            assert!(!dir.exists(), "staging outlived its commit");
+            assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2, 3, 4, 100]);
+            assert!(s.was_loaded(9));
+
+            let again = s.stage(9).expect("stage");
+            let refused = s.commit_load(LoadCommit {
+                load_id: 9,
+                files: vec![staged(&again, "a.col", 7, 0..5)],
+                replace_day: None,
+            });
+            assert!(matches!(
+                refused,
+                Err(StoreError::LoadRepeated { load_id: 9 })
+            ));
+            s.unstage(9);
+            s.flush(FlushKind::Final);
+        }
+        let s = store(&scratch);
+        let leaf = s.open(7, "ts").expect("leaf");
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2, 3, 4, 100]);
+        let (_, records) =
+            Manifest::open(&manifest::path_in(&scratch.0), &mut |_| {}).expect("manifest");
+        let finished = manifest::live(&records)
+            .into_values()
+            .filter(|f| f.finished)
+            .count();
+        assert_eq!(finished, 1, "the load's file is not flagged finished");
+    }
+
+    /// A template no leaf is open for takes the load's row groups when it opens.
+    #[test]
+    fn a_load_for_a_template_with_no_leaf_waits_for_the_leaf() {
+        let scratch = Scratch::new("no-leaf");
+        let s = store(&scratch);
+        let dir = s.stage(9).expect("stage");
+        s.commit_load(LoadCommit {
+            load_id: 9,
+            files: vec![staged(&dir, "a.col", 8, 0..3)],
+            replace_day: None,
+        })
+        .expect("commit");
+        let leaf = s.open(8, "ts").expect("leaf");
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2]);
+    }
+
+    /// The record is the commit: a stop after it and before the move leaves the files in
+    /// staging, and the next start moves them rather than deleting them.
+    #[test]
+    fn a_load_stopped_between_its_record_and_its_move_is_moved_at_the_next_start() {
+        let scratch = Scratch::new("finish-move");
+        let rel = format!("{}/seg_0_000001.col", day_name(day_of(T0)));
+        {
+            let s = store(&scratch);
+            let dir = s.stage(9).expect("stage");
+            let file = staged(&dir, "a.col", 7, 0..4);
+            // `commit_load`'s record, and no move: the process stops here.
+            let mut files = lock(&s.files);
+            files
+                .record(vec![Record::Add {
+                    files: vec![FileRecord::sealed(rel.clone(), &file.index)],
+                    source: Some(manifest::load_source(9)),
+                }])
+                .expect("record");
+        }
+        assert!(!scratch.0.join(DATA_DIR).join(&rel).exists());
+        let s = store(&scratch);
+        assert!(scratch.0.join(DATA_DIR).join(&rel).exists(), "not moved");
+        assert!(!scratch.0.join(STAGING_DIR).exists(), "staging survived");
+        let leaf = s.open(7, "ts").expect("leaf");
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2, 3]);
+        assert!(s.was_loaded(9));
+    }
+
+    /// A committed file found neither in `data/` nor in staging stops the start with
+    /// staging untouched - never after the only copy of a load's rows is deleted.
+    #[test]
+    fn a_committed_load_missing_from_staging_stops_the_start_and_keeps_staging() {
+        let scratch = Scratch::new("fail-closed");
+        let rel = format!("{}/seg_0_000001.col", day_name(day_of(T0)));
+        {
+            let s = store(&scratch);
+            let dir = s.stage(9).expect("stage");
+            let file = staged(&dir, "a.col", 7, 0..4);
+            let other = staged(&dir, "b.col", 7, 4..6);
+            let mut files = lock(&s.files);
+            files
+                .record(vec![Record::Add {
+                    files: vec![
+                        FileRecord::sealed(rel.clone(), &file.index),
+                        FileRecord::sealed(
+                            format!("{}/seg_0_000002.col", day_name(day_of(T0))),
+                            &other.index,
+                        ),
+                    ],
+                    source: Some(manifest::load_source(9)),
+                }])
+                .expect("record");
+            // One of the two is lost - a bad sector, a hand that tidied up.
+            fs::remove_file(&other.path).expect("remove");
+        }
+        assert!(DiskStore::open(scratch.0.clone(), eager()).is_err());
+        assert!(
+            files_under(&scratch.0.join(STAGING_DIR))
+                .expect("staging")
+                .iter()
+                .any(|p| p.ends_with("a.col")),
+            "the start deleted the staged copy it could still have moved"
+        );
+    }
+
+    /// A committed load whose files are all in place is not held up by what else sits in
+    /// its staging directory: a later run of the same inputs cut short at a file's header.
+    #[test]
+    fn a_stray_file_in_a_moved_loads_staging_does_not_stop_the_start() {
+        let scratch = Scratch::new("stray");
+        {
+            let s = store(&scratch);
+            let dir = s.stage(9).expect("stage");
+            s.commit_load(LoadCommit {
+                load_id: 9,
+                files: vec![staged(&dir, "a.col", 7, 0..3)],
+                replace_day: None,
+            })
+            .expect("commit");
+            // The same inputs again, with --replace-day, stopped inside a file's header.
+            let again = scratch.0.join(STAGING_DIR).join(format!("{:016x}", 9));
+            fs::create_dir_all(again.join("2024-01-15")).expect("mkdir");
+            fs::write(again.join("2024-01-15").join("000001.col"), b"").expect("write");
+        }
+        let s = store(&scratch);
+        assert_eq!(ns(s.open(7, "ts").expect("leaf").as_ref()), vec![0, 1, 2]);
+        assert!(!scratch.0.join(STAGING_DIR).exists(), "staging survived");
+    }
+
+    /// While a committed load's files are still in staging, no load stages - the same load
+    /// again would stage into the same directory, over the only copy.
+    #[test]
+    fn nothing_stages_over_a_committed_load_left_in_staging() {
+        let scratch = Scratch::new("move-pending");
+        let s = store(&scratch);
+        let dir = s.stage(9).expect("stage");
+        let file = staged(&dir, "a.col", 7, 0..4);
+        // The move fails: something that is not a directory sits where the day's is.
+        let day_dir = scratch.0.join(DATA_DIR).join(day_name(day_of(T0)));
+        fs::write(&day_dir, b"in the way").expect("block");
+        let failed = s.commit_load(LoadCommit {
+            load_id: 9,
+            files: vec![file],
+            replace_day: None,
+        });
+        assert!(matches!(
+            failed,
+            Err(StoreError::NotMoved { load_id: 9, .. })
+        ));
+        fs::remove_file(&day_dir).expect("unblock");
+        assert!(matches!(
+            s.stage(9),
+            Err(StoreError::MovePending { load_id: 9 })
+        ));
+        assert!(matches!(
+            s.stage(10),
+            Err(StoreError::MovePending { load_id: 9 })
+        ));
+        assert!(dir.join("a.col").exists(), "the only copy went");
+        drop(s);
+        // The next start finishes the move.
+        let s = store(&scratch);
+        assert_eq!(
+            ns(s.open(7, "ts").expect("leaf").as_ref()),
+            vec![0, 1, 2, 3]
+        );
+    }
+
+    /// Before the record, a load is only its staging directory, which the next start
+    /// deletes: no row of it, and no file.
+    #[test]
+    fn a_load_stopped_before_its_record_leaves_nothing() {
+        let scratch = Scratch::new("undo");
+        {
+            let s = store(&scratch);
+            let dir = s.stage(9).expect("stage");
+            staged(&dir, "a.col", 7, 0..4);
+        }
+        let s = store(&scratch);
+        assert!(!scratch.0.join(STAGING_DIR).exists(), "staging survived");
+        assert!(data_files(&scratch.0).is_empty());
+        assert!(!s.was_loaded(9));
+        assert!(ns(s.open(7, "ts").expect("leaf").as_ref()).is_empty());
+    }
+
+    /// Replace-a-day writes the day's rows still in memory, retires every file of the day
+    /// in the record that adds the load's, and deletes a retired file only once the last
+    /// query holding it lets go.
+    #[test]
+    fn replace_a_day_retires_the_day_and_deletes_its_files_after_the_last_reader() {
+        let scratch = Scratch::new("replace");
+        let s = store(&scratch);
+        let leaf = s.open(7, "ts").expect("leaf");
+        for n in 0..3 {
+            leaf.append(row(T0 + n, 50 + n));
+        }
+        s.flush(FlushKind::Tick);
+        leaf.append(row(T0 + 9, 59));
+        let old: Vec<PathBuf> = data_files(&scratch.0).into_iter().collect();
+        assert_eq!(old.len(), 1);
+        // A query's snapshot of the day, taken before the replace.
+        let held = {
+            let leaves = s.leaves.read().expect("leaves");
+            let state = leaves[0].state();
+            Arc::clone(&state.days[&day_of(T0)].stored)
+        };
+        let dir = s.stage(9).expect("stage");
+        let done = s
+            .commit_load(LoadCommit {
+                load_id: 9,
+                files: vec![staged(&dir, "a.col", 7, 0..5)],
+                replace_day: Some(day_of(T0)),
+            })
+            .expect("replace");
+        assert_eq!(done.replaced.len(), 1, "{done:?}");
+        assert_eq!(
+            ns(leaf.as_ref()),
+            vec![0, 1, 2, 3, 4],
+            "the day holds only the load"
+        );
+        assert!(old[0].exists(), "deleted under a reader");
+        drop(held);
+        assert!(!old[0].exists(), "a retired file outlived its last reader");
+        drop(leaf);
+        drop(s);
+        let s = store(&scratch);
+        assert_eq!(
+            ns(s.open(7, "ts").expect("leaf").as_ref()),
+            vec![0, 1, 2, 3, 4]
+        );
+    }
+
+    /// A day whose rows went into another day's file past the open-day cap cannot be
+    /// replaced by retiring its directory: the file is named and nothing is loaded.
+    #[test]
+    fn replace_a_day_refuses_a_day_with_rows_in_another_days_file() {
+        const TODAY: i64 = 20_000;
+        let scratch = Scratch::new("replace-spread");
+        let options = DiskOptions {
+            max_open_files: 1,
+            ..eager()
+        };
+        let s = store_with(&scratch, options).with_today(|| TODAY);
+        let leaf = s.open(7, "ts").expect("leaf");
+        leaf.append(row(T0, 0));
+        leaf.append(row(T0 + DAY_NS, 1));
+        s.flush(FlushKind::Tick);
+        let dir = s.stage(9).expect("stage");
+        let late = day_of(T0 + DAY_NS);
+        let file = StagedFile {
+            day: late,
+            ..staged(&dir, "a.col", 7, 0..1)
+        };
+        let refused = s.commit_load(LoadCommit {
+            load_id: 9,
+            files: vec![file],
+            replace_day: Some(late),
+        });
+        match refused {
+            Err(StoreError::ReplaceRefused { path, .. }) => {
+                assert!(path.starts_with(&day_name(TODAY)), "{path}")
+            }
+            other => panic!("replaced a day with rows elsewhere: {other:?}"),
+        }
+        assert!(!s.was_loaded(9));
     }
 
     /// The final flush seals one file per open day, however many templates wrote to it.

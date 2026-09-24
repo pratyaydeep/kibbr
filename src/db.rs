@@ -131,42 +131,73 @@ pub fn ingest_prepared(
     prepared: Prepared,
     now: DateTime<Utc>,
 ) -> Result<(), SinkError> {
-    let (leaf, _) = trie.ingest(parsed, now)?;
     let Some(stores) = stores else {
+        trie.ingest(parsed, now)?;
         return Ok(());
     };
-    let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
-        slot.as_ref()
-            .map(|meta| (meta.template_id, meta.time_source.clone()))
-    });
-    // `ingest` just wrote the meta, so `None` is a poisoned lock and nothing else.
-    // Dropping the row is the only option left and it is counted nowhere.
-    if let Some((id, source)) = placed {
-        let Prepared { mut row } = prepared;
-        // The effective time: the time column where it holds an instant, and
-        // otherwise the arrival time - stored in the system column, **after**
-        // fingerprinting, so it is not a key and makes no template. A row with its own
-        // time does not get the column.
-        //
-        // Left here rather than moved out with the row: which column holds the time is
-        // the *template's* choice, and nothing outside the trie knows it yet.
-        if crate::store::ts_of(&row, source.column()).is_none() {
-            row.insert(
-                RECEIVED_AT_COLUMN.to_string(),
-                ColValue::Datetime(crate::store::nanos_of(crate::query::system_time(now))),
-            );
-        }
+    if let Some(placed) = place(trie, parsed, prepared, now)? {
         // Refused by line, as a catalog append that fails is: the template exists, the row
         // is nowhere, and the line must not be counted as ingested. `to_string` and not
         // `error::chain`: every `StoreError` already prints its cause, and a chain would
         // print it twice.
-        stores.append(id, source.column(), row).map_err(|e| {
-            SinkError::Line(DetectorErrorKind::NotStored {
-                detail: e.to_string(),
-            })
-        })?;
+        stores
+            .append(placed.template_id, &placed.time_column, placed.row)
+            .map_err(|e| {
+                SinkError::Line(DetectorErrorKind::NotStored {
+                    detail: e.to_string(),
+                })
+            })?;
     }
     Ok(())
+}
+
+/// A line's template, the template's time column, and the row it stores.
+pub struct Placed {
+    pub template_id: u64,
+    pub time_column: String,
+    pub row: Row,
+}
+
+/// A line through the trie - its template made or widened, durably - and its row stamped
+/// with an arrival time if it has no time of its own: everything the write path does but
+/// the append.
+///
+/// **Both doors call this**, `/ingest` through `ingest_prepared` and the bulk loader
+/// directly, which is what makes a line's template, types and stored row the same whichever
+/// door it came through. `None` is a poisoned leaf lock and nothing else: `ingest` just
+/// wrote the meta. Dropping the row is the only option left and it is counted nowhere.
+pub fn place(
+    trie: &Trie,
+    parsed: &ParsedLog,
+    prepared: Prepared,
+    now: DateTime<Utc>,
+) -> Result<Option<Placed>, SinkError> {
+    let (leaf, _) = trie.ingest(parsed, now)?;
+    let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
+        slot.as_ref()
+            .map(|meta| (meta.template_id, meta.time_source.clone()))
+    });
+    let Some((id, source)) = placed else {
+        return Ok(None);
+    };
+    let Prepared { mut row } = prepared;
+    // The effective time: the time column where it holds an instant, and otherwise the
+    // arrival time - stored in the system column, **after** fingerprinting, so it is not a
+    // key and makes no template. A row with its own time does not get the column.
+    //
+    // Left here rather than moved out with the row: which column holds the time is the
+    // *template's* choice, and nothing outside the trie knows it yet.
+    if crate::store::ts_of(&row, source.column()).is_none() {
+        row.insert(
+            RECEIVED_AT_COLUMN.to_string(),
+            ColValue::Datetime(crate::store::nanos_of(crate::query::system_time(now))),
+        );
+    }
+    Ok(Some(Placed {
+        template_id: id,
+        time_column: source.column().to_string(),
+        row,
+    }))
 }
 
 /// Build the trie, and the stores unless `with_rows` is false.
