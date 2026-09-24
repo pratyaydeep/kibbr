@@ -52,6 +52,7 @@ use crate::db;
 use crate::engine;
 use crate::error::{self, CliError, DetectorError, DetectorErrorKind, ServeError};
 use crate::fmt::{commas, rfc3339_at};
+use crate::load;
 use crate::query;
 use crate::store::{FlushKind, StoreError, StoreManager};
 use crate::trie::Trie;
@@ -152,71 +153,81 @@ pub struct Server {
     /// its lock, because `/health` must not queue behind a flush and `/ingest` must not
     /// buffer a body it is about to refuse.
     write_health: Arc<crate::store::WriteHealth>,
+    /// The bulk loads this server has been asked to run: at most one at a time, on a
+    /// thread of its own with its own pool, never on the runtime or the blocking pool the
+    /// live door's bodies use.
+    loads: std::sync::Mutex<Loads>,
+    /// What `/load` and `/load/<job>` are asked with, as `LOCK` holds it. `None` without a
+    /// data directory, where there is nothing to load into.
+    load_token: Option<String>,
+}
+
+/// The header a `/load` request carries its token in.
+const LOAD_TOKEN_HEADER: &str = "x-triedb-load-token";
+
+/// Whether a request shows the server's load token. First, before the body is read or a
+/// path is looked at, so a caller without it learns nothing - not even which paths exist.
+fn load_refused(server: &Server, headers: &HeaderMap) -> Option<Response> {
+    let shown = headers
+        .get(LOAD_TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let ours = server.load_token.as_deref()?;
+    // Compared whole, not up to the first difference, so the time an answer takes says
+    // nothing about how much of a guess was right.
+    let same = shown.len() == ours.len()
+        && shown
+            .bytes()
+            .zip(ours.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0;
+    (!same).then(|| {
+        fail(
+            StatusCode::FORBIDDEN,
+            "a load is taken from `triedb load` on this machine, which shows the token this \
+             server wrote to its data directory's LOCK",
+        )
+    })
+}
+
+/// Load jobs, by number, and the one running.
+#[derive(Default)]
+struct Loads {
+    next: u64,
+    jobs: std::collections::BTreeMap<u64, Arc<LoadJob>>,
+    running: Option<std::thread::JoinHandle<()>>,
+}
+
+/// The largest `POST /load` body: about 200,000 input paths.
+const MAX_LOAD_REQUEST_BYTES: usize = 64 * 1024 * 1024;
+
+/// Finished jobs kept for `GET /load/<job>`. A client polls until its job is done, so only
+/// the recent ones are ever asked about.
+const LOAD_JOBS_KEPT: usize = 64;
+
+struct LoadJob {
+    control: load::Control,
+    state: std::sync::Mutex<LoadState>,
+}
+
+enum LoadState {
+    Running,
+    Done(Box<load::Report>),
+    Failed(String),
 }
 
 impl Server {
-    /// Build the state, restoring what is on disk.
-    ///
-    /// The trie comes back first because it is what says which leaves exist; every one of
-    /// them is then opened, so a template that existed before the restart is a template
-    /// that exists after it even when its directory holds no rows. A leaf opened and empty
-    /// is the "known template, nothing in it" answer, which is a different thing from "no
-    /// such template" and has to stay different across a restart.
+    /// Build the state, restoring what is on disk (`open_durable`).
     fn new(
         now: DateTime<Utc>,
         limits: Limits,
         api: ApiLimits,
         storage: Storage,
         schema: Schema,
+        load_token: Option<String>,
     ) -> Result<Self, ServeError> {
-        let (trie, stores) = match storage.base_path.clone() {
-            Some(base) => {
-                let data_dir = storage.data_dir();
-                let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir, &schema)?;
-
-                let stores =
-                    StoreManager::disk(base, storage.disk_options()).map_err(storage_fatal)?;
-
-                // Applied whatever the snapshot said, including when it parsed cleanly:
-                // the hazard is a trie that does not know about stored rows, and a stale
-                // or hand-edited snapshot that parses is as unaware as one that did not.
-                // See `Trie::reserve_template_ids_through` for what reissuing an id costs.
-                let claimed = stores.claimed_template_ids();
-                if let Some(highest) = claimed.last() {
-                    trie.reserve_template_ids_through(*highest);
-                }
-                let known: std::collections::BTreeSet<u64> = trie
-                    .all_leaves()
-                    .iter()
-                    .filter_map(|leaf| {
-                        leaf.leaf_meta
-                            .read()
-                            .ok()
-                            .and_then(|slot| slot.as_ref().map(|meta| meta.template_id))
-                    })
-                    .collect();
-                let orphans = claimed.iter().filter(|id| !known.contains(id)).count();
-                if orphans > 0 {
-                    log(&format!(
-                        "WARN storage - {} template id(s) with rows on disk that no template \
-                         refers to; those rows are not queryable, and new templates take \
-                         fresh ids rather than reusing them",
-                        commas(orphans as u64)
-                    ));
-                }
-                for leaf in trie.all_leaves() {
-                    let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
-                        slot.as_ref()
-                            .map(|meta| (meta.template_id, meta.time_source.column().to_string()))
-                    });
-                    if let Some((id, time_column)) = placed {
-                        if let Err(e) = stores.open_existing(id, &time_column) {
-                            log(&format!("WARN leaf {id} - {}", error::chain(&e)));
-                        }
-                    }
-                }
-                (trie, stores)
-            }
+        let (trie, stores) = match storage.base_path {
+            Some(_) => open_durable(&storage, &schema)?,
             None => (
                 Trie::new().with_time_columns(schema.time_columns.clone()),
                 StoreManager::memory(),
@@ -241,8 +252,76 @@ impl Server {
             storage,
             ingest_permits: Arc::new(Semaphore::new(api.ingest_concurrency)),
             write_health,
+            loads: std::sync::Mutex::new(Loads::default()),
+            load_token,
         })
     }
+}
+
+/// The trie and the stores of a data directory, restored: what a server serves, and what a
+/// load running alone commits into - the same steps, so a directory a load opened is left
+/// exactly as a server's start would have left it.
+///
+/// The trie comes back first because it is what says which leaves exist; every one of them
+/// is then opened, so a template that existed before the restart is a template that exists
+/// after it even when its directory holds no rows. A leaf opened and empty is the "known
+/// template, nothing in it" answer, which is a different thing from "no such template" and
+/// has to stay different across a restart.
+///
+/// The caller holds the directory's `LOCK`: recovery writes.
+pub(crate) fn open_durable(
+    storage: &Storage,
+    schema: &Schema,
+) -> Result<(Trie, StoreManager), ServeError> {
+    let Some(base) = storage.base_path.clone() else {
+        return Err(ServeError::Storage {
+            detail: "no data directory".to_string(),
+        });
+    };
+    let data_dir = storage.data_dir();
+    let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir, schema)?;
+
+    let stores = StoreManager::disk(base, storage.disk_options()).map_err(storage_fatal)?;
+
+    // Applied whatever the snapshot said, including when it parsed cleanly:
+    // the hazard is a trie that does not know about stored rows, and a stale
+    // or hand-edited snapshot that parses is as unaware as one that did not.
+    // See `Trie::reserve_template_ids_through` for what reissuing an id costs.
+    let claimed = stores.claimed_template_ids();
+    if let Some(highest) = claimed.last() {
+        trie.reserve_template_ids_through(*highest);
+    }
+    let known: std::collections::BTreeSet<u64> = trie
+        .all_leaves()
+        .iter()
+        .filter_map(|leaf| {
+            leaf.leaf_meta
+                .read()
+                .ok()
+                .and_then(|slot| slot.as_ref().map(|meta| meta.template_id))
+        })
+        .collect();
+    let orphans = claimed.iter().filter(|id| !known.contains(id)).count();
+    if orphans > 0 {
+        log(&format!(
+            "WARN storage - {} template id(s) with rows on disk that no template \
+             refers to; those rows are not queryable, and new templates take \
+             fresh ids rather than reusing them",
+            commas(orphans as u64)
+        ));
+    }
+    for leaf in trie.all_leaves() {
+        let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
+            slot.as_ref()
+                .map(|meta| (meta.template_id, meta.time_source.column().to_string()))
+        });
+        if let Some((id, time_column)) = placed {
+            if let Err(e) = stores.open_existing(id, &time_column) {
+                log(&format!("WARN leaf {id} - {}", error::chain(&e)));
+            }
+        }
+    }
+    Ok((trie, stores))
 }
 
 /// A store that will not open, as the error startup exits on. An earlier layout or another
@@ -1037,6 +1116,264 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
     }
 }
 
+/// `POST /load`: what `triedb load` sends when this server holds the data directory.
+#[derive(Debug, Deserialize)]
+struct LoadRequest {
+    /// Files, already expanded from any directory by the client, which is where the command
+    /// line was: each with the file name the load id hashes. The load itself puts them in
+    /// load order and keeps each file once, whoever sent them.
+    inputs: Vec<LoadInput>,
+    #[serde(default)]
+    replace_day: Option<String>,
+    #[serde(default)]
+    max_mb_per_sec: Option<f64>,
+    #[serde(default)]
+    threads: Option<usize>,
+    #[serde(default)]
+    received_at: Option<String>,
+    #[serde(default)]
+    proceed: bool,
+    #[serde(default)]
+    max_arrival_share: Option<f64>,
+    /// The data directory the client meant, canonical. `LOCK` can still name the last
+    /// holder's address in the moment before a new holder announces its own, and a load
+    /// sent there would be committed into whatever that address now serves.
+    #[serde(default)]
+    data_dir: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoadInput {
+    path: std::path::PathBuf,
+    name: String,
+}
+
+/// Parse and check a load request into the loader's options, or say what is wrong with it.
+fn load_options(request: LoadRequest) -> Result<load::Options, String> {
+    if request.inputs.is_empty() {
+        return Err("inputs is empty: nothing to load".to_string());
+    }
+    let mut inputs = Vec::with_capacity(request.inputs.len());
+    for input in request.inputs {
+        // Absolute, because it is this process's working directory that resolves it and
+        // not the client's.
+        if !input.path.is_absolute() {
+            return Err(format!("{}: not an absolute path", input.path.display()));
+        }
+        match std::fs::metadata(&input.path) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Err(format!("{}: not a file", input.path.display())),
+            Err(e) => return Err(format!("{}: {e}", input.path.display())),
+        }
+        inputs.push(load::Input {
+            path: input.path,
+            name: input.name,
+        });
+    }
+    let replace_day = match request.replace_day.as_deref() {
+        None => None,
+        Some(text) => Some(
+            crate::store::disk::day_of_name(text)
+                .ok_or_else(|| format!("replace_day `{text}` is not a YYYY-MM-DD day"))?,
+        ),
+    };
+    let received_at = match request.received_at.as_deref() {
+        None => Utc::now(),
+        Some(text) => DateTime::parse_from_rfc3339(text)
+            .map_err(|e| format!("received_at `{text}` is not RFC 3339: {e}"))?
+            .with_timezone(&Utc),
+    };
+    let share = request
+        .max_arrival_share
+        .unwrap_or(load::DEFAULT_MAX_ARRIVAL_SHARE);
+    if !(share.is_finite() && share >= 0.0) {
+        return Err(format!("max_arrival_share {share} is not a percentage"));
+    }
+    Ok(load::Options {
+        inputs,
+        replace_day,
+        max_bytes_per_sec: request.max_mb_per_sec.map(|mb| mb * 1_000_000.0),
+        threads: request.threads.unwrap_or_else(load::server_threads).max(1),
+        received_at,
+        proceed: request.proceed,
+        max_arrival_share: share,
+    })
+}
+
+/// Start a load job and answer at once with its number; `GET /load/<job>` says how it went.
+///
+/// **Not held open for the load.** A request that lasted the whole load would hold up a
+/// graceful shutdown for as long - axum waits for every connection - and a client that
+/// gave up would not stop it. The job runs on a thread of its own, the client polls, and
+/// a shutdown stops the job before its commit and waits for it.
+async fn post_load(State(server): State<Arc<Server>>, headers: HeaderMap, body: Bytes) -> Response {
+    if server.stores.disk_store().is_none() {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &load::LoadError::NoDisk.to_string(),
+        );
+    }
+    if let Some(refused) = load_refused(&server, &headers) {
+        return refused;
+    }
+    let request: LoadRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, &format!("load request: {e}")),
+    };
+    if let (Some(asked), Some(ours)) = (&request.data_dir, &server.storage.base_path) {
+        let ours = std::fs::canonicalize(ours).unwrap_or_else(|_| ours.clone());
+        if *asked != ours {
+            return fail(
+                StatusCode::CONFLICT,
+                &format!(
+                    "this server serves {}, not {}; nothing was loaded",
+                    ours.display(),
+                    asked.display()
+                ),
+            );
+        }
+    }
+    let options = match load_options(request) {
+        Ok(o) => o,
+        Err(message) => return fail(StatusCode::BAD_REQUEST, &message),
+    };
+    let mut loads = server.loads.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((id, _)) = loads.jobs.iter().find(|(_, job)| {
+        matches!(
+            *job.state.lock().unwrap_or_else(|e| e.into_inner()),
+            LoadState::Running
+        )
+    }) {
+        return fail(
+            StatusCode::CONFLICT,
+            &format!("load job {id} is still running; one load runs at a time"),
+        );
+    }
+    // Reap the last one's thread, which has finished: its state says so.
+    if let Some(done) = loads.running.take() {
+        let _ = done.join();
+    }
+    loads.next += 1;
+    let id = loads.next;
+    let job = Arc::new(LoadJob {
+        control: load::Control::default(),
+        state: std::sync::Mutex::new(LoadState::Running),
+    });
+    loads.jobs.insert(id, Arc::clone(&job));
+    while loads.jobs.len() > LOAD_JOBS_KEPT {
+        let oldest = *loads.jobs.keys().next().expect("more than kept");
+        loads.jobs.remove(&oldest);
+    }
+    let held = Arc::clone(&server);
+    let spawned = std::thread::Builder::new()
+        .name(format!("load-{id}"))
+        .spawn(move || {
+            log(&format!(
+                "load job {id} - {} input(s){}",
+                options.inputs.len(),
+                options
+                    .replace_day
+                    .map(|d| format!(", replacing {}", crate::store::disk::day_name(d)))
+                    .unwrap_or_default()
+            ));
+            // A panic is a failed job and not a job running for ever: left `running`, it
+            // would refuse every later load with a 409 and keep its client polling. Its
+            // staging stays - a panic past the commit record leaves the only copy there -
+            // and the next start finishes or removes it.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                load::run(
+                    &held.trie,
+                    &held.stores,
+                    &options,
+                    &job.control,
+                    &mut |_| {},
+                )
+            }));
+            let state = match result {
+                Ok(Ok(report)) => {
+                    log(&format!("load job {id} - {}", report.summary()));
+                    LoadState::Done(Box::new(report))
+                }
+                Ok(Err(e)) => {
+                    log(&format!("load job {id} - failed: {}", error::chain(&e)));
+                    LoadState::Failed(error::chain(&e))
+                }
+                Err(_) => {
+                    let why = "the load failed on a bug in this build (a panic); anything it \
+                               staged is finished or removed by the next start";
+                    log(&format!("load job {id} - {why}"));
+                    LoadState::Failed(why.to_string())
+                }
+            };
+            *job.state.lock().unwrap_or_else(|e| e.into_inner()) = state;
+        });
+    match spawned {
+        Ok(handle) => {
+            loads.running = Some(handle);
+            (StatusCode::ACCEPTED, Json(json!({"ok": true, "job": id}))).into_response()
+        }
+        Err(e) => {
+            loads.jobs.remove(&id);
+            fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("starting the load job: {e}"),
+            )
+        }
+    }
+}
+
+/// `GET /load/<job>`: running, done with its report, or failed with why.
+async fn get_load(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<u64>,
+) -> Response {
+    if let Some(refused) = load_refused(&server, &headers) {
+        return refused;
+    }
+    let job = {
+        let loads = server.loads.lock().unwrap_or_else(|e| e.into_inner());
+        loads.jobs.get(&id).map(Arc::clone)
+    };
+    let Some(job) = job else {
+        return fail(StatusCode::NOT_FOUND, &format!("no load job {id}"));
+    };
+    let state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+    let body = match &*state {
+        LoadState::Running => json!({
+            "ok": true, "job": id, "state": "running",
+            "lines": job.control.lines.load(Ordering::Relaxed),
+        }),
+        LoadState::Done(report) => {
+            json!({"ok": true, "job": id, "state": "done", "report": report})
+        }
+        LoadState::Failed(error) => {
+            json!({"ok": true, "job": id, "state": "failed", "error": error})
+        }
+    };
+    Json(body).into_response()
+}
+
+/// Stop a running load before it commits, and wait for its thread: shutdown's first step
+/// after the last request. A load already inside its commit finishes it - that is a few
+/// renames - and one before it removes its staging directory.
+fn stop_loads(server: &Server) {
+    let (running, jobs): (Option<std::thread::JoinHandle<()>>, Vec<Arc<LoadJob>>) = {
+        let mut loads = server.loads.lock().unwrap_or_else(|e| e.into_inner());
+        (loads.running.take(), loads.jobs.values().cloned().collect())
+    };
+    let Some(running) = running else {
+        return;
+    };
+    for job in &jobs {
+        job.control.cancel.store(true, Ordering::Relaxed);
+    }
+    if !running.is_finished() {
+        log("waiting for the running load job to stop");
+    }
+    let _ = running.join();
+}
+
 /// The log viewer. One HTML file, inline CSS and JS, no other request needed.
 ///
 /// `no-store`, because the page is rebuilt with the binary. A cached viewer against a
@@ -1228,6 +1565,13 @@ fn router(server: Arc<Server>) -> Router {
         .route("/stats", get(get_stats))
         .route("/templates", get(get_templates))
         .route("/query", post(post_query))
+        // A load names its files, not their lines: a list of absolute paths, which for a
+        // directory of months of hourly files passes axum's 2MB default.
+        .route(
+            "/load",
+            post(post_load).layer(DefaultBodyLimit::max(MAX_LOAD_REQUEST_BYTES)),
+        )
+        .route("/load/{job}", get(get_load))
         // Order matters. `.layer()` wraps what is already there, so the *last* added is
         // outermost: `admit` runs first, and a shed body never reaches the extractor that
         // would have buffered it.
@@ -1278,14 +1622,24 @@ async fn serve(
     storage: Storage,
     schema: Schema,
 ) -> Result<(), ServeError> {
-    // Read-only, and before the port is taken: a data directory holding a segment from
-    // another format version is not served at all, so nothing is listening when the
-    // process exits over it. Everything that writes to the directory - catalog recovery,
-    // segment recovery - stays behind the bind, where a second server started on a port in
-    // use fails before touching the files the first one is appending to.
+    // Read-only, so it runs before the lock and the port: a data directory holding a
+    // segment from another format version is not served at all, and nothing is listening
+    // when the process exits over it. Everything that writes - catalog recovery, segment
+    // recovery - waits for the directory's LOCK below.
     if let Some(base) = storage.base_path.as_deref() {
         crate::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
     }
+    // Taken before anything is written and before the port: two servers on one directory
+    // - on two ports, or both on `--port 0` - would each append to the catalog and the
+    // manifest over the other's records. Held until this function returns.
+    let mut lock = match storage.base_path.as_deref() {
+        Some(base) => {
+            let mut lock = crate::lock::DataLock::acquire(base)?;
+            let _ = lock.announce(&crate::lock::Holder::server(None, None));
+            Some(lock)
+        }
+        None => None,
+    };
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -1298,7 +1652,41 @@ async fn serve(
         .local_addr()
         .map_err(|source| ServeError::Bind { addr, source })?;
 
-    let server = Arc::new(Server::new(Utc::now(), limits, api, storage, schema)?);
+    // Written to `LOCK` beside the address: a `/load` shows it or is refused. See lock.rs.
+    let load_token = match &lock {
+        Some(_) => Some(
+            crate::store::v3::file::new_file_id()
+                .map(|id| crate::store::manifest::hex(&id))
+                .map_err(|e| ServeError::Storage {
+                    detail: format!("drawing the load token: {e}"),
+                })?,
+        ),
+        None => None,
+    };
+    let server = Arc::new(Server::new(
+        Utc::now(),
+        limits,
+        api,
+        storage,
+        schema,
+        load_token.clone(),
+    )?);
+    // Where `triedb load` finds this server - written once it can answer. An address of
+    // all interfaces is reached on loopback from the same machine, which is where the
+    // directory is.
+    if let Some(lock) = lock.as_mut() {
+        let reach = if bound.ip().is_unspecified() {
+            SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), bound.port())
+        } else {
+            bound
+        };
+        let holder = crate::lock::Holder::server(Some(reach.to_string()), load_token);
+        if let Err(e) = lock.announce(&holder) {
+            log(&format!(
+                "WARN {e}; `triedb load` will not find this server"
+            ));
+        }
+    }
     let token = CancellationToken::new();
     // Installed before the banner: a server that cannot hear SIGTERM will be killed by
     // the SIGKILL that follows it, and a deploy is a bad place to discover that.
@@ -1334,11 +1722,18 @@ async fn serve(
     // `axum::serve` returns once every connection it accepted has finished, so reaching
     // this line *is* "in-flight requests complete first".
     //
+    // Loads stop next: one past its commit finishes it, one before it removes its staging,
+    // so the final flush and the trie snapshot below see the directory as it will stay - a
+    // load committing beside them would publish rows the snapshot does not describe.
+    stop_loads(&server);
+
     // The flush task is joined before the wind-down and not after: a tick arriving between
     // the final flush and the trie snapshot would write rows the snapshot does not
     // describe, and a tick beside the final flush would only queue behind it.
     let _ = flusher.await;
-    shutdown_sequence(&server)
+    let result = shutdown_sequence(&server);
+    drop(lock);
+    result
 }
 
 /// Ask every store whether a row group is due, every interval, until the token is
@@ -1650,6 +2045,7 @@ fn banner(addr: SocketAddr, server: &Server) {
         "  endpoints   GET  /            the log viewer, in a browser".to_string(),
         "              POST /ingest      NDJSON body, one log line per line; gzip ok".to_string(),
         "              POST /query       {\"q\": \"<trieql>\"}".to_string(),
+        "              POST /load        a bulk load job: what `triedb load` sends".to_string(),
         "              GET  /templates   every template, its columns and row count".to_string(),
         "              GET  /stats       throughput, template count, storage size".to_string(),
         "              GET  /health      {\"ok\":true}".to_string(),

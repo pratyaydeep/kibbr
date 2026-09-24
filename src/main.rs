@@ -1,5 +1,6 @@
 //! TrieDB. Generate hostile logs, parse them, build the trie, query it.
 
+mod bench;
 mod catalog;
 mod config;
 mod db;
@@ -11,9 +12,12 @@ mod flatten;
 mod fmt;
 mod frame;
 mod gen;
+mod http;
 mod infer;
 mod key;
 mod lines;
+mod load;
+mod lock;
 mod parse;
 mod query;
 mod reference;
@@ -182,6 +186,80 @@ enum Command {
         /// first one the template holds as a Datetime wins, and a template holding none
         /// takes its rows' arrival time. Comma-separated.
         /// Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+        time_columns: Option<Vec<String>>,
+    },
+    /// Load closed days of logs into a data directory whole: NDJSON, gzip or zstd, from
+    /// files, directories or standard input. The load is published in one step - every row
+    /// or none - and the same inputs are never loaded twice. A server holding the directory
+    /// is asked to run it; with none, this command takes the directory and runs it alone.
+    Load {
+        /// Files, directories - every file under them, names starting with `.` skipped - or
+        /// `-` for standard input. Read in order of file name, whatever order given.
+        #[arg(required = true, value_name = "INPUT")]
+        inputs: Vec<PathBuf>,
+        /// The data directory. Overrides `TRIEDB__STORAGE__BASE_PATH`. [default: triedb-data]
+        #[arg(long, value_name = "PATH")]
+        data_dir: Option<PathBuf>,
+        /// Publish these rows as the whole of this UTC day, retiring every file it held, in
+        /// the same step: how a day's source is changed, say from what arrived live to the
+        /// archive's copy. Every row must be on that day. A load of inputs loaded before is
+        /// allowed with this, since it replaces them.
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        replace_day: Option<String>,
+        /// Read at most this many megabytes of input a second, after decompression - so a
+        /// load leaves the machine to the live door.
+        #[arg(long, value_name = "MB")]
+        max_mb_per_sec: Option<f64>,
+        /// Threads to parse and encode on, at most one per core. [default: one per core up
+        /// to 8 alone, half that inside a server]
+        #[arg(long, value_name = "N")]
+        threads: Option<usize>,
+        /// The arrival time given to rows with no time of their own. [default: now]
+        #[arg(long, value_name = "RFC3339")]
+        received_at: Option<String>,
+        /// Load even when more of the input's first 10,000 rows than --max-arrival-share
+        /// have no time of their own and would be stored at their arrival time - now, or
+        /// --received-at.
+        #[arg(long)]
+        proceed: bool,
+        /// The percentage of the first 10,000 rows that may fall back to arrival time
+        /// before the load stops. [default: 1]
+        #[arg(long, value_name = "PERCENT")]
+        max_arrival_share: Option<f64>,
+        /// As `serve --time-columns`: the key names a new template's time column is chosen
+        /// from. Used only when no server holds the directory - a server uses its own.
+        /// Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+        time_columns: Option<Vec<String>>,
+        /// A data file is sealed at this many bytes and the next one opened, when no
+        /// server holds the directory. Overrides `TRIEDB__STORAGE__SEGMENT_MAX_BYTES`.
+        /// [default: 512 MiB]
+        #[arg(long, value_name = "BYTES")]
+        segment_max_bytes: Option<usize>,
+        /// Print the report as one JSON object instead of a line.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Measure what a file costs to store: load it into a scratch data directory and print
+    /// its size raw, under gzip -9 and zstd -19, and as TrieDB holds it - data files,
+    /// catalog and manifest - in bytes and in disk blocks.
+    BenchStorage {
+        /// NDJSON, gzip or zstd.
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+        /// Also index the same lines into this Elasticsearch - a scratch index, deleted
+        /// after - and print its store size beside TrieDB's.
+        #[arg(long, value_name = "URL")]
+        es: Option<String>,
+        /// Where to load it. Must be absent or empty. [default: a directory under the
+        /// system's temporary directory]
+        #[arg(long, value_name = "PATH")]
+        scratch: Option<PathBuf>,
+        /// Leave the scratch directory in place, to look at.
+        #[arg(long)]
+        keep: bool,
+        /// As `load --time-columns`. Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },
@@ -377,6 +455,59 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 max_buffer_bytes,
             )?,
             config::Schema::load(time_columns),
+        ),
+        Command::Load {
+            inputs,
+            data_dir,
+            replace_day,
+            max_mb_per_sec,
+            threads,
+            received_at,
+            proceed,
+            max_arrival_share,
+            time_columns,
+            segment_max_bytes,
+            json,
+        } => {
+            let storage = config::Storage::load(
+                true,
+                data_dir,
+                None,
+                None,
+                None,
+                None,
+                segment_max_bytes,
+                None,
+            )?;
+            let schema = config::Schema::load(time_columns.clone());
+            let args = load::Args {
+                inputs,
+                replace_day,
+                max_mb_per_sec,
+                threads,
+                received_at,
+                proceed,
+                max_arrival_share,
+                time_columns,
+                json,
+            };
+            load::command(args, storage, schema, &mut out).map_err(CliError::from)
+        }
+        Command::BenchStorage {
+            input,
+            es,
+            scratch,
+            keep,
+            time_columns,
+        } => bench::run(
+            &bench::Args {
+                input,
+                es,
+                scratch,
+                keep,
+            },
+            config::Schema::load(time_columns),
+            &mut out,
         ),
         Command::Explain {
             query,

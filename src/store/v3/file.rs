@@ -201,6 +201,19 @@ pub fn check_header(path: &Path, bytes: &[u8]) -> Result<[u8; 16], FormatError> 
     Ok(id)
 }
 
+/// The id in a file's header, checked, without reading the rest: how startup matches a
+/// file a load left in `staging/` to the manifest record that named it.
+pub fn file_id_of(path: &Path) -> Result<[u8; 16], FormatError> {
+    let mut head = Vec::with_capacity(HEADER_LEN);
+    File::open(path)
+        .and_then(|f| f.take(HEADER_LEN as u64).read_to_end(&mut head))
+        .map_err(|source| FormatError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    check_header(path, &head)
+}
+
 /// The version byte of a file that starts with the magic, without reading the rest -
 /// what startup reads, before the port is taken, to refuse a directory holding another
 /// version.
@@ -832,6 +845,12 @@ impl Writer {
             .retain(|_, id| (*id as usize) < mark.schemas);
         self.index.entries.truncate(mark.entries);
         Ok(())
+    }
+
+    /// Flag the file finished: written whole, by a bulk load or by compaction, so
+    /// compaction skips it. The flag is in the footer, so it takes effect at `seal`.
+    pub fn finish(&mut self) {
+        self.index.finished = true;
     }
 
     /// Whether a write could not be cut back, so the file takes nothing more.

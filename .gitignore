@@ -81,3 +81,18 @@ sample.ndjson
 # The corpora, the prepared data directory and the builds the live-door measurements
 # (search_under_load, shutdown_time) were run against - scratch, and the scripts rebuild them.
 /testdata/live-door/
+
+# The 200,000-line corpus the two-doors differential sends through /ingest and through
+# `triedb load` - scratch, `gen-logs --seed 1` rebuilds it.
+/testdata/two-doors/
+
+# The farm corpus the kill -9 rounds of `triedb load` run against - scratch, `gen-logs
+# --profile farm` rebuilds it.
+/testdata/load-kill/
+
+# The farm corpus `bench-storage` was first run against - scratch, `gen-logs --profile farm`
+# rebuilds it.
+/testdata/bench-storage/
+
+# Smoke-test corpora and data directories for the bulk door, run by hand - scratch.
+/testdata/bulk-door/

@@ -9,12 +9,14 @@
 //!                             "finished":true}], "source":"load:9f3a…"}
 //! {"kind":"seal",   "files":[{…the same fields, now known…}]}
 //! {"kind":"remove", "files":["2024-01-15/seg_0_000003.col", …]}
-//! {"kind":"replace","add":[…],"remove":[…]}      one step: compaction, or replace-a-day
+//! {"kind":"replace","add":[…],"remove":[…],"source":"load:…"}   one step: compaction, or replace-a-day
 //! ```
 //!
 //! **A file the manifest does not name is not part of the database.** Startup deletes
-//! such files and any leftover `staging/`, so every change to the set of files is one
-//! appended record and a crash lands cleanly on one side of it.
+//! such files. A load's files it does name but that a crash left in `staging/` are moved
+//! into place first - the record was the commit - and then the rest of `staging/` is
+//! deleted. So every change to the set of files is one appended record, and a crash lands
+//! cleanly on one side of it.
 //!
 //! **Why `seal` is a kind of its own.** The live door names a file the moment it creates
 //! it - before its first row group, so a crash cannot leave durable row groups in a file
@@ -101,6 +103,60 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// A bulk load's `source`: `load:` and its id as 16 hex digits.
+pub fn load_source(load_id: u64) -> String {
+    format!("load:{load_id:016x}")
+}
+
+/// The load id a `source` names, if it names one.
+pub fn load_of(source: &str) -> Option<u64> {
+    let digits = source.strip_prefix("load:")?;
+    if digits.len() != 16 {
+        return None;
+    }
+    u64::from_str_radix(digits, 16).ok()
+}
+
+/// Every load a record names as its source, committed or since retired: running one of them
+/// again is refused by its id, whatever became of its files.
+pub fn load_ids(records: &[Record]) -> std::collections::BTreeSet<u64> {
+    records
+        .iter()
+        .filter_map(|record| match record {
+            Record::Add { source, .. } | Record::Replace { source, .. } => {
+                source.as_deref().and_then(load_of)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The load that published each path, by the record that added it: where startup looks for
+/// a file a commit named and a crash left in `staging/<load id>/`.
+pub fn published_by_load(records: &[Record]) -> BTreeMap<String, u64> {
+    let mut out = BTreeMap::new();
+    for record in records {
+        let (files, source) = match record {
+            Record::Add { files, source } => (files, source),
+            Record::Replace { add, source, .. } => (add, source),
+            _ => continue,
+        };
+        match source.as_deref().and_then(load_of) {
+            Some(id) => {
+                for f in files {
+                    out.insert(f.path.clone(), id);
+                }
+            }
+            None => {
+                for f in files {
+                    out.remove(&f.path);
+                }
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Record {
@@ -115,9 +171,12 @@ pub enum Record {
     Remove {
         files: Vec<String>,
     },
+    /// Files added and files retired in one step: replace-a-day, and compaction.
     Replace {
         add: Vec<FileRecord>,
         remove: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
     },
 }
 
@@ -133,28 +192,34 @@ struct KindOnly {
 pub fn live(records: &[Record]) -> BTreeMap<String, FileRecord> {
     let mut files = BTreeMap::new();
     for record in records {
-        match record {
-            Record::Add { files: added, .. } | Record::Seal { files: added } => {
-                for f in added {
-                    files.insert(f.path.clone(), f.clone());
-                }
+        apply(&mut files, record);
+    }
+    files
+}
+
+/// One record applied to a live set: what `live` does for each record in turn, and what a
+/// running store does for each record it appends, so the two cannot disagree.
+pub fn apply(files: &mut BTreeMap<String, FileRecord>, record: &Record) {
+    match record {
+        Record::Add { files: added, .. } | Record::Seal { files: added } => {
+            for f in added {
+                files.insert(f.path.clone(), f.clone());
             }
-            Record::Remove { files: gone } => {
-                for path in gone {
-                    files.remove(path);
-                }
+        }
+        Record::Remove { files: gone } => {
+            for path in gone {
+                files.remove(path);
             }
-            Record::Replace { add, remove } => {
-                for path in remove {
-                    files.remove(path);
-                }
-                for f in add {
-                    files.insert(f.path.clone(), f.clone());
-                }
+        }
+        Record::Replace { add, remove, .. } => {
+            for path in remove {
+                files.remove(path);
+            }
+            for f in add {
+                files.insert(f.path.clone(), f.clone());
             }
         }
     }
-    files
 }
 
 /// An open manifest, positioned at its end.
@@ -260,10 +325,42 @@ mod tests {
             Record::Replace {
                 add: vec![file("d/c.col", true)],
                 remove: vec!["d/a.col".into()],
+                source: None,
             },
         ];
         let live = live(&records);
         assert_eq!(live.keys().collect::<Vec<_>>(), vec!["d/c.col"]);
+    }
+
+    /// A load's id comes back from its `source`, on an `add` and on a `replace` alike, and a
+    /// record from before replace carried one still reads.
+    #[test]
+    fn a_load_is_named_by_its_source_on_add_and_replace() {
+        let id = 0x9f3a_0000_0000_0001;
+        assert_eq!(load_source(id), "load:9f3a000000000001");
+        assert_eq!(load_of(&load_source(id)), Some(id));
+        assert_eq!(load_of("load:9f3a"), None);
+        let records = vec![
+            Record::Add {
+                files: vec![file("d/a.col", true)],
+                source: Some(load_source(id)),
+            },
+            Record::Replace {
+                add: vec![file("d/b.col", true)],
+                remove: vec!["d/a.col".into()],
+                source: Some(load_source(id + 1)),
+            },
+        ];
+        assert_eq!(
+            load_ids(&records).into_iter().collect::<Vec<_>>(),
+            vec![id, id + 1]
+        );
+        let by = published_by_load(&records);
+        assert_eq!(by.get("d/b.col"), Some(&(id + 1)));
+        let old: Record =
+            serde_json::from_str(r#"{"kind":"replace","add":[],"remove":["d/a.col"]}"#)
+                .expect("a replace with no source");
+        assert!(matches!(old, Record::Replace { source: None, .. }));
     }
 
     /// The catalog's reader, so the catalog's truncation rule: every cut of a manifest

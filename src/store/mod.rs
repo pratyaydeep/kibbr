@@ -294,6 +294,53 @@ pub enum StoreError {
          and re-ingest."
     )]
     LegacyLayout { path: std::path::PathBuf },
+    /// A bulk load the manifest already names: the same inputs - the same file names and
+    /// the same bytes - loaded twice would be every row twice.
+    #[error(
+        "load {load_id:016x} was loaded before: manifest.log names load:{load_id:016x}, so \
+         these inputs - the same file names holding the same bytes - were committed once \
+         already (and may since have been replaced), and nothing was loaded. To load a day of \
+         them again in place of what that day holds, use --replace-day"
+    )]
+    LoadRepeated { load_id: u64 },
+    /// A committed load whose files are still in `staging/`: until a restart moves them,
+    /// this process's view is short of their rows, and another load staging over them
+    /// would delete the only copy.
+    #[error(
+        "load {load_id:016x} is committed - or its record may be - and its files are still in \
+         staging/; restart to settle it (the start finishes the load if its record is there \
+         and removes it if not), then load again"
+    )]
+    MovePending { load_id: u64 },
+    /// The record that commits a load failed partway: it may be on disk whole, in which
+    /// case the load is committed. The staged files are kept for the next start to decide.
+    #[error(
+        "load {load_id:016x}: writing its manifest record failed ({source}), and the record may \
+         be on disk. Its files are kept in staging/; the next start finishes the load if the \
+         record is there and removes them if not"
+    )]
+    CommitUncertain {
+        load_id: u64,
+        #[source]
+        source: manifest::ManifestError,
+    },
+    #[error("--replace-day {day}: {path}: {why}. Nothing was loaded")]
+    ReplaceRefused {
+        day: String,
+        path: String,
+        why: String,
+    },
+    /// Past the record that commits a load, a move out of `staging/` failed. The rows are
+    /// safe - the next start finishes the move - but this process cannot show them.
+    #[error(
+        "load {load_id:016x} is committed, but moving its files into data/ failed ({source}). \
+         Its rows are safe in staging/, and the next start moves them into place"
+    )]
+    NotMoved {
+        load_id: u64,
+        #[source]
+        source: v3::FormatError,
+    },
 }
 
 /// What one scan produced and what it cost.
@@ -589,6 +636,11 @@ pub trait Store: Send + Sync {
     fn buffer_bytes(&self) -> (u64, u64) {
         (0, 0)
     }
+    /// The disk store, for the bulk door: only it has files to publish. `None` for a store
+    /// whose rows never leave memory, which a load is refused against.
+    fn as_disk(&self) -> Option<&DiskStore> {
+        None
+    }
 }
 
 // ── Whether the store can write at all ─────────────────────────────────────────────
@@ -717,6 +769,11 @@ impl StoreManager {
     /// Template ids stored rows already name. See `Store::claimed`.
     pub fn claimed_template_ids(&self) -> Vec<u64> {
         self.backend.claimed()
+    }
+
+    /// The disk store underneath, if there is one: what a bulk load commits through.
+    pub fn disk_store(&self) -> Option<&DiskStore> {
+        self.backend.as_disk()
     }
 
     /// Open the store on first write, then buffer the row.
