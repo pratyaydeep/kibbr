@@ -38,6 +38,13 @@ use clap::{Parser, Subcommand};
 
 use error::CliError;
 
+/// mimalloc in place of the system allocator. On macOS arm64 the server aborted inside
+/// libmalloc - "pointer being freed was not allocated" - at three unrelated free sites, with
+/// no `unsafe` in src/ and a clean AddressSanitizer run, which left the allocator itself as
+/// the suspect. This takes it out of the picture.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(name = "triedb", version, about = "TrieDB - log store", long_about = None)]
 struct Cli {

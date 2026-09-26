@@ -14,6 +14,11 @@ of it - and the later sections add the HTTP server and the viewer.
 cargo build --release
 ```
 
+The binary uses [mimalloc](https://github.com/microsoft/mimalloc) as its allocator, because
+on macOS arm64 the system one aborted the server with "pointer being freed was not
+allocated" at unrelated free sites that neither the code (no `unsafe`) nor AddressSanitizer
+could account for.
+
 The binary lands at `target/release/triedb`. Everything below assumes it is on your
 `PATH`:
 
