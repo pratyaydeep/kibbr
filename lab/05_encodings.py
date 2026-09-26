@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab.common import datasets, encodings as enc, measure, rows as rowlib
-from lab.common.frontend import FLOAT64, IP, STRING, UUID
+from lab.common.frontend import BOOL, DATETIME, FLOAT64, INT64, IP, STRING, UUID
 
 CHUNK = 8_192
 ZSTD_LEVELS = [1, 3, 9, 19]
@@ -97,6 +97,35 @@ def charged(sizes: dict, names: list) -> dict:
     return out
 
 
+# One encoding per column type, chosen before the data is seen - what a writer that does
+# not search per chunk would store, and so the figure a first build can be held to.
+# BEST_PER_CHUNK is the ceiling a search would reach; this is the floor without one.
+# Float64 and the all-null type have no encoding of their own and stay plain.
+FIXED = {
+    STRING: enc.enc_dict,
+    DATETIME: enc.enc_delta_varint,
+    INT64: enc.enc_varint,
+    BOOL: enc.enc_bits,
+    UUID: enc.enc_uuid16,
+    IP: enc.enc_ip_bin,
+}
+FIXED_ZSTD_LEVELS = (3, 9)
+
+
+def fixed_blob(values: list, ty) -> bytes:
+    """This chunk under the fixed rule: one value stored once, else the type's encoding.
+
+    Same-value-once comes first for every type, because telling a constant chunk apart
+    costs one pass and no search. Where the type's encoder declines - a word list over
+    all-distinct text, a UUID column holding one non-UUID - the chunk is charged plain,
+    as `charged` does for the other tables.
+    """
+    blob = enc.enc_const(values, ty)
+    if blob is None and ty in FIXED:
+        blob = FIXED[ty](values, ty)
+    return blob if blob is not None else enc.enc_plain(values, ty)
+
+
 def main() -> int:
     ap = measure.parse_args("05_encodings")
     ap.add_argument(
@@ -135,6 +164,12 @@ def main() -> int:
     dict_scope: dict = {"per_chunk": 0, "per_file": 0}
     plain_blobs: list = []
     file_dicts: dict = defaultdict(lambda: defaultdict(list))
+    # The fixed rule, arrival order: bytes per column with no codec and at each zstd level,
+    # plus what the column's values are, so the table can say why a column stays big.
+    fixed_col: dict = defaultdict(lambda: defaultdict(int))
+    col_types: dict = defaultdict(set)
+    col_distinct: dict = defaultdict(set)
+    col_cells: dict = defaultdict(int)
 
     for t in P.templates.values():
         rows_sorted = sorted(t.rows)
@@ -161,6 +196,14 @@ def main() -> int:
                     best = min(sizes.values())
                     best_per_chunk[order_name] += best
                     if order_name == "arrival":
+                        blob = fixed_blob(values, ty)
+                        fixed_col[key]["none"] += len(blob)
+                        for z in FIXED_ZSTD_LEVELS:
+                            fixed_col[key][f"zstd{z}"] += len(enc.zstd_bytes(blob, z))
+                        col_types[key].add(label)
+                        present = [P.raws[r][i] for r in idxs if P.raws[r][i] is not None]
+                        col_distinct[key].update(present)
+                        col_cells[key] += len(present)
                         plain_blobs.append(enc.enc_plain(values, ty))
                         # A word list per chunk, against one per file for the same column.
                         d = enc.enc_dict(values, ty)
@@ -343,6 +386,45 @@ def main() -> int:
         headers=["variant", "bytes", "of raw NDJSON", "of gzip -9"],
         title=f"the full stack (raw {raw:,} B, gzip -9 {gz:,} B)",
     )
+    # -- the fixed rule: the prediction a build is measured against ---------------
+    # Raw here counts each line's newline, since that is the file gzip, zstd and
+    # `triedb bench-storage` read; the ratios above leave it out.
+    raw_file = raw + ds.lines
+    fixed_total = {v: sum(c[v] for c in fixed_col.values())
+                   for v in ("none",) + tuple(f"zstd{z}" for z in FIXED_ZSTD_LEVELS)}
+    frows = [
+        [f"fixed per type{'' if v == 'none' else ' + ' + v}", b, round(b / raw_file, 4)]
+        for v, b in fixed_total.items()
+    ]
+    frows.append(["BEST_PER_CHUNK, arrival order", best_per_chunk["arrival"],
+                  round(best_per_chunk["arrival"] / raw_file, 4)])
+    measure.table(
+        frows,
+        headers=["variant", "bytes", "of raw file"],
+        title=f"one fixed encoding per column type (raw file {raw_file:,} B)",
+    )
+    for v, b in fixed_total.items():
+        res.add(f"FIXED {v}", "bytes", b, "bytes",
+                "same-value-once, else word list / delta-varint / varint / bits / "
+                "UUID and IP as bytes by type; plain for Float64")
+        res.add(f"FIXED {v}", "ratio_to_raw_file", round(b / raw_file, 5), "ratio",
+                "raw counts newlines, as gzip and bench-storage do")
+
+    zkey = f"zstd{FIXED_ZSTD_LEVELS[0]}"
+    ranked = sorted(fixed_col.items(), key=lambda kv: -kv[1][zkey])[:10]
+    body = []
+    for key, sizes in ranked:
+        ratio = len(col_distinct[key]) / col_cells[key] if col_cells[key] else 0.0
+        types = "/".join(sorted(col_types[key]))
+        body.append([key[:32], types, round(ratio, 4), sizes["none"], sizes[zkey]])
+        res.add(f"fixed column:{key}", f"bytes_{zkey}", sizes[zkey], "bytes",
+                f"type {types}, distinct/rows {ratio:.4f}")
+    measure.table(
+        body,
+        headers=["column", "type", "distinct/rows", "fixed bytes", f"fixed + {zkey}"],
+        title=f"the 10 biggest columns under the fixed rule + {zkey}",
+    )
+
     gain = 100.0 * (best_per_chunk["arrival"] - best_per_chunk["sorted"]) / best_per_chunk["arrival"]
     print(f"\n  sorting rows inside each chunk saves {gain:.2f}% of the best total.")
     res.add("verdict", "sort_saving_pct", round(gain, 3), "percent",
