@@ -761,6 +761,69 @@ fn the_same_stream_piped_twice_through_a_server_is_refused_the_second_time() {
     assert_eq!(server.count(ALL), LINES as u64);
 }
 
+/// A query running while a server commits a load counts all of the load or none of it.
+///
+/// The commit swaps every template's file set in one step; what could tear is the reader.
+/// A query that looked at each template's rows as it reached it, and was in flight across
+/// that step, counted the templates it reached after the commit with the load and the
+/// ones before without: measured, four such answers in every round of six hundred, from
+/// four clients - one per client in flight at the instant. So the only valid counts are
+/// the one before and the one after.
+#[test]
+fn a_query_in_flight_across_a_commit_counts_all_of_the_load_or_none() {
+    let db = Db::new();
+    let first = db.input("first.ndjson", &hostile(LINES, 42));
+    let second = db.input("second.ndjson", &hostile(LINES, 43));
+    let server = db.start();
+    assert_eq!(
+        db.load(&["--json"], &[&first]).report()["rows"],
+        LINES as u64
+    );
+    let before = server.count(ALL);
+
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let port = server.port;
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let body = serde_json::json!({ "q": ALL }).to_string();
+                let mut seen = Vec::new();
+                while !stop.load(Ordering::Relaxed) {
+                    let (status, text) = request(port, "POST", "/query", body.as_bytes());
+                    assert_eq!(status, 200, "{text}");
+                    seen.push(json(&text)["count"].as_u64().expect("a count"));
+                }
+                seen
+            })
+        })
+        .collect();
+    let report = db
+        .spawn(&db.load_args(&["--json"], &[&second]), None)
+        .finish(DEADLINE)
+        .report();
+    stop.store(true, Ordering::Relaxed);
+    let seen: Vec<u64> = readers
+        .into_iter()
+        .flat_map(|r| r.join().expect("a reader panicked"))
+        .collect();
+
+    let after = server.count(ALL);
+    assert_eq!(after, before + report["rows"].as_u64().expect("rows"));
+    let torn: Vec<u64> = seen
+        .iter()
+        .copied()
+        .filter(|n| *n != before && *n != after)
+        .collect();
+    assert!(
+        torn.is_empty(),
+        "{} of {} answers counted part of the load (valid: {before} or {after}): {:?}",
+        torn.len(),
+        seen.len(),
+        &torn[..torn.len().min(10)]
+    );
+}
+
 // ── Replace-a-day ──────────────────────────────────────────────────────────────────
 
 /// One source per day, and `--replace-day` is how the source changes: the day as it
@@ -1074,6 +1137,190 @@ fn a_head_of_rows_without_a_time_is_refused_unless_told_to_proceed() {
     assert_eq!(report["arrival"]["fell_back"], 200, "{report}");
     assert_eq!(server.count(ALL), 200);
     assert_eq!(server.count(DAY_COUNT), 200);
+}
+
+/// `count` lines of one template on 2023-06-01, each with its own time in `ts` - never on
+/// `DAY`, so a row counted there took the arrival time `--received-at` gave it.
+fn timed(count: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for i in 0..count {
+        let second = i % 3600;
+        out.extend_from_slice(
+            format!(
+                "{{\"ts\":\"2023-06-01T{:02}:{:02}:{:02}Z\",\"level\":\"info\",\"n\":{i}}}\n",
+                10 + i / 3600,
+                second / 60,
+                second % 60
+            )
+            .as_bytes(),
+        );
+    }
+    out
+}
+
+/// `count` lines of one template with no time of its own: `logged_at` reads as a Datetime,
+/// but it is no name on the time columns, so it is the key the refusal should point at.
+fn untimed(count: usize) -> Vec<u8> {
+    (0..count)
+        .map(|i| {
+            format!(
+                "{{\"logged_at\":\"2023-06-01T09:00:00Z\",\"level\":\"warn\",\"job\":\"j{i}\"}}\n"
+            )
+        })
+        .collect::<String>()
+        .into_bytes()
+}
+
+/// The check reads every row, not a sample of the head: 10,500 rows with a time of their
+/// own, then 5,250 without. The first 10,000 are clean, so only a count over the whole
+/// input finds the third that would be filed under the load's arrival day. Stopped, it
+/// leaves nothing - no manifest record, no staging, no id - alone and through a server.
+#[test]
+fn an_untimed_tail_after_a_clean_head_stops_the_load() {
+    let db = Db::new();
+    let mut body = timed(10_500);
+    body.extend_from_slice(&untimed(5_250));
+    let input = db.input("tail.ndjson", &body);
+    let stopped = [
+        "33.3% of the 15750 rows (5250)",
+        "arrival time",
+        "Nothing was loaded",
+        "Datetime-typed keys: logged_at",
+        "--proceed",
+    ];
+
+    db.load(&[], &[&input]).refused(&stopped);
+    assert!(db.manifest().is_empty(), "{:?}", db.manifest());
+    assert!(db.staging().is_empty(), "left: {:?}", db.staging());
+
+    let server = db.start();
+    db.load(&["--json"], &[&input]).refused(&stopped);
+    assert_eq!(server.count(ALL), 0);
+    assert!(db.live().is_empty(), "{:?}", db.live());
+    assert!(db.staging().is_empty(), "left: {:?}", db.staging());
+}
+
+/// Files load in name order, so a later-sorting file is past any head: here one wholly
+/// untimed behind 12,000 clean rows, a fifth of the load.
+#[test]
+fn a_later_file_with_no_time_stops_the_load() {
+    let db = Db::new();
+    db.input("batch/a.ndjson", &timed(12_000));
+    db.input("batch/b.ndjson", &untimed(3_000));
+    let batch = db.root.join("in").join("batch");
+
+    db.load(&["--json"], &[&batch]).refused(&[
+        "20.0% of the 15000 rows (3000)",
+        "Datetime-typed keys: logged_at",
+    ]);
+    assert!(db.manifest().is_empty(), "{:?}", db.manifest());
+    assert!(db.staging().is_empty(), "left: {:?}", db.staging());
+}
+
+/// With `--proceed` the same input commits, and the report's count is the rows stored at
+/// arrival time - every one of them on the `--received-at` day, where no line's own time
+/// falls - not how many of the head were. The line an operator reads says the same: the
+/// count, the share and the day, and that the limit was passed on purpose.
+#[test]
+fn proceeding_past_the_share_reports_every_row_stored_at_arrival_time() {
+    let db = Db::new();
+    let mut body = timed(10_500);
+    body.extend_from_slice(&untimed(5_250));
+    let input = db.input("tail.ndjson", &body);
+    let at = "2024-01-15T12:00:00Z";
+
+    let report = db
+        .load(&["--proceed", "--received-at", at, "--json"], &[&input])
+        .report();
+    let arrival = &report["arrival"];
+    assert_eq!(report["rows"], 15_750, "{report}");
+    assert_eq!(arrival["head"], 10_000, "{report}");
+    assert_eq!(arrival["rows"], 15_750, "{report}");
+    assert_eq!(arrival["fell_back"], 5_250, "{report}");
+    assert_eq!(arrival["day"], DAY, "{report}");
+    assert_eq!(db.count(DAY_COUNT), 5_250, "rows at arrival time");
+    assert_eq!(db.count(ALL), 15_750);
+
+    let text = Db::new();
+    let input = text.input("tail.ndjson", &body);
+    let ran = text.load(&["--proceed", "--received-at", at], &[&input]);
+    assert_eq!(ran.code, Some(0), "{}", ran.stderr);
+    for phrase in ["5,250 of 15,750 rows", "(33.3%)", DAY, "--proceed"] {
+        assert!(ran.stdout.contains(phrase), "no `{phrase}`: {}", ran.stdout);
+    }
+
+    // And within the limit it still says so, with the count at zero.
+    let clean = Db::new();
+    let input = clean.input("one.ndjson", &one_template(100));
+    let ran = clean.load(&["--received-at", at], &[&input]);
+    assert_eq!(ran.code, Some(0), "{}", ran.stderr);
+    for phrase in [
+        "0 of 100 rows",
+        "(0.0%)",
+        DAY,
+        "within --max-arrival-share 1%",
+    ] {
+        assert!(ran.stdout.contains(phrase), "no `{phrase}`: {}", ran.stdout);
+    }
+}
+
+// ── Memory ─────────────────────────────────────────────────────────────────────────
+
+/// `--load-buffer-bytes` reaches a server's load: at 64KiB a farm day's rows are written in
+/// many more, smaller row groups than at the default - and every one of them is still
+/// stored once.
+#[test]
+fn a_small_load_buffer_is_passed_to_the_server_and_loses_no_row() {
+    let bytes = farm(FARM_LINES, 1);
+    let roomy = Db::new();
+    let input = roomy.input("farm.ndjson", &bytes);
+    let wide = roomy.load(&["--json"], &[&input]).report();
+
+    let db = Db::new();
+    let input = db.input("farm.ndjson", &bytes);
+    let server = db.start();
+    let narrow = db
+        .load(&["--load-buffer-bytes", "65536", "--json"], &[&input])
+        .report();
+    assert_eq!(narrow["rows"], FARM_LINES as u64, "{narrow}");
+    assert_eq!(server.count(ALL), FARM_LINES as u64);
+    let (few, many) = (
+        wide["row_groups"].as_u64().expect("row_groups"),
+        narrow["row_groups"].as_u64().expect("row_groups"),
+    );
+    assert!(
+        many > few,
+        "64KiB of rows made {many} row groups, the default {few}"
+    );
+}
+
+/// A bound of nothing holds no row: refused on the command line, and by a server asked
+/// for it directly.
+#[test]
+fn a_load_buffer_of_zero_is_refused() {
+    let db = Db::new();
+    let input = db.input("farm.ndjson", &farm(300, 5));
+    db.load(&["--load-buffer-bytes", "0"], &[&input])
+        .refused(&["--load-buffer-bytes"]);
+
+    let server = db.start();
+    let lock: Value = json(&fs::read_to_string(db.base().join("LOCK")).expect("LOCK"));
+    let token = lock["token"].as_str().expect("a token in LOCK");
+    let body = serde_json::json!({
+        "inputs": [{"path": input, "name": "farm.ndjson"}],
+        "load_buffer_bytes": 0,
+    })
+    .to_string();
+    let (status, text) = request_with(
+        server.port,
+        "POST",
+        "/load",
+        &format!("x-triedb-load-token: {token}\r\n"),
+        body.as_bytes(),
+    );
+    assert_eq!(status, 400, "{text}");
+    assert!(text.contains("load_buffer_bytes"), "{text}");
+    assert_eq!(server.count(ALL), 0);
 }
 
 // ── The LOCK ───────────────────────────────────────────────────────────────────────

@@ -441,9 +441,17 @@ zcat archive.gz | triedb load --data-dir triedb-data -       # standard input
   that day, retiring what the day held in the same record - how a day that arrived live is
   swapped for a clean copy from the archive.
 - **Rows with no time of their own** take their arrival time, which for an old file is
-  the wrong day. The load reads the head of its input first and stops if more than 1% of
-  it would; `--proceed` loads anyway.
-- `--max-mb-per-sec` and `--threads` keep a load from crowding out the live door.
+  the wrong day. The load counts every such row before it commits, and stops, loading
+  nothing, if more than 1% (`--max-arrival-share`) would - naming the templates and their
+  Datetime-typed keys, the names to add to the time columns. It looks at the first 10,000
+  rows before it starts as well, so a file with no time from its first line stops at once.
+  `--proceed` loads anyway. The report always says how many rows took their arrival time,
+  and which day that is. A template keeps the time source it was made with, and a load
+  stopped by the count over every row has made its new templates already, so set the
+  time columns before loading a new source, not after.
+- `--max-mb-per-sec` and `--threads` keep a load from crowding the live door out of CPU -
+  the rate holds the pass that parses and encodes - and `--load-buffer-bytes` (64 MiB of
+  rows unless told otherwise) keeps it from crowding it out of memory.
 
 `scripts/two_doors.sh` sends the same 200,000 lines through both doors into two data
 directories and asks both `scripts/agree.sh`'s query set: they must answer identically.

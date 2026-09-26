@@ -4,8 +4,9 @@
 //! ```text
 //!  inputs ─► load id ─► arrival check on the head ─► parse, on the load's own threads
 //!         ─► per template and UTC day, batches in memory (invisible to queries)
-//!         ─► full row groups ─► staging/<load id>/<day>/NNNNNN.col, sealed, finished
-//!         ─► one manifest record ─► data/<day>/seg_0_NNNNNN.col ─► the leaves
+//!         ─► row groups ─► staging/<load id>/<day>/NNNNNN.col, sealed, finished
+//!         ─► arrival check on every row ─► one manifest record
+//!         ─► data/<day>/seg_0_NNNNNN.col ─► the leaves
 //! ```
 //!
 //! - **One write path.** A line goes through `db::place`, which `/ingest` goes through
@@ -15,8 +16,14 @@
 //!   whole load is committed.
 //! - **Full row groups.** The loader sees all of its input, so a template's rows of a day
 //!   close at 8,192 rows or about 8MB of column data, the thresholds every writer uses -
-//!   never at a timeout. A memory limit closes the largest batches early, as the live
-//!   door's does: at 10,000 templates a batch each is more memory than the machine has.
+//!   never at a timeout. A hard bound on the rows held, `--load-buffer-bytes`, writes the
+//!   largest batches early: at 10,000 templates a batch each is more memory than the
+//!   machine has, and a load inside a server shares the machine with the live door.
+//! - **Every row's time checked.** A row with no time of its own is filed under its
+//!   arrival day, which for an old file is the wrong one. The loader counts them all as it
+//!   stages, and stops before the commit if too many would be. A stop there leaves the
+//!   load's new templates made, each on arrival time for good, so the head of the input is
+//!   looked at first: a file untimed from its first line stops with nothing made.
 //! - **Born finished.** Every file is flagged finished, so compaction will skip it: there
 //!   is nothing a rewrite would improve. It needs no write-ahead log - the input is the
 //!   log - and a stop at any moment before the commit costs only the staging directory.
@@ -71,28 +78,56 @@ use crate::store::v3::file::Writer;
 use crate::store::v3::{day_of, Source};
 use crate::store::{
     effective_ts, ts_of, value_bytes, DiskStore, Row, RowGroupLimits, StoreError, StoreManager,
+    RECEIVED_AT_COLUMN,
 };
 use crate::trie::Trie;
 use crate::types::TimeSource;
 
-/// How much of the input the arrival-time check reads: enough rows that a share of 1% is
-/// a hundred of them, few enough that it costs nothing beside the load.
+/// How much of the input the early arrival-time check reads before anything is staged:
+/// enough rows that a share of 1% is a hundred of them, few enough that it costs nothing
+/// beside the load. It is an early exit only - the count that decides is over every row.
 pub const HEAD_ROWS: usize = 10_000;
 
-/// The share of the head, in percent, that may fall back to arrival time before a load
+/// Lines the head check reads at most, rows or not: a rejected line is no row, and an input
+/// opening on gigabytes of text that is not JSON would otherwise be parsed whole, unpaced,
+/// before the paced pass read it again. The whole-input count still decides.
+const HEAD_LINES: usize = 10 * HEAD_ROWS;
+
+/// The share of the rows, in percent, that may fall back to arrival time before a load
 /// stops. Loading old files, arrival time is the wrong day by construction - today - so a
 /// row that takes it is misfiled rather than late; a load that would misfile more than
 /// one row in a hundred is more likely missing a `time_columns` name than meant.
 pub const DEFAULT_MAX_ARRIVAL_SHARE: f64 = 1.0;
 
+/// The memory a load holds its rows in unless told otherwise (`--load-buffer-bytes`): open
+/// batches and closed ones not yet written, together, as `Row::held_bytes` counts them.
+///
+/// **Its own bound, well under the live door's 512MiB.** Held to the live door's limit, a
+/// load inside a busy server cost about half a core but raised its resident size by 0.5
+/// to 0.9GB, which on an 8GB machine was a swap storm: 40 to 57s with nothing ingested and
+/// `/ingest` answering 503. `--max-mb-per-sec` and `--threads` bound what a load costs in
+/// CPU; this bounds its memory. 64MiB is about 28,000 farm rows (2.4KB held each): a
+/// template that dominates the input still closes row groups of thousands of rows, and a
+/// load of thousands of templates writes its largest batches early, as smaller row
+/// groups. That is the trade taken for a load that cannot push the live door out of memory.
+pub const DEFAULT_LOAD_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
 /// Lines per parse job: large enough that handing one to a thread costs nothing beside
 /// parsing it.
 const CHUNK_LINES: usize = 2_048;
 
-/// Raw bytes a round of chunks may hold before it is parsed and applied, whatever the line
-/// count: rounds are read whole into memory, and only rows in batches are held against the
-/// memory limit.
-const ROUND_BYTES: usize = 64 * 1024 * 1024;
+/// A round's raw lines are at most this fraction of the load's buffer - and one line at
+/// least, whatever its size. A round is read whole, then parsed whole, before its first
+/// row is placed, and none of that is counted as held: a farm line of 488 bytes parses
+/// into about 9.6KB of line and row, twenty times its size, so a round of even a quarter
+/// of the bound would parse into five times the bound. At a sixty-fourth the default's
+/// rounds are 1MiB of lines, about 20MB parsed.
+const ROUND_SHARE: usize = 64;
+
+/// Templates a refusal names; past this it counts the rest. A load of old files missing a
+/// time column can leave thousands of templates on arrival time, and a message that lists
+/// them all is not read.
+const MAX_NAMED: usize = 10;
 
 /// Staging files a load keeps open at once. A load of six months has a day per file; past
 /// this many, the least recently written is sealed and its day's next rows open a file of
@@ -129,13 +164,19 @@ pub struct Options {
     pub inputs: Vec<Input>,
     /// Retire every other file of this day, as days since the epoch, in the commit.
     pub replace_day: Option<i64>,
-    /// Decompressed input bytes a second, across both passes over the input.
+    /// Decompressed input bytes a second the pass that parses and encodes may read - the
+    /// pass whose CPU the live door shares. The id's digest and the head check are not held
+    /// to it; see `Pace`.
     pub max_bytes_per_sec: Option<f64>,
     pub threads: usize,
+    /// The rows the load may hold in memory - open batches and closed ones not yet written,
+    /// as `Row::held_bytes` counts them - before it writes the largest early. At least 1.
+    pub load_buffer_bytes: usize,
     /// The arrival time of every row with no time of its own, and every template's
     /// `created_at`: one instant for the whole load, as one `/ingest` body has one.
     pub received_at: DateTime<Utc>,
-    /// Load even when more of the head than `max_arrival_share` falls back to arrival time.
+    /// Load even when more than `max_arrival_share` of the rows - of the head, or of them
+    /// all - fall back to arrival time.
     pub proceed: bool,
     /// In percent.
     pub max_arrival_share: f64,
@@ -171,14 +212,30 @@ pub fn server_threads() -> usize {
 
 // ── What a load did ────────────────────────────────────────────────────────────────
 
+/// Rows with no time of their own, which took the load's arrival time.
+///
+/// The new fields default when absent, so a client reads the report of a server a build
+/// older than itself.
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 pub struct Arrival {
-    /// Rows of the head read.
+    /// Rows the early check on the head read, before anything was staged.
     pub head: u64,
-    /// Of those, rows that would take their arrival time.
+    /// Rows checked: every row the load stored.
+    #[serde(default)]
+    pub rows: u64,
+    /// Of `rows`, those stored at their arrival time.
     pub fell_back: u64,
-    /// In percent.
+    /// `fell_back` of `rows`, in percent.
     pub share: f64,
+    /// The UTC day they are filed under, YYYY-MM-DD.
+    #[serde(default)]
+    pub day: String,
+    /// The `--max-arrival-share` the load was held to, in percent.
+    #[serde(default)]
+    pub limit: f64,
+    /// Past `limit` - over every row or over the head - and loaded because of `--proceed`.
+    #[serde(default)]
+    pub proceeded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
@@ -244,6 +301,42 @@ impl Report {
                 self.replaced.len()
             ));
         }
+        // Always, zero included: the line an operator reads is where a load filed under
+        // the wrong day has to show, and a count said only when it is large is one they
+        // learn to expect absent.
+        let a = &self.arrival;
+        if a.day.is_empty() {
+            // A server a build older than this client: its report counted the head only.
+            out.push_str(&format!(
+                "; {} of the first {} rows ({:.1}%) had no time of their own",
+                commas(a.fell_back),
+                commas(a.head),
+                a.share
+            ));
+            return out;
+        }
+        out.push_str(&format!(
+            "; {} of {} rows ({:.1}%) had no time of their own and took their arrival time, \
+             {} - {}",
+            commas(a.fell_back),
+            commas(a.rows),
+            a.share,
+            a.day,
+            if a.share > a.limit {
+                format!(
+                    "past --max-arrival-share {}%, loaded because of --proceed",
+                    a.limit
+                )
+            } else if a.proceeded {
+                format!(
+                    "within --max-arrival-share {}% over every row, though the head was past \
+                     it; loaded because of --proceed",
+                    a.limit
+                )
+            } else {
+                format!("within --max-arrival-share {}%", a.limit)
+            }
+        ));
         out
     }
 }
@@ -262,20 +355,21 @@ pub enum LoadError {
     Store(#[from] StoreError),
     #[error(transparent)]
     Format(#[from] crate::store::v3::FormatError),
+    /// `counted` says which rows the share is of - the head's, or every row - and `advice`
+    /// differs with it: see `Checked`.
     #[error(
-        "{share:.1}% of the first {head} rows ({fell_back}) have no time of their own and \
-         would be stored at their arrival time, {day} - more than the {limit}% \
-         --max-arrival-share allows. Nothing was loaded. If their templates are new, add \
-         their time key to the time columns (--time-columns, or TRIEDB__SCHEMA__TIME_COLUMNS \
-         for a server); a template that exists already keeps the time source it was made \
-         with. Or pass --proceed to load them at their arrival time"
+        "{share:.1}% of {counted} ({fell_back}) have no time of their own and would be \
+         stored at their arrival time, {day} - more than the {limit}% --max-arrival-share \
+         allows. Nothing was loaded. On arrival time: {templates}. {advice}"
     )]
     ArrivalShare {
         share: f64,
-        head: u64,
+        counted: String,
         fell_back: u64,
         day: String,
         limit: f64,
+        templates: String,
+        advice: &'static str,
     },
     #[error(
         "line {line} is on {day}, outside --replace-day {replace}: a replace publishes one \
@@ -514,15 +608,31 @@ pub fn open_decoded(path: &Path) -> Result<Box<dyn Read + Send>, LoadError> {
     })
 }
 
-/// The pace `--max-mb-per-sec` holds a load to: the bytes read so far, decompressed, never
-/// ahead of the rate times the time since the load began.
+/// The pace `--max-mb-per-sec` holds a load to: the bytes the staging pass has read,
+/// decompressed, never ahead of the rate times the time since that pass began.
 ///
 /// On the decompressed bytes, because they are what the parse and the encode cost - the
 /// CPU the live door shares - where a compressed file's bytes on disk understate it tenfold.
 ///
-/// **Every read checks for a stop**, and a wait is slept in short slices that check too: a
-/// load paced to a trickle must not hold up a server's shutdown - and its final flush of the
-/// live door's rows - for as long as its next megabyte is due.
+/// **Only the pass that parses and encodes is paced.** The id's digest and the head check
+/// read the input before it, and cost a decompress, a hash and ten thousand rows' parse -
+/// little beside the pass that parses every line. Charged to one pace with that pass, as
+/// they once were, they spent the rate on bytes read twice, and a load delivered about
+/// 0.47 of what it was asked for: 40 MB/s gave 15.9 to 17.0, 20 gave 9.3, 10 gave 4.8, 5
+/// gave 2.4 and 1 gave 0.44, over a 70MB farm day, zstd or plain, four threads or one. Paced
+/// alone, a 98MB farm day at 10 MB/s takes 10.3s (9.5 MB/s) and at 5 takes 20.1s (4.9):
+/// the rest is the reads before it and the last row groups and the commit after.
+///
+/// **The time the reads before it took is credit, up to `PACE_CREDIT`.** The rate is what a
+/// load reads over its whole run - what its report's seconds divide - and those reads took
+/// 0.5s of that day: started at the staging pass, the clock left 20 MB/s delivering 17.9.
+/// Capped, because the credit is a burst at full speed: the id's digest took 0.3s of a
+/// 98MB day, so tens of seconds of six months', and the pass would spend them all on the
+/// cores the live door shares before the rate held it.
+///
+/// **Every read checks for a stop**, unpaced ones included, and a wait is slept in short
+/// slices that check too: a load paced to a trickle must not hold up a server's shutdown -
+/// and its final flush of the live door's rows - for as long as its next megabyte is due.
 struct Pace {
     bytes_per_sec: Option<f64>,
     start: Instant,
@@ -533,14 +643,28 @@ struct Pace {
 /// How long a paced wait sleeps before it looks for a stop again.
 const PACE_SLICE: Duration = Duration::from_millis(50);
 
+/// The most of the reads before the staging pass its pace counts as already spent: see
+/// `Pace`. About what they take for a day of logs.
+const PACE_CREDIT: Duration = Duration::from_secs(1);
+
 impl Pace {
     fn new(bytes_per_sec: Option<f64>, cancel: Arc<AtomicBool>) -> Self {
+        Self::since(Instant::now(), bytes_per_sec, cancel)
+    }
+
+    /// A pace whose clock started at `start`.
+    fn since(start: Instant, bytes_per_sec: Option<f64>, cancel: Arc<AtomicBool>) -> Self {
         Self {
             bytes_per_sec: bytes_per_sec.filter(|r| *r > 0.0),
-            start: Instant::now(),
+            start,
             read: 0,
             cancel,
         }
+    }
+
+    /// Held to no rate, but stopped when told to: the reads before the staging pass.
+    fn unpaced(cancel: Arc<AtomicBool>) -> Self {
+        Self::new(None, cancel)
     }
 
     fn stopped(&self) -> io::Result<()> {
@@ -597,7 +721,7 @@ fn paced<'a>(
 /// The load id of these inputs. See the module comment.
 #[cfg(test)]
 pub fn load_id(inputs: &[Input]) -> Result<u64, LoadError> {
-    let pace = RefCell::new(Pace::new(None, Arc::default()));
+    let pace = RefCell::new(Pace::unpaced(Arc::default()));
     Ok(order(inputs, &pace)?.1)
 }
 
@@ -737,9 +861,212 @@ impl<'a> Lines<'a> {
     }
 }
 
+/// How a pass reads its input: a round of chunks at a time, one chunk per thread, parsed
+/// side by side and then applied in line order.
+struct Rounds {
+    threads: usize,
+    /// Raw bytes a round may hold past its first line: see `ROUND_SHARE`.
+    max_bytes: usize,
+}
+
+impl Rounds {
+    fn of(opts: &Options) -> Self {
+        Self {
+            threads: opts.threads.clamp(1, max_threads()),
+            max_bytes: (opts.load_buffer_bytes / ROUND_SHARE).max(1),
+        }
+    }
+}
+
+/// The next round of lines, and whether the input ended in it.
+fn read_round(
+    lines: &mut Lines<'_>,
+    threads: usize,
+    max_bytes: usize,
+) -> Result<(Vec<Vec<Got>>, bool), LoadError> {
+    let mut chunks: Vec<Vec<Got>> = Vec::with_capacity(threads);
+    let mut chunk: Vec<Got> = Vec::new();
+    let mut round_bytes = 0usize;
+    let mut chunk_bytes = 0usize;
+    let mut ended = false;
+    loop {
+        // A chunk also closes at its share of the round's bytes, so a round of wide lines
+        // that meets the byte budget is still spread across every thread. Never empty:
+        // under a bound so small a thread's share rounds to nothing, that would be a round
+        // of empty chunks, and no line read.
+        if !chunk.is_empty() && (chunk.len() >= CHUNK_LINES || chunk_bytes >= max_bytes / threads) {
+            chunk_bytes = 0;
+            chunks.push(std::mem::take(&mut chunk));
+            if chunks.len() >= threads {
+                break;
+            }
+        }
+        // A line may be 64MiB: a round of thousands of them is gigabytes before one row
+        // reaches a batch the bound counts. A round starts at no bytes, so it takes its
+        // first line whatever that line's size.
+        if round_bytes >= max_bytes {
+            break;
+        }
+        match lines.next_line()? {
+            None => {
+                ended = true;
+                break;
+            }
+            Some(got) => {
+                let bytes = got.1.as_ref().map_or(0, Vec::len);
+                round_bytes += bytes;
+                chunk_bytes += bytes;
+                chunk.push(got);
+            }
+        }
+    }
+    if !chunk.is_empty() {
+        chunks.push(chunk);
+    }
+    Ok((chunks, ended))
+}
+
 // ── The arrival-time check ─────────────────────────────────────────────────────────
 
-/// The share of the head of the input that would be stored at its arrival time.
+/// Whose rows fell back to arrival time: a template by id, or - in the head check, which
+/// makes nothing - one not made yet, by the line it was first met on and the keys that
+/// line could have taken its time from.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Who {
+    Template(u64),
+    New { line: u64, keys: String },
+}
+
+/// Rows checked for a time of their own, and those that had none, by template.
+#[derive(Debug, Default)]
+struct Tally {
+    rows: u64,
+    fell_back: u64,
+    by: HashMap<Who, u64>,
+}
+
+/// Which check stopped a load: it decides what the refusal can honestly advise.
+#[derive(Debug, Clone, Copy)]
+enum Checked {
+    /// The early one, before anything was staged. It made no template, so a time key added
+    /// to the time columns reaches every new one.
+    Head,
+    /// The one over every row, after staging. Staging put each line through the trie, so
+    /// the load's new templates are made - on arrival time, for good.
+    Whole,
+}
+
+impl Tally {
+    fn count(&mut self, fell_back: bool, who: impl FnOnce() -> Who) {
+        self.rows += 1;
+        if fell_back {
+            self.fell_back += 1;
+            *self.by.entry(who()).or_default() += 1;
+        }
+    }
+
+    /// In percent.
+    fn share(&self) -> f64 {
+        if self.rows == 0 {
+            0.0
+        } else {
+            self.fell_back as f64 * 100.0 / self.rows as f64
+        }
+    }
+
+    /// The templates that fell back, most rows first, each with its Datetime-typed keys -
+    /// what an operator would add to the time columns - and at most `MAX_NAMED` of them.
+    fn named(&self, trie: &Trie) -> String {
+        let mut by: Vec<(&Who, u64)> = self.by.iter().map(|(who, n)| (who, *n)).collect();
+        by.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        let wanted: BTreeSet<u64> = by
+            .iter()
+            .take(MAX_NAMED)
+            .filter_map(|(who, _)| match who {
+                Who::Template(id) => Some(*id),
+                Who::New { .. } => None,
+            })
+            .collect();
+        // A template on arrival time, by the keys an operator could name as its time; one
+        // with a time column, by that column - its rows fell back because the column held
+        // no instant, and no time key would change that.
+        let mut said: HashMap<u64, String> = HashMap::new();
+        if !wanted.is_empty() {
+            for leaf in trie.all_leaves() {
+                let Ok(slot) = leaf.leaf_meta.read() else {
+                    continue;
+                };
+                if let Some(meta) = slot.as_ref().filter(|m| wanted.contains(&m.template_id)) {
+                    said.insert(
+                        meta.template_id,
+                        match &meta.time_source {
+                            TimeSource::Arrival => format!(
+                                "Datetime-typed keys: {}",
+                                crate::trie::datetime_keys(
+                                    meta.columns.iter().map(|c| (c.name.as_str(), c.col_type)),
+                                )
+                            ),
+                            TimeSource::Column(name) => {
+                                format!("its time column `{name}` held no time")
+                            }
+                        },
+                    );
+                }
+            }
+        }
+        let mut parts: Vec<String> = by
+            .iter()
+            .take(MAX_NAMED)
+            .map(|(who, n)| match who {
+                Who::Template(id) => format!(
+                    "template {id} ({n} rows; {})",
+                    said.get(id)
+                        .map_or("Datetime-typed keys: unknown", String::as_str)
+                ),
+                Who::New { line, keys } => format!(
+                    "a new template first on line {line} ({n} rows; Datetime-typed keys: {keys})"
+                ),
+            })
+            .collect();
+        if by.len() > MAX_NAMED {
+            parts.push(format!("and {} more", by.len() - MAX_NAMED));
+        }
+        parts.join(", ")
+    }
+
+    fn refusal(&self, checked: Checked, trie: &Trie, day: &str, limit: f64) -> LoadError {
+        let (counted, advice) = match checked {
+            Checked::Head => (
+                format!("the first {} rows", self.rows),
+                "If their templates are new, add their time key to the time columns \
+                 (--time-columns, or TRIEDB__SCHEMA__TIME_COLUMNS for a server); a template \
+                 that exists already keeps the time source it was made with. Or pass \
+                 --proceed to load them at their arrival time",
+            ),
+            Checked::Whole => (
+                format!("the {} rows", self.rows),
+                "Their templates exist now - a load makes its new ones, and widens a column's \
+                 type, as it reads, before it can count; those stay - and a template keeps \
+                 the time source it was made with, so a time key added to the time columns \
+                 reaches only templates still to come. Or pass --proceed to load them at \
+                 their arrival time",
+            ),
+        };
+        LoadError::ArrivalShare {
+            share: self.share(),
+            counted,
+            fell_back: self.fell_back,
+            day: day.to_string(),
+            limit,
+            templates: self.named(trie),
+            advice,
+        }
+    }
+}
+
+/// The early look at the head of the input: how much of it would be stored at its arrival
+/// time. An exit before anything is staged, for the file untimed from its first line; the
+/// count that decides is over every row, as they are staged.
 ///
 /// **Nothing is created.** A line of a template the catalog knows takes that template's
 /// time source; a line of one it does not takes the source its first line would choose -
@@ -747,54 +1074,77 @@ impl<'a> Lines<'a> {
 /// Creating the templates for real would make the check's answer permanent: a template's
 /// time source is chosen once, and one created while a load is refused would keep arrival
 /// time after the operator added its time key and ran the load again.
-fn arrival_head(trie: &Trie, inputs: &[Input], pace: &RefCell<Pace>) -> Result<Arrival, LoadError> {
+///
+/// **Parsed on the load's threads**, in the staging pass's rounds. On one thread it took
+/// 0.66s of a 98MB farm day loaded at 10 MB/s: unpaced time the report's seconds count and
+/// the rate does not, which alone put the load 7% under the rate it was asked for.
+fn arrival_head(
+    trie: &Trie,
+    inputs: &[Input],
+    pace: &RefCell<Pace>,
+    rounds: &Rounds,
+) -> Result<Tally, LoadError> {
     let mut lines = Lines::new(inputs, pace);
-    let mut unseen: HashMap<Vec<String>, TimeSource> = HashMap::new();
-    let (mut head, mut fell_back) = (0u64, 0u64);
-    while (head as usize) < HEAD_ROWS {
-        let Some(got) = lines.next_line()? else {
-            break;
-        };
-        let (no, Some(raw)) = got else {
-            continue;
-        };
-        let Ok(parsed) = parse_line(&raw, no as usize) else {
-            continue;
-        };
-        let tokens = parsed.walk_tokens();
-        let borrowed: Vec<&str> = tokens.iter().map(String::as_str).collect();
-        let known = trie.walk(&borrowed).and_then(|walked| {
-            walked
-                .node
-                .leaf_meta
-                .read()
-                .ok()
-                .and_then(|slot| slot.as_ref().map(|meta| meta.time_source.clone()))
-        });
-        let source = match known {
-            Some(source) => source,
-            None => unseen
-                .entry(tokens)
-                .or_insert_with(|| {
-                    TimeSource::choose(trie.time_columns(), |name| parsed.column_type(name))
-                })
-                .clone(),
-        };
-        if ts_of(&db::row_of(&parsed), source.column()).is_none() {
-            fell_back += 1;
+    let mut unseen: HashMap<Vec<String>, (TimeSource, Who)> = HashMap::new();
+    let mut tally = Tally::default();
+    let mut seen = 0usize;
+    let done = |tally: &Tally, seen: usize| tally.rows as usize >= HEAD_ROWS || seen >= HEAD_LINES;
+    loop {
+        let (chunks, ended) = read_round(&mut lines, rounds.threads, rounds.max_bytes)?;
+        for chunk in parse_chunks(chunks, rounds.threads)? {
+            for (no, parsed) in chunk {
+                if done(&tally, seen) {
+                    return Ok(tally);
+                }
+                seen += 1;
+                if let Ok((parsed, prepared)) = parsed {
+                    head_row(trie, &mut unseen, &mut tally, no, &parsed, &prepared.row);
+                }
+            }
         }
-        head += 1;
+        if ended || done(&tally, seen) {
+            return Ok(tally);
+        }
     }
-    let share = if head == 0 {
-        0.0
-    } else {
-        fell_back as f64 * 100.0 / head as f64
+}
+
+/// One row of the head: counted against its template's time source, or - for a template
+/// not made yet - the one its first line would choose.
+fn head_row(
+    trie: &Trie,
+    unseen: &mut HashMap<Vec<String>, (TimeSource, Who)>,
+    tally: &mut Tally,
+    no: u64,
+    parsed: &ParsedLog,
+    row: &Row,
+) {
+    let tokens = parsed.walk_tokens();
+    let borrowed: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let known = trie.walk(&borrowed).and_then(|walked| {
+        walked.node.leaf_meta.read().ok().and_then(|slot| {
+            slot.as_ref()
+                .map(|meta| (meta.time_source.clone(), Who::Template(meta.template_id)))
+        })
+    });
+    let (source, who) = match known {
+        Some(known) => known,
+        None => unseen
+            .entry(tokens)
+            .or_insert_with(|| {
+                let source =
+                    TimeSource::choose(trie.time_columns(), |name| parsed.column_type(name));
+                let keys = crate::trie::datetime_keys(
+                    parsed
+                        .keys
+                        .iter()
+                        .map(|key| (key.as_str(), parsed.column_type(key))),
+                );
+                (source, Who::New { line: no, keys })
+            })
+            .clone(),
     };
-    Ok(Arrival {
-        head,
-        fell_back,
-        share,
-    })
+    let fell_back = ts_of(row, source.column()).is_none();
+    tally.count(fell_back, || who);
 }
 
 // ── Batches and the files they go into ─────────────────────────────────────────────
@@ -1029,6 +1379,141 @@ fn write_due(
     Ok(())
 }
 
+/// Every row a load holds: its open batches, and the batches closed and waiting to be
+/// encoded and written.
+///
+/// **Both count against the bound.** A batch closed at the row group thresholds is in
+/// memory until it is written, and one round can close many: counted only while open, as
+/// they once were, a round's worth of full batches sat outside a bound that said nothing
+/// was held.
+#[derive(Default)]
+struct Held {
+    open: HashMap<(u64, i64), Batch>,
+    due: Vec<Due>,
+    /// `Row::held_bytes` of the rows in `open`, and of those in `due`.
+    open_bytes: usize,
+    due_bytes: usize,
+    /// The most held once a row's place was paid for - see `bound`.
+    peak: usize,
+}
+
+impl Held {
+    /// One row into its template-day's batch, which is closed once it is full.
+    fn push(&mut self, key: (u64, i64), no: u64, row: Row, time: i64, limits: &RowGroupLimits) {
+        let bytes: usize = row
+            .iter()
+            .map(|(key, value)| key.len() + value_bytes(value))
+            .sum();
+        let held = row.held_bytes();
+        let batch = self.open.entry(key).or_default();
+        if batch.rows.is_empty() {
+            batch.first = no;
+        }
+        batch.last = no;
+        batch.rows.push(row);
+        batch.times.push(time);
+        batch.bytes += bytes;
+        batch.held += held;
+        self.open_bytes += held;
+        if batch.rows.len() >= limits.rows || batch.bytes >= limits.bytes {
+            self.close(key);
+        }
+    }
+
+    fn close(&mut self, key: (u64, i64)) {
+        if let Some(batch) = self.open.remove(&key) {
+            self.open_bytes -= batch.held;
+            self.due_bytes += batch.held;
+            self.due.push(Due {
+                template_id: key.0,
+                day: key.1,
+                batch,
+            });
+        }
+    }
+
+    /// Every closed batch encoded and written, in the order they closed.
+    fn write(
+        &mut self,
+        stage: &mut Stage<'_>,
+        load_id: u64,
+        threads: usize,
+    ) -> Result<(), LoadError> {
+        write_due(&mut self.due, stage, load_id, threads)?;
+        self.due_bytes = 0;
+        Ok(())
+    }
+
+    /// Back within `bound` if the last row took it past: the closed batches written, and if
+    /// that is not enough, the largest open ones closed and written too.
+    ///
+    /// Called after every row, so the bound is passed by one row at most, for as long as
+    /// the writes take. Once a round, as it was, a round of rows could close more full
+    /// batches than the bound holds before anything looked.
+    ///
+    /// **Down to three quarters of it**, not to just under it: at the bound, closing only
+    /// what the last row passed it by would close a batch on nearly every row after, and one
+    /// burst would buy a long run of tiny row groups.
+    fn bound(
+        &mut self,
+        bound: usize,
+        stage: &mut Stage<'_>,
+        load_id: u64,
+        threads: usize,
+    ) -> Result<(), LoadError> {
+        if self.open_bytes + self.due_bytes > bound {
+            self.write(stage, load_id, threads)?;
+        }
+        if self.open_bytes > bound {
+            // Ties broken by the first line, so the same input closes the same batches -
+            // and writes the same files - every time, whatever order the map keeps.
+            let mut sizes: Vec<((u64, i64), usize, u64)> = self
+                .open
+                .iter()
+                .map(|(key, b)| (*key, b.held, b.first))
+                .collect();
+            sizes.sort_unstable_by_key(|(_, held, first)| (std::cmp::Reverse(*held), *first));
+            for (key, ..) in sizes {
+                if self.open_bytes <= bound / 4 * 3 {
+                    break;
+                }
+                self.close(key);
+            }
+            self.write(stage, load_id, threads)?;
+        }
+        // The tests recount it from the batches rather than trust the sums they check.
+        #[cfg(test)]
+        let now = self.open.values().map(|b| b.held).sum::<usize>()
+            + self.due.iter().map(|d| d.batch.held).sum::<usize>();
+        #[cfg(not(test))]
+        let now = self.open_bytes + self.due_bytes;
+        self.peak = self.peak.max(now);
+        Ok(())
+    }
+
+    /// The rest, each a row group of what its template had left on its day - in the order
+    /// the batches began, so the files come out the same for the same input every time.
+    fn finish(
+        &mut self,
+        stage: &mut Stage<'_>,
+        load_id: u64,
+        threads: usize,
+    ) -> Result<(), LoadError> {
+        let mut rest: Vec<((u64, i64), Batch)> = self.open.drain().collect();
+        rest.sort_by_key(|(_, b)| b.first);
+        for ((template_id, day), batch) in rest {
+            self.open_bytes -= batch.held;
+            self.due_bytes += batch.held;
+            self.due.push(Due {
+                template_id,
+                day,
+                batch,
+            });
+        }
+        self.write(stage, load_id, threads)
+    }
+}
+
 // ── The load ───────────────────────────────────────────────────────────────────────
 
 /// A line parsed on a pool thread: its number, and its row or why it has none.
@@ -1103,6 +1588,26 @@ pub fn run(
     control: &Control,
     on_error: &mut dyn FnMut(&DetectorError),
 ) -> Result<Report, LoadError> {
+    run_measured(trie, stores, opts, control, on_error).map(|(report, _)| report)
+}
+
+/// What a load measured of itself that its report does not carry: what the tests hold it to.
+#[derive(Debug, Default, Clone, Copy)]
+#[cfg_attr(not(test), allow(dead_code))]
+struct Measured {
+    /// The most rows held at once, open batches and closed ones not yet written together.
+    peak_held: usize,
+    /// Decompressed bytes the pace that holds `--max-mb-per-sec` was charged.
+    paced: u64,
+}
+
+fn run_measured(
+    trie: &Trie,
+    stores: &StoreManager,
+    opts: &Options,
+    control: &Control,
+    on_error: &mut dyn FnMut(&DetectorError),
+) -> Result<(Report, Measured), LoadError> {
     match run_inner(trie, stores, opts, control, on_error) {
         // A stop shows up as whatever read or wait it interrupted; it is still a stop.
         Err(e) if control.cancelled() && !committed_or_uncertain(&e) => Err(LoadError::Cancelled),
@@ -1130,38 +1635,32 @@ fn run_inner(
     opts: &Options,
     control: &Control,
     on_error: &mut dyn FnMut(&DetectorError),
-) -> Result<Report, LoadError> {
+) -> Result<(Report, Measured), LoadError> {
     let started = Instant::now();
     let disk = stores.disk_store().ok_or(LoadError::NoDisk)?;
     if opts.inputs.is_empty() {
         return Err(LoadError::Input("nothing to load".to_string()));
     }
-    let pace = RefCell::new(Pace::new(
-        opts.max_bytes_per_sec,
-        Arc::clone(&control.cancel),
-    ));
+    // The reads before the staging pass: held to no rate - see `Pace` - but stopped.
+    let unpaced = RefCell::new(Pace::unpaced(Arc::clone(&control.cancel)));
 
     // Refused by its id before a line is parsed: every later step would be wasted.
-    let (inputs, load_id) = order(&each_file_once(&opts.inputs)?, &pace)?;
+    let (inputs, load_id) = order(&each_file_once(&opts.inputs)?, &unpaced)?;
     if opts.replace_day.is_none() && disk.was_loaded(load_id) {
         return Err(StoreError::LoadRepeated { load_id }.into());
     }
-    let arrival = arrival_head(trie, &inputs, &pace)?;
-    if !opts.proceed && arrival.share > opts.max_arrival_share {
-        return Err(LoadError::ArrivalShare {
-            share: arrival.share,
-            head: arrival.head,
-            fell_back: arrival.fell_back,
-            day: day_name(day_of(crate::store::nanos_of(crate::query::system_time(
-                opts.received_at,
-            )))),
-            limit: opts.max_arrival_share,
-        });
+    let limit = opts.max_arrival_share;
+    let day = day_name(day_of(crate::store::nanos_of(crate::query::system_time(
+        opts.received_at,
+    ))));
+    let head = arrival_head(trie, &inputs, &unpaced, &Rounds::of(opts))?;
+    if !opts.proceed && head.share() > limit {
+        return Err(head.refusal(Checked::Head, trie, &day, limit));
     }
 
     let dir = disk.stage(load_id)?;
     let staged = stage_all(
-        trie, disk, opts, &inputs, control, &dir, load_id, &pace, on_error,
+        trie, disk, opts, &inputs, control, &dir, load_id, started, on_error,
     );
     let (files, counts, templates) = match staged {
         Ok(done) => done,
@@ -1174,6 +1673,24 @@ fn run_inner(
         disk.unstage(load_id);
         return Err(LoadError::Cancelled);
     }
+    // Every row counted and nothing published: the check that decides. The head's saw ten
+    // thousand rows in load order, and a clean head says nothing of an untimed tail or of a
+    // later file with no time at all.
+    let tally = &counts.arrival;
+    if !opts.proceed && tally.share() > limit {
+        disk.unstage(load_id);
+        return Err(tally.refusal(Checked::Whole, trie, &day, limit));
+    }
+    let arrival = Arrival {
+        head: head.rows,
+        rows: tally.rows,
+        fell_back: tally.fell_back,
+        share: tally.share(),
+        day,
+        limit,
+        // Only `--proceed` gets a load this far past either check.
+        proceeded: head.share() > limit || tally.share() > limit,
+    };
     for (id, time_column) in &templates {
         if let Err(e) = stores.open_existing(*id, time_column) {
             disk.unstage(load_id);
@@ -1222,7 +1739,11 @@ fn run_inner(
             return Err(e.into());
         }
     };
-    Ok(Report {
+    let measured = Measured {
+        peak_held: counts.peak_held,
+        paced: counts.paced,
+    };
+    let report = Report {
         ok: true,
         load_id: format!("{load_id:016x}"),
         lines: counts.lines,
@@ -1238,7 +1759,8 @@ fn run_inner(
         seconds: started.elapsed().as_secs_f64(),
         errors_omitted: counts.errors_omitted,
         errors: counts.errors,
-    })
+    };
+    Ok((report, measured))
 }
 
 #[derive(Default)]
@@ -1249,6 +1771,10 @@ struct Counts {
     row_groups: u64,
     errors: Vec<LineError>,
     errors_omitted: u64,
+    /// Every row placed, and those that took their arrival time.
+    arrival: Tally,
+    peak_held: usize,
+    paced: u64,
 }
 
 impl Counts {
@@ -1267,7 +1793,7 @@ impl Counts {
 }
 
 /// Every line through the trie into a batch, every batch into a staging file, every file
-/// sealed: the load, less its commit.
+/// sealed: the load, less its commit. The only pass `--max-mb-per-sec` holds.
 #[allow(clippy::too_many_arguments)]
 fn stage_all(
     trie: &Trie,
@@ -1277,12 +1803,20 @@ fn stage_all(
     control: &Control,
     dir: &Path,
     load_id: u64,
-    pace: &RefCell<Pace>,
+    started: Instant,
     on_error: &mut dyn FnMut(&DetectorError),
 ) -> Result<StagedLoad, LoadError> {
     let limits: RowGroupLimits = disk.row_group_limits();
-    let max_held = disk.max_buffer_bytes() as usize;
-    let threads = opts.threads.clamp(1, max_threads());
+    let bound = opts.load_buffer_bytes.max(1);
+    let Rounds { threads, max_bytes } = Rounds::of(opts);
+    // Made here, with the reads since `started` as credit up to `PACE_CREDIT`: see `Pace`.
+    let now = Instant::now();
+    let credit = now.saturating_duration_since(started).min(PACE_CREDIT);
+    let pace = RefCell::new(Pace::since(
+        now.checked_sub(credit).unwrap_or(now),
+        opts.max_bytes_per_sec,
+        Arc::clone(&control.cancel),
+    ));
     let mut stage = Stage {
         dir,
         max_bytes: disk.segment_max_bytes(),
@@ -1294,52 +1828,14 @@ fn stage_all(
     };
     let mut counts = Counts::default();
     let mut templates: BTreeMap<u64, String> = BTreeMap::new();
-    let mut batches: HashMap<(u64, i64), Batch> = HashMap::new();
-    let mut due: Vec<Due> = Vec::new();
-    let mut held = 0usize;
-    let mut lines = Lines::new(inputs, pace);
+    let mut held = Held::default();
+    let mut lines = Lines::new(inputs, &pace);
 
     loop {
         if control.cancelled() {
             return Err(LoadError::Cancelled);
         }
-        // A round: a chunk per thread, parsed side by side, then applied in line order.
-        let mut chunks: Vec<Vec<Got>> = Vec::with_capacity(threads);
-        let mut chunk: Vec<Got> = Vec::with_capacity(CHUNK_LINES);
-        let mut round_bytes = 0usize;
-        let mut chunk_bytes = 0usize;
-        let mut ended = false;
-        loop {
-            // A chunk also closes at its share of the round's bytes, so a round of wide
-            // lines that meets the byte budget is still spread across every thread.
-            if chunk.len() >= CHUNK_LINES || chunk_bytes >= ROUND_BYTES / threads {
-                chunk_bytes = 0;
-                chunks.push(std::mem::take(&mut chunk));
-                if chunks.len() >= threads {
-                    break;
-                }
-            }
-            // A line may be 64MiB: a round of thousands of them is gigabytes before one
-            // row reaches a batch the memory limit counts.
-            if round_bytes >= ROUND_BYTES {
-                break;
-            }
-            match lines.next_line()? {
-                None => {
-                    ended = true;
-                    break;
-                }
-                Some(got) => {
-                    let bytes = got.1.as_ref().map_or(0, Vec::len);
-                    round_bytes += bytes;
-                    chunk_bytes += bytes;
-                    chunk.push(got);
-                }
-            }
-        }
-        if !chunk.is_empty() {
-            chunks.push(chunk);
-        }
+        let (chunks, ended) = read_round(&mut lines, threads, max_bytes)?;
         control.lines.store(lines.line, Ordering::Relaxed);
 
         for chunk in parse_chunks(chunks, threads)? {
@@ -1381,78 +1877,35 @@ fn stage_all(
                         });
                     }
                 }
+                let template_id = placed.template_id;
                 templates
-                    .entry(placed.template_id)
+                    .entry(template_id)
                     .or_insert_with(|| placed.time_column.clone());
-                let bytes: usize = placed
-                    .row
-                    .iter()
-                    .map(|(key, value)| key.len() + value_bytes(value))
-                    .sum();
-                let row_held = placed.row.held_bytes();
-                let key = (placed.template_id, day);
-                let batch = batches.entry(key).or_default();
-                if batch.rows.is_empty() {
-                    batch.first = no;
-                }
-                batch.last = no;
-                batch.rows.push(placed.row);
-                batch.times.push(time);
-                batch.bytes += bytes;
-                batch.held += row_held;
-                held += row_held;
-                if batch.rows.len() >= limits.rows || batch.bytes >= limits.bytes {
-                    let batch = batches.remove(&key).unwrap_or_default();
-                    held -= batch.held;
-                    due.push(Due {
-                        template_id: key.0,
-                        day: key.1,
-                        batch,
-                    });
-                }
+                // Fell back exactly when `place` gave it the arrival column: no flattened key
+                // can be spelled that way, so the column is there only because the template's
+                // own time column held no instant.
+                let fell_back = placed.row.contains_key(RECEIVED_AT_COLUMN);
+                counts
+                    .arrival
+                    .count(fell_back, || Who::Template(template_id));
+                held.push((template_id, day), no, placed.row, time, &limits);
+                held.bound(bound, &mut stage, load_id, threads)?;
             }
         }
-
-        // Past the memory limit, the largest batches close early - down to three quarters
-        // of it, so one burst does not buy a round of small row groups on every chunk after.
-        if held > max_held {
-            let mut sizes: Vec<((u64, i64), usize)> =
-                batches.iter().map(|(k, b)| (*k, b.held)).collect();
-            sizes.sort_unstable_by_key(|(_, h)| std::cmp::Reverse(*h));
-            for (key, _) in sizes {
-                if held <= max_held / 4 * 3 {
-                    break;
-                }
-                if let Some(batch) = batches.remove(&key) {
-                    held -= batch.held;
-                    due.push(Due {
-                        template_id: key.0,
-                        day: key.1,
-                        batch,
-                    });
-                }
-            }
-        }
-        write_due(&mut due, &mut stage, load_id, threads)?;
+        // The batches this round filled, written by its end at the latest.
+        held.write(&mut stage, load_id, threads)?;
         if ended {
             break;
         }
     }
 
-    // The rest, each a row group of what its template had left on its day - in the order
-    // the batches began, so the files come out the same for the same input every time.
-    let mut rest: Vec<((u64, i64), Batch)> = batches.into_iter().collect();
-    rest.sort_by_key(|(_, b)| b.first);
-    due.extend(rest.into_iter().map(|((template_id, day), batch)| Due {
-        template_id,
-        day,
-        batch,
-    }));
-    write_due(&mut due, &mut stage, load_id, threads)?;
+    held.finish(&mut stage, load_id, threads)?;
     let (files, row_groups) = stage.finish()?;
     counts.lines = lines.line;
     counts.blank = lines.blank;
     counts.row_groups = row_groups;
+    counts.peak_held = held.peak;
+    counts.paced = pace.borrow().read;
     control.lines.store(lines.line, Ordering::Relaxed);
     Ok((files, counts, templates))
 }
@@ -1466,6 +1919,7 @@ pub struct Args {
     pub replace_day: Option<String>,
     pub max_mb_per_sec: Option<f64>,
     pub threads: Option<usize>,
+    pub load_buffer_bytes: Option<usize>,
     pub received_at: Option<String>,
     pub proceed: bool,
     pub max_arrival_share: Option<f64>,
@@ -1517,6 +1971,13 @@ pub fn command(
             "--max-arrival-share {share}: not a percentage"
         )));
     }
+    // Refused here as well as by a server, so a client load fails before it is sent.
+    let load_buffer_bytes = args.load_buffer_bytes.unwrap_or(DEFAULT_LOAD_BUFFER_BYTES);
+    if load_buffer_bytes == 0 {
+        return Err(LoadError::Input(
+            "--load-buffer-bytes 0: a load has to hold at least one row".to_string(),
+        ));
+    }
     let waited = Instant::now();
     loop {
         match crate::lock::DataLock::acquire(&base) {
@@ -1526,6 +1987,7 @@ pub fn command(
                     replace_day,
                     max_bytes_per_sec: args.max_mb_per_sec.map(|mb| mb * 1_000_000.0),
                     threads: args.threads.unwrap_or_else(alone_threads).max(1),
+                    load_buffer_bytes,
                     received_at,
                     proceed: args.proceed,
                     max_arrival_share: share,
@@ -1701,6 +2163,7 @@ fn client_run(
         "replace_day": args.replace_day,
         "max_mb_per_sec": args.max_mb_per_sec,
         "threads": args.threads,
+        "load_buffer_bytes": args.load_buffer_bytes,
         "received_at": args.received_at,
         "proceed": args.proceed,
         "max_arrival_share": share,
@@ -1858,5 +2321,347 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["a.ndjson", "b.ndjson"]);
         assert!(resolve(&[scratch.0.join("missing")], None).is_err());
+    }
+
+    // ── Loads into a data directory of the test's own ──
+
+    /// A data directory opened as `triedb load` alone opens one. The lock is dropped last,
+    /// after the stores that write under it.
+    struct Store {
+        trie: Trie,
+        stores: StoreManager,
+        _lock: crate::lock::DataLock,
+    }
+
+    impl Store {
+        fn open(scratch: &Scratch) -> Self {
+            let base = scratch.0.join("store");
+            let storage = crate::config::Storage::load(
+                true,
+                Some(base.clone()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("storage settings");
+            let lock = crate::lock::DataLock::acquire(&base).expect("lock");
+            let (trie, stores) =
+                crate::serve::open_durable(&storage, &crate::config::Schema::default())
+                    .expect("open the data directory");
+            Self {
+                trie,
+                stores,
+                _lock: lock,
+            }
+        }
+
+        fn load(&self, opts: &Options) -> Result<(Report, Measured), LoadError> {
+            run_measured(
+                &self.trie,
+                &self.stores,
+                opts,
+                &Control::default(),
+                &mut |_| {},
+            )
+        }
+
+        /// Every template's rows, as a scan hands them out: each day in storage order.
+        fn rows(&self) -> Vec<(u64, Row)> {
+            let mut out = Vec::new();
+            for leaf in self.trie.all_leaves() {
+                let Some(id) = leaf
+                    .leaf_meta
+                    .read()
+                    .expect("leaf meta")
+                    .as_ref()
+                    .map(|m| m.template_id)
+                else {
+                    continue;
+                };
+                let Some(store) = self.stores.lookup(id) else {
+                    continue;
+                };
+                let scan = store
+                    .scan(&crate::store::ScanOptions::default(), &[])
+                    .expect("scan");
+                out.extend(scan.rows.into_iter().map(|row| (id, row)));
+            }
+            out
+        }
+    }
+
+    fn options(inputs: Vec<Input>) -> Options {
+        Options {
+            inputs,
+            replace_day: None,
+            max_bytes_per_sec: None,
+            threads: 2,
+            load_buffer_bytes: DEFAULT_LOAD_BUFFER_BYTES,
+            received_at: "2024-02-20T12:00:00Z".parse().expect("an instant"),
+            proceed: false,
+            max_arrival_share: DEFAULT_MAX_ARRIVAL_SHARE,
+        }
+    }
+
+    /// `count` timed lines across `templates` key sets and `days` days, interleaved so every
+    /// template-day is open at once: line `i` holds key `t<i*7 % templates>`, falls on
+    /// 2024-01-<1 + i*13 % days>, and carries `n` = `i`.
+    fn spread(count: usize, templates: usize, days: usize) -> Vec<u8> {
+        (0..count)
+            .map(|i| {
+                format!(
+                    "{{\"ts\":\"2024-01-{:02}T10:00:00Z\",\"t{}\":\"x\",\"n\":{i}}}\n",
+                    1 + i * 13 % days,
+                    i * 7 % templates
+                )
+            })
+            .collect::<String>()
+            .into_bytes()
+    }
+
+    /// `count` lines of template `k` with no time of their own; `logged_at` is a Datetime,
+    /// but no name on the default time columns.
+    fn untimed(count: usize, k: usize) -> Vec<u8> {
+        (0..count)
+            .map(|i| format!("{{\"logged_at\":\"2023-06-01T09:00:00Z\",\"u{k}\":{i}}}\n"))
+            .collect::<String>()
+            .into_bytes()
+    }
+
+    /// A hard bound: open batches and closed ones not yet written together never hold more
+    /// than `--load-buffer-bytes`, however many template-days are open - and every row is
+    /// still stored once, each template-day's rows in line order.
+    #[test]
+    fn a_tiny_load_buffer_holds_its_rows_to_the_bound_and_loses_none() {
+        const LINES: usize = 6_000;
+        const BOUND: usize = 16 * 1024;
+        let scratch = Scratch::new("bound");
+        let input = scratch.write("in/spread.ndjson", &spread(LINES, 12, 7));
+        let store = Store::open(&scratch);
+        let opts = Options {
+            load_buffer_bytes: BOUND,
+            ..options(resolve(&[input], None).expect("resolve"))
+        };
+        let (report, measured) = store.load(&opts).expect("load");
+        assert_eq!(report.rows, LINES as u64);
+        assert!(
+            measured.peak_held <= BOUND,
+            "held {} bytes of rows against a bound of {BOUND}",
+            measured.peak_held
+        );
+
+        let mut seen = vec![false; LINES];
+        let mut last: HashMap<(u64, i64), i64> = HashMap::new();
+        for (template, row) in store.rows() {
+            let Some(crate::types::ColValue::Int64(n)) = row.get("n") else {
+                panic!("a row with no n: {row:?}");
+            };
+            let day = day_of(effective_ts(&row, "ts").expect("a time"));
+            let before = last.insert((template, day), *n);
+            assert!(
+                before.is_none_or(|b| b < *n),
+                "template {template} on {}: n {n} after {before:?}",
+                day_name(day)
+            );
+            assert!(
+                !std::mem::replace(&mut seen[*n as usize], true),
+                "n {n} twice"
+            );
+        }
+        assert!(seen.iter().all(|s| *s), "rows missing");
+        assert_eq!(last.len(), 84, "not every template-day was stored");
+    }
+
+    /// `--max-mb-per-sec` holds the pass that parses and encodes, and that pass reads each
+    /// input byte once: its pace is charged the inputs' decompressed length exactly - not
+    /// the id's digest of them, nor the head check's, which read them first.
+    #[test]
+    fn the_pace_is_charged_each_input_byte_once() {
+        let scratch = Scratch::new("paced");
+        let plain = spread(3_000, 5, 3);
+        let other = spread(2_000, 4, 2);
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(6));
+        gz.write_all(&other).expect("gzip");
+        let a = scratch.write("in/a.ndjson", &plain);
+        let b = scratch.write("in/b.ndjson.gz", &gz.finish().expect("gzip"));
+        let store = Store::open(&scratch);
+        let opts = Options {
+            // A rate no load reaches: charged, never waited on.
+            max_bytes_per_sec: Some(1e15),
+            ..options(resolve(&[a, b], None).expect("resolve"))
+        };
+        let (_, measured) = store.load(&opts).expect("load");
+        assert_eq!(measured.paced, (plain.len() + other.len()) as u64);
+    }
+
+    /// And the rate is what the load delivers: bytes at N a second take about bytes / N
+    /// seconds, not twice or three times that. Wide margins, for a debug build on a busy
+    /// machine; a pace charged for the digest and the head as well is still past them.
+    #[test]
+    fn a_paced_load_takes_about_its_bytes_over_the_rate() {
+        let scratch = Scratch::new("rate");
+        let bytes = spread(1_500, 5, 3);
+        let input = scratch.write("in/a.ndjson", &bytes);
+        let store = Store::open(&scratch);
+        let opts = Options {
+            max_bytes_per_sec: Some(bytes.len() as f64),
+            ..options(resolve(&[input], None).expect("resolve"))
+        };
+        let (report, _) = store.load(&opts).expect("load");
+        assert!(
+            (0.8..2.5).contains(&report.seconds),
+            "{} bytes at {} a second took {}s",
+            bytes.len(),
+            bytes.len(),
+            report.seconds
+        );
+    }
+
+    /// The head check makes nothing - a template made while the load is refused would keep
+    /// arrival time after its time key was added - so it names a template it has not seen
+    /// by the line it first met it on, with the keys that could be its time.
+    #[test]
+    fn the_head_check_names_a_new_template_by_its_line_and_makes_none() {
+        let scratch = Scratch::new("head");
+        let mut body = spread(50, 2, 2);
+        body.extend_from_slice(&untimed(150, 0));
+        let input = scratch.write("in/a.ndjson", &body);
+        let store = Store::open(&scratch);
+        let err = store
+            .load(&options(resolve(&[input], None).expect("resolve")))
+            .expect_err("refused");
+        let text = err.to_string();
+        for phrase in [
+            "75.0% of the first 200 rows (150)",
+            "2024-02-20",
+            "a new template first on line 51 (150 rows; Datetime-typed keys: logged_at)",
+            "--proceed",
+        ] {
+            assert!(text.contains(phrase), "no `{phrase}`: {text}");
+        }
+        assert!(
+            store.trie.all_leaves().is_empty(),
+            "the check made a template"
+        );
+    }
+
+    /// The head check reads at most `HEAD_LINES` lines, rows or not: an input opening on
+    /// text that is not JSON is not parsed whole, unpaced, before the paced pass. Here the
+    /// head finds no row at all and lets the load through to the count over every row,
+    /// which stops it.
+    #[test]
+    fn the_head_check_stops_at_its_line_cap_and_the_count_over_every_row_decides() {
+        let scratch = Scratch::new("head-lines");
+        let mut body: Vec<u8> = (0..HEAD_LINES + 5)
+            .flat_map(|i| format!("not json {i}\n").into_bytes())
+            .collect();
+        body.extend_from_slice(&untimed(50, 0));
+        let input = scratch.write("in/a.ndjson", &body);
+        let store = Store::open(&scratch);
+        let text = store
+            .load(&options(resolve(&[input], None).expect("resolve")))
+            .expect_err("refused")
+            .to_string();
+        assert!(
+            text.contains("100.0% of the 50 rows (50)"),
+            "not the count over every row: {text}"
+        );
+    }
+
+    /// A template with a time column whose rows held no instant there is named by that
+    /// column, not by Datetime-typed keys an operator could add: no time key would change
+    /// where its rows go.
+    #[test]
+    fn a_template_with_a_time_column_is_named_by_it_when_its_rows_fall_back() {
+        let scratch = Scratch::new("column-fell-back");
+        let mut body = spread(10_500, 1, 1);
+        for i in 0..500 {
+            body.extend_from_slice(
+                format!("{{\"ts\":\"N/A\",\"t0\":\"x\",\"n\":{i}}}\n").as_bytes(),
+            );
+        }
+        let input = scratch.write("in/a.ndjson", &body);
+        let store = Store::open(&scratch);
+        let text = store
+            .load(&options(resolve(&[input], None).expect("resolve")))
+            .expect_err("refused")
+            .to_string();
+        assert!(
+            text.contains("(500 rows; its time column `ts` held no time)"),
+            "{text}"
+        );
+    }
+
+    /// Past the head's limit and within it over every row, `--proceed` loads - and the
+    /// summary says the load was within the limit, not past it.
+    #[test]
+    fn a_load_past_only_the_head_says_it_was_within_the_limit() {
+        let scratch = Scratch::new("head-only");
+        let mut body = untimed(150, 0);
+        body.extend_from_slice(&spread(49_850, 2, 2));
+        let input = scratch.write("in/a.ndjson", &body);
+        let store = Store::open(&scratch);
+        let refused = store
+            .load(&options(
+                resolve(std::slice::from_ref(&input), None).expect("resolve"),
+            ))
+            .expect_err("the head is past the limit");
+        assert!(
+            refused.to_string().contains("of the first 10000 rows"),
+            "{refused}"
+        );
+        let (report, _) = store
+            .load(&Options {
+                proceed: true,
+                ..options(resolve(&[input], None).expect("resolve"))
+            })
+            .expect("loaded with --proceed");
+        let summary = report.summary();
+        assert!(
+            summary.contains("150 of 50,000 rows (0.3%)")
+                && summary.contains("within --max-arrival-share 1% over every row"),
+            "{summary}"
+        );
+    }
+
+    /// Past a clean head, the count is over every row, and the refusal names the templates
+    /// that fell back by id, most rows first, ten at most.
+    #[test]
+    fn the_whole_input_check_names_ten_templates_most_rows_first() {
+        let scratch = Scratch::new("whole");
+        let mut body = spread(10_500, 3, 2);
+        for k in 0..12 {
+            body.extend_from_slice(&untimed(100 + k, k));
+        }
+        let input = scratch.write("in/a.ndjson", &body);
+        let store = Store::open(&scratch);
+        let err = store
+            .load(&options(resolve(&[input], None).expect("resolve")))
+            .expect_err("refused");
+        let text = err.to_string();
+        let fell_back: usize = (0..12).map(|k| 100 + k).sum();
+        let rows = 10_500 + fell_back;
+        for phrase in [
+            format!("of the {rows} rows ({fell_back})"),
+            "(111 rows; Datetime-typed keys: logged_at)".to_string(),
+            "and 2 more".to_string(),
+        ] {
+            assert!(text.contains(&phrase), "no `{phrase}`: {text}");
+        }
+        assert!(
+            !text.contains("(100 rows;"),
+            "the fewest rows named first: {text}"
+        );
+        let staging = scratch
+            .0
+            .join("store")
+            .join(crate::store::disk::STAGING_DIR);
+        let left: Vec<_> = fs::read_dir(&staging)
+            .map(|d| d.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        assert!(left.is_empty(), "staging left: {left:?}");
     }
 }
