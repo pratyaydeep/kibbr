@@ -13,6 +13,9 @@ crc32c = "0.6.8"
 # Default features, so the inflater is `miniz_oxide` - pure Rust, no C toolchain in the
 # build and nothing new to audit for memory safety on a path that decodes hostile input.
 flate2 = "1.1"
+# The global allocator, in place of the system's - why is at `#[global_allocator]` in
+# src/main.rs. C under the hood, like zstd.
+mimalloc = "0.1.52"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
