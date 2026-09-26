@@ -213,6 +213,7 @@ fn measure(
         replace_day: None,
         max_bytes_per_sec: None,
         threads: load::alone_threads(),
+        load_buffer_bytes: load::DEFAULT_LOAD_BUFFER_BYTES,
         received_at: chrono::Utc::now(),
         // What it costs to store, not whether its times are right: a file whose rows take
         // their arrival time is stored all the same.

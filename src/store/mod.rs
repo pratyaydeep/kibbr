@@ -382,9 +382,8 @@ pub struct Scan {
 
 /// How many data files may be open for writing at once. One is open per UTC day that has
 /// taken a row since it was last sealed, so this bounds the days a burst of late rows can
-/// keep open. Past it a row whose day has no open file goes into today's file, in a row
-/// group of its own day, and the least recently written file is sealed to make room for
-/// today's when it needs opening.
+/// keep open. At it, a row whose day has no open file seals the least recently written
+/// file and opens its own day's: a row group is never filed under another day.
 pub const DEFAULT_MAX_OPEN_SEGMENTS: usize = 512;
 
 /// The memory every buffer together may hold before the largest are closed early - and
@@ -604,6 +603,61 @@ pub trait LeafStore: Send + Sync {
     }
 }
 
+/// What one query reads: the templates it asked for, as the store held them at one moment.
+///
+/// **One snapshot per query, taken as it starts.** A load or a replace publishes every
+/// template's row groups in one step, but a query that looked at each template as it
+/// reached it could straddle that step and count some templates before it and the rest
+/// after: measured, a `COUNT LOG {}` in flight across a load's commit answered 240,819 when
+/// only 60,000 or 340,000 were ever true, and a count of a day being replaced came out
+/// between its old and new counts. Every template is taken in one hold instead, and the
+/// answer comes from that.
+///
+/// A file a replace retires after the snapshot is taken stays readable until the query
+/// ends: the snapshot holds the file, and a retired file is deleted by its last holder.
+pub trait Snapshot: Send {
+    /// The store's publication count when this was taken: see `Store::generation`.
+    fn generation(&self) -> u64;
+
+    /// One template's rows as `LeafStore::visit` would have handed them over at the
+    /// moment the snapshot was taken. `opts` carries the window the snapshot was taken
+    /// with. `None` for a template it holds no leaf of: a known template with no rows.
+    ///
+    /// **Each template once**: what the snapshot held of it is let go as it is read, so a
+    /// long query does not keep the rows and files of the templates it has finished with.
+    fn visit(
+        &mut self,
+        template_id: u64,
+        opts: &ScanOptions,
+        preds: &[Predicate],
+        v: &mut dyn Visitor,
+    ) -> Option<Result<Scan, StoreError>>;
+}
+
+/// The snapshot of a store that never publishes more than one row at a time: its leaves,
+/// read as they stand when each is reached. The memory store takes no loads, so a query
+/// against it can only straddle an ingest body - which is not atomic to a query at either
+/// store.
+struct Live(BTreeMap<u64, Arc<dyn LeafStore>>);
+
+impl Snapshot for Live {
+    fn generation(&self) -> u64 {
+        0
+    }
+
+    fn visit(
+        &mut self,
+        template_id: u64,
+        opts: &ScanOptions,
+        preds: &[Predicate],
+        v: &mut dyn Visitor,
+    ) -> Option<Result<Scan, StoreError>> {
+        self.0
+            .remove(&template_id)
+            .map(|leaf| leaf.visit(opts, preds, v))
+    }
+}
+
 /// Where leaves come from, and where their rows are written. The registry lives on
 /// `StoreManager`, so this trait is the whole of what memory and disk actually differ by.
 pub trait Store: Send + Sync {
@@ -640,6 +694,25 @@ pub trait Store: Send + Sync {
     /// whose rows never leave memory, which a load is refused against.
     fn as_disk(&self) -> Option<&DiskStore> {
         None
+    }
+
+    /// How many times a load or a replace has published here, bumped in the same step as
+    /// the publish: a query that sees it move between planning and its snapshot plans
+    /// again, since a load's new templates may have joined the catalog after the plan was
+    /// made. A store with no bulk door never publishes, and stays at 0.
+    fn generation(&self) -> u64 {
+        0
+    }
+
+    /// `leaves` - the registry's open leaves of the templates a query planned - as one
+    /// `Snapshot`, taken with the query's window (`opts.since`, `opts.until`).
+    fn snapshot(
+        &self,
+        leaves: Vec<(u64, Arc<dyn LeafStore>)>,
+        opts: &ScanOptions,
+    ) -> Box<dyn Snapshot> {
+        let _ = opts;
+        Box::new(Live(leaves.into_iter().collect()))
     }
 }
 
@@ -883,6 +956,20 @@ impl StoreManager {
         }
         self.health.set_error(crate::error::chain(e));
         self.health.degrade();
+    }
+
+    /// See `Store::generation`.
+    pub fn generation(&self) -> u64 {
+        self.backend.generation()
+    }
+
+    /// The templates a query planned, in one snapshot: see `Snapshot`.
+    pub fn snapshot(&self, template_ids: &[u64], opts: &ScanOptions) -> Box<dyn Snapshot> {
+        let leaves = template_ids
+            .iter()
+            .filter_map(|id| self.lookup(*id).map(|leaf| (*id, leaf)))
+            .collect();
+        self.backend.snapshot(leaves, opts)
     }
 
     pub fn get(&self, template_id: u64) -> Result<Arc<dyn LeafStore>, StoreError> {

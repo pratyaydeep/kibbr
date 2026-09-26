@@ -1234,7 +1234,27 @@ pub fn execute(
     stores: &StoreManager,
     query: &Query,
 ) -> Result<QueryResult, ExecError> {
-    let plan = plan(trie, query);
+    let exists_only = query.mode == QueryMode::Exists;
+    let mut opts = query.scan_options();
+    let started = Instant::now();
+    // **One snapshot of every planned template**, and nothing read outside it: see
+    // `Snapshot`. Planned again if a load published between the plan and the snapshot - its
+    // new templates can have joined the catalog after the plan was made, and a snapshot
+    // holding the load's rows of the planned templates but not of those would count part of
+    // it. A publish is a load's commit, so this goes round again once per commit that lands
+    // in that gap, and no more.
+    let (plan, snapshot) = loop {
+        let before = stores.generation();
+        let plan = plan(trie, query);
+        if exists_only && query.time.is_open() {
+            break (plan, None);
+        }
+        let ids: Vec<u64> = plan.leaves.iter().map(|l| l.template_id).collect();
+        let snapshot = stores.snapshot(&ids, &opts);
+        if snapshot.generation() == before {
+            break (plan, Some(snapshot));
+        }
+    };
     let mut result = QueryResult {
         exists: !plan.leaves.is_empty(),
         meta: QueryMeta {
@@ -1245,13 +1265,9 @@ pub fn execute(
         },
         ..QueryResult::default()
     };
-    let exists_only = query.mode == QueryMode::Exists;
-    if exists_only && query.time.is_open() {
+    let Some(mut snapshot) = snapshot else {
         return Ok(result);
-    }
-
-    let started = Instant::now();
-    let mut opts = query.scan_options();
+    };
     let mut newest = Newest::new(query.limit);
     // Split once rather than per leaf: the width decides the time axis and the columns
     // decide the label, and neither changes between leaves.
@@ -1267,12 +1283,6 @@ pub fn execute(
     let mut tally = Tally::new();
 
     for leaf in &plan.leaves {
-        // A planned leaf with no store is a known template holding no rows: the second
-        // of the two empty answers, reached without an error.
-        let Some(store) = stores.lookup(leaf.template_id) else {
-            continue;
-        };
-        result.meta.leaves_opened += 1;
         let preds: Vec<Predicate> = leaf.residual.iter().map(predicate).collect();
         let ts = leaf.time_column.as_str();
         opts.ts_column = Some(leaf.time_column.clone());
@@ -1305,10 +1315,11 @@ pub fn execute(
         // whole days skipped before they are opened, through `wants_partition`.
         opts.limit = if exists_only { 1 } else { 0 };
 
+        let id = leaf.template_id;
         let scan = match &query.mode {
             // One row is the whole answer, and `visit` stops on it.
             QueryMode::Exists | QueryMode::Count => {
-                store.visit(&opts, &preds, &mut Rows(|_: &Row, _| {}))?
+                snapshot.visit(id, &opts, &preds, &mut Rows(|_: &Row, _| {}))
             }
             QueryMode::Fetch => {
                 let mut fetch = Fetch {
@@ -1317,11 +1328,12 @@ pub fn execute(
                     ts,
                     after: query.cursor.map(|c| c.rank),
                 };
-                store.visit(&opts, &preds, &mut fetch)?
+                snapshot.visit(id, &opts, &preds, &mut fetch)
             }
             QueryMode::GroupBy(_) => {
                 let (tally, columns) = (&mut tally, &columns);
-                store.visit(
+                snapshot.visit(
+                    id,
                     &opts,
                     &preds,
                     &mut Rows(|row: &Row, _| {
@@ -1334,9 +1346,16 @@ pub fn execute(
                             .entry((bucket, group_values(row, columns)))
                             .or_insert(0) += 1;
                     }),
-                )?
+                )
             }
         };
+        // A planned template with no leaf is a known template holding no rows: the second
+        // of the two empty answers, reached without an error.
+        let Some(scan) = scan else {
+            continue;
+        };
+        let scan = scan?;
+        result.meta.leaves_opened += 1;
 
         result.meta.files_opened += scan.files_read;
         result.meta.rows_scanned += scan.scanned;
@@ -1378,7 +1397,8 @@ pub fn execute(
     result.meta.truncated =
         query.mode == QueryMode::Fetch && result.meta.rows_returned < result.count;
     result.meta.limit_source = query.limit_source;
-    result.meta.duration = plan.duration + started.elapsed();
+    // From before the plan: a plan made again for a publish that landed under it counts.
+    result.meta.duration = started.elapsed();
     Ok(result)
 }
 
@@ -1515,6 +1535,88 @@ mod tests {
                 max_groups: 0,
             },
         )
+    }
+
+    /// A load that publishes between a query's plan and its snapshot can have added a
+    /// template the plan never saw - its rows in the snapshot for the planned templates, and
+    /// not for that one. The query sees the publish count move and plans again, so the new
+    /// template is in the answer.
+    #[test]
+    fn a_publish_between_the_plan_and_the_snapshot_plans_again() {
+        use crate::store::{
+            LeafStore, MemoryStore, Predicate, Scan, ScanOptions, Snapshot, Store, StoreError,
+            Visitor,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+
+        /// A store whose first snapshot finds that a load has just published a new
+        /// template, as one landing in that gap would.
+        struct Publishing {
+            inner: MemoryStore,
+            trie: Arc<Trie>,
+            generation: AtomicU64,
+            published: AtomicBool,
+        }
+        struct Taken(u64);
+        impl Snapshot for Taken {
+            fn generation(&self) -> u64 {
+                self.0
+            }
+            fn visit(
+                &mut self,
+                _: u64,
+                _: &ScanOptions,
+                _: &[Predicate],
+                _: &mut dyn Visitor,
+            ) -> Option<Result<Scan, StoreError>> {
+                None
+            }
+        }
+        impl Store for Publishing {
+            fn open(&self, id: u64, column: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
+                self.inner.open(id, column)
+            }
+            fn kind(&self) -> &'static str {
+                "publishing"
+            }
+            fn base_path(&self) -> Option<&std::path::Path> {
+                None
+            }
+            fn generation(&self) -> u64 {
+                self.generation.load(Ordering::SeqCst)
+            }
+            fn snapshot(
+                &self,
+                _: Vec<(u64, Arc<dyn LeafStore>)>,
+                _: &ScanOptions,
+            ) -> Box<dyn Snapshot> {
+                if !self.published.swap(true, Ordering::SeqCst) {
+                    let line = br#"{"ts":"2024-01-15T12:00:00Z","loaded":"yes","batch":7}"#;
+                    let parsed = crate::flatten::parse_line(line, 1).expect("a line");
+                    self.trie
+                        .ingest(&parsed, chrono::Utc::now())
+                        .expect("a new template");
+                    self.generation.fetch_add(1, Ordering::SeqCst);
+                }
+                Box::new(Taken(self.generation.load(Ordering::SeqCst)))
+            }
+        }
+
+        let trie = Arc::new(db().trie);
+        let stores = StoreManager::new(Box::new(Publishing {
+            inner: MemoryStore::new(),
+            trie: Arc::clone(&trie),
+            generation: AtomicU64::new(0),
+            published: AtomicBool::new(false),
+        }));
+        let q = query(QueryMode::Count, None, None);
+        let planned = plan(&trie, &q).leaves.len();
+        let result = execute(&trie, &stores, &q).expect("execute");
+        assert_eq!(
+            result.meta.templates_matched,
+            planned + 1,
+            "the template published under the plan is not in the answer"
+        );
     }
 
     fn bucketed(width: u64) -> QueryMode {
