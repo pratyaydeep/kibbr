@@ -207,24 +207,33 @@ enum Command {
         /// allowed with this, since it replaces them.
         #[arg(long, value_name = "YYYY-MM-DD")]
         replace_day: Option<String>,
-        /// Read at most this many megabytes of input a second, after decompression - so a
-        /// load leaves the machine to the live door.
+        /// Parse and encode at most this many megabytes of input a second, after
+        /// decompression, over the whole load - so a load leaves the machine to the live
+        /// door. The quick reads before it, for the load id and the arrival check, are not
+        /// held to it; their time counts toward the rate, up to a second.
         #[arg(long, value_name = "MB")]
         max_mb_per_sec: Option<f64>,
         /// Threads to parse and encode on, at most one per core. [default: one per core up
         /// to 8 alone, half that inside a server]
         #[arg(long, value_name = "N")]
         threads: Option<usize>,
+        /// Memory the load may hold rows in before it writes them - open row groups and
+        /// closed ones not yet written, together. Past it the largest are written early, as
+        /// smaller row groups, so a load inside a server cannot crowd the live door out of
+        /// memory. [default: 64 MiB]
+        #[arg(long, value_name = "BYTES")]
+        load_buffer_bytes: Option<usize>,
         /// The arrival time given to rows with no time of their own. [default: now]
         #[arg(long, value_name = "RFC3339")]
         received_at: Option<String>,
-        /// Load even when more of the input's first 10,000 rows than --max-arrival-share
-        /// have no time of their own and would be stored at their arrival time - now, or
-        /// --received-at.
+        /// Load even when more than --max-arrival-share of the rows have no time of their
+        /// own and would be stored at their arrival time - now, or --received-at.
         #[arg(long)]
         proceed: bool,
-        /// The percentage of the first 10,000 rows that may fall back to arrival time
-        /// before the load stops. [default: 1]
+        /// The percentage of rows that may fall back to arrival time before the load
+        /// stops, loading nothing: of every row, counted before the commit - and of the
+        /// first 10,000, checked before anything is written, so a file with no time from
+        /// its first line stops at once. [default: 1]
         #[arg(long, value_name = "PERCENT")]
         max_arrival_share: Option<f64>,
         /// As `serve --time-columns`: the key names a new template's time column is chosen
@@ -462,6 +471,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             replace_day,
             max_mb_per_sec,
             threads,
+            load_buffer_bytes,
             received_at,
             proceed,
             max_arrival_share,
@@ -485,6 +495,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 replace_day,
                 max_mb_per_sec,
                 threads,
+                load_buffer_bytes,
                 received_at,
                 proceed,
                 max_arrival_share,

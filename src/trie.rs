@@ -781,20 +781,11 @@ impl Trie {
                 if time_source == TimeSource::Arrival {
                     // One WARN per template, naming the keys an operator could add to
                     // `time_columns` to give it a time of its own.
-                    let dated: Vec<&str> = columns
-                        .iter()
-                        .filter(|c| c.col_type == Some(ColumnType::Datetime))
-                        .map(|c| c.name.as_str())
-                        .collect();
                     eprintln!(
                         "triedb: WARN template {template_id} has no time column among \
                          [{}]; its rows take their arrival time. Datetime-typed keys: {}",
                         self.time_columns.join(", "),
-                        if dated.is_empty() {
-                            "none".to_string()
-                        } else {
-                            dated.join(", ")
-                        }
+                        datetime_keys(columns.iter().map(|c| (c.name.as_str(), c.col_type)))
                     );
                 }
 
@@ -900,6 +891,25 @@ impl Trie {
         };
         drop(slot);
         Ok((leaf, is_new))
+    }
+}
+
+/// The keys an operator could add to `time_columns` to give a template a time of its own -
+/// those typed `Datetime`, comma-separated, or `none`. One spelling for the WARN a template
+/// on arrival time is made with and for the bulk loader's refusal naming it, so the two
+/// cannot name different keys for one template.
+pub fn datetime_keys<'a>(
+    columns: impl IntoIterator<Item = (&'a str, Option<ColumnType>)>,
+) -> String {
+    let dated: Vec<&str> = columns
+        .into_iter()
+        .filter(|(_, ty)| *ty == Some(ColumnType::Datetime))
+        .map(|(name, _)| name)
+        .collect();
+    if dated.is_empty() {
+        "none".to_string()
+    } else {
+        dated.join(", ")
     }
 }
 

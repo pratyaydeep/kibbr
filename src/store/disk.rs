@@ -59,7 +59,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate};
 
@@ -69,8 +69,8 @@ use super::v3::file::{self, Entry, Index, Mark, Reader, Writer};
 use super::v3::{day_of, FormatError, Source, DAY_NS};
 use super::{
     effective_ts, in_window, lock, nanos_of, render_row, value_bytes, DiskOptions, FlushKind,
-    Flushed, LeafStore, Predicate, Row, RowGroupLimits, Scan, ScanOptions, Store, StoreError,
-    Visitor, DEFAULT_TS_COLUMN,
+    Flushed, LeafStore, Predicate, Row, RowGroupLimits, Scan, ScanOptions, Snapshot, Store,
+    StoreError, Visitor, DEFAULT_TS_COLUMN,
 };
 
 pub const DATA_DIR: &str = "data";
@@ -82,11 +82,6 @@ pub const DEFAULT_SEGMENT_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
 fn warn(message: String) {
     eprintln!("triedb: WARN {message}");
-}
-
-/// Today, as days since the epoch, by the system clock.
-fn today_utc() -> i64 {
-    day_of(nanos_of(SystemTime::now()))
 }
 
 // ── Names ──────────────────────────────────────────────────────────────────────────
@@ -227,8 +222,8 @@ struct Open {
     rel: String,
     /// Each schema's columns, shared by every `Stored` that names it.
     schemas: HashMap<u32, Arc<Vec<String>>>,
-    /// The flush that last wrote to it. Past the cap on open files the least recently
-    /// written is sealed first.
+    /// The flush that last wrote to it. At the cap on open files the least recently
+    /// written is sealed to make room.
     written: u64,
     /// Where the running flush began writing to it: what a failed flush cuts it back to.
     began: Option<Mark>,
@@ -253,8 +248,12 @@ struct Files {
     data: PathBuf,
     manifest: Manifest,
     /// The manifest's live files, kept current with every record appended: what
-    /// replace-a-day retires, and what it looks through for its day's rows elsewhere.
+    /// replace-a-day takes its day's directory from and retires.
     live: BTreeMap<String, FileRecord>,
+    /// Days a file found at startup shares with another day, and that file: see
+    /// `day_files`. Only a directory written before a row always went into its own day's
+    /// file can have one, and nothing this process writes adds to it.
+    mixed: BTreeMap<i64, String>,
     /// Every load a record names as its source. A repeat is refused by its id.
     loads: BTreeSet<u64>,
     /// Loads committed whose files could not all be moved out of staging: this process's
@@ -282,24 +281,25 @@ impl Files {
         Ok(())
     }
 
-    /// The day directory whose file a row group of `day` goes into.
-    ///
-    /// Its own day's, when that is open or there is room to open it. **Past the cap on open
-    /// days, today's**, as a row group of its own day among today's. A reader skips a file
-    /// by the time range its index holds and never by its directory's name, so a late row is
-    /// found wherever it went; and a burst of rows from a hundred old days costs today's
-    /// file a hundred row groups instead of costing the process a hundred open files.
-    fn target(&self, day: i64, today: i64) -> i64 {
-        if self.open.contains_key(&day) || self.open.len() < self.max_open.max(1) {
-            day
-        } else {
-            today
-        }
+    /// Whether a file must be sealed before `day` can open one: it has none open, and the
+    /// cap on open files is reached.
+    fn full_for(&self, day: i64) -> bool {
+        !self.open.contains_key(&day) && self.open.len() >= self.max_open.max(1)
+    }
+
+    /// The open file to seal to make room: one no batch still to be written in this flush
+    /// wants, if there is one - sealing a day about to be written would only open its next
+    /// number a moment later - and then the least recently written, the older day first
+    /// between two written by the same flush.
+    fn least_recent(&self, wanted: &BTreeMap<i64, usize>) -> Option<i64> {
+        self.open
+            .iter()
+            .min_by_key(|(day, open)| (wanted.contains_key(day), open.written, **day))
+            .map(|(day, _)| *day)
     }
 
     /// The open file in `dir`'s directory, created and named in the manifest if there is
-    /// none. Never refused for the cap: `settle` brings the count back under it once the
-    /// flush has written, so no file this flush wrote to is sealed before it is flushed.
+    /// none. The caller has made room for it under the cap first (`full_for`).
     fn open_in(&mut self, dir: i64) -> Result<&mut Open, StoreError> {
         if !self.open.contains_key(&dir) {
             let path_dir = self.data.join(day_name(dir));
@@ -348,25 +348,23 @@ impl Files {
         })
     }
 
-    /// Append one moved-aside batch's row groups, encoded, to its day's file - or today's -
-    /// and the directory it went to. Not flushed: a flush appends every batch that is due
-    /// first, and then flushes each file it wrote to once.
+    /// Append one moved-aside batch's row groups, encoded, to its day's file. Not
+    /// flushed: a flush appends every batch that is due first, and then flushes each file
+    /// it wrote to once.
     fn write(
         &mut self,
         moved: &Moved,
         encoded: Vec<EncodedRowGroup>,
-        today: i64,
-    ) -> Result<(i64, Vec<Stored>), StoreError> {
+    ) -> Result<Vec<Stored>, StoreError> {
         // A batch that did not encode whole touches no file.
         let encoded = encoded.into_iter().collect::<Result<Vec<_>, _>>()?;
-        let dir = self.target(moved.day, today);
         let flushes = self.flushes;
-        let open = self.open_in(dir)?;
+        let open = self.open_in(moved.day)?;
         open.written = flushes;
         let mark = open.writer.mark();
         open.began.get_or_insert(mark);
         match append_row_groups(open, moved.leaf.template_id, encoded) {
-            Ok(stored) => Ok((dir, stored)),
+            Ok(stored) => Ok(stored),
             Err(e) => {
                 // Whatever of this batch reached the file is cut back, so the batches either
                 // side of it are still written and flushed: one bad batch costs its own rows
@@ -403,10 +401,10 @@ impl Files {
         }
     }
 
-    /// After a flush: seal every file past the size cap, and then the least recently
-    /// written until no more than the cap are open - never today's, which is where late rows
-    /// go. What was sealed, and what could not be.
-    fn settle(&mut self, today: i64) -> (usize, Vec<StoreError>) {
+    /// After a flush: seal every file past the size cap. What was sealed, and what could
+    /// not be. The cap on open files needs nothing here: the flush made room under it
+    /// before it opened each file.
+    fn settle(&mut self) -> (usize, Vec<StoreError>) {
         let mut errors = Vec::new();
         for open in self.open.values_mut() {
             open.began = None;
@@ -431,30 +429,12 @@ impl Files {
                 }));
             }
         }
-        let mut seal: Vec<i64> = self
+        let seal: Vec<i64> = self
             .open
             .iter()
             .filter(|(_, open)| open.writer.len() >= self.max_bytes)
             .map(|(day, _)| *day)
             .collect();
-        let cap = self.max_open.max(1);
-        let mut left = self.open.len() - seal.len();
-        if left > cap {
-            let mut idle: Vec<(u64, i64)> = self
-                .open
-                .iter()
-                .filter(|(day, _)| **day != today && !seal.contains(day))
-                .map(|(day, open)| (open.written, *day))
-                .collect();
-            idle.sort_unstable();
-            for (_, day) in idle {
-                if left <= cap {
-                    break;
-                }
-                seal.push(day);
-                left -= 1;
-            }
-        }
         let (sealed, failed) = self.seal_days(seal);
         errors.extend(failed);
         (sealed, errors)
@@ -496,77 +476,31 @@ impl Files {
 impl Files {
     /// Every live file in `day`'s directory: what replace-a-day retires.
     ///
-    /// **Refused, naming the file, when a directory and a day do not coincide.** A row
-    /// group goes into its own day's directory unless the open-day cap was reached, in which
-    /// case it went into today's - so a directory can hold another day's rows, and a day can
-    /// have rows in another directory. Retiring the directory would then take rows of other
-    /// days with it, or leave some of this day's behind beside the new ones: either way the
-    /// day's count would not be what the load holds. Only a store that has run past the
-    /// open-day cap can be in that state, and the file named says where.
+    /// The directory is the day: a row group goes into its own day's file and no other's,
+    /// whatever the cap on open files, so retiring the directory takes every row of the
+    /// day and nothing of any other. **Refused, naming the file, for a day a file found at
+    /// startup shares with another day** - a directory written while a late row still went
+    /// into today's file. Retiring the directory would then take the other day's rows with
+    /// it, or leave some of this day's beside the new ones, and the day's count would not
+    /// be what the load holds.
     fn day_files(&self, day: i64) -> Result<Vec<String>, StoreError> {
-        let prefix = format!("{}/", day_name(day));
-        let refuse = |rel: &str, why: String| StoreError::ReplaceRefused {
-            day: day_name(day),
-            path: rel.to_string(),
-            why,
-        };
-        let mut out = Vec::new();
-        for (rel, record) in &self.live {
-            let inside = rel.starts_with(&prefix);
-            // A file's days: its row groups' own, from the writer's index while it is open
-            // and from the footer once sealed. The manifest's range alone cannot say
-            // whether a file spanning three days holds a row of the middle one.
-            let days: BTreeSet<i64> = match self.open.values().find(|o| &o.rel == rel) {
-                Some(open) => open
-                    .writer
-                    .index()
-                    .entries
-                    .iter()
-                    .map(|e| day_of(e.min_time))
-                    .collect(),
-                None if record.rows == Some(0) => BTreeSet::new(),
-                None if inside
-                    && record.min_ts.map(day_of) == Some(day)
-                    && record.max_ts.map(day_of) == Some(day) =>
-                {
-                    BTreeSet::from([day])
-                }
-                None if !inside
-                    && record
-                        .min_ts
-                        .zip(record.max_ts)
-                        .is_some_and(|(lo, hi)| day < day_of(lo) || day > day_of(hi)) =>
-                {
-                    BTreeSet::new()
-                }
-                None => file::open_sealed(&self.data.join(rel))?
-                    .map(|index| index.entries.iter().map(|e| day_of(e.min_time)).collect())
-                    .unwrap_or_default(),
-            };
-            if inside {
-                if let Some(other) = days.iter().find(|d| **d != day) {
-                    return Err(refuse(
-                        rel,
-                        format!(
-                            "it also holds rows of {}, which went into it past the cap on open days; \
-                             retiring it would take them too",
-                            day_name(*other)
-                        ),
-                    ));
-                }
-                out.push(rel.clone());
-            } else if days.contains(&day) {
-                return Err(refuse(
-                    rel,
-                    format!(
-                        "it holds rows of {}, which went into it past the cap on open days; they \
-                         would stay beside the new ones",
-                        day_name(day)
-                    ),
-                ));
-            }
+        if let Some(rel) = self.mixed.get(&day) {
+            return Err(StoreError::ReplaceRefused {
+                day: day_name(day),
+                path: rel.clone(),
+                why: "it holds row groups of more than one day - written before every row went \
+                      into its own day's file - so retiring the day's directory would take \
+                      another day's rows or leave some of this day's"
+                    .to_string(),
+            });
         }
-        Ok(out)
+        let prefix = format!("{}/", day_name(day));
+        Ok(self
+            .live
+            .keys()
+            .filter(|rel| rel.starts_with(&prefix))
+            .cloned()
+            .collect())
     }
 }
 
@@ -729,8 +663,18 @@ pub struct DiskStore {
     /// Threads a flush encodes row groups on: one per core, up to eight.
     encoders: usize,
     files: Mutex<Files>,
-    /// Every leaf this store has opened, for a flush to walk.
-    leaves: RwLock<Vec<Arc<DiskLeaf>>>,
+    /// Every leaf this store has opened, by template: for a flush to walk, and for a query
+    /// to take its snapshot from in the hold a load publishes under.
+    leaves: RwLock<BTreeMap<u64, Arc<DiskLeaf>>>,
+    /// Held in write by a load's publish, and in read by a query's snapshot while it
+    /// freezes its leaves: a snapshot is wholly before a publish or wholly after it. Apart
+    /// from `leaves`, which a template's first row takes in write to add its leaf: a wide
+    /// query's freezes held there would stall that row - and, behind it, every ingest body
+    /// and every query waiting on the registry - for as long as they took.
+    publish: RwLock<()>,
+    /// Loads and replaces published so far: see `Store::generation`. Bumped under the
+    /// write hold of `publish`, and read under a read hold.
+    generation: AtomicU64,
     /// Row groups on disk with no leaf open yet - found at startup, or committed by a load
     /// since - by template, in storage order. A leaf takes its own
     /// when it opens; a template no catalog record names keeps them here, unread.
@@ -742,9 +686,6 @@ pub struct DiskStore {
     /// Files open for writing as the last flush left them. Read by `/stats`, without the
     /// files lock a flush holds across the disk.
     open_count: AtomicUsize,
-    /// Today, as days since the epoch: where a late row goes once the open days are
-    /// capped. A function and not a call to the clock, so a test can say when today is.
-    today: fn() -> i64,
 }
 
 impl DiskStore {
@@ -805,6 +746,7 @@ impl DiskStore {
 
         let mut next: BTreeMap<i64, u32> = BTreeMap::new();
         let mut stored: BTreeMap<u64, Vec<Stored>> = BTreeMap::new();
+        let mut mixed: BTreeMap<i64, String> = BTreeMap::new();
         let mut seals = Vec::new();
         for (rel, record) in &live {
             let path = data.join(rel);
@@ -868,6 +810,16 @@ impl DiskStore {
                 }
                 .into());
             }
+            // A row group of another day than its directory's: filed there, past the cap on
+            // open days, by a build that sent a late row into today's file. Both days are
+            // noted, with the file, for `day_files` to refuse.
+            for e in &index.entries {
+                let other = day_of(e.min_time);
+                if other != day {
+                    mixed.entry(day).or_insert_with(|| rel.clone());
+                    mixed.entry(other).or_insert_with(|| rel.clone());
+                }
+            }
             index_rows(&mut stored, Arc::new(DataFile::new(path)), &index);
         }
         if !seals.is_empty() {
@@ -887,6 +839,7 @@ impl DiskStore {
                 data,
                 manifest,
                 live,
+                mixed,
                 loads,
                 unmoved: BTreeSet::new(),
                 open: BTreeMap::new(),
@@ -895,12 +848,13 @@ impl DiskStore {
                 max_bytes: options.segment_max_bytes,
                 flushes: 0,
             }),
-            leaves: RwLock::new(Vec::new()),
+            leaves: RwLock::new(BTreeMap::new()),
+            publish: RwLock::new(()),
+            generation: AtomicU64::new(0),
             stored: Mutex::new(stored),
             claimed,
             buffered: Arc::new(AtomicU64::new(0)),
             open_count: AtomicUsize::new(0),
-            today: today_utc,
         })
     }
 
@@ -1078,11 +1032,11 @@ impl DiskStore {
     /// A committed load's row groups into the leaves - and into `stored`, for a template
     /// with no leaf open - and the retired files' out, in one hold of the leaves' lock.
     ///
-    /// **Per leaf, one step**: a query of one template sees the day as it was or as the
-    /// load left it, never with the old row groups gone and the new ones not yet there.
-    /// Across templates it is the live door's rule - a query running beside a commit can
-    /// see some templates' rows of it and not yet others' - and a query that starts once
-    /// the load has answered sees all of it.
+    /// **One step, across every template**: the swap and the `generation` bump happen in
+    /// one write hold of `publish`, the lock a query's snapshot freezes its leaves under in
+    /// read - so a query counts all of a load or none of it, and a replaced day as it was or
+    /// as the load left it, never some templates' rows of it and not others'. See
+    /// `Snapshot`.
     fn publish_load(
         &self,
         data: &Path,
@@ -1097,8 +1051,10 @@ impl DiskStore {
         }
         let mut taken: Vec<Arc<DataFile>> = Vec::new();
         {
+            let _publishing = self.publish.write().unwrap_or_else(|e| e.into_inner());
             let leaves = self.leaves.write().unwrap_or_else(|e| e.into_inner());
-            for leaf in leaves.iter() {
+            self.generation.fetch_add(1, Ordering::Relaxed);
+            for leaf in leaves.values() {
                 let rows = new.remove(&leaf.template_id).unwrap_or_default();
                 if !gone.is_empty() || !rows.is_empty() {
                     taken.extend(leaf.swap(&gone, rows));
@@ -1140,7 +1096,9 @@ impl DiskStore {
             .leaves
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .clone();
+            .values()
+            .cloned()
+            .collect();
         let now = Instant::now();
         let mut done = Flushed::default();
 
@@ -1156,42 +1114,73 @@ impl DiskStore {
         // ── 2. Encode, write and flush them, holding no leaf's lock ──
         //
         // Encoded side by side first - nearly all of the cost, and none of it needs the
-        // file - then numbered, framed and appended one at a time, in order.
-        let today = (self.today)();
+        // file - then numbered, framed and appended one at a time, day by day: a day's
+        // file is opened once per flush however many templates wrote to it.
         let jobs = jobs_of(&moved, &self.limits);
         let mut encoded = encode_all(&moved, &jobs, self.encoders).into_iter();
-        let mut written: Vec<Result<Vec<Stored>, StoreError>> = Vec::with_capacity(moved.len());
-        let mut by_file: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
+        let mut per_batch: Vec<Vec<EncodedRowGroup>> = Vec::with_capacity(moved.len());
         let mut first_job = 0;
-        for (at, m) in moved.iter().enumerate() {
+        for at in 0..moved.len() {
             let count = jobs[first_job..]
                 .iter()
                 .take_while(|j| j.moved == at)
                 .count();
             first_job += count;
-            let mine: Vec<_> = encoded.by_ref().take(count).collect();
-            written.push(match files.write(m, mine, today) {
-                Ok((dir, stored)) => {
-                    by_file.entry(dir).or_default().push(at);
-                    Ok(stored)
-                }
-                Err(e) => Err(e),
-            });
+            per_batch.push(encoded.by_ref().take(count).collect());
         }
-        for (dir, ats) in by_file {
-            match files.sync(dir) {
-                Ok(()) => done.syncs += 1,
-                Err(e) => {
-                    let why = e.to_string();
-                    let mut first = Some(e);
-                    for at in ats {
-                        written[at] = Err(first.take().unwrap_or_else(|| StoreError::Io {
-                            template_id: moved[at].leaf.template_id,
-                            source: std::io::Error::other(why.clone()),
-                        }));
-                    }
+        let mut written: Vec<Result<Vec<Stored>, StoreError>> =
+            (0..moved.len()).map(|_| Ok(Vec::new())).collect();
+        let mut by_file: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
+        let mut seal_failed = Vec::new();
+        // Days with a file open first: by the time a day needs room, every open file this
+        // flush will write to has been written, so the one sealed for it is never one a
+        // later batch wants - a day is sealed and opened again as its next number only when
+        // more days than the cap want a file in one flush.
+        let mut order: Vec<usize> = (0..moved.len()).collect();
+        order.sort_by_key(|at| {
+            let day = moved[*at].day;
+            (!files.open.contains_key(&day), day)
+        });
+        let mut wanted: BTreeMap<i64, usize> = BTreeMap::new();
+        for m in &moved {
+            *wanted.entry(m.day).or_default() += 1;
+        }
+        for at in order {
+            let day = moved[at].day;
+            if let Some(left) = wanted.get_mut(&day) {
+                *left -= 1;
+                if *left == 0 {
+                    wanted.remove(&day);
                 }
             }
+            // **At the cap, the least recently written file is sealed and the row's own day
+            // opened** - never another day's file. A late row once went into today's file
+            // instead, as a row group of its own day: its day was then split across two
+            // directories in an order a restart read differently from the order it was
+            // written in - tied rows swapped places, and a cursor from before the restart
+            // repeated one and skipped the other - and no replace could retire the day
+            // without taking another's rows or leaving some of its own. What this costs is
+            // a seal and an open per late day past the cap, where the spill cost a row
+            // group in a file already open.
+            if files.full_for(day) {
+                if let Some(victim) = files.least_recent(&wanted) {
+                    // Written by this flush and not yet flushed: flushed first, so nothing
+                    // sealed holds row groups a failed flush would still cut back.
+                    if let Some(ats) = by_file.remove(&victim) {
+                        self.sync_into(files, victim, ats, &moved, &mut written, &mut done);
+                    }
+                    let (sealed, failed) = files.seal_days(vec![victim]);
+                    done.sealed += sealed;
+                    seal_failed.extend(failed);
+                }
+            }
+            written[at] = files.write(&moved[at], std::mem::take(&mut per_batch[at]));
+            if written[at].is_ok() {
+                by_file.entry(day).or_default().push(at);
+            }
+        }
+        for (dir, ats) in by_file {
+            self.sync_into(files, dir, ats, &moved, &mut written, &mut done);
         }
 
         // ── 3. Publish each row group and drop the rows it holds: one more short hold ──
@@ -1222,23 +1211,44 @@ impl DiskStore {
             }
         }
 
-        // ── 4. Seal: every file on a final flush, and otherwise those a cap says to ──
-        let (sealed, seal_failed) = match only {
+        // ── 4. Seal: every file on a final flush, and otherwise those past the size cap ──
+        let (sealed, failed) = match only {
             Some(day) => files.seal_days(vec![day]),
             None if kind.is_final() => files.seal_all(),
-            None => files.settle(today),
+            None => files.settle(),
         };
-        done.sealed = sealed;
+        done.sealed += sealed;
+        seal_failed.extend(failed);
         done.seal_failed = seal_failed;
         self.open_count.store(files.open.len(), Ordering::Relaxed);
         done
     }
 
-    /// The same store, with `today` saying which day is today.
-    #[cfg(test)]
-    fn with_today(mut self, today: fn() -> i64) -> Self {
-        self.today = today;
-        self
+    /// Flush one file this flush wrote to, and if that fails, fail every batch written to
+    /// it: the file was cut back to where the flush began, so their rows go back to their
+    /// buffers.
+    fn sync_into(
+        &self,
+        files: &mut Files,
+        dir: i64,
+        ats: Vec<usize>,
+        moved: &[Moved],
+        written: &mut [Result<Vec<Stored>, StoreError>],
+        done: &mut Flushed,
+    ) {
+        match files.sync(dir) {
+            Ok(()) => done.syncs += 1,
+            Err(e) => {
+                let why = e.to_string();
+                let mut first = Some(e);
+                for at in ats {
+                    written[at] = Err(first.take().unwrap_or_else(|| StoreError::Io {
+                        template_id: moved[at].leaf.template_id,
+                        source: std::io::Error::other(why.clone()),
+                    }));
+                }
+            }
+        }
     }
 
     /// Past the memory limit, move aside the largest buffers left as well, largest first,
@@ -1492,7 +1502,7 @@ impl Store for DiskStore {
             held: Arc::clone(&self.buffered),
             state: Mutex::new(LeafState { days, buffered: 0 }),
         });
-        leaves.push(Arc::clone(&leaf));
+        leaves.insert(template_id, Arc::clone(&leaf));
         Ok(leaf)
     }
 
@@ -1523,6 +1533,64 @@ impl Store for DiskStore {
 
     fn buffer_bytes(&self) -> (u64, u64) {
         (self.buffered.load(Ordering::Relaxed), self.max_buffer_bytes)
+    }
+
+    fn generation(&self) -> u64 {
+        let _publishing = self.publish.read().unwrap_or_else(|e| e.into_inner());
+        self.generation.load(Ordering::Relaxed)
+    }
+
+    /// Every planned template's leaf, frozen in one read hold of `publish` - the hold a
+    /// load's publish waits for in write, and bumps `generation` under - so the snapshot is
+    /// wholly before a commit or wholly after it. The registry's leaves say which templates
+    /// have one; this store's own are the ones it can freeze.
+    fn snapshot(
+        &self,
+        leaves: Vec<(u64, Arc<dyn LeafStore>)>,
+        opts: &ScanOptions,
+    ) -> Box<dyn Snapshot> {
+        let since = opts.since.map(nanos_of);
+        let until = opts.until.map(nanos_of);
+        let _publishing = self.publish.read().unwrap_or_else(|e| e.into_inner());
+        let mine: Vec<(u64, Arc<DiskLeaf>)> = {
+            let held = self.leaves.read().unwrap_or_else(|e| e.into_inner());
+            leaves
+                .into_iter()
+                .filter_map(|(id, _)| held.get(&id).map(|leaf| (id, Arc::clone(leaf))))
+                .collect()
+        };
+        let frozen = mine
+            .into_iter()
+            .map(|(id, leaf)| (id, leaf.freeze(since, until)))
+            .collect();
+        Box::new(DiskSnapshot {
+            generation: self.generation.load(Ordering::Relaxed),
+            leaves: frozen,
+        })
+    }
+}
+
+/// A query's snapshot of the disk store: see `Snapshot`.
+struct DiskSnapshot {
+    generation: u64,
+    leaves: BTreeMap<u64, Frozen>,
+}
+
+impl Snapshot for DiskSnapshot {
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn visit(
+        &mut self,
+        template_id: u64,
+        opts: &ScanOptions,
+        preds: &[Predicate],
+        v: &mut dyn Visitor,
+    ) -> Option<Result<Scan, StoreError>> {
+        self.leaves
+            .remove(&template_id)
+            .map(|frozen| frozen.visit(opts, preds, v))
     }
 }
 
@@ -1837,6 +1905,23 @@ impl DiskLeaf {
         };
     }
 
+    /// Every day a query over `[since, until)` can use, newest first, copied in one hold of
+    /// the lock - `View`s share the row groups and rows, so this is counts and pointers,
+    /// not rows - and the row groups of the days the window rules out, counted as pruned.
+    fn freeze(&self, since: Option<i64>, until: Option<i64>) -> Frozen {
+        let windowed = since.is_some() || until.is_some();
+        let state = self.state();
+        let mut frozen = Frozen::default();
+        for (day, part) in state.days.iter().rev() {
+            if windowed && !Self::overlaps(*day, part.span(), since, until) {
+                frozen.pruned += part.stored.len() as u64;
+                continue;
+            }
+            frozen.views.push(part.view());
+        }
+        frozen
+    }
+
     /// How many rows this day contributes to `count`, if that can be known without reading
     /// it: no predicate could reject a row, and the window holds the whole day's range.
     fn countable(
@@ -1974,6 +2059,47 @@ impl DiskLeaf {
     }
 }
 
+/// One leaf as a query found it: see `DiskLeaf::freeze`. Read with no lock held.
+#[derive(Default)]
+struct Frozen {
+    views: Vec<View>,
+    pruned: u64,
+}
+
+impl Frozen {
+    /// The frozen days' rows, newest day first. `opts` must carry the window it was frozen
+    /// with: the days it ruled out were not copied.
+    fn visit(
+        &self,
+        opts: &ScanOptions,
+        preds: &[Predicate],
+        v: &mut dyn Visitor,
+    ) -> Result<Scan, StoreError> {
+        let since = opts.since.map(nanos_of);
+        let until = opts.until.map(nanos_of);
+        let mut out = Scan {
+            row_groups_pruned: self.pruned,
+            ..Scan::default()
+        };
+        let mut readers = HashMap::new();
+        for view in &self.views {
+            if !v.wants_partition(view.span.map(|(_, hi)| hi)) {
+                // The visitor has no use for a row from here, but a limit bounds the rows in
+                // the answer and not the rows that matched: the day is still counted, free
+                // when nothing inside it could reject a row, and read otherwise.
+                if let Some(matched) = DiskLeaf::countable(view, preds, since, until) {
+                    out.matched += matched;
+                    continue;
+                }
+            }
+            if !DiskLeaf::visit_day(view, opts, preds, v, &mut out, &mut readers)? {
+                break;
+            }
+        }
+        Ok(out)
+    }
+}
+
 impl LeafStore for DiskLeaf {
     fn template_id(&self) -> u64 {
         self.template_id
@@ -2027,38 +2153,8 @@ impl LeafStore for DiskLeaf {
         preds: &[Predicate],
         v: &mut dyn Visitor,
     ) -> Result<Scan, StoreError> {
-        let since = opts.since.map(nanos_of);
-        let until = opts.until.map(nanos_of);
-        let windowed = since.is_some() || until.is_some();
-        let mut out = Scan::default();
-        let views: Vec<View> = {
-            let state = self.state();
-            let mut views = Vec::new();
-            for (day, part) in state.days.iter().rev() {
-                if windowed && !Self::overlaps(*day, part.span(), since, until) {
-                    out.row_groups_pruned += part.stored.len() as u64;
-                    continue;
-                }
-                views.push(part.view());
-            }
-            views
-        };
-        let mut readers = HashMap::new();
-        for view in &views {
-            if !v.wants_partition(view.span.map(|(_, hi)| hi)) {
-                // The visitor has no use for a row from here, but a limit bounds the rows in
-                // the answer and not the rows that matched: the day is still counted, free
-                // when nothing inside it could reject a row, and read otherwise.
-                if let Some(matched) = Self::countable(view, preds, since, until) {
-                    out.matched += matched;
-                    continue;
-                }
-            }
-            if !Self::visit_day(view, opts, preds, v, &mut out, &mut readers)? {
-                break;
-            }
-        }
-        Ok(out)
+        self.freeze(opts.since.map(nanos_of), opts.until.map(nanos_of))
+            .visit(opts, preds, v)
     }
 
     fn len(&self) -> u64 {
@@ -2313,11 +2409,42 @@ mod tests {
         assert_eq!((done.rows, done.syncs, done.sealed), (0, 0, 2));
     }
 
-    /// Past the cap on open days, a row whose day has no open file goes into today's file,
-    /// as a row group of its own day - and is found there, before a restart and after.
+    /// The UTC day each data file's directory names, in path order.
+    fn file_days(scratch: &Scratch) -> Vec<String> {
+        data_files(&scratch.0)
+            .iter()
+            .map(|p| {
+                let day = p.parent().and_then(|d| d.file_name()).unwrap_or_default();
+                day.to_string_lossy().into_owned()
+            })
+            .collect()
+    }
+
+    /// Every row group of every sealed data file lies in the day its directory names.
+    fn every_row_group_in_its_own_day(scratch: &Scratch) {
+        for path in data_files(&scratch.0) {
+            let dir = path
+                .parent()
+                .and_then(|d| d.file_name())
+                .unwrap_or_default();
+            let day = day_of_name(&dir.to_string_lossy()).expect("a day directory");
+            let index = file::open_sealed(&path).expect("readable").expect("sealed");
+            for e in &index.entries {
+                assert_eq!(
+                    (day_of(e.min_time), day_of(e.max_time)),
+                    (day, day),
+                    "{} holds a row group of another day",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    /// Past the cap on open days, the least recently written file is sealed and a row whose
+    /// day has no open file opens its own day's: no row group is ever in another day's
+    /// file, before a restart or after.
     #[test]
-    fn past_the_open_day_cap_a_late_row_goes_into_todays_file() {
-        const TODAY: i64 = 20_000;
+    fn past_the_open_day_cap_a_late_row_opens_its_own_days_file() {
         let scratch = Scratch::new("late");
         let options = DiskOptions {
             max_open_files: 2,
@@ -2325,33 +2452,91 @@ mod tests {
         };
         let first = day_of(T0);
         {
-            let s = store_with(&scratch, options).with_today(|| TODAY);
+            let s = store_with(&scratch, options);
             let leaf = s.open(7, "ts").expect("leaf");
             for d in 0..3 {
                 leaf.append(row(T0 + d * DAY_NS, d));
             }
             let done = s.flush(FlushKind::Tick);
             assert!(done.failed.is_empty(), "{:?}", done.failed);
-            assert_eq!(done.syncs, 3);
-            assert_eq!(s.open_files(), (2, 2), "the cap was not restored");
+            // The first day's file is flushed and sealed to make room for the third's.
+            assert_eq!((done.syncs, done.sealed), (3, 1));
+            assert_eq!(s.open_files(), (2, 2), "the cap was passed");
             assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2]);
             s.flush(FlushKind::Final);
         }
-        let names: Vec<String> = data_files(&scratch.0)
-            .iter()
-            .map(|p| {
-                let day = p.parent().and_then(|d| d.file_name()).unwrap_or_default();
-                day.to_string_lossy().into_owned()
-            })
-            .collect();
         assert_eq!(
-            names,
-            vec![day_name(first), day_name(first + 1), day_name(TODAY)],
-            "the third day did not go into today's file"
+            file_days(&scratch),
+            vec![day_name(first), day_name(first + 1), day_name(first + 2)],
+            "a row went into another day's file"
         );
+        every_row_group_in_its_own_day(&scratch);
         let s = store(&scratch);
         let leaf = s.open(7, "ts").expect("leaf");
         assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2]);
+    }
+
+    /// Rows of one template and one timestamp keep their order across a restart when their
+    /// day's file was sealed for the cap in between.
+    ///
+    /// Filed into today's file past the cap, the first went into `<today>/seg_0_000001.col`
+    /// and the second, once a size seal had freed a slot, into its own day's
+    /// `<day>/seg_0_000001.col` - which sorts first by path. The order a restart reads was
+    /// then the reverse of the order they were published in: a cursor taken between them
+    /// before the restart repeated one row and never returned the other.
+    #[test]
+    fn tied_rows_keep_their_order_across_a_restart_past_the_open_day_cap() {
+        let scratch = Scratch::new("tied");
+        let options = DiskOptions {
+            max_open_files: 1,
+            segment_max_bytes: 700,
+            ..eager()
+        };
+        let tied = T0 + DAY_NS;
+        let positions = |leaf: &dyn LeafStore| {
+            let mut out = Vec::new();
+            leaf.visit(
+                &ScanOptions::default(),
+                &[],
+                &mut Rows(|r: &Row, seq: u64| out.push((r.get("n").cloned(), seq))),
+            )
+            .expect("scan");
+            out.sort_by_key(|(_, seq)| *seq);
+            out.into_iter().map(|(n, _)| n).collect::<Vec<_>>()
+        };
+        let before = {
+            let s = store_with(&scratch, options);
+            let a = s.open(7, "ts").expect("leaf");
+            let b = s.open(8, "ts").expect("leaf");
+            let c = s.open(9, "ts").expect("leaf");
+            a.append(row(T0, 0));
+            s.flush(FlushKind::Tick);
+            b.append(row(tied, 1));
+            s.flush(FlushKind::Tick);
+            // Wide enough to take its file past the size cap.
+            let mut wide = row(T0 + 2 * DAY_NS, 0);
+            wide.insert("pad".into(), ColValue::String("f".repeat(600)));
+            c.append(wide);
+            s.flush(FlushKind::Tick);
+            b.append(row(tied, 2));
+            let done = s.flush(FlushKind::Tick);
+            assert!(done.failed.is_empty(), "{:?}", done.failed);
+            let before = positions(b.as_ref());
+            s.flush(FlushKind::Final);
+            before
+        };
+        assert_eq!(
+            before,
+            vec![Some(ColValue::Int64(1)), Some(ColValue::Int64(2))]
+        );
+        let s = store_with(&scratch, options);
+        let b = s.open(8, "ts").expect("leaf");
+        assert_eq!(
+            positions(b.as_ref()),
+            before,
+            "a restart reordered tied rows"
+        );
+        every_row_group_in_its_own_day(&scratch);
     }
 
     /// A day's file past the size cap is sealed after the flush that took it there, and the
@@ -2448,12 +2633,23 @@ mod tests {
     /// A load's file for template `id`, rows `ns` on T0's day: staged under the load's own
     /// name, sealed and flagged finished, as the loader leaves one.
     fn staged(dir: &Path, name: &str, id: u64, ns: std::ops::Range<i64>) -> StagedFile {
+        staged_at(dir, name, id, T0, ns)
+    }
+
+    /// `staged`, with rows at `base + n` and on `base`'s day.
+    fn staged_at(
+        dir: &Path,
+        name: &str,
+        id: u64,
+        base: i64,
+        ns: std::ops::Range<i64>,
+    ) -> StagedFile {
         let path = dir.join(name);
         let mut writer = Writer::create(&path).expect("create");
         writer.finish();
-        let rows: Vec<Row> = ns.clone().map(|n| row(T0 + n, n)).collect();
+        let rows: Vec<Row> = ns.clone().map(|n| row(base + n, n)).collect();
         let refs: Vec<&Row> = rows.iter().collect();
-        let times: Vec<i64> = ns.clone().map(|n| T0 + n).collect();
+        let times: Vec<i64> = ns.clone().map(|n| base + n).collect();
         let columns = schema_of(refs.iter().copied());
         let encoded = build::encode(
             id,
@@ -2472,7 +2668,7 @@ mod tests {
             .append(id, &encoded.frame(schema_id))
             .expect("append");
         StagedFile {
-            day: day_of(T0),
+            day: day_of(base),
             path,
             index: writer.seal().expect("seal"),
         }
@@ -2709,7 +2905,7 @@ mod tests {
         // A query's snapshot of the day, taken before the replace.
         let held = {
             let leaves = s.leaves.read().expect("leaves");
-            let state = leaves[0].state();
+            let state = leaves[&7].state();
             Arc::clone(&state.days[&day_of(T0)].stored)
         };
         let dir = s.stage(9).expect("stage");
@@ -2738,39 +2934,245 @@ mod tests {
         );
     }
 
-    /// A day whose rows went into another day's file past the open-day cap cannot be
-    /// replaced by retiring its directory: the file is named and nothing is loaded.
+    /// A day that passed through the cap on open days - its file sealed to make room for
+    /// another day's, and opened again - is replaced like any other: every file of it is in
+    /// its own directory, so retiring the directory retires the day and nothing else.
     #[test]
-    fn replace_a_day_refuses_a_day_with_rows_in_another_days_file() {
-        const TODAY: i64 = 20_000;
-        let scratch = Scratch::new("replace-spread");
+    fn replace_a_day_after_the_open_day_cap_retires_that_day_and_no_other() {
+        let scratch = Scratch::new("replace-capped");
         let options = DiskOptions {
             max_open_files: 1,
             ..eager()
         };
-        let s = store_with(&scratch, options).with_today(|| TODAY);
+        let s = store_with(&scratch, options);
         let leaf = s.open(7, "ts").expect("leaf");
+        let late = day_of(T0 + DAY_NS);
         leaf.append(row(T0, 0));
         leaf.append(row(T0 + DAY_NS, 1));
         s.flush(FlushKind::Tick);
+        leaf.append(row(T0 + 1, 2));
+        s.flush(FlushKind::Tick);
+        leaf.append(row(T0 + DAY_NS + 1, 3));
+        s.flush(FlushKind::Tick);
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2, 3]);
         let dir = s.stage(9).expect("stage");
-        let late = day_of(T0 + DAY_NS);
-        let file = StagedFile {
-            day: late,
-            ..staged(&dir, "a.col", 7, 0..1)
+        let file = staged_at(&dir, "a.col", 7, T0 + DAY_NS, 10..12);
+        let done = s
+            .commit_load(LoadCommit {
+                load_id: 9,
+                files: vec![file],
+                replace_day: Some(late),
+            })
+            .expect("a day that passed through the cap is replaced");
+        assert!(
+            done.replaced
+                .iter()
+                .all(|rel| rel.starts_with(&format!("{}/", day_name(late)))),
+            "{done:?}"
+        );
+        assert_eq!(
+            ns(leaf.as_ref()),
+            vec![0, 2, 10, 11],
+            "the other day lost rows, or the replaced day kept some"
+        );
+        s.flush(FlushKind::Final);
+        every_row_group_in_its_own_day(&scratch);
+    }
+
+    /// Each row's `n` from one template of a snapshot, sorted.
+    fn snapshot_ns(snap: &mut dyn Snapshot, id: u64) -> Vec<i64> {
+        let mut out = Vec::new();
+        let opts = ScanOptions {
+            ts_column: Some("ts".into()),
+            ..ScanOptions::default()
         };
-        let refused = s.commit_load(LoadCommit {
+        snap.visit(
+            id,
+            &opts,
+            &[],
+            &mut Rows(|r: &Row, _: u64| match r.get("n") {
+                Some(ColValue::Int64(n)) => out.push(*n),
+                other => panic!("n is {other:?}"),
+            }),
+        )
+        .expect("a leaf")
+        .expect("scan");
+        out.sort_unstable();
+        out
+    }
+
+    /// A snapshot answers as the store stood when it was taken, for every template in it: a
+    /// load committed after it - over two templates - shows in neither, and a snapshot
+    /// taken after shows it in both. A load publishes every template in one step, and the
+    /// snapshot is taken in one step too, so no query can see one template's share of a
+    /// load and not another's.
+    #[test]
+    fn a_snapshot_sees_a_load_in_every_template_or_in_none() {
+        let scratch = Scratch::new("snapshot");
+        let s = store(&scratch);
+        let a = s.open(7, "ts").expect("leaf");
+        let b = s.open(8, "ts").expect("leaf");
+        a.append(row(T0 + 100, 100));
+        b.append(row(T0 + 200, 200));
+        let leaves =
+            || -> Vec<(u64, Arc<dyn LeafStore>)> { vec![(7, Arc::clone(&a)), (8, Arc::clone(&b))] };
+        let opts = ScanOptions::default();
+        let mut before = s.snapshot(leaves(), &opts);
+        let generation = s.generation();
+        assert_eq!(before.generation(), generation);
+
+        let dir = s.stage(9).expect("stage");
+        s.commit_load(LoadCommit {
             load_id: 9,
-            files: vec![file],
-            replace_day: Some(late),
-        });
-        match refused {
-            Err(StoreError::ReplaceRefused { path, .. }) => {
-                assert!(path.starts_with(&day_name(TODAY)), "{path}")
-            }
-            other => panic!("replaced a day with rows elsewhere: {other:?}"),
+            files: vec![
+                staged(&dir, "a.col", 7, 0..3),
+                staged(&dir, "b.col", 8, 10..12),
+            ],
+            replace_day: None,
+        })
+        .expect("commit");
+        assert_eq!(s.generation(), generation + 1, "a publish is not counted");
+
+        assert_eq!(snapshot_ns(before.as_mut(), 7), vec![100]);
+        assert_eq!(snapshot_ns(before.as_mut(), 8), vec![200]);
+        let mut after = s.snapshot(leaves(), &opts);
+        assert_eq!(snapshot_ns(after.as_mut(), 7), vec![0, 1, 2, 100]);
+        assert_eq!(snapshot_ns(after.as_mut(), 8), vec![10, 11, 200]);
+        assert!(before
+            .visit(9, &opts, &[], &mut Rows(|_: &Row, _| {}))
+            .is_none());
+    }
+
+    /// A day a replace retires after a snapshot was taken is still read, whole, through
+    /// that snapshot - its file stays on disk while the snapshot holds it - and the file
+    /// goes when the snapshot does.
+    #[test]
+    fn a_snapshot_reads_a_replaced_day_until_it_is_dropped() {
+        let scratch = Scratch::new("snapshot-replace");
+        let s = store(&scratch);
+        let leaf = s.open(7, "ts").expect("leaf");
+        for n in 0..3 {
+            leaf.append(row(T0 + n, 50 + n));
         }
-        assert!(!s.was_loaded(9));
+        s.flush(FlushKind::Final);
+        let old: Vec<PathBuf> = data_files(&scratch.0).into_iter().collect();
+        let opts = ScanOptions::default();
+        let mut held = s.snapshot(vec![(7, Arc::clone(&leaf))], &opts);
+        let dir = s.stage(9).expect("stage");
+        s.commit_load(LoadCommit {
+            load_id: 9,
+            files: vec![staged(&dir, "a.col", 7, 0..5)],
+            replace_day: Some(day_of(T0)),
+        })
+        .expect("replace");
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2, 3, 4]);
+        assert!(old[0].exists(), "deleted under a snapshot");
+        assert_eq!(
+            snapshot_ns(held.as_mut(), 7),
+            vec![50, 51, 52],
+            "the snapshot lost the day it was taken with"
+        );
+        drop(held);
+        assert!(
+            !old[0].exists(),
+            "a retired file outlived its last snapshot"
+        );
+    }
+
+    /// A day a file found at startup shares with another day - a directory written while a
+    /// late row still went into today's file - is not replaced: retiring its directory
+    /// would take the other day's rows, or leave some of its own. Both days are refused,
+    /// naming the file; any other day is replaced as usual.
+    #[test]
+    fn replace_a_day_refuses_a_day_a_file_from_before_shares_with_another() {
+        let scratch = Scratch::new("replace-mixed");
+        let first = day_of(T0);
+        let late = first + 1;
+        {
+            let s = store(&scratch);
+            // What the spill left: a file under the first day's directory holding a row
+            // group of the next day's.
+            let dir = s.stage(9).expect("stage");
+            let file = StagedFile {
+                day: first,
+                ..staged_at(&dir, "a.col", 7, T0 + DAY_NS, 0..2)
+            };
+            s.commit_load(LoadCommit {
+                load_id: 9,
+                files: vec![file],
+                replace_day: None,
+            })
+            .expect("commit");
+            let dir = s.stage(10).expect("stage");
+            s.commit_load(LoadCommit {
+                load_id: 10,
+                files: vec![staged_at(&dir, "b.col", 7, T0 + 2 * DAY_NS, 5..6)],
+                replace_day: None,
+            })
+            .expect("commit");
+        }
+        let s = store(&scratch);
+        let leaf = s.open(7, "ts").expect("leaf");
+        for (load_id, day) in [(11, first), (12, late)] {
+            let dir = s.stage(load_id).expect("stage");
+            let refused = s.commit_load(LoadCommit {
+                load_id,
+                files: vec![staged_at(&dir, "c.col", 7, day * DAY_NS, 20..21)],
+                replace_day: Some(day),
+            });
+            match refused {
+                Err(StoreError::ReplaceRefused { path, .. }) => {
+                    assert!(path.starts_with(&day_name(first)), "{path}")
+                }
+                other => panic!("replaced a day a mixed file shares: {other:?}"),
+            }
+            s.unstage(load_id);
+        }
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 5], "a refused replace changed rows");
+        let dir = s.stage(13).expect("stage");
+        s.commit_load(LoadCommit {
+            load_id: 13,
+            files: vec![staged_at(&dir, "d.col", 7, T0 + 2 * DAY_NS, 30..31)],
+            replace_day: Some(first + 2),
+        })
+        .expect("a day no mixed file touches is replaced");
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 30]);
+    }
+
+    /// At the cap, the file sealed to make room is one no later batch of the flush wants:
+    /// a flush writing no more days than the cap never seals a day and opens it again as its
+    /// next number.
+    #[test]
+    fn at_the_cap_a_day_the_flush_still_wants_is_not_the_one_sealed() {
+        let scratch = Scratch::new("victim");
+        let options = DiskOptions {
+            max_open_files: 2,
+            ..eager()
+        };
+        let s = store_with(&scratch, options);
+        let leaf = s.open(7, "ts").expect("leaf");
+        leaf.append(row(T0 + 9 * DAY_NS, 9));
+        s.flush(FlushKind::Tick);
+        leaf.append(row(T0 + 3 * DAY_NS, 3));
+        s.flush(FlushKind::Tick);
+        // The ninth day, open since the first flush, is the least recently written - and
+        // this flush wants it again. The third day is the one to seal.
+        leaf.append(row(T0 + DAY_NS, 1));
+        leaf.append(row(T0 + 9 * DAY_NS + 1, 10));
+        let done = s.flush(FlushKind::Tick);
+        assert!(done.failed.is_empty(), "{:?}", done.failed);
+        assert_eq!(done.sealed, 1, "a day was sealed and opened again");
+        s.flush(FlushKind::Final);
+        let names: Vec<String> = data_files(&scratch.0)
+            .iter()
+            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().all(|n| n == "seg_0_000001.col"),
+            "a day opened a second file: {names:?}"
+        );
+        assert_eq!(ns(leaf.as_ref()), vec![1, 3, 9, 10]);
+        every_row_group_in_its_own_day(&scratch);
     }
 
     /// The final flush seals one file per open day, however many templates wrote to it.

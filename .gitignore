@@ -96,3 +96,14 @@ sample.ndjson
 
 # Smoke-test corpora and data directories for the bulk door, run by hand - scratch.
 /testdata/bulk-door/
+
+# The black-box runs of `triedb load` - the two-doors differential, the repeat refusal,
+# kill -9 rounds, replace-a-day, the arrival-share check and load-under-live-traffic.
+# Scratch, and `gen-logs` rebuilds every corpus.
+/testdata/load-blackbox/
+
+# AddressSanitizer builds and the runs made under them - scratch.
+/testdata/asan/
+
+# Before/after runs of the snapshot, own-day, streaming-loader and arrival-check fixes - scratch.
+/testdata/m6e/

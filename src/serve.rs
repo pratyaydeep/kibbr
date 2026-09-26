@@ -1129,6 +1129,10 @@ struct LoadRequest {
     max_mb_per_sec: Option<f64>,
     #[serde(default)]
     threads: Option<usize>,
+    /// The loader's own bound on the rows it holds, not the live door's: see
+    /// `load::DEFAULT_LOAD_BUFFER_BYTES`.
+    #[serde(default)]
+    load_buffer_bytes: Option<usize>,
     #[serde(default)]
     received_at: Option<String>,
     #[serde(default)]
@@ -1189,11 +1193,18 @@ fn load_options(request: LoadRequest) -> Result<load::Options, String> {
     if !(share.is_finite() && share >= 0.0) {
         return Err(format!("max_arrival_share {share} is not a percentage"));
     }
+    let load_buffer_bytes = request
+        .load_buffer_bytes
+        .unwrap_or(load::DEFAULT_LOAD_BUFFER_BYTES);
+    if load_buffer_bytes == 0 {
+        return Err("load_buffer_bytes 0: a load has to hold at least one row".to_string());
+    }
     Ok(load::Options {
         inputs,
         replace_day,
         max_bytes_per_sec: request.max_mb_per_sec.map(|mb| mb * 1_000_000.0),
         threads: request.threads.unwrap_or_else(load::server_threads).max(1),
+        load_buffer_bytes,
         received_at,
         proceed: request.proceed,
         max_arrival_share: share,
@@ -1468,7 +1479,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "kind": stores.kind(),
             "durable": server.storage.is_durable(),
             "note": if server.storage.is_durable() {
-                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that goes into today's, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
+                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that seals the least recently written and opens its own day's, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
@@ -2012,9 +2023,9 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20                       rows, 8MB, or {}ms, whichever comes first. The\n\
                  \x20                       thresholds are checked every {}ms. At most {} day\n\
                  \x20                       files are open for writing at once; past that a\n\
-                 \x20                       row for a day with none open goes into today's,\n\
-                 \x20                       as a row group of its own day. Keep it under\n\
-                 \x20                       `ulimit -n`.\n\
+                 \x20                       row for a day with none open seals the least\n\
+                 \x20                       recently written and opens its own day's. Keep\n\
+                 \x20                       it under `ulimit -n`.\n\
                  \x20                       SIGTERM closes and seals everything before exiting.\n\
                  \x20             catalog   {}/catalog.log - a template is written here, and\n\
                  \x20                       fsynced, before the line that made it counts as\n\
