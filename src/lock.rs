@@ -15,7 +15,7 @@
 //! dies, `kill -9` included, so a crash never leaves a lock someone must delete by hand; the
 //! file itself is never deleted, because a process deleting it while another opened it
 //! would let two think they hold it. What the file *says* is only a hint: who holds it, and
-//! for a server, where to reach it - which is how `triedb load` finds the server it must ask
+//! for a server, where to reach it - which is how `kibbr load` finds the server it must ask
 //! to run the load instead of writing beside it.
 //!
 //! **And the key to its `/load`.** A server reads the files a load names, with its own
@@ -124,7 +124,7 @@ impl DataLock {
             Ok(()) => Ok(Self { file, path }),
             Err(TryLockError::WouldBlock) => Err(LockError::Held {
                 holder: holder(base)
-                    .map_or_else(|| "another triedb process".to_string(), |h| h.describe()),
+                    .map_or_else(|| "another kibbr process".to_string(), |h| h.describe()),
                 path,
             }),
             Err(TryLockError::Error(source)) => Err(io(source)),
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn a_second_holder_is_refused_and_told_who_holds_it() {
-        let dir = std::env::temp_dir().join(format!("triedb-lock-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-lock-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mut first = DataLock::acquire(&dir).expect("first");
         first

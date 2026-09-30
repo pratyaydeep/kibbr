@@ -38,7 +38,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 COMBOS=${COMBOS:-100}
 SEED=${SEED:-7}
 NLINES=${NLINES:-2000}

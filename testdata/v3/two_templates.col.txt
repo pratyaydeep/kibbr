@@ -41,7 +41,7 @@
 # offset    bytes                                              field
 #
 # -- header, 24 bytes
-00000000  54 52 44 42                                       header.magic  'TRDB'
+00000000  4b 42 42 52                                       header.magic  'KBBR'
 00000004  03                                                header.version  3
 00000005  00 00 00                                          header.reserved  zero
 00000008  76 33 20 74 77 6f 20 74 65 6d 70 6c 61 74 65 73   header.file_id  'v3 two templates'
@@ -416,6 +416,6 @@
 #
 # -- trailer, 8 bytes
 000005d2  cf 01 00 00                                       trailer.footer_len  463 = the footer frame, 8 + payload_len
-000005d6  54 52 44 42                                       trailer.magic  'TRDB'
+000005d6  4b 42 42 52                                       trailer.magic  'KBBR'
 #
 # 1498 bytes

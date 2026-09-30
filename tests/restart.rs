@@ -39,7 +39,7 @@ impl Db {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "triedb-restart-test-{}-{}",
+            "kibbr-restart-test-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -59,14 +59,14 @@ impl Db {
     }
 
     fn start_with(&self, extra: &[&str]) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
             .args(["serve", "--port", "0"])
             .args(["--data-dir", &self.dir.display().to_string()])
             .args(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to spawn triedb serve");
+            .expect("failed to spawn kibbr serve");
 
         let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
         let mut port = None;
@@ -158,7 +158,7 @@ impl Server {
             .success();
         assert!(ok, "kill -TERM failed");
 
-        let status = self.child.wait().expect("failed to wait for triedb serve");
+        let status = self.child.wait().expect("failed to wait for kibbr serve");
         let mut log = String::new();
         let _ = self.stderr.read_to_string(&mut log);
         assert_eq!(
@@ -220,7 +220,7 @@ fn json(text: &str) -> serde_json::Value {
 
 /// `LINES` generated lines, seeded so two runs of this file ingest the same bytes.
 fn corpus() -> Vec<u8> {
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", &LINES.to_string(), "--seed", "42"])
         .output()
         .expect("failed to run gen-logs");

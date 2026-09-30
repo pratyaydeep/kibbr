@@ -280,7 +280,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `"{" (pair ("," pair)*)? "}"`. `{}` is the empty pattern - every template, which is
-    /// what `triedb query` with no `--match` already means.
+    /// what `kibbr query` with no `--match` already means.
     fn pattern(&mut self) -> Result<Vec<Match>, ParseError> {
         self.eat(&Tok::Open, "`{`")?;
         let mut matches = Vec::new();

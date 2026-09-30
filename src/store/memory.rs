@@ -1,6 +1,6 @@
 //! The in-memory store: one `Vec<Row>` per leaf.
 //!
-//! Kept, not replaced. It is what `triedb query <file>` builds - a database rebuilt per
+//! Kept, not replaced. It is what `kibbr query <file>` builds - a database rebuilt per
 //! invocation has nothing to persist to - and it is the other half of the differential
 //! that checks the disk store: two implementations of one interface that must return the
 //! same answers, so a disagreement is a bug found with no hand-written assertion.

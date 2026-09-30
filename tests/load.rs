@@ -1,4 +1,4 @@
-//! `triedb load`, the bulk door, from outside the process.
+//! `kibbr load`, the bulk door, from outside the process.
 //!
 //! The loader and the server are separate processes on one data directory, and almost
 //! everything worth checking is what one of them leaves for the other: a load run alone
@@ -63,7 +63,7 @@ impl Db {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "triedb-load-test-{}-{}",
+            "kibbr-load-test-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -92,7 +92,7 @@ impl Db {
 
     // ── Processes ──
 
-    /// `triedb <args>`, stdout and stderr to files: a pipe nobody reads until the exit
+    /// `kibbr <args>`, stdout and stderr to files: a pipe nobody reads until the exit
     /// can fill and stall the child, and a stalled child looks like a slow one.
     fn spawn(&self, args: &[String], stdin: Option<&Path>) -> Running {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -103,18 +103,18 @@ impl Db {
             Some(path) => Stdio::from(File::open(path).expect("open the stdin input")),
             None => Stdio::null(),
         };
-        let child = Command::new(env!("CARGO_BIN_EXE_triedb"))
+        let child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
             .args(args)
             .stdin(stdin)
             .stdout(File::create(&out).expect("create the stdout file"))
             .stderr(File::create(&err).expect("create the stderr file"))
             .spawn()
-            .expect("failed to spawn triedb");
+            .expect("failed to spawn kibbr");
         Running {
             child,
             out,
             err,
-            what: format!("triedb {}", args.join(" ")),
+            what: format!("kibbr {}", args.join(" ")),
         }
     }
 
@@ -130,7 +130,7 @@ impl Db {
             .finish(DEADLINE)
     }
 
-    /// `triedb load <args> -`, with `stdin` as the input.
+    /// `kibbr load <args> -`, with `stdin` as the input.
     fn load_stdin(&self, args: &[&str], stdin: &Path) -> Ran {
         let mut all = self.load_args(args, &[]);
         all.push("-".into());
@@ -138,13 +138,13 @@ impl Db {
     }
 
     fn start(&self) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
             .args(["serve", "--port", "0"])
             .args(["--data-dir", &self.base_arg()])
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to spawn triedb serve");
+            .expect("failed to spawn kibbr serve");
 
         let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
         let mut port = None;
@@ -300,12 +300,12 @@ impl Running {
         let deadline = Instant::now() + limit;
         let mut timed_out = false;
         let status = loop {
-            match self.child.try_wait().expect("failed to poll triedb") {
+            match self.child.try_wait().expect("failed to poll kibbr") {
                 Some(status) => break status,
                 None if Instant::now() >= deadline => {
                     timed_out = true;
                     let _ = self.child.kill();
-                    break self.child.wait().expect("failed to wait for triedb");
+                    break self.child.wait().expect("failed to wait for kibbr");
                 }
                 None => sleep(Duration::from_millis(20)),
             }
@@ -424,7 +424,7 @@ impl Server {
             .expect("failed to run kill")
             .success();
         assert!(ok, "kill -TERM failed");
-        let status = self.child.wait().expect("failed to wait for triedb serve");
+        let status = self.child.wait().expect("failed to wait for kibbr serve");
         let mut log = String::new();
         let _ = self.stderr.read_to_string(&mut log);
         assert_eq!(
@@ -499,7 +499,7 @@ fn strings(v: &Value) -> BTreeSet<String> {
 // ── Inputs ─────────────────────────────────────────────────────────────────────────
 
 fn gen(args: &[&str]) -> Vec<u8> {
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .arg("gen-logs")
         .args(args)
         .output()
@@ -656,7 +656,7 @@ fn a_load_writes_full_row_groups() {
 
 // ── Repeats ────────────────────────────────────────────────────────────────────────
 
-/// TrieDB keeps no row identity, so a file loaded twice would be every row twice with
+/// Kibbr keeps no row identity, so a file loaded twice would be every row twice with
 /// nothing to tell them apart. The id is derived from the input's names and bytes, and a
 /// known one is refused before anything is written.
 ///
@@ -992,7 +992,7 @@ fn a_load_request_without_the_lock_token_is_refused() {
             .mode();
         assert_eq!(mode & 0o077, 0, "LOCK is readable by others: {mode:o}");
     }
-    let shown = format!("x-triedb-load-token: {token}\r\n");
+    let shown = format!("x-kibbr-load-token: {token}\r\n");
     let (status, text) = request_with(
         server.port,
         "POST",
@@ -1039,7 +1039,7 @@ fn a_named_pipe_is_refused_and_standard_input_is_the_way_to_pipe() {
         .success();
     assert!(made, "mkfifo failed");
     db.load(&["--json"], &[&fifo])
-        .refused(&["not a regular file", "triedb load -"]);
+        .refused(&["not a regular file", "kibbr load -"]);
 }
 
 /// A repeated id is allowed with `--replace-day`: reloading the day from the same file
@@ -1315,7 +1315,7 @@ fn a_load_buffer_of_zero_is_refused() {
         server.port,
         "POST",
         "/load",
-        &format!("x-triedb-load-token: {token}\r\n"),
+        &format!("x-kibbr-load-token: {token}\r\n"),
         body.as_bytes(),
     );
     assert_eq!(status, 400, "{text}");

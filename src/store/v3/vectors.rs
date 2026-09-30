@@ -27,7 +27,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "triedb-v3-{name}-{}-{:?}",
+            "kibbr-v3-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

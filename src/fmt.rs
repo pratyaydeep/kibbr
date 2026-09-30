@@ -26,7 +26,7 @@ pub fn col_text(value: &ColValue) -> String {
 
 /// An instant as RFC 3339, and the only place this crate spells one.
 ///
-/// One definition, per the note at the top of this file: the table, `triedb parse`, and
+/// One definition, per the note at the top of this file: the table, `kibbr parse`, and
 /// the rows in `--format json` and `--format ndjson` all come through here, so a
 /// timestamp cannot read one way on the terminal and another in the JSON.
 ///

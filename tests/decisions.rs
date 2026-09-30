@@ -44,13 +44,13 @@ const FIXTURE: &str = concat!(
 const ALL: [&str; 3] = ["--between", "2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z"];
 
 /// Environment variable for the backstop configuration.
-const MAX_ROWS_ENV: &str = "TRIEDB__QUERY__MAX_ROWS";
+const MAX_ROWS_ENV: &str = "KIBBR__QUERY__MAX_ROWS";
 
 fn query(args: &[&str]) -> Value {
     let out = raw(args);
     assert!(
         out.status.success(),
-        "triedb query {args:?} exited {:?}\nstderr: {}",
+        "kibbr query {args:?} exited {:?}\nstderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -64,7 +64,7 @@ fn raw(args: &[&str]) -> std::process::Output {
 
 /// Test with environment variables: flag > environment > default.
 fn raw_env(args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_triedb"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
     command
         .arg("query")
         .arg("-")
@@ -81,12 +81,12 @@ fn raw_env(args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(FIXTURE.as_bytes());
     });
-    let out = child.wait_with_output().expect("failed to wait on triedb");
+    let out = child.wait_with_output().expect("failed to wait on kibbr");
     writer.join().expect("stdin writer thread panicked");
     out
 }

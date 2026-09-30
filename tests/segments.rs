@@ -26,7 +26,7 @@ impl Db {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "triedb-segment-test-{}-{}",
+            "kibbr-segment-test-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -39,14 +39,14 @@ impl Db {
     }
 
     fn start_with(&self, extra: &[&str]) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
             .args(["serve", "--port", "0"])
             .args(["--data-dir", &self.dir.display().to_string()])
             .args(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to spawn triedb serve");
+            .expect("failed to spawn kibbr serve");
 
         let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
         let mut port = None;
@@ -135,7 +135,7 @@ impl Server {
             .expect("failed to run kill")
             .success();
         assert!(ok, "kill -TERM failed");
-        let status = self.child.wait().expect("failed to wait for triedb serve");
+        let status = self.child.wait().expect("failed to wait for kibbr serve");
         let mut log = String::new();
         let _ = self.stderr.read_to_string(&mut log);
         assert_eq!(
@@ -351,13 +351,13 @@ fn a_per_template_data_directory_is_refused_by_path() {
     let db = Db::new();
     let day = db.dir.join("leaf_101").join("2024-01-15");
     fs::create_dir_all(&day).expect("create the day directory");
-    fs::write(day.join("seg_000001.col"), b"TRDB\x02\x00\x00\x00").expect("write a v2 segment");
+    fs::write(day.join("seg_000001.col"), b"KBBR\x02\x00\x00\x00").expect("write a v2 segment");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["serve", "--port", "0"])
         .args(["--data-dir", &db.dir.display().to_string()])
         .output()
-        .expect("failed to run triedb serve");
+        .expect("failed to run kibbr serve");
 
     assert!(
         !out.status.success(),
@@ -381,13 +381,13 @@ fn a_data_file_of_another_version_is_refused_by_path() {
     let db = Db::new();
     let day = db.dir.join("data").join("2024-01-15");
     fs::create_dir_all(&day).expect("create the day directory");
-    fs::write(day.join("seg_0_000001.col"), b"TRDB\x02\x00\x00\x00").expect("write");
+    fs::write(day.join("seg_0_000001.col"), b"KBBR\x02\x00\x00\x00").expect("write");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["serve", "--port", "0"])
         .args(["--data-dir", &db.dir.display().to_string()])
         .output()
-        .expect("failed to run triedb serve");
+        .expect("failed to run kibbr serve");
 
     assert!(
         !out.status.success(),
@@ -397,6 +397,33 @@ fn a_data_file_of_another_version_is_refused_by_path() {
     assert!(
         text.contains("version 2") && text.contains("seg_0_000001.col"),
         "the error does not name the file and its version:\n{text}"
+    );
+}
+
+/// A data file written by a pre-rename build - the old magic, a version this build does
+/// read - is refused by path like another version, and says why.
+#[test]
+fn a_data_file_from_a_pre_rename_build_is_refused_by_path() {
+    let db = Db::new();
+    let day = db.dir.join("data").join("2024-01-15");
+    fs::create_dir_all(&day).expect("create the day directory");
+    // The pre-rename magic, then version 3.
+    fs::write(day.join("seg_0_000001.col"), b"\x54\x52\x44\x42\x03\x00\x00\x00").expect("write");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+        .args(["serve", "--port", "0"])
+        .args(["--data-dir", &db.dir.display().to_string()])
+        .output()
+        .expect("failed to run kibbr serve");
+
+    assert!(
+        !out.status.success(),
+        "a pre-rename data file started anyway"
+    );
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        text.contains("written by a pre-rename build") && text.contains("seg_0_000001.col"),
+        "the error does not name the file and say what wrote it:\n{text}"
     );
 }
 

@@ -44,7 +44,7 @@ pub const FIRST_TEMPLATE_ID: u64 = 101;
 /// documentation and not authority: the store derives a leaf's directory from the
 /// configured base and the template id, because a restart under a different `--data-dir`
 /// would otherwise send every leaf back to the directory it was first seen under.
-pub const DEFAULT_DATA_DIR: &str = "/var/lib/triedb/data";
+pub const DEFAULT_DATA_DIR: &str = "/var/lib/kibbr/data";
 
 /// The only way a trie operation fails.
 ///
@@ -782,7 +782,7 @@ impl Trie {
                     // One WARN per template, naming the keys an operator could add to
                     // `time_columns` to give it a time of its own.
                     eprintln!(
-                        "triedb: WARN template {template_id} has no time column among \
+                        "kibbr: WARN template {template_id} has no time column among \
                          [{}]; its rows take their arrival time. Datetime-typed keys: {}",
                         self.time_columns.join(", "),
                         datetime_keys(columns.iter().map(|c| (c.name.as_str(), c.col_type)))
@@ -825,7 +825,7 @@ impl Trie {
                                 // widening, and is not warned about.
                                 if let (Some(from), Some(to)) = (col.col_type, joined) {
                                     eprintln!(
-                                        "triedb: WARN template {} column `{key}` widened \
+                                        "kibbr: WARN template {} column `{key}` widened \
                                          from {} to {} on value `{}`",
                                         meta.template_id,
                                         from.as_str(),
@@ -980,7 +980,7 @@ mod tests {
     use crate::flatten::parse_line;
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("triedb-trie-{}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-trie-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("mkdir");
         dir

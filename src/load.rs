@@ -1,4 +1,4 @@
-//! The bulk door: `triedb load`, a closed day of lines - or six months of them - loaded
+//! The bulk door: `kibbr load`, a closed day of lines - or six months of them - loaded
 //! whole.
 //!
 //! ```text
@@ -47,7 +47,7 @@
 //! **What the id does not catch.** It is over the whole set of inputs, by name: a file
 //! renamed (`day.ndjson` loaded again as `day.ndjson.gz`), the same bytes piped through
 //! `-`, or a file loaded again beside new ones is a new load, and its rows are stored
-//! twice. TrieDB keeps no row identity to catch that later; one source per day, and
+//! twice. Kibbr keeps no row identity to catch that later; one source per day, and
 //! `--replace-day` to change it, is the rule that keeps a day's rows once.
 //!
 //! **Positions.** Each row group records the load id as its stream and the line numbers of
@@ -493,7 +493,7 @@ pub fn resolve(args: &[PathBuf], spool: Option<&Path>) -> Result<Vec<Input>, Loa
             return Err(LoadError::Input(format!(
                 "{}: not a regular file. A load reads its input more than once - for its id, \
                  its arrival check and its rows - and a pipe or a device gives its bytes only \
-                 once; pipe it to `triedb load -` instead",
+                 once; pipe it to `kibbr load -` instead",
                 arg.display()
             )));
         }
@@ -1039,7 +1039,7 @@ impl Tally {
             Checked::Head => (
                 format!("the first {} rows", self.rows),
                 "If their templates are new, add their time key to the time columns \
-                 (--time-columns, or TRIEDB__SCHEMA__TIME_COLUMNS for a server); a template \
+                 (--time-columns, or KIBBR__SCHEMA__TIME_COLUMNS for a server); a template \
                  that exists already keeps the time source it was made with. Or pass \
                  --proceed to load them at their arrival time",
             ),
@@ -1912,7 +1912,7 @@ fn stage_all(
 
 // ── The command ────────────────────────────────────────────────────────────────────
 
-/// `triedb load`, as the command line gave it.
+/// `kibbr load`, as the command line gave it.
 #[derive(Debug)]
 pub struct Args {
     pub inputs: Vec<PathBuf>,
@@ -1927,14 +1927,14 @@ pub struct Args {
     pub json: bool,
 }
 
-/// How long `triedb load` waits for a server that holds the directory's lock to say where
+/// How long `kibbr load` waits for a server that holds the directory's lock to say where
 /// it listens: a server writes its address once it can answer, a moment after it starts.
 const SERVER_STARTING_WAIT: Duration = Duration::from_secs(30);
 
 /// How often a client asks a server how its load is going.
 const POLL: Duration = Duration::from_millis(100);
 
-/// Run `triedb load`: alone, if no process holds the data directory; otherwise as a
+/// Run `kibbr load`: alone, if no process holds the data directory; otherwise as a
 /// client of the server that does.
 ///
 /// **Who holds `LOCK` decides where the load runs**, because one process writes the
@@ -2083,7 +2083,7 @@ fn client(
 ) -> Result<(), LoadError> {
     if args.time_columns.is_some() {
         eprintln!(
-            "triedb: WARN --time-columns is ignored: the server at {address} holds this data \
+            "kibbr: WARN --time-columns is ignored: the server at {address} holds this data \
              directory, and a template's time source is chosen by the server's own list"
         );
     }
@@ -2106,11 +2106,11 @@ fn client(
     let _ = fs::remove_file(&spool);
     let report = result?;
     for e in &report.errors {
-        eprintln!("triedb: line {}: {}", e.line, e.error);
+        eprintln!("kibbr: line {}: {}", e.line, e.error);
     }
     if report.errors_omitted > 0 {
         eprintln!(
-            "triedb: {} more rejected line(s) not listed",
+            "kibbr: {} more rejected line(s) not listed",
             report.errors_omitted
         );
     }
@@ -2170,7 +2170,7 @@ fn client_run(
         "data_dir": text(&data_dir)?,
     });
     let bytes = serde_json::to_vec(&body).unwrap_or_default();
-    let shown = [("x-triedb-load-token", token)];
+    let shown = [("x-kibbr-load-token", token)];
     let (status, answer) = crate::http::request(
         address,
         "POST",
@@ -2237,7 +2237,7 @@ mod tests {
     impl Scratch {
         fn new(name: &str) -> Self {
             let dir = std::env::temp_dir().join(format!(
-                "triedb-load-{name}-{}-{:?}",
+                "kibbr-load-{name}-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
@@ -2325,7 +2325,7 @@ mod tests {
 
     // ── Loads into a data directory of the test's own ──
 
-    /// A data directory opened as `triedb load` alone opens one. The lock is dropped last,
+    /// A data directory opened as `kibbr load` alone opens one. The lock is dropped last,
     /// after the stores that write under it.
     struct Store {
         trie: Trie,

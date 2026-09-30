@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A load killed with kill -9 at any moment leaves the whole load or none of it.
 #
-# `triedb load` writes its files under staging/, commits them with one manifest record,
+# `kibbr load` writes its files under staging/, commits them with one manifest record,
 # then moves them into data/. A kill can land before the record, between the record and
 # the move, or in the middle of the move, and the next start has to finish a committed load
 # and undo an uncommitted one. A partial answer after the restart is rows no one committed
@@ -35,7 +35,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-./target/release/triedb}
+BIN=${BIN:-./target/release/kibbr}
 NLINES=${NLINES:-200000}
 GEN_SEED=${GEN_SEED:-42}
 ROUNDS=${ROUNDS:-20}
@@ -43,7 +43,7 @@ SEED=${SEED:-1}
 T_MS=${T_MS:-}
 
 # Another build can be tested by naming its binary; the default is built first.
-[ "$BIN" != ./target/release/triedb ] || cargo build --release --quiet || exit 1
+[ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 
 # Written under a temporary name and renamed: a generation cut short must not leave a
 # truncated file that later runs trust. The load id hashes the file's name and bytes, so

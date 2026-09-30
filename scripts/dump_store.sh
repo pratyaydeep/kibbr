@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Materialise on disk what `triedb query` builds in memory: the templates, and one file
+# Materialise on disk what `kibbr query` builds in memory: the templates, and one file
 # per template holding that template's rows.
 #
 # Nothing persists yet (src/db.rs) - every query rebuilds the trie and the leaf stores
@@ -10,14 +10,14 @@
 #
 # The rows are the *stored* shape, not the input lines: nested objects flattened to dotted
 # keys, arrays kept whole as a raw JSON string, values carrying the type the ladder chose,
-# and a `Datetime` as the epoch nanoseconds a `ColValue` actually holds - `triedb query
+# and a `Datetime` as the epoch nanoseconds a `ColValue` actually holds - `kibbr query
 # --format ndjson` is the surface that renders those as RFC 3339. Keys are sorted.
 #
 #   scripts/dump_store.sh --lines 5000 --templates 20 --seed 3
 #   scripts/dump_store.sh --input sample.ndjson --out /tmp/dump
 #   scripts/dump_store.sh --verify          # every row against the engine's own output
 #
-# Reads `triedb parse --json`, which reports the template every line landed in. The row is
+# Reads `kibbr parse --json`, which reports the template every line landed in. The row is
 # rebuilt by the rule in `db::row_of` - typed value if the key has one, the raw string
 # otherwise, which is how a promoted dimension carries its value. Keep the two in step:
 # if `row_of` changes, this is wrong until it changes too.
@@ -25,7 +25,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 SEED=42
 LINES=1000
 TEMPLATES=12

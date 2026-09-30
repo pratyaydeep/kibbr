@@ -1,4 +1,4 @@
-//! TrieDB. Generate hostile logs, parse them, build the trie, query it.
+//! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
 mod bench;
 mod catalog;
@@ -46,7 +46,7 @@ use error::CliError;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Parser)]
-#[command(name = "triedb", version, about = "TrieDB - log store", long_about = None)]
+#[command(name = "kibbr", version, about = "kibbr - log store", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -65,7 +65,7 @@ enum Command {
         #[arg(long, default_value_t = 1000)]
         lines: u64,
         /// `hostile` only: how many distinct log shapes to draw from. Optional fields
-        /// split each shape into several fingerprints, so `triedb parse` reports more
+        /// split each shape into several fingerprints, so `kibbr parse` reports more
         /// templates than this. [default: 12]
         #[arg(long)]
         templates: Option<usize>,
@@ -118,16 +118,16 @@ enum Command {
         #[arg(long, default_value_t = serve::DEFAULT_PORT)]
         port: u16,
         /// Rows a query that names no `LIMIT` is cut at.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_ROWS`.
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_ROWS`.
         #[arg(long, value_name = "ROWS")]
         max_rows: Option<usize>,
         /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_BUCKETS`.
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
         #[arg(long, value_name = "BUCKETS")]
         max_buckets: Option<usize>,
         /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
         /// count times the distinct values of the other keys.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
 
@@ -135,16 +135,16 @@ enum Command {
         // are here and not on `query`/`explain`: a file has no wire, no encoding and no
         // second caller competing for the machine.
         /// The largest `/ingest` body accepted, measured on the wire *before* any
-        /// decompression. Overrides `TRIEDB__API__MAX_BODY_BYTES`.
+        /// decompression. Overrides `KIBBR__API__MAX_BODY_BYTES`.
         #[arg(long, value_name = "BYTES")]
         max_body_bytes: Option<usize>,
         /// The largest a gzipped `/ingest` body may become once decompressed. Cannot
-        /// exceed the 64 MiB line limit. Overrides `TRIEDB__API__MAX_DECOMPRESSED_BYTES`.
+        /// exceed the 64 MiB line limit. Overrides `KIBBR__API__MAX_DECOMPRESSED_BYTES`.
         #[arg(long, value_name = "BYTES")]
         max_decompressed_bytes: Option<usize>,
         /// How many `/ingest` bodies may be parsed at once. Beyond it, a body waits
         /// briefly and is then answered `503` with a `Retry-After` rather than left to
-        /// time out. Overrides `TRIEDB__API__INGEST_CONCURRENCY`.
+        /// time out. Overrides `KIBBR__API__INGEST_CONCURRENCY`.
         #[arg(long, value_name = "N")]
         ingest_concurrency: Option<usize>,
         /// Where rows go. `disk` writes day-partitioned column files and snapshots the
@@ -152,47 +152,47 @@ enum Command {
         /// memory-versus-disk differential runs against.
         #[arg(long, value_name = "KIND", default_value = "disk")]
         storage: StorageKind,
-        /// The data directory. Created if absent. Overrides `TRIEDB__STORAGE__BASE_PATH`.
+        /// The data directory. Created if absent. Overrides `KIBBR__STORAGE__BASE_PATH`.
         #[arg(long, value_name = "PATH")]
         data_dir: Option<PathBuf>,
         /// The trie snapshot. Defaults to `trie.json` inside the data directory.
-        /// Overrides `TRIEDB__STORAGE__TRIE_FILE`.
+        /// Overrides `KIBBR__STORAGE__TRIE_FILE`.
         #[arg(long, value_name = "PATH")]
         trie_file: Option<PathBuf>,
         /// How often the row group thresholds are checked, in milliseconds. This is not
         /// when a row reaches the disk - see --row-group-timeout-ms - and not when it
         /// becomes queryable, which is at once.
-        /// Overrides `TRIEDB__INGESTOR__FLUSH_INTERVAL_MS`.
+        /// Overrides `KIBBR__INGESTOR__FLUSH_INTERVAL_MS`.
         #[arg(long, value_name = "MS")]
         flush_interval_ms: Option<usize>,
         /// How long a row group may stay open with rows in it, in milliseconds, when
         /// neither 8,192 rows nor 8MB got there first. Until there is a write-ahead log
         /// this is also what a kill -9 costs. Floored at the flush interval.
-        /// Overrides `TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS`.
+        /// Overrides `KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS`.
         #[arg(long, value_name = "MS")]
         row_group_timeout_ms: Option<usize>,
         /// How many segment files may be open for writing at once, across every leaf.
         /// Past it the least recently written one is sealed, which is always safe - the
         /// next row for that partition opens the next segment number. Set it below
         /// `ulimit -n`: a cap above the descriptor limit is not a cap.
-        /// Overrides `TRIEDB__STORAGE__MAX_OPEN_SEGMENTS`.
+        /// Overrides `KIBBR__STORAGE__MAX_OPEN_SEGMENTS`.
         #[arg(long, value_name = "N")]
         max_open_segments: Option<usize>,
         /// A day's data file is sealed at this many bytes and the next one opened.
-        /// Overrides `TRIEDB__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
+        /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         segment_max_bytes: Option<usize>,
         /// Memory every buffer together may hold before the largest are closed early - an
         /// emergency brake - and at twice which `/ingest` answers 503 until the flush
         /// catches up. Estimated per row, hash tables and allocations included, which is
         /// about eight times a row's keys and values.
-        /// Overrides `TRIEDB__STORAGE__MAX_BUFFER_BYTES`. [default: 512 MiB]
+        /// Overrides `KIBBR__STORAGE__MAX_BUFFER_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         max_buffer_bytes: Option<usize>,
         /// The key names a new template's time column is chosen from, in order; the
         /// first one the template holds as a Datetime wins, and a template holding none
         /// takes its rows' arrival time. Comma-separated.
-        /// Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        /// Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },
@@ -205,7 +205,7 @@ enum Command {
         /// `-` for standard input. Read in order of file name, whatever order given.
         #[arg(required = true, value_name = "INPUT")]
         inputs: Vec<PathBuf>,
-        /// The data directory. Overrides `TRIEDB__STORAGE__BASE_PATH`. [default: triedb-data]
+        /// The data directory. Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
         #[arg(long, value_name = "PATH")]
         data_dir: Option<PathBuf>,
         /// Publish these rows as the whole of this UTC day, retiring every file it held, in
@@ -245,11 +245,11 @@ enum Command {
         max_arrival_share: Option<f64>,
         /// As `serve --time-columns`: the key names a new template's time column is chosen
         /// from. Used only when no server holds the directory - a server uses its own.
-        /// Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        /// Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
         /// A data file is sealed at this many bytes and the next one opened, when no
-        /// server holds the directory. Overrides `TRIEDB__STORAGE__SEGMENT_MAX_BYTES`.
+        /// server holds the directory. Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`.
         /// [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         segment_max_bytes: Option<usize>,
@@ -258,14 +258,14 @@ enum Command {
         json: bool,
     },
     /// Measure what a file costs to store: load it into a scratch data directory and print
-    /// its size raw, under gzip -9 and zstd -19, and as TrieDB holds it - data files,
+    /// its size raw, under gzip -9 and zstd -19, and as kibbr holds it - data files,
     /// catalog and manifest - in bytes and in disk blocks.
     BenchStorage {
         /// NDJSON, gzip or zstd.
         #[arg(value_name = "FILE")]
         input: PathBuf,
         /// Also index the same lines into this Elasticsearch - a scratch index, deleted
-        /// after - and print its store size beside TrieDB's.
+        /// after - and print its store size beside kibbr's.
         #[arg(long, value_name = "URL")]
         es: Option<String>,
         /// Where to load it. Must be absent or empty. [default: a directory under the
@@ -275,7 +275,7 @@ enum Command {
         /// Leave the scratch directory in place, to look at.
         #[arg(long)]
         keep: bool,
-        /// As `load --time-columns`. Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        /// As `load --time-columns`. Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },
@@ -288,12 +288,12 @@ enum Command {
         #[arg(long, value_name = "ROWS")]
         max_rows: Option<usize>,
         /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_BUCKETS`.
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
         #[arg(long, value_name = "BUCKETS")]
         max_buckets: Option<usize>,
         /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
         /// count times the distinct values of the other keys.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
     },
@@ -365,22 +365,22 @@ enum Command {
         after: Option<String>,
 
         /// Rows a query that names no `LIMIT` is cut at.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_ROWS`. Not exclusive with a
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_ROWS`. Not exclusive with a
         /// TrieQL string, unlike `--limit`: the grammar cannot state it, and it is a
         /// property of the server rather than of the query.
         #[arg(long, value_name = "ROWS")]
         max_rows: Option<usize>,
         /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_BUCKETS`.
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
         #[arg(long, value_name = "BUCKETS")]
         max_buckets: Option<usize>,
         /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
         /// count times the distinct values of the other keys.
-        /// `0` disables it. Overrides `TRIEDB__QUERY__MAX_GROUPS`.
+        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
         /// As `serve --time-columns`: the names a template's time column is chosen from.
-        /// Overrides `TRIEDB__SCHEMA__TIME_COLUMNS`.
+        /// Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },

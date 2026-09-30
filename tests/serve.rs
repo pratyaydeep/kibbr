@@ -1,4 +1,4 @@
-//! `triedb serve` from outside the binary: every endpoint answers, a body with three bad
+//! `kibbr serve` from outside the binary: every endpoint answers, a body with three bad
 //! lines in it reports exactly those three, and a signal mid-request exits 0.
 //!
 //! HTTP is spoken over a bare `TcpStream` rather than through a client crate. The
@@ -41,7 +41,7 @@ struct Server {
 fn scratch_dir() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "triedb-serve-test-{}-{}",
+        "kibbr-serve-test-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -53,7 +53,7 @@ impl Server {
     /// Start on port 0 and read back the port the OS chose.
     ///
     /// Not a fixed port: two of these tests run concurrently under `cargo test`, and
-    /// 7700 is also where a developer's own `triedb serve` is. The banner prints the
+    /// 7700 is also where a developer's own `kibbr serve` is. The banner prints the
     /// bound address precisely so something can read it.
     fn start() -> Self {
         Self::start_with(&[])
@@ -64,7 +64,7 @@ impl Server {
     fn start_with(extra: &[&str]) -> Self {
         let memory = extra.windows(2).any(|pair| pair == ["--storage", "memory"]);
         let data_dir = (!memory).then(scratch_dir);
-        let mut command = Command::new(env!("CARGO_BIN_EXE_triedb"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
         command.args(["serve", "--port", "0"]);
         if let Some(dir) = &data_dir {
             command.args(["--data-dir", &dir.display().to_string()]);
@@ -74,7 +74,7 @@ impl Server {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to spawn triedb serve");
+            .expect("failed to spawn kibbr serve");
 
         let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
         let mut port = None;
@@ -153,7 +153,7 @@ impl Server {
 
     /// Wait for exit, and return the code plus everything left on stderr.
     fn wait(mut self) -> (Option<i32>, String) {
-        let status = self.child.wait().expect("failed to wait for triedb serve");
+        let status = self.child.wait().expect("failed to wait for kibbr serve");
         let mut log = String::new();
         let _ = self.stderr.read_to_string(&mut log);
         // Already reaped; stop `Drop` from killing a pid that may have been reused. The
@@ -245,7 +245,7 @@ fn json(text: &str) -> serde_json::Value {
 /// correctly whatever went wrong on it, and a truncated document, a non-object and a
 /// bad byte take three different routes to `DetectorError`.
 fn corpus() -> Vec<u8> {
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", &LINES.to_string(), "--seed", "42"])
         .output()
         .expect("failed to run gen-logs");
@@ -465,7 +465,7 @@ fn three_bad_lines_report_exactly_those_three() {
 #[test]
 fn a_clean_body_reports_no_errors() {
     let server = Server::start();
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", "200", "--seed", "7"])
         .output()
         .expect("failed to run gen-logs");
@@ -515,7 +515,7 @@ fn a_signal_lets_the_in_flight_request_finish() {
     let server = Server::start();
     let port = server.port;
 
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", "20000", "--seed", "3"])
         .output()
         .expect("failed to run gen-logs");
@@ -865,7 +865,7 @@ fn past_capacity_ingest_sheds_with_retry_after() {
     // ids across the whole ten-digit range, so those columns now hold both the type a
     // value inside the epoch window gets and the type one outside it gets, and a column
     // carrying two types seals a segment every time the type changes.
-    let out = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", "20000", "--seed", "11"])
         .output()
         .expect("failed to run gen-logs");
