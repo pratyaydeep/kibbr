@@ -43,7 +43,7 @@ pub const DEFAULT_MAX_GROUPS: usize = 100_000;
 /// The largest `/ingest` body accepted off the wire, 10 MiB.
 ///
 /// axum's own 2 MiB is right for a form and wrong for a log shipper: Vector's default
-/// batch is larger, and a 413 on a routine batch reads as TrieDB rejecting valid logs. Not
+/// batch is larger, and a 413 on a routine batch reads as kibbr rejecting valid logs. Not
 /// unlimited, because the body is buffered whole and this process cannot spill it.
 ///
 /// Measured before decompression, which is the only place it *can* be measured, and the
@@ -77,21 +77,21 @@ fn default_ingest_concurrency() -> usize {
 }
 
 /// Environment variable for the max_rows configuration.
-const MAX_ROWS_ENV: &str = "TRIEDB__QUERY__MAX_ROWS";
-const MAX_BUCKETS_ENV: &str = "TRIEDB__QUERY__MAX_BUCKETS";
-const MAX_GROUPS_ENV: &str = "TRIEDB__QUERY__MAX_GROUPS";
-const MAX_BODY_BYTES_ENV: &str = "TRIEDB__API__MAX_BODY_BYTES";
-const MAX_DECOMPRESSED_BYTES_ENV: &str = "TRIEDB__API__MAX_DECOMPRESSED_BYTES";
-const INGEST_CONCURRENCY_ENV: &str = "TRIEDB__API__INGEST_CONCURRENCY";
-const BASE_PATH_ENV: &str = "TRIEDB__STORAGE__BASE_PATH";
-const TRIE_FILE_ENV: &str = "TRIEDB__STORAGE__TRIE_FILE";
-const FLUSH_INTERVAL_ENV: &str = "TRIEDB__INGESTOR__FLUSH_INTERVAL_MS";
-const ROW_GROUP_TIMEOUT_ENV: &str = "TRIEDB__INGESTOR__ROW_GROUP_TIMEOUT_MS";
-const MAX_OPEN_SEGMENTS_ENV: &str = "TRIEDB__STORAGE__MAX_OPEN_SEGMENTS";
-const SEGMENT_MAX_BYTES_ENV: &str = "TRIEDB__STORAGE__SEGMENT_MAX_BYTES";
-const MAX_BUFFER_BYTES_ENV: &str = "TRIEDB__STORAGE__MAX_BUFFER_BYTES";
-const TIME_COLUMNS_ENV: &str = "TRIEDB__SCHEMA__TIME_COLUMNS";
-const EPOCH_WINDOW_ENV: &str = "TRIEDB__SCHEMA__EPOCH_WINDOW";
+const MAX_ROWS_ENV: &str = "KIBBR__QUERY__MAX_ROWS";
+const MAX_BUCKETS_ENV: &str = "KIBBR__QUERY__MAX_BUCKETS";
+const MAX_GROUPS_ENV: &str = "KIBBR__QUERY__MAX_GROUPS";
+const MAX_BODY_BYTES_ENV: &str = "KIBBR__API__MAX_BODY_BYTES";
+const MAX_DECOMPRESSED_BYTES_ENV: &str = "KIBBR__API__MAX_DECOMPRESSED_BYTES";
+const INGEST_CONCURRENCY_ENV: &str = "KIBBR__API__INGEST_CONCURRENCY";
+const BASE_PATH_ENV: &str = "KIBBR__STORAGE__BASE_PATH";
+const TRIE_FILE_ENV: &str = "KIBBR__STORAGE__TRIE_FILE";
+const FLUSH_INTERVAL_ENV: &str = "KIBBR__INGESTOR__FLUSH_INTERVAL_MS";
+const ROW_GROUP_TIMEOUT_ENV: &str = "KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS";
+const MAX_OPEN_SEGMENTS_ENV: &str = "KIBBR__STORAGE__MAX_OPEN_SEGMENTS";
+const SEGMENT_MAX_BYTES_ENV: &str = "KIBBR__STORAGE__SEGMENT_MAX_BYTES";
+const MAX_BUFFER_BYTES_ENV: &str = "KIBBR__STORAGE__MAX_BUFFER_BYTES";
+const TIME_COLUMNS_ENV: &str = "KIBBR__SCHEMA__TIME_COLUMNS";
+const EPOCH_WINDOW_ENV: &str = "KIBBR__SCHEMA__EPOCH_WINDOW";
 
 /// The names a template's time column is chosen from, first match wins.
 pub const DEFAULT_TIME_COLUMNS: &[&str] = &[
@@ -126,7 +126,7 @@ pub const DEFAULT_ROW_GROUP_TIMEOUT_MS: usize = 60_000;
 ///
 /// Relative, and beside the process rather than under `/var/lib`: a default that needs
 /// root to create is a default that fails on the first run on a laptop.
-pub const DEFAULT_DATA_DIR: &str = "triedb-data";
+pub const DEFAULT_DATA_DIR: &str = "kibbr-data";
 /// The trie snapshot, inside the data directory so one path moves both.
 pub const TRIE_FILE_NAME: &str = "trie.json";
 
@@ -188,7 +188,7 @@ pub enum ConfigError {
 /// What the type ladder and the trie are told about the data: for now, which key names
 /// may carry a template's time.
 ///
-/// Carried by the CLI as well as the server - `triedb query <file>` builds its trie in
+/// Carried by the CLI as well as the server - `kibbr query <file>` builds its trie in
 /// the process, and a template created there chooses its time source by the same rule.
 #[derive(Debug, Clone)]
 pub struct Schema {

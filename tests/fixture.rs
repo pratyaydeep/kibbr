@@ -3,20 +3,20 @@
 
 use std::process::{Command, Stdio};
 
-fn triedb() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_triedb"));
+fn kibbr() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kibbr"));
     // The fixture's labels are the *default* window's, so an exported one would turn the
     // whole file red for a reason that has nothing to do with the build. The two tests
     // that want a window set it back, after this.
-    cmd.env_remove("TRIEDB__SCHEMA__EPOCH_WINDOW");
+    cmd.env_remove("KIBBR__SCHEMA__EPOCH_WINDOW");
     cmd
 }
 
 fn run(args: &[&str]) -> String {
-    let out = triedb().args(args).output().expect("failed to run triedb");
+    let out = kibbr().args(args).output().expect("failed to run kibbr");
     assert!(
         out.status.success(),
-        "triedb {args:?} exited {:?}\nstderr: {}",
+        "kibbr {args:?} exited {:?}\nstderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -38,18 +38,18 @@ fn feed(child: &mut std::process::Child, input: &[u8]) -> std::thread::JoinHandl
 }
 
 fn run_stdin(args: &[&str], input: &str) -> String {
-    let mut child = triedb()
+    let mut child = kibbr()
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let writer = feed(&mut child, input.as_bytes());
-    let out = child.wait_with_output().expect("failed to wait on triedb");
+    let out = child.wait_with_output().expect("failed to wait on kibbr");
     writer.join().expect("stdin writer thread panicked");
     assert!(
         out.status.success(),
-        "triedb {args:?} exited {:?}",
+        "kibbr {args:?} exited {:?}",
         out.status.code()
     );
     String::from_utf8(out.stdout).expect("stdout was not utf-8")
@@ -64,15 +64,15 @@ fn run_stdin(args: &[&str], input: &str) -> String {
 /// Takes bytes rather than `&str` so a test can feed input that is not UTF-8, which is
 /// the whole point of some of them. `&str` and `&String` still pass unchanged.
 fn run_stdin_rejecting(input: impl AsRef<[u8]>) -> (String, String) {
-    let mut child = triedb()
+    let mut child = kibbr()
         .args(["parse", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let writer = feed(&mut child, input.as_ref());
-    let out = child.wait_with_output().expect("failed to wait on triedb");
+    let out = child.wait_with_output().expect("failed to wait on kibbr");
     writer.join().expect("stdin writer thread panicked");
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -145,16 +145,16 @@ fn every_fixture_value_gets_its_labelled_type() {
 /// `parse --json` over stdin with the epoch window set, returning the exit status, the
 /// type of `v` on each line, and stderr.
 fn parse_under_window(window: &str, input: &str) -> (bool, Vec<String>, String) {
-    let mut child = triedb()
+    let mut child = kibbr()
         .args(["parse", "-", "--json"])
-        .env("TRIEDB__SCHEMA__EPOCH_WINDOW", window)
+        .env("KIBBR__SCHEMA__EPOCH_WINDOW", window)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let writer = feed(&mut child, input.as_bytes());
-    let out = child.wait_with_output().expect("failed to wait on triedb");
+    let out = child.wait_with_output().expect("failed to wait on kibbr");
     writer.join().expect("stdin writer thread panicked");
     let types = String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -256,7 +256,7 @@ fn an_unreadable_epoch_window_is_refused() {
         assert!(!ok, "`{window}` was accepted");
         assert!(types.is_empty(), "`{window}` typed lines anyway: {types:?}");
         assert!(
-            stderr.contains("TRIEDB__SCHEMA__EPOCH_WINDOW") && stderr.contains(why),
+            stderr.contains("KIBBR__SCHEMA__EPOCH_WINDOW") && stderr.contains(why),
             "`{window}`: stderr did not say `{why}`: {stderr}"
         );
     }

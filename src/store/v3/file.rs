@@ -21,7 +21,7 @@ use super::build::RowGroup;
 use super::read::{self, Cell, Header};
 use super::{
     Bad, Bytes, FormatError, DAY_NS, HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, MAGIC,
-    MAX_BODY, OPTIONAL, TRAILER_LEN, VERSION,
+    MAX_BODY, OPTIONAL, PRE_RENAME_MAGIC, TRAILER_LEN, VERSION,
 };
 use crate::frame::{self, Next};
 
@@ -181,10 +181,15 @@ pub fn check_header(path: &Path, bytes: &[u8]) -> Result<[u8; 16], FormatError> 
     if bytes.len() < HEADER_LEN {
         return Err(corrupt(0, "shorter than the 24-byte header"));
     }
+    if bytes[..4] == PRE_RENAME_MAGIC {
+        return Err(FormatError::PreRename {
+            path: path.to_path_buf(),
+        });
+    }
     if bytes[..4] != MAGIC {
         return Err(corrupt(
             0,
-            "not a TrieDB file - it does not start with TRDB",
+            "not a kibbr file - it does not start with KBBR",
         ));
     }
     if bytes[4] != VERSION {
@@ -216,16 +221,25 @@ pub fn file_id_of(path: &Path) -> Result<[u8; 16], FormatError> {
 
 /// The version byte of a file that starts with the magic, without reading the rest -
 /// what startup reads, before the port is taken, to refuse a directory holding another
-/// version.
-pub fn version_of(path: &Path) -> std::io::Result<Option<u8>> {
+/// version. A file that starts with the pre-rename magic is `PreRename`.
+pub fn version_of(path: &Path) -> Result<Option<u8>, FormatError> {
+    let io = |source| FormatError::Io {
+        path: path.to_path_buf(),
+        source,
+    };
     let mut head = [0u8; 5];
-    let mut file = File::open(path)?;
+    let mut file = File::open(path).map_err(io)?;
     let mut got = 0;
     while got < head.len() {
-        match file.read(&mut head[got..])? {
+        match file.read(&mut head[got..]).map_err(io)? {
             0 => break,
             n => got += n,
         }
+    }
+    if got > 0 && PRE_RENAME_MAGIC.starts_with(&head[..got.min(4)]) {
+        return Err(FormatError::PreRename {
+            path: path.to_path_buf(),
+        });
     }
     Ok((got == head.len() && head[..4] == MAGIC).then_some(head[4]))
 }
@@ -609,6 +623,12 @@ pub fn recover(path: &Path) -> Result<Recovered, FormatError> {
     let bytes = fs::read(path).map_err(io)?;
     let len = bytes.len() as u64;
     if bytes.len() < HEADER_LEN {
+        // Even cut inside the magic: the first bytes say which build wrote it.
+        if !bytes.is_empty() && PRE_RENAME_MAGIC.starts_with(&bytes[..bytes.len().min(4)]) {
+            return Err(FormatError::PreRename {
+                path: path.to_path_buf(),
+            });
+        }
         let mut expect = MAGIC.to_vec();
         expect.extend_from_slice(&[VERSION, 0, 0, 0]);
         let n = bytes.len().min(expect.len());
@@ -622,7 +642,7 @@ pub fn recover(path: &Path) -> Result<Recovered, FormatError> {
             return Err(FormatError::Corrupt {
                 path: path.to_path_buf(),
                 offset: 0,
-                what: "not a TrieDB file - it does not start with TRDB".into(),
+                what: "not a kibbr file - it does not start with KBBR".into(),
             });
         }
         let index = Index::new(new_file_id().map_err(io)?);
@@ -1014,7 +1034,7 @@ mod tests {
     /// number the forgotten one had.
     #[test]
     fn a_rollback_forgets_everything_written_since_the_mark() {
-        let dir = std::env::temp_dir().join(format!("triedb-rollback-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-rollback-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("mkdir");
         let path = dir.join("seg_0_000001.col");

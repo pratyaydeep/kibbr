@@ -23,7 +23,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 LINES=${LINES:-2000}
 BODIES=${BODIES:-20}
 WARMUP=${WARMUP:-3}

@@ -1,4 +1,6 @@
-# trieDB
+# kibbr
+
+TrieDB is now kibbr.
 
 A log store that fingerprints each line's shape and infers a type for every value.
 
@@ -19,7 +21,7 @@ on macOS arm64 the system one aborted the server with "pointer being freed was n
 allocated" at unrelated free sites that neither the code (no `unsafe`) nor AddressSanitizer
 could account for.
 
-The binary lands at `target/release/triedb`. Everything below assumes it is on your
+The binary lands at `target/release/kibbr`. Everything below assumes it is on your
 `PATH`:
 
 ```
@@ -27,7 +29,7 @@ export PATH="$PWD/target/release:$PATH"
 ```
 
 If you would rather not touch `PATH`, use `cargo run --release --` in place of
-`triedb` - note the `--`, which separates cargo's flags from the program's:
+`kibbr` - note the `--`, which separates cargo's flags from the program's:
 
 ```
 cargo run --release -- gen-logs --lines 5
@@ -38,10 +40,10 @@ To install it properly: `cargo install --path .`
 Check it works:
 
 ```
-$ triedb --help
-TrieDB - log store
+$ kibbr --help
+kibbr - log store
 
-Usage: triedb <COMMAND>
+Usage: kibbr <COMMAND>
 
 Commands:
   gen-logs  Generate reproducible NDJSON logs on stdout
@@ -54,7 +56,7 @@ Commands:
 `gen-logs` writes NDJSON to **stdout** - one JSON object per line.
 
 ```
-$ triedb gen-logs --lines 2 --seed 7
+$ kibbr gen-logs --lines 2 --seed 7
 {"err":{"trace_id":"26dd6ba0-018e-4163-8a97-1122d61f6197","code":7751,"cause":{"detail":"🔥 rate limit hit 🚨"}},"msg":"login","ts_unix":1706539241,"service":"auth","level":"fatal"}
 {"event":"rate_limited","device":{"owner":{"email":"u18897@auth.example.com"},"serial":2743511012,"fw":218.51,"online":false},"ts":"2024-02-02T06:59:28Z"}
 ```
@@ -76,9 +78,9 @@ stability.
 Nothing reads the wall clock, so the seed fixes the output completely:
 
 ```
-$ triedb gen-logs --lines 1000 --seed 42 | shasum -a 256
+$ kibbr gen-logs --lines 1000 --seed 42 | shasum -a 256
 491d250b905b730c237a9a0642b55cf97610fe7945cc6fdb53a474175a936abe  -
-$ triedb gen-logs --lines 1000 --seed 42 | shasum -a 256
+$ kibbr gen-logs --lines 1000 --seed 42 | shasum -a 256
 491d250b905b730c237a9a0642b55cf97610fe7945cc6fdb53a474175a936abe  -
 ```
 
@@ -87,12 +89,12 @@ $ triedb gen-logs --lines 1000 --seed 42 | shasum -a 256
 `parse` takes a file path, or `-` for stdin. Both forms work:
 
 ```
-triedb gen-logs --lines 1000 --seed 42 > testdata/sample.ndjson
-triedb parse testdata/sample.ndjson --limit 1
+kibbr gen-logs --lines 1000 --seed 42 > testdata/sample.ndjson
+kibbr parse testdata/sample.ndjson --limit 1
 ```
 
 ```
-triedb gen-logs --lines 1000 --seed 42 | triedb parse - --limit 1
+kibbr gen-logs --lines 1000 --seed 42 | kibbr parse - --limit 1
 ```
 
 Either way:
@@ -133,7 +135,7 @@ output, so pipe it somewhere.
 **Parse a line you wrote yourself.** Fastest way to get a feel for the ladder:
 
 ```
-$ echo '{"event":"login_failed","user":{"id":"u42","email":"u42@corp.example.com"},"order_id":1700000000,"tags":["a","b"],"note":"","deleted_at":null}' | triedb parse -
+$ echo '{"event":"login_failed","user":{"id":"u42","email":"u42@corp.example.com"},"order_id":1700000000,"tags":["a","b"],"note":"","deleted_at":null}' | kibbr parse -
 line 1
   fingerprint  deleted_at | event=login_failed | note | order_id | tags | user.email | user.id
   deleted_at   Null       null
@@ -153,14 +155,14 @@ scan, and this misclassification is the accepted price. Change the value to
 **See how often that fires** across a real run:
 
 ```
-$ triedb gen-logs --lines 1000 --seed 42 | triedb parse - | grep -c "(= "
+$ kibbr gen-logs --lines 1000 --seed 42 | kibbr parse - | grep -c "(= "
 1293
 ```
 
 **Count what types actually show up:**
 
 ```
-$ triedb gen-logs --lines 1000 --seed 42 | triedb parse - | awk '/^  / && $1 != "fingerprint" {print $2}' | sort | uniq -c | sort -rn
+$ kibbr gen-logs --lines 1000 --seed 42 | kibbr parse - | awk '/^  / && $1 != "fingerprint" {print $2}' | sort | uniq -c | sort -rn
 3295 String
 1907 Datetime
 1185 Int64
@@ -176,7 +178,7 @@ fingerprints: an optional field present on one line and absent on the next is a
 different key set, and therefore a different template.
 
 ```
-$ triedb gen-logs --lines 1000 --templates 12 --seed 42 | triedb parse - | tail -1
+$ kibbr gen-logs --lines 1000 --templates 12 --seed 42 | kibbr parse - | tail -1
 1000 lines, 356 templates
 ```
 
@@ -187,29 +189,29 @@ kitchen sink, so `--templates 1` gives you nested objects, nulls, empty strings,
 unicode, arrays, a real timestamp and a fake one on every line:
 
 ```
-triedb gen-logs --lines 3 --templates 1 --seed 1 | triedb parse -
+kibbr gen-logs --lines 3 --templates 1 --seed 1 | kibbr parse -
 ```
 
 **Confirm reproducibility yourself:**
 
 ```
-diff <(triedb gen-logs --lines 5000 --templates 40 --seed 99) \
-     <(triedb gen-logs --lines 5000 --templates 40 --seed 99)
+diff <(kibbr gen-logs --lines 5000 --templates 40 --seed 99) \
+     <(kibbr gen-logs --lines 5000 --templates 40 --seed 99)
 ```
 
 **Break it on purpose.** Nesting past depth 8 is refused, and so is anything that is
 not a JSON object:
 
 ```
-$ echo '{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":1}}}}}}}}}' | triedb parse -
-triedb: nesting deeper than 8 levels at key `a.b.c.d.e.f.g.h`
+$ echo '{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":1}}}}}}}}}' | kibbr parse -
+kibbr: nesting deeper than 8 levels at key `a.b.c.d.e.f.g.h`
 
-$ echo 'not json' | triedb parse -
-triedb: line 1: invalid JSON
+$ echo 'not json' | kibbr parse -
+kibbr: line 1: invalid JSON
   caused by: expected ident at line 1 column 2
 
-$ echo '[1,2,3]' | triedb parse -
-triedb: top-level JSON value is an array, expected an object
+$ echo '[1,2,3]' | kibbr parse -
+kibbr: top-level JSON value is an array, expected an object
 ```
 
 **Get it as JSON** instead of the human table. `--json` emits one record per line
@@ -217,7 +219,7 @@ with `values` (raw text), `typed_values` (decoded - timestamps as unix nanosecon
 and `types`. Key ordering is stable run to run, so it diffs cleanly:
 
 ```
-triedb gen-logs --lines 5 --seed 3 | triedb parse - --json | jq .
+kibbr gen-logs --lines 5 --seed 3 | kibbr parse - --json | jq .
 ```
 
 **Read the fixture.** `testdata/fixture.ndjson` is 44 hand-written values, each
@@ -226,7 +228,7 @@ explains why each one is there - the ten-digit cases, `"NaN"`, `"TRUE"`,
 `"9223372036854775808"`, `[1700000000]`, and the rest:
 
 ```
-triedb parse testdata/fixture.ndjson
+kibbr parse testdata/fixture.ndjson
 ```
 
 Add a line in the same shape and the test suite will check your case too.
@@ -234,7 +236,7 @@ Add a line in the same shape and the test suite will check your case too.
 ## Serve it over HTTP
 
 ```
-triedb serve
+kibbr serve
 ```
 
 **Storage is memory and only memory.** Nothing is written to disk - there is no
@@ -243,7 +245,7 @@ process. The banner says so on startup, and `/stats` says so as a field:
 
 ```
 
-triedb serve
+kibbr serve
 
   listening   http://127.0.0.1:7700
 
@@ -255,7 +257,7 @@ triedb serve
   endpoints   GET  /            the log viewer, in a browser
               POST /ingest      NDJSON body, one log line per line
               POST /query       {"q": "<trieql>"}
-              POST /load        a bulk load job: what `triedb load` sends
+              POST /load        a bulk load job: what `kibbr load` sends
               GET  /templates   every template, its columns and row count
               GET  /stats       throughput, template count, storage size
               GET  /health      {"ok":true}
@@ -274,7 +276,7 @@ should be something you typed.
 **Feed it and ask it something:**
 
 ```
-triedb gen-logs --lines 500 --seed 42 > logs.ndjson
+kibbr gen-logs --lines 500 --seed 42 > logs.ndjson
 curl -s -X POST --data-binary @logs.ndjson  http://127.0.0.1:7700/ingest
 curl -s -X POST -d '{"q": "COUNT LOG {\"level\": \"error\"}"}' http://127.0.0.1:7700/query
 curl -s http://127.0.0.1:7700/templates
@@ -299,7 +301,7 @@ is reachable by anything that can open a socket, and a decoder that unwinds on
 malformed input turns one bad shipper config into an outage for everybody else.
 
 **Two size limits, because one cannot see a bomb.** The first is on what
-arrives: 10 MiB, `--max-body-bytes` or `TRIEDB__API__MAX_BODY_BYTES`. That is
+arrives: 10 MiB, `--max-body-bytes` or `KIBBR__API__MAX_BODY_BYTES`. That is
 the only place a compressed body *can* be measured, and it is not enough on its
 own - a carefully built 1 MiB body inflates to gigabytes, passes the first check
 by three orders of magnitude, and kills the process while being decompressed. So
@@ -338,7 +340,7 @@ template id) or one trie per tenant, with a tenant selector on `/query`,
 would otherwise be materialised in the server before a byte of the response is
 written, which is a denial-of-service path reachable by accident from a
 terminal. So the answer is cut at `max_rows` - 10,000 by default, `--max-rows`
-or `TRIEDB__QUERY__MAX_ROWS` to change it, `0` to turn it off - and says so:
+or `KIBBR__QUERY__MAX_ROWS` to change it, `0` to turn it off - and says so:
 `truncated: true`, `limit_source: "backstop"`, and a `next_cursor` to hand back
 as `AFTER` for the rest. A `LIMIT` you asked for is honoured above it rather
 than clamped to it, and `COUNT` and `GROUP BY` return no rows for it to bound.
@@ -349,7 +351,7 @@ quiet, which is not the same statement as a bucket nobody asked about. So the
 result is a list rather than a map of the buckets that happened to have rows:
 
 ```
-$ triedb query logs.ndjson \
+$ kibbr query logs.ndjson \
     'COUNT LOG {"level":"ERROR"} BETWEEN 2024-01-15T09:00:00Z AND 2024-01-15T12:00:00Z GROUP BY time(5m)'
 bucket                count
 2024-01-15T09:55:00Z  3
@@ -377,8 +379,8 @@ it. `max_buckets` (10,000) and `max_groups` (100,000) do, and going over is a
 refusal naming both counts rather than a chart with its tail quietly missing:
 
 ```
-$ triedb explain 'COUNT LOG {} SINCE 30d GROUP BY time(1s)'
-triedb: `GROUP BY time(1s)` over this range needs 2,592,001 buckets; the limit is
+$ kibbr explain 'COUNT LOG {} SINCE 30d GROUP BY time(1s)'
+kibbr: `GROUP BY time(1s)` over this range needs 2,592,001 buckets; the limit is
 10,000 - widen the bucket or narrow the range
 ```
 
@@ -403,15 +405,15 @@ and the shutdown walks a fixed order naming the steps this build does not have y
 With `--storage memory`:
 
 ```
-triedb: SIGINT received - shutting down
-triedb: stop accepting - 1 request(s) in flight
-triedb: in-flight requests complete
-triedb: final flush - skipped, storage is memory (--data-dir puts the stores on disk)
-triedb: WAL checkpoint - skipped, there is no WAL yet
-triedb: trie.json - skipped, storage is memory
-triedb: close stores - 328 store(s), 60,997 row(s) discarded, they were only in memory
-triedb: close WAL - skipped, there is no WAL yet
-triedb: exit 0
+kibbr: SIGINT received - shutting down
+kibbr: stop accepting - 1 request(s) in flight
+kibbr: in-flight requests complete
+kibbr: final flush - skipped, storage is memory (--data-dir puts the stores on disk)
+kibbr: WAL checkpoint - skipped, there is no WAL yet
+kibbr: trie.json - skipped, storage is memory
+kibbr: close stores - 328 store(s), 60,997 row(s) discarded, they were only in memory
+kibbr: close WAL - skipped, there is no WAL yet
+kibbr: exit 0
 ```
 
 Naming the skipped steps is the point. Four of the six are the difference between
@@ -419,13 +421,13 @@ this and a database that survives being restarted.
 
 ## Load closed days
 
-`/ingest` is the live door: lines as they happen. `triedb load` is the bulk door: a
+`/ingest` is the live door: lines as they happen. `kibbr load` is the bulk door: a
 closed day of lines - or six months of them - loaded whole.
 
 ```
-triedb load --data-dir triedb-data logs/2024-01-15/          # every file under it
-triedb load --data-dir triedb-data yesterday.ndjson.gz       # gzip, zstd or NDJSON
-zcat archive.gz | triedb load --data-dir triedb-data -       # standard input
+kibbr load --data-dir kibbr-data logs/2024-01-15/          # every file under it
+kibbr load --data-dir kibbr-data yesterday.ndjson.gz       # gzip, zstd or NDJSON
+zcat archive.gz | kibbr load --data-dir kibbr-data -       # standard input
 ```
 
 - **All or nothing.** The load writes finished files into `staging/`, then publishes
@@ -441,7 +443,7 @@ zcat archive.gz | triedb load --data-dir triedb-data -       # standard input
   `LOCK` file. If a server holds it, `load` asks that server to run the load
   (`POST /load`), and the rows are queryable the moment it commits; if nothing does,
   `load` takes the directory and runs alone.
-- **One source per day.** TrieDB keeps no row identity, so the two doors cannot remove
+- **One source per day.** Kibbr keeps no row identity, so the two doors cannot remove
   duplicates between them. `--replace-day 2024-01-15` publishes the load as the whole of
   that day, retiring what the day held in the same record - how a day that arrived live is
   swapped for a clean copy from the archive.
@@ -464,10 +466,10 @@ directories and asks both `scripts/agree.sh`'s query set: they must answer ident
 **What a file costs to store**, by one command:
 
 ```
-triedb bench-storage day.ndjson            # add --es http://localhost:9200 to compare
+kibbr bench-storage day.ndjson            # add --es http://localhost:9200 to compare
 ```
 
-prints the file's size raw, under `gzip -9` and `zstd -19`, and as TrieDB holds it - data
+prints the file's size raw, under `gzip -9` and `zstd -19`, and as kibbr holds it - data
 files, catalog and manifest, in bytes and in disk blocks, with the data files broken down
 into column data, row group headers, schema records and footers.
 
@@ -556,9 +558,9 @@ src/engine.rs     the walk, the scan, the result
 src/trieql.rs     the query grammar
 src/query.rs      the `query` command, and the result JSON both surfaces answer with
 src/serve.rs      the HTTP surface, the banner, the shutdown sequence
-src/load.rs       `triedb load` - the bulk door: staging, the load id, the commit
+src/load.rs       `kibbr load` - the bulk door: staging, the load id, the commit
 src/lock.rs       the LOCK file: one process owns a data directory
-src/bench.rs      `triedb bench-storage`
+src/bench.rs      `kibbr bench-storage`
 src/http.rs       the small HTTP client `load` and `bench-storage --es` speak
 src/viewer.html   the log viewer served at `/` - one file, compiled into the binary
 tests/fixture.rs  outer-surface tests

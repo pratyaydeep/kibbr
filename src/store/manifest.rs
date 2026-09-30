@@ -367,7 +367,7 @@ mod tests {
     /// reads back the records wholly before it, and reopening leaves the file there.
     #[test]
     fn a_manifest_cut_at_every_offset_keeps_the_records_before_the_cut() {
-        let dir = std::env::temp_dir().join(format!("triedb-manifest-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-manifest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("mkdir");
         let path = path_in(&dir);

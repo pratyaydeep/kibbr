@@ -20,7 +20,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-./target/release/triedb}
+BIN=${BIN:-./target/release/kibbr}
 LINES=${LINES:-200000}
 GEN_SEED=${GEN_SEED:-42}
 SENDERS=${SENDERS:-4}
@@ -31,7 +31,7 @@ BUDGET_SECONDS=${BUDGET_SECONDS:-10}
 STOP_TIMEOUT_SECONDS=${STOP_TIMEOUT_SECONDS:-1800}
 
 # Another build can be measured by naming its binary; the default is built first.
-[ "$BIN" != ./target/release/triedb ] || cargo build --release --quiet || exit 1
+[ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 
 mkdir -p testdata/live-door
 INPUT=testdata/live-door/${LINES}-seed${GEN_SEED}.ndjson
@@ -131,7 +131,7 @@ else
 fi
 PID=""
 echo "SIGTERM to exit      ${ELAPSED}s, exit code $CODE"
-grep -E 'triedb: (final flush|close stores|exit)' "$WORK/run1.log" | sed 's/^/  /'
+grep -E 'kibbr: (final flush|close stores|exit)' "$WORK/run1.log" | sed 's/^/  /'
 FILES=$(find "$WORK/db/data" -type f 2>/dev/null | wc -l | tr -d ' ')
 echo "data files           $FILES"
 

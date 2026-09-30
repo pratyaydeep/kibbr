@@ -501,5 +501,5 @@ fn token_count(file: &TrieFile, by_id: &BTreeMap<u64, &NodeRecord>) -> u64 {
 }
 
 fn warn(message: &str) {
-    eprintln!("triedb: WARN trie.json: {message}");
+    eprintln!("kibbr: WARN trie.json: {message}");
 }

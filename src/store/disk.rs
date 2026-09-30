@@ -81,7 +81,7 @@ pub const STAGING_DIR: &str = "staging";
 pub const DEFAULT_SEGMENT_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
 fn warn(message: String) {
-    eprintln!("triedb: WARN {message}");
+    eprintln!("kibbr: WARN {message}");
 }
 
 // ── Names ──────────────────────────────────────────────────────────────────────────
@@ -149,10 +149,12 @@ pub fn refuse_other_versions(base: &Path) -> Result<(), StoreError> {
     }
     files.sort();
     for path in files {
-        if let Ok(Some(found)) = file::version_of(&path) {
-            if found != super::v3::VERSION {
+        match file::version_of(&path) {
+            Ok(Some(found)) if found != super::v3::VERSION => {
                 return Err(FormatError::Version { path, found }.into());
             }
+            Err(e @ FormatError::PreRename { .. }) => return Err(e.into()),
+            _ => {}
         }
     }
     Ok(())
@@ -1385,6 +1387,7 @@ fn finish_moves(
                 Ok(file_id) => {
                     by_id.insert(manifest::hex(&file_id), path);
                 }
+                Err(e @ FormatError::PreRename { .. }) => return Err(e.into()),
                 Err(e) => unreadable.push(e.to_string()),
             }
         }
@@ -2202,7 +2205,7 @@ mod tests {
     impl Scratch {
         fn new(name: &str) -> Self {
             let dir = std::env::temp_dir().join(format!(
-                "triedb-disk-{name}-{}-{:?}",
+                "kibbr-disk-{name}-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
@@ -2305,7 +2308,7 @@ mod tests {
         let scratch = Scratch::new("unnamed");
         let day = scratch.0.join(DATA_DIR).join("2024-01-15");
         fs::create_dir_all(&day).expect("mkdir");
-        fs::write(day.join("seg_0_000001.col"), b"TRDB\x03\0\0\0").expect("write");
+        fs::write(day.join("seg_0_000001.col"), b"KBBR\x03\0\0\0").expect("write");
         fs::create_dir_all(scratch.0.join(STAGING_DIR).join("abc")).expect("mkdir");
         let _ = store(&scratch);
         assert!(!day.exists(), "an unnamed file survived startup");

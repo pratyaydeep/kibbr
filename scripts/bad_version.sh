@@ -8,7 +8,7 @@
 #
 # What this asserts:
 #
-#   1. With byte 4 of one segment set to 2, `triedb serve` exits non-zero within 5s and
+#   1. With byte 4 of one segment set to 2, `kibbr serve` exits non-zero within 5s and
 #      its stderr names that segment's path.
 #   2. It exits that way, naming the segment, even when its port is already held by
 #      another process - so the check ran before the listener was opened. A server that
@@ -20,7 +20,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-./target/release/triedb}
+BIN=${BIN:-./target/release/kibbr}
 NLINES=${NLINES:-100}
 GEN_SEED=${GEN_SEED:-42}
 EXIT_WITHIN_S=${EXIT_WITHIN_S:-5}

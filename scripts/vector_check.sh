@@ -4,7 +4,7 @@
 #
 # curl proves the endpoint answers. It has no retry policy, no buffer, no adaptive
 # concurrency and no opinion about a 503, so it cannot say whether the answers are ones a
-# shipper acts on correctly - which is what putting TrieDB behind a shipper is betting on.
+# shipper acts on correctly - which is what putting kibbr behind a shipper is betting on.
 #
 # Vector 0.37.1 is the pinned version. Downloaded into testdata/ and run from there:
 # nothing installed, nothing on PATH, and the version is the one being claimed rather than
@@ -15,9 +15,9 @@
 #
 # Two experiments, in order:
 #
-#   A  restart      TrieDB is `kill -9`'d mid-batch and restarted. Vector must retry what
+#   A  restart      Kibbr is `kill -9`'d mid-batch and restarted. Vector must retry what
 #                   it had not yet had acknowledged, and must not drop it.
-#   B  slowdown     TrieDB is started with one ingest permit, so it sheds. Vector must back
+#   B  slowdown     Kibbr is started with one ingest permit, so it sheds. Vector must back
 #                   off - a falling concurrency limit and a bounded buffer - rather than
 #                   queueing without limit.
 #
@@ -31,7 +31,7 @@ VERSION=0.37.1
 DIR=testdata/vector
 RUN=$DIR/run
 BIN=$DIR/vector-x86_64-apple-darwin/bin/vector
-TRIEDB=./target/release/triedb
+KIBBR=./target/release/kibbr
 PORT=7700
 METRICS=127.0.0.1:9598
 LINES=${LINES:-20000}
@@ -81,14 +81,14 @@ PY
 
 # ── Helpers ────────────────────────────────────────────────────────────────────────
 
-triedb_up() {  # $@ = extra serve flags
-  $TRIEDB serve --port $PORT "$@" >/dev/null 2>>"$RUN/triedb.log" &
-  echo $! > "$RUN/triedb.pid"
+kibbr_up() {  # $@ = extra serve flags
+  $KIBBR serve --port $PORT "$@" >/dev/null 2>>"$RUN/kibbr.log" &
+  echo $! > "$RUN/kibbr.pid"
   for _ in $(seq 1 50); do
     curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && return 0
     sleep 0.2
   done
-  echo "triedb did not come up"; exit 1
+  echo "kibbr did not come up"; exit 1
 }
 
 # `$1` is a dotted path into /stats, e.g. `ingest.lines_ingested`. An argument rather than
@@ -106,7 +106,7 @@ print(node)' "$1" 2>/dev/null || echo 0
 metric()  { curl -s "http://$METRICS/metrics" | grep -F "$1" | grep -v '^#' ; }
 sum_of()  { metric "$1" | awk '{s+=$(NF-1)} END {printf "%d\n", s}'; }
 
-cleanup() { pkill -f "bin/vector" 2>/dev/null; pkill -f "triedb serve" 2>/dev/null; }
+cleanup() { pkill -f "bin/vector" 2>/dev/null; pkill -f "kibbr serve" 2>/dev/null; }
 trap cleanup EXIT
 
 # ══ A - restart mid-batch ══════════════════════════════════════════════════════════
@@ -114,7 +114,7 @@ trap cleanup EXIT
 echo
 echo "════ A. kill -9 mid-batch, restart ════"
 cleanup; sleep 1
-rm -rf "$RUN/data" "$RUN/triedb.log"; mkdir -p "$RUN/data"
+rm -rf "$RUN/data" "$RUN/kibbr.log"; mkdir -p "$RUN/data"
 
 cat > "$RUN/restart.toml" <<EOF
 data_dir = "$PWD/$RUN/data"
@@ -138,11 +138,11 @@ type    = "prometheus_exporter"
 inputs  = ["metrics"]
 address = "$METRICS"
 
-# The sink a deployment points at TrieDB, with two changes:
+# The sink a deployment points at kibbr, with two changes:
 #   compression        turned on - the point of the exercise
 #   encoding/framing   \`codec = "ndjson"\`, the obvious spelling, does not load on 0.37.1;
 #                      the codec is \`json\` and the newlines come from \`framing\`.
-[sinks.triedb]
+[sinks.kibbr]
 type               = "http"
 inputs             = ["unwrap"]
 uri                = "http://127.0.0.1:$PORT/ingest"
@@ -159,7 +159,7 @@ EOF
 # second is a log file being written to, which is what Vector is pointed at in production.
 : > "$RUN/corpus.ndjson"
 rm -f "$RUN"/chunk.*
-triedb_up
+kibbr_up
 "${RUNNER[@]}" "$BIN" --config "$RUN/restart.toml" >"$RUN/vector.log" 2>&1 &
 sleep 1
 
@@ -180,18 +180,18 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 
-sent_at_kill=$(sum_of 'vector_component_sent_events_total{component_id="triedb"')
-echo "  before the kill:  triedb ingested $read_so_far, vector had $sent_at_kill acknowledged"
+sent_at_kill=$(sum_of 'vector_component_sent_events_total{component_id="kibbr"')
+echo "  before the kill:  kibbr ingested $read_so_far, vector had $sent_at_kill acknowledged"
 
-kill -9 "$(cat "$RUN/triedb.pid")" 2>/dev/null
+kill -9 "$(cat "$RUN/kibbr.pid")" 2>/dev/null
 echo "  kill -9 sent; leaving the server down for 8s"
 sleep 8
 
-sent_down=$(sum_of 'vector_component_sent_events_total{component_id="triedb"')
+sent_down=$(sum_of 'vector_component_sent_events_total{component_id="kibbr"')
 errors_down=$(sum_of 'vector_component_errors_total{')
 echo "  while down:       vector acknowledged $sent_down total, errors $errors_down"
 
-triedb_up
+kibbr_up
 echo "  restarted, empty by design - the rows it held are gone (storage is memory)"
 wait $FEEDER 2>/dev/null
 echo "  the whole corpus has now been written to the file"
@@ -207,14 +207,14 @@ done
 
 echo
 echo "── vector, after the restart ──"
-metric 'vector_component_sent_events_total{component_id="triedb"'
+metric 'vector_component_sent_events_total{component_id="kibbr"'
 metric 'vector_component_errors_total{'
-metric 'vector_http_client_responses_total{component_id="triedb"'
-metric 'vector_buffer_events{component_id="triedb"'
-metric 'vector_component_discarded_events_total{component_id="triedb"'
+metric 'vector_http_client_responses_total{component_id="kibbr"'
+metric 'vector_buffer_events{component_id="kibbr"'
+metric 'vector_component_discarded_events_total{component_id="kibbr"'
 
 echo
-echo "── triedb, after the restart ──"
+echo "── kibbr, after the restart ──"
 curl -s "http://127.0.0.1:$PORT/stats" | python3 -m json.tool | grep -A 8 '"ingest"'
 
 echo
@@ -241,8 +241,8 @@ echo "── vector's own account of the outage ──"
 grep -aE "Retrying after (error|response)|HTTP error" "$RUN/vector.log" | head -4
 
 echo
-echo "── triedb log ──"
-cat "$RUN/triedb.log"
+echo "── kibbr log ──"
+cat "$RUN/kibbr.log"
 
 # ══ B - artificial slowdown ════════════════════════════════════════════════════════
 #
@@ -259,9 +259,9 @@ cat "$RUN/triedb.log"
 
 run_slow() {  # $1 = label, $2 = concurrency setting, $3 = seconds, $4 = source count
   cleanup; sleep 1
-  rm -rf "$RUN/data" "$RUN/triedb.log"; mkdir -p "$RUN/data"
+  rm -rf "$RUN/data" "$RUN/kibbr.log"; mkdir -p "$RUN/data"
 
-  # One `demo_logs` at full rate tops out around what TrieDB ingests, so with a single
+  # One `demo_logs` at full rate tops out around what kibbr ingests, so with a single
   # source neither side is ever behind and there is nothing to shed. The slowdown has to be
   # *relative*: N sources feeding one sink is the shape of a DaemonSet, where the server is
   # one process and the senders are one per node.
@@ -294,7 +294,7 @@ inputs  = ["metrics"]
 address = "$METRICS"
 
 # Big batches, so one request holds the single permit long enough for the next to meet it.
-[sinks.triedb]
+[sinks.kibbr]
 type               = "http"
 inputs             = ["unwrap"]
 uri                = "http://127.0.0.1:$PORT/ingest"
@@ -316,7 +316,7 @@ text = open(path).read()
 open(path, "w").write(text.replace("SOURCES", sources))
 PY
 
-  triedb_up --ingest-concurrency 1 --max-body-bytes 67108864
+  kibbr_up --ingest-concurrency 1 --max-body-bytes 67108864
   "${RUNNER[@]}" "$BIN" --config "$RUN/slow.toml" >"$RUN/vector-slow.log" 2>&1 &
   echo
   echo "════ $1 ════"
@@ -325,8 +325,8 @@ PY
 
   echo
   echo "── vector ──"
-  metric 'vector_http_client_responses_total{component_id="triedb"'
-  metric 'vector_component_sent_events_total{component_id="triedb"'
+  metric 'vector_http_client_responses_total{component_id="kibbr"'
+  metric 'vector_component_sent_events_total{component_id="kibbr"'
   metric 'vector_component_discarded_events_total{'
   metric 'vector_component_errors_total{'
   metric 'vector_buffer_events{'
@@ -336,7 +336,7 @@ PY
   grep -aE "Retrying after response" "$RUN/vector-slow.log" | head -2
 
   echo
-  echo "── triedb ──"
+  echo "── kibbr ──"
   curl -s "http://127.0.0.1:$PORT/stats" \
     | python3 -c 'import sys,json;print(" ",json.load(sys.stdin)["ingest"])'
 }

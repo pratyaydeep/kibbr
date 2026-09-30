@@ -1,4 +1,4 @@
-//! `triedb serve` - the native HTTP surface, on :7700.
+//! `kibbr serve` - the native HTTP surface, on :7700.
 //!
 //! One `Trie` and one `StoreManager`, held for the life of the process, wrapped in the
 //! five endpoints below. Nothing here knows how a line becomes a row: `/query` builds the
@@ -163,7 +163,7 @@ pub struct Server {
 }
 
 /// The header a `/load` request carries its token in.
-const LOAD_TOKEN_HEADER: &str = "x-triedb-load-token";
+const LOAD_TOKEN_HEADER: &str = "x-kibbr-load-token";
 
 /// Whether a request shows the server's load token. First, before the body is read or a
 /// path is looked at, so a caller without it learns nothing - not even which paths exist.
@@ -184,7 +184,7 @@ fn load_refused(server: &Server, headers: &HeaderMap) -> Option<Response> {
     (!same).then(|| {
         fail(
             StatusCode::FORBIDDEN,
-            "a load is taken from `triedb load` on this machine, which shows the token this \
+            "a load is taken from `kibbr load` on this machine, which shows the token this \
              server wrote to its data directory's LOCK",
         )
     })
@@ -332,6 +332,9 @@ fn storage_fatal(e: StoreError) -> ServeError {
         StoreError::LegacyLayout { path } => ServeError::LegacyLayout { path },
         StoreError::Format(crate::store::v3::FormatError::Version { path, found }) => {
             ServeError::SegmentVersion { path, found }
+        }
+        StoreError::Format(crate::store::v3::FormatError::PreRename { path }) => {
+            ServeError::PreRename { path }
         }
         e => ServeError::Storage {
             detail: error::chain(&e),
@@ -1116,7 +1119,7 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
     }
 }
 
-/// `POST /load`: what `triedb load` sends when this server holds the data directory.
+/// `POST /load`: what `kibbr load` sends when this server holds the data directory.
 #[derive(Debug, Deserialize)]
 struct LoadRequest {
     /// Files, already expanded from any directory by the client, which is where the command
@@ -1682,7 +1685,7 @@ async fn serve(
         schema,
         load_token.clone(),
     )?);
-    // Where `triedb load` finds this server - written once it can answer. An address of
+    // Where `kibbr load` finds this server - written once it can answer. An address of
     // all interfaces is reached on loopback from the same machine, which is where the
     // directory is.
     if let Some(lock) = lock.as_mut() {
@@ -1694,7 +1697,7 @@ async fn serve(
         let holder = crate::lock::Holder::server(Some(reach.to_string()), load_token);
         if let Err(e) = lock.announce(&holder) {
             log(&format!(
-                "WARN {e}; `triedb load` will not find this server"
+                "WARN {e}; `kibbr load` will not find this server"
             ));
         }
     }
@@ -1999,7 +2002,7 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
 
 /// The startup banner.
 ///
-/// stderr, and not stdout, so that `triedb serve >/dev/null` still prints the paragraph
+/// stderr, and not stdout, so that `kibbr serve >/dev/null` still prints the paragraph
 /// about losing data. A warning a redirect can silence is a warning that will be silenced
 /// by the first person who pipes the process into a log file, and this is something to
 /// say rather than hide.
@@ -2007,7 +2010,7 @@ fn banner(addr: SocketAddr, server: &Server) {
     let (limits, api) = (server.limits, server.api);
     let lines = [
         String::new(),
-        "triedb serve".to_string(),
+        "kibbr serve".to_string(),
         String::new(),
         format!("  listening   http://{addr}"),
         String::new(),
@@ -2056,7 +2059,7 @@ fn banner(addr: SocketAddr, server: &Server) {
         "  endpoints   GET  /            the log viewer, in a browser".to_string(),
         "              POST /ingest      NDJSON body, one log line per line; gzip ok".to_string(),
         "              POST /query       {\"q\": \"<trieql>\"}".to_string(),
-        "              POST /load        a bulk load job: what `triedb load` sends".to_string(),
+        "              POST /load        a bulk load job: what `kibbr load` sends".to_string(),
         "              GET  /templates   every template, its columns and row count".to_string(),
         "              GET  /stats       throughput, template count, storage size".to_string(),
         "              GET  /health      {\"ok\":true}".to_string(),
@@ -2102,5 +2105,5 @@ fn banner(addr: SocketAddr, server: &Server) {
 /// One lifecycle line. stderr for the reason the banner is there - these are logs, and
 /// this surface's data goes out over HTTP.
 fn log(message: &str) {
-    eprintln!("triedb: {message}");
+    eprintln!("kibbr: {message}");
 }

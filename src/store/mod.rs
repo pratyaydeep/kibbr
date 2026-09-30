@@ -1381,7 +1381,7 @@ mod tests {
     /// and a flush, closing the largest early, empties them again.
     #[test]
     fn the_buffers_are_full_past_twice_their_limit_until_a_flush() {
-        let dir = std::env::temp_dir().join(format!("triedb-full-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-full-{}", std::process::id()));
         let row = |n: i64| {
             let mut row = Row::new();
             row.insert(
@@ -1429,7 +1429,7 @@ mod tests {
     /// same at the end of the run as at the start and the four threads take thousands; the
     /// whole leaf is read once at the end, and once more after a restart.
     ///
-    /// `TRIEDB_SNAPSHOT_SECONDS` sets how long it runs; 10 by default.
+    /// `KIBBR_SNAPSHOT_SECONDS` sets how long it runs; 10 by default.
     #[test]
     fn every_snapshot_sees_every_row_exactly_once_while_row_groups_close() {
         use std::sync::atomic::AtomicBool;
@@ -1438,11 +1438,11 @@ mod tests {
         const ID: u64 = 7;
         const T0: i64 = 1_705_314_600_000_000_000;
         const WINDOW: u64 = 2_048;
-        let seconds: u64 = std::env::var("TRIEDB_SNAPSHOT_SECONDS")
+        let seconds: u64 = std::env::var("KIBBR_SNAPSHOT_SECONDS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(10);
-        let dir = std::env::temp_dir().join(format!("triedb-snapshot-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-snapshot-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         // Every flush closes whatever is buffered, in row groups of 64: a close is always
         // under way, and a snapshot meets rows in row groups, moved aside and buffered.

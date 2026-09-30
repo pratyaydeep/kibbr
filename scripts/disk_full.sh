@@ -23,7 +23,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 DISK_MB=${DISK_MB:-40}
 BALLAST_MB=${BALLAST_MB:-20}
 BATCH=${BATCH:-2000}
@@ -36,7 +36,7 @@ MAX_OPEN_SEGMENTS=${MAX_OPEN_SEGMENTS:-32}
 # nothing reaches the disk during a run this size, the disk never fills, and the script
 # measures a shutdown rather than a full disk.
 ROW_GROUP_TIMEOUT_MS=${ROW_GROUP_TIMEOUT_MS:-500}
-VOLUME=${VOLUME:-triedbfull}
+VOLUME=${VOLUME:-kibbrfull}
 
 case "$(uname -s)" in
   Darwin) PLATFORM=macos ;;
@@ -98,7 +98,7 @@ echo "free for the data    $(df -m "$MOUNT" | tail -1 | awk '{print $4}')MB"
 
 PORT=""
 start() {  # start <logfile>
-  TRIEDB__STORAGE__MAX_OPEN_SEGMENTS="$MAX_OPEN_SEGMENTS" \
+  KIBBR__STORAGE__MAX_OPEN_SEGMENTS="$MAX_OPEN_SEGMENTS" \
     "$BIN" serve --port 0 --data-dir "$MOUNT/data" \
       --row-group-timeout-ms "$ROW_GROUP_TIMEOUT_MS" 2>"$1" &
   PID=$!

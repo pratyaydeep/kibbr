@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn open_truncates_a_torn_tail_on_disk_and_appends_after_it() {
-        let dir = std::env::temp_dir().join(format!("triedb-catalog-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-catalog-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("mkdir");
         let path = path_in(&dir);
@@ -525,7 +525,7 @@ mod tests {
     /// fsync is the open's error rather than a line in a log.
     #[test]
     fn creating_the_catalog_syncs_its_directory_once_and_a_failed_sync_is_an_error() {
-        let dir = std::env::temp_dir().join(format!("triedb-catalog-sync-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kibbr-catalog-sync-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("mkdir");
         let path = path_in(&dir);
@@ -580,7 +580,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir =
-            std::env::temp_dir().join(format!("triedb-catalog-nosync-{}", std::process::id()));
+            std::env::temp_dir().join(format!("kibbr-catalog-nosync-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("mkdir");
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o300)).expect("chmod -wx");

@@ -1,11 +1,11 @@
-//! `triedb bench-storage <file>`: what a file costs to store, by one command.
+//! `kibbr bench-storage <file>`: what a file costs to store, by one command.
 //!
 //! Every storage number before this went through `POST /ingest` and a hand-run `du`, so no
 //! two were measured the same way. This loads the file through the bulk door into a
 //! scratch data directory - full row groups, the way a closed day is stored - and prints,
 //! beside the raw bytes and the two compressors an operator would otherwise reach for:
 //!
-//! - **TrieDB's total**: every data file, the catalog and the manifest - everything the
+//! - **Kibbr's total**: every data file, the catalog and the manifest - everything the
 //!   directory needs to answer a query, and nothing it does not (`LOCK` is a few bytes of
 //!   hint, `staging/` is empty after a commit).
 //! - **Where the data files' bytes go**: column data, row group headers, schema records,
@@ -165,7 +165,7 @@ fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), Loa
             (dir.clone(), false)
         }
         None => {
-            let dir = std::env::temp_dir().join(format!("triedb-bench-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("kibbr-bench-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             (dir, true)
         }
@@ -174,7 +174,7 @@ fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), Loa
     if !args.keep {
         let _ = fs::remove_dir_all(&scratch);
     } else if ours {
-        eprintln!("triedb: kept {}", scratch.display());
+        eprintln!("kibbr: kept {}", scratch.display());
     }
     result
 }
@@ -202,7 +202,7 @@ fn measure(
         }
     };
 
-    // ── TrieDB: the file through the bulk door, alone ──
+    // ── kibbr: the file through the bulk door, alone ──
     let storage = Storage::load(true, Some(data.clone()), None, None, None, None, None, None)
         .map_err(CliError::from)?;
     let lock = crate::lock::DataLock::acquire(&data)?;
@@ -344,7 +344,7 @@ fn measure(
     row("raw", Some(raw), raw.bytes);
     row("gzip -9", Some(gz), gz.bytes);
     row("zstd -19", Some(zst), zst.bytes);
-    row("TrieDB total", Some(total), total.bytes);
+    row("kibbr total", Some(total), total.bytes);
     row("  data files", Some(files), files.bytes);
     row("    column data", None, parts.columns);
     row("    row group headers", None, parts.row_group_headers);
@@ -378,7 +378,7 @@ fn measure(
 /// force-merged, and how many lines it refused.
 fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
     let url = crate::http::parse_url(url).map_err(LoadError::Input)?;
-    let index = format!("triedb-bench-{}", std::process::id());
+    let index = format!("kibbr-bench-{}", std::process::id());
     let at = |path: &str| format!("{}/{index}{path}", url.prefix);
     let call = |method: &str, path: String, body: Option<(&str, &[u8])>| {
         let (status, answer) = crate::http::request(
