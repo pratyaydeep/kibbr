@@ -38,7 +38,7 @@ fn fixture() -> String {
 const WINDOW: [&str; 2] = ["2024-01-15T09:00:00Z", "2024-01-15T12:00:00Z"];
 
 fn run(args: &[&str]) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_triedb"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .arg("query")
         .arg("-")
         .args(args)
@@ -46,18 +46,18 @@ fn run(args: &[&str]) -> std::process::Output {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     let body = fixture();
     std::thread::spawn(move || stdin.write_all(body.as_bytes()));
-    child.wait_with_output().expect("failed to run triedb")
+    child.wait_with_output().expect("failed to run kibbr")
 }
 
 fn query(args: &[&str]) -> String {
     let out = run(args);
     assert!(
         out.status.success(),
-        "triedb query {args:?} exited {:?}\nstderr: {}",
+        "kibbr query {args:?} exited {:?}\nstderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );

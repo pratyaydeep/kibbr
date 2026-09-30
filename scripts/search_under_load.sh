@@ -36,7 +36,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-./target/release/triedb}
+BIN=${BIN:-./target/release/kibbr}
 RUNS=${RUNS:-3}
 ITER=${ITER:-20}
 LOAD_SECONDS=${LOAD_SECONDS:-32}
@@ -55,7 +55,7 @@ S3='MATCH LOG {"err.trace_id":"aeb53b34-0c10-4971-8a69-db9873af8965"}'
 S4='MATCH LOG {} LIMIT 500'
 
 # Another build can be measured by naming its binary; the default is built first.
-[ "$BIN" != ./target/release/triedb ] || cargo build --release --quiet || exit 1
+[ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 
 DIR=testdata/live-door
 mkdir -p "$DIR"

@@ -2,11 +2,11 @@
 //! piece per column that prints every value back as it was ingested.
 //!
 //! ```text
-//! header        24 bytes: 'TRDB', version 3, three zero bytes, a 16-byte random file id
+//! header        24 bytes: 'KBBR', version 3, three zero bytes, a 16-byte random file id
 //! frames        schema records, row groups (each followed by its chunk area), optional
 //!               frames, in the order they were written
 //! footer frame  written once, when the file is sealed
-//! trailer       8 bytes: the footer frame's length, then 'TRDB'
+//! trailer       8 bytes: the footer frame's length, then 'KBBR'
 //! ```
 //!
 //! Every frame is `frame::read`'s: `[4] payload_len [4] crc [N] payload`, the payload's
@@ -48,7 +48,10 @@ pub mod read;
 #[cfg(test)]
 mod vectors;
 
-pub const MAGIC: [u8; 4] = *b"TRDB";
+pub const MAGIC: [u8; 4] = *b"KBBR";
+/// The magic 0.1.0-alpha.1 wrote, before the rename. A file that starts with it is refused
+/// by path, like one of another version: nothing reads it and there is nothing to migrate.
+pub const PRE_RENAME_MAGIC: [u8; 4] = [0x54, 0x52, 0x44, 0x42];
 pub const VERSION: u8 = 3;
 pub const HEADER_LEN: usize = 24;
 pub const TRAILER_LEN: usize = 8;
@@ -89,7 +92,7 @@ pub enum FormatError {
         offset: u64,
         what: String,
     },
-    /// A TrieDB file from another format version. There is no upgrade path: the path is
+    /// A kibbr file from another format version. There is no upgrade path: the path is
     /// named and the process exits non-zero rather than reading bytes it would have to
     /// guess the meaning of.
     #[error(
@@ -97,6 +100,12 @@ pub enum FormatError {
          is no migration - point --data-dir somewhere else, or remove it and re-ingest"
     )]
     Version { path: PathBuf, found: u8 },
+    /// A file written by a pre-rename build: the same refusal as another version.
+    #[error(
+        "{path}: written by a pre-rename build; this build does not read it, and there is \
+         no migration - point --data-dir somewhere else, or remove it and re-ingest"
+    )]
+    PreRename { path: PathBuf },
 }
 
 /// A rule broken at one offset, before the path is known. `at` is relative to whatever

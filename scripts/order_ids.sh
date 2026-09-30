@@ -19,7 +19,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 
 cargo build --release --quiet || exit 1
 WORK=$(mktemp -d)

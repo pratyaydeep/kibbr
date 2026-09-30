@@ -1,7 +1,9 @@
 [package]
-name = "triedb"
+name = "kibbr"
 version = "0.1.0"
 edition = "2021"
+description = "kibbr - log store"
+repository = "https://github.com/pratyaydeep/kibbr"
 
 [dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }

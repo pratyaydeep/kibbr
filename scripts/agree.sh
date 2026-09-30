@@ -34,7 +34,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-./target/release/triedb}
+BIN=${BIN:-./target/release/kibbr}
 COMBOS=${COMBOS:-100}
 SEED=${SEED:-7}
 NLINES=${NLINES:-2000}
@@ -45,7 +45,7 @@ PRINT_QUERIES=${PRINT_QUERIES:-}
 BASE=1705314600
 SPAN=2592000
 
-[ "$BIN" != ./target/release/triedb ] || cargo build --release --quiet || exit 1
+[ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 

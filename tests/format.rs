@@ -11,8 +11,8 @@ use serde_json::Value;
 
 const FIXTURE: &str = include_str!("../testdata/sample_logs.ndjson");
 
-fn triedb() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_triedb"))
+fn kibbr() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_kibbr"))
 }
 
 /// stdout and stderr apart, because for this format the difference between them is the
@@ -20,7 +20,7 @@ fn triedb() -> Command {
 fn query(args: &[&str]) -> (String, String) {
     use std::io::Write;
 
-    let mut child = triedb()
+    let mut child = kibbr()
         .arg("query")
         .arg("-")
         .args(args)
@@ -28,13 +28,13 @@ fn query(args: &[&str]) -> (String, String) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     std::thread::spawn(move || stdin.write_all(FIXTURE.as_bytes()));
-    let out = child.wait_with_output().expect("failed to run triedb");
+    let out = child.wait_with_output().expect("failed to run kibbr");
     assert!(
         out.status.success(),
-        "triedb query {args:?} exited {:?}",
+        "kibbr query {args:?} exited {:?}",
         out.status.code()
     );
     (
@@ -169,7 +169,7 @@ fn renders_datetimes_as_rfc3339() {
     assert_eq!(body["rows"][0]["ts"], objects(&rows)[0]["ts"]);
 
     // Nanoseconds in, nanoseconds out.
-    let mut child = triedb()
+    let mut child = kibbr()
         .args([
             "query",
             "-",
@@ -180,13 +180,13 @@ fn renders_datetimes_as_rfc3339() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     std::thread::spawn(move || {
         use std::io::Write;
         stdin.write_all(br#"{"ts":"2024-01-15T10:30:00.123456789Z","event":"x"}"#)
     });
-    let out = child.wait_with_output().expect("failed to run triedb");
+    let out = child.wait_with_output().expect("failed to run kibbr");
     assert_eq!(
         objects(&String::from_utf8_lossy(&out.stdout)),
         vec![serde_json::json!({"event": "x", "ts": "2024-01-15T10:30:00.123456789Z"})]
@@ -212,7 +212,7 @@ fn the_output_is_ingestable() {
 
     let (stdout, _) = query(&[r#"MATCH LOG {"service": "auth"}"#, "--format", "ndjson"]);
 
-    let mut child = triedb()
+    let mut child = kibbr()
         .args([
             "query",
             "-",
@@ -223,10 +223,10 @@ fn the_output_is_ingestable() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     std::thread::spawn(move || stdin.write_all(stdout.as_bytes()));
-    let out = child.wait_with_output().expect("failed to run triedb");
+    let out = child.wait_with_output().expect("failed to run kibbr");
 
     assert!(out.status.success());
     assert_eq!(

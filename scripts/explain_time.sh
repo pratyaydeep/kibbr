@@ -17,7 +17,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 REPEATS=${REPEATS:-5}
 PATTERN=${PATTERN:---match event=login_ok}
 

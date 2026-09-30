@@ -4247,7 +4247,7 @@ fn deployment(svc: Svc) -> &'static str {
 }
 
 /// Dotted path into nested objects. `\.` is a literal dot inside one member name, the way
-/// ECS loggers write `log.level` - and the way `triedb` renders such a key back.
+/// ECS loggers write `log.level` - and the way `kibbr` renders such a key back.
 fn insert(root: &mut Map<String, Value>, path: &str, value: Value) {
     let segments: Vec<String> = if path.contains('\\') {
         let mut out = vec![String::new()];

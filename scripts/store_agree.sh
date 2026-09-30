@@ -23,7 +23,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 COMBOS=${COMBOS:-120}
 SEED=${SEED:-7}
 NLINES=${NLINES:-2000}
@@ -48,7 +48,7 @@ INPUT="$WORK/input.ndjson"
 "$BIN" gen-logs --lines "$NLINES" --templates 12 --seed "$GEN_SEED" > "$INPUT"
 
 # Port 0 and the bound port read back off the banner, as the tests do: a fixed pair of
-# ports would collide with a developer's own `triedb serve`.
+# ports would collide with a developer's own `kibbr serve`.
 #
 # Sets PID and PORT rather than echoing them, and so must be called in *this* shell. A
 # `read < <(start ...)` would put the server in a process-substitution subshell, where it

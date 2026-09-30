@@ -25,7 +25,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 NLINES=${NLINES:-20000}
 GEN_SEED=${GEN_SEED:-42}
 FD_LIMIT=${FD_LIMIT:-256}
@@ -62,7 +62,7 @@ mkdir -p testdata/ingest-limits
 
 PORT=""
 start() {  # start <logfile>
-  TRIEDB__STORAGE__MAX_OPEN_SEGMENTS="$MAX_OPEN_SEGMENTS" \
+  KIBBR__STORAGE__MAX_OPEN_SEGMENTS="$MAX_OPEN_SEGMENTS" \
     "$BIN" serve --port 0 --data-dir "$WORK/data" \
       --row-group-timeout-ms "$ROW_GROUP_TIMEOUT_MS" 2>"$1" &
   PID=$!

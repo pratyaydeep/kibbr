@@ -27,7 +27,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-42}
 
@@ -148,7 +148,7 @@ echo "  first reason       ${FIRST_MSG//_/ }"
 echo "  /health            $HEALTH_BODY"
 echo "  retry              $RETRY_CODE, COUNT LOG {} $STORED before and $AFTER_RETRY after"
 echo "  exit               $RUN2_EXIT"
-grep -E '^triedb: .*(exit [0-9]|refused|dropped)' "$WORK/run2.log" | sed 's/^/  /'
+grep -E '^kibbr: .*(exit [0-9]|refused|dropped)' "$WORK/run2.log" | sed 's/^/  /'
 
 # ── Run 3: the directory given back ──────────────────────────────────────────────────
 chmod 755 "$LOCKED"

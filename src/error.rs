@@ -186,7 +186,7 @@ pub enum GenError {
     Write(#[source] std::io::Error),
 }
 
-/// A `triedb query` flag that could not be turned into a `Query`.
+/// A `kibbr query` flag that could not be turned into a `Query`.
 ///
 /// Flag-level only: nothing here carries a byte position, because a flag value is its own
 /// unit and quoting it whole says where it was. TrieQL's failures are
@@ -224,14 +224,14 @@ pub enum QueryError {
     BackwardsRange { from: String, to: String },
 }
 
-/// What stops `triedb serve` from starting, or from finishing cleanly.
+/// What stops `kibbr serve` from starting, or from finishing cleanly.
 ///
 /// Nothing a *request* gets wrong is in here. A bad query is a 400 with the parse error
 /// in the body and the server carries on; a malformed ingest line is one entry in that
 /// response's `errors` array. These are the faults that leave no server running.
 #[derive(Debug, Error)]
 pub enum ServeError {
-    /// Almost always "address already in use" - a second `triedb serve` on 7700, or
+    /// Almost always "address already in use" - a second `kibbr serve` on 7700, or
     /// something else holding it. Names the address, because the remedy is `--port`.
     #[error("cannot listen on {addr}: {source}")]
     Bind {
@@ -283,6 +283,15 @@ pub enum ServeError {
         crate::store::v3::VERSION
     )]
     SegmentVersion { path: std::path::PathBuf, found: u8 },
+
+    /// A data file written by a pre-rename build, whose magic this build does not write.
+    /// Refused as another version is, by path and before anything is served.
+    #[error(
+        "{path}: written by a pre-rename build; this build does not read it and does not \
+         guess at the rest. Nothing was served. There is nothing to migrate: start the build \
+         that wrote it, or move that file out of the data directory."
+    )]
+    PreRename { path: std::path::PathBuf },
 
     /// The final flush could not write every buffered row, so they went with the process.
     ///
@@ -412,7 +421,7 @@ pub fn chain(e: &(dyn std::error::Error + 'static)) -> String {
 /// rejected line should not look different from a failed run.
 pub fn report(e: &(dyn std::error::Error + 'static)) {
     let mut stderr = io::stderr().lock();
-    let _ = writeln!(stderr, "triedb: {e}");
+    let _ = writeln!(stderr, "kibbr: {e}");
     let mut source = e.source();
     while let Some(cause) = source {
         let _ = writeln!(stderr, "  caused by: {cause}");

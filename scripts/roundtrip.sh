@@ -27,7 +27,7 @@
 # - flattened as the store flattens it: nested objects joined with `.`, a `.` or `\`
 #   inside a member name escaped, an empty object contributing no key;
 # - an array is stored as its JSON text and returned as that string;
-# - numbers compared as the JSON reader TrieDB uses reads them: an integer inside i64 or
+# - numbers compared as the JSON reader kibbr uses reads them: an integer inside i64 or
 #   u64 exactly, anything else as the nearest double - so 123456789012345678901234567890
 #   is the double it was always read as, the same number to every reader that reads JSON
 #   numbers as doubles;
@@ -36,18 +36,18 @@
 #
 #   scripts/roundtrip.sh
 #   HOSTILE=5000 FARM=5000 scripts/roundtrip.sh
-#   BIN=/path/to/an/older/triedb scripts/roundtrip.sh
+#   BIN=/path/to/an/older/kibbr scripts/roundtrip.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # BIN names another build to hold to the rule - an older one, to see what it breaks.
-BIN=${BIN:-./target/release/triedb}
+BIN=${BIN:-./target/release/kibbr}
 HOSTILE=${HOSTILE:-3000}
 FARM=${FARM:-3000}
 CASES=testdata/roundtrip.ndjson
 
-[ "$BIN" = ./target/release/triedb ] && { cargo build --release --quiet || exit 1; }
+[ "$BIN" = ./target/release/kibbr ] && { cargo build --release --quiet || exit 1; }
 WORK=$(mktemp -d)
 MEM_PID=""
 DISK_PID=""

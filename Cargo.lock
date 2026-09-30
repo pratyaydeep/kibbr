@@ -482,6 +482,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kibbr"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "clap",
+ "crc32c",
+ "flate2",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "zstd",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -852,24 +870,6 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
-
-[[package]]
-name = "triedb"
-version = "0.1.0"
-dependencies = [
- "axum",
- "chrono",
- "clap",
- "crc32c",
- "flate2",
- "mimalloc",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-util",
- "zstd",
-]
 
 [[package]]
 name = "unicode-ident"

@@ -1,4 +1,4 @@
-//! The least HTTP/1.1 client that `triedb load` and `bench-storage --es` need: one request
+//! The least HTTP/1.1 client that `kibbr load` and `bench-storage --es` need: one request
 //! per connection, a body in, a status and a body out.
 //!
 //! Hand-written over `TcpStream` rather than a client crate because the two callers ask

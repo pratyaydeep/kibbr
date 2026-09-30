@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # How much a log file looks like real logs, side by side for any number of files: its
-# size and what `gzip -9` and `zstd -19` make of it, how many templates `triedb parse`
+# size and what `gzip -9` and `zstd -19` make of it, how many templates `kibbr parse`
 # finds and how unevenly the rows fall across them, and which columns hold the bytes and
 # the entropy. Run it on generated data beside a sample of real logs, and the gap between
 # the columns is how far the generator is from the real thing.
@@ -29,7 +29,7 @@
 
 set -uo pipefail
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 TOP=${TOP:-10}
 
 [ $# -ge 1 ] || { echo "usage: $0 FILE [FILE...]" >&2; exit 2; }
@@ -219,7 +219,7 @@ for i, f in enumerate(files):
     d["zst"] = int(open(os.path.join(work, f"{i}.zst")).read())
     # One line per rejected input line; the closing summary and any `caused by` are not.
     d["rejected"] += sum(1 for l in open(os.path.join(work, f"{i}.parse_err"))
-                         if re.match(r"triedb: line \d+:", l))
+                         if re.match(r"kibbr: line \d+:", l))
     parse_status, tally_status = open(os.path.join(work, f"{i}.status")).read().split()
     # `parse` exits 1 when it rejected a line and carried on; anything else is a failure.
     if tally_status != "0" or parse_status not in ("0", "1"):

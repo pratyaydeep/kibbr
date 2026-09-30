@@ -1,4 +1,4 @@
-//! `triedb demo` - build the trie over a file and print it as an ASCII tree.
+//! `kibbr demo` - build the trie over a file and print it as an ASCII tree.
 //!
 //! The tree is the observable surface of the trie. A non-branching run of edges prints on
 //! one line joined by `→`; `●` marks a leaf, and the column list under it carries the
@@ -162,7 +162,7 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
     // stderr, not stdout: an elapsed time is the one number that can never be
     // byte-identical across runs, so it goes beside the artifact instead of in it.
     eprintln!(
-        "triedb demo: {} lines in {} ms",
+        "kibbr demo: {} lines in {} ms",
         commas(ingested),
         elapsed.as_millis()
     );

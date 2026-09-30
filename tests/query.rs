@@ -19,8 +19,8 @@ use serde_json::Value;
 /// to each of the two answers.
 const FIXTURE: &str = include_str!("../testdata/sample_logs.ndjson");
 
-fn triedb() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_triedb"))
+fn kibbr() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_kibbr"))
 }
 
 /// Runs a query with the fixture on stdin. Feeds from a separate thread for the same
@@ -29,23 +29,23 @@ fn triedb() -> Command {
 fn query(args: &[&str]) -> String {
     use std::io::Write;
 
-    let mut child = triedb()
+    let mut child = kibbr()
         .arg("query")
         .arg("-")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(FIXTURE.as_bytes());
     });
-    let out = child.wait_with_output().expect("failed to wait on triedb");
+    let out = child.wait_with_output().expect("failed to wait on kibbr");
     writer.join().expect("stdin writer thread panicked");
     assert!(
         out.status.success(),
-        "triedb query {args:?} exited {:?}\nstderr: {}",
+        "kibbr query {args:?} exited {:?}\nstderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );

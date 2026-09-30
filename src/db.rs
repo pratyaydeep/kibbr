@@ -4,7 +4,7 @@
 //! Kept apart from `engine` so the engine can be handed a trie and stores from anywhere
 //! once something does persist them.
 //!
-//! `triedb serve` is the caller that made that separation pay: it holds one `Db` for the
+//! `kibbr serve` is the caller that made that separation pay: it holds one `Db` for the
 //! process lifetime and appends to it a body at a time, where the CLI builds a fresh one
 //! per query. Both go through `ingest_line`, so the two surfaces cannot disagree about
 //! what putting a line in the database means.
@@ -207,7 +207,7 @@ pub fn place(
 ///
 /// Always in memory, and it has to be: the CLI rebuilds the whole database from its input
 /// file per invocation, so there is nothing for it to persist and nothing it should read
-/// back. A `triedb query` that picked up a `trie.json` would answer about rows its input
+/// back. A `kibbr query` that picked up a `trie.json` would answer about rows its input
 /// file does not contain.
 ///
 /// `now` is every line's arrival time, one instant for the whole file: the CLI has no

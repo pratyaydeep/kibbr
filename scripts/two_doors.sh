@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A differential pair: the live door against the bulk door.
 #
-# `POST /ingest` and `triedb load` are two ways into a data directory that share almost no
+# `POST /ingest` and `kibbr load` are two ways into a data directory that share almost no
 # write path. The live door buffers rows per template and closes a row group at 8,192 rows
 # or on a timeout, one flush tick at a time; the loader parses on its own pool, writes full
 # row groups into staging and publishes them in one manifest record. A query must not be
@@ -13,7 +13,7 @@
 #
 #   1. Every /ingest body answers 200, and the rows ingested are the lines less the ones
 #      rejected and the blank ones.
-#   2. `triedb load`, a client of the server running on its directory, exits 0 with as
+#   2. `kibbr load`, a client of the server running on its directory, exits 0 with as
 #      many rows and as many rejections as the live door had.
 #   3. Every query answers the same on both: exists, count, rows, groups, templates_matched,
 #      truncated and next_cursor. The cursor is the last row's rank - timestamp, key set,
@@ -56,7 +56,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-./target/release/triedb}
+BIN=${BIN:-./target/release/kibbr}
 NLINES=${NLINES:-200000}
 GEN_SEED=${GEN_SEED:-1}
 COMBOS=${COMBOS:-100}
@@ -64,7 +64,7 @@ SEED=${SEED:-7}
 BATCH=2000
 
 # Another build can be checked by naming its binary; the default is built first.
-[ "$BIN" != ./target/release/triedb ] || cargo build --release --quiet || exit 1
+[ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 # Absolute from here on, which agree.sh reads as another build and so does not build again:
 # one build per run, and none replacing the binary under servers already running from it.
 case "$BIN" in /*) ;; *) BIN=$PWD/${BIN#./} ;; esac
@@ -407,7 +407,7 @@ echo "live door  $INGESTED rows from $LINES lines ($REJECTED rejected, $BLANK bl
   { echo "FAIL the live door ingested $INGESTED rows, want $((LINES - REJECTED - BLANK))"; FAIL=1; }
 
 if [ "$LOAD_CODE" != 0 ]; then
-  echo "FAIL triedb load exited $LOAD_CODE, want 0"
+  echo "FAIL kibbr load exited $LOAD_CODE, want 0"
   tail -20 "$WORK/load.err"
   exit 1
 fi

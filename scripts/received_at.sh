@@ -13,7 +13,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/triedb
+BIN=./target/release/kibbr
 NLINES=${NLINES:-20000}
 GEN_SEED=${GEN_SEED:-42}
 EXPECTED_TEMPLATES=${EXPECTED_TEMPLATES:-823}

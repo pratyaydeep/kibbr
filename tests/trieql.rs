@@ -12,16 +12,16 @@ use serde_json::Value;
 
 const FIXTURE: &str = include_str!("../testdata/sample_logs.ndjson");
 
-fn triedb() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_triedb"))
+fn kibbr() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_kibbr"))
 }
 
-/// `triedb explain`, which parses and executes nothing - the parser on its own.
+/// `kibbr explain`, which parses and executes nothing - the parser on its own.
 fn explain(query: &str) -> Output {
-    triedb()
+    kibbr()
         .args(["explain", query])
         .output()
-        .expect("failed to run triedb")
+        .expect("failed to run kibbr")
 }
 
 /// Runs a query over the fixture. Fed from a thread for the reason `tests/query.rs`
@@ -29,20 +29,20 @@ fn explain(query: &str) -> Output {
 fn query(args: &[&str]) -> String {
     use std::io::Write;
 
-    let mut child = triedb()
+    let mut child = kibbr()
         .arg("query")
         .arg("-")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("failed to spawn triedb");
+        .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     std::thread::spawn(move || stdin.write_all(FIXTURE.as_bytes()));
-    let out = child.wait_with_output().expect("failed to run triedb");
+    let out = child.wait_with_output().expect("failed to run kibbr");
     assert!(
         out.status.success(),
-        "triedb query {args:?} exited {:?}\nstderr: {}",
+        "kibbr query {args:?} exited {:?}\nstderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -425,10 +425,10 @@ fn keywords_ignore_case_and_duration_units_do_not() {
         .success());
 
     let trieql = explain(r#"COUNT LOG {} SINCE 1H"#);
-    let flags = triedb()
+    let flags = kibbr()
         .args(["query", "-", "--since", "1H", "--count"])
         .output()
-        .expect("failed to run triedb");
+        .expect("failed to run kibbr");
     assert!(!trieql.status.success(), "TrieQL took an uppercase unit");
     assert!(!flags.status.success(), "--since took an uppercase unit");
 }
@@ -447,14 +447,14 @@ fn invisible_characters_are_named_in_the_error() {
 /// nobody can read, and clap rejects it before either parser runs.
 #[test]
 fn the_two_surfaces_do_not_mix() {
-    let out = triedb()
+    let out = kibbr()
         .args(["query", "-", r#"COUNT LOG {}"#, "--match", "a=b"])
         .output()
-        .expect("failed to run triedb");
+        .expect("failed to run kibbr");
     assert!(!out.status.success());
 }
 
-/// `triedb explain` reads no data - it takes no file to read.
+/// `kibbr explain` reads no data - it takes no file to read.
 #[test]
 fn explain_reports_the_parse_and_reads_nothing() {
     let out = explain(r#"MATCH LOG {"event": "login_ok"} SINCE 1h GROUP BY level"#);

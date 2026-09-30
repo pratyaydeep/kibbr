@@ -4,15 +4,15 @@
 use std::collections::HashSet;
 use std::process::{Command, Stdio};
 
-fn triedb() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_triedb"))
+fn kibbr() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_kibbr"))
 }
 
 fn run(args: &[&str]) -> String {
-    let out = triedb().args(args).output().expect("failed to run triedb");
+    let out = kibbr().args(args).output().expect("failed to run kibbr");
     assert!(
         out.status.success(),
-        "triedb {args:?} exited {:?}\nstderr: {}",
+        "kibbr {args:?} exited {:?}\nstderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -20,20 +20,20 @@ fn run(args: &[&str]) -> String {
 }
 
 fn refused(args: &[&str]) -> String {
-    let out = triedb().args(args).output().expect("failed to run triedb");
-    assert!(!out.status.success(), "triedb {args:?} was accepted");
+    let out = kibbr().args(args).output().expect("failed to run kibbr");
+    assert!(!out.status.success(), "kibbr {args:?} was accepted");
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 /// `parse --json` over `input`; stderr must be empty, so a rejected line fails the test.
 fn parse_json(input: &str) -> Vec<serde_json::Value> {
-    let mut child = triedb()
+    let mut child = kibbr()
         .args(["parse", "-", "--json"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to run triedb parse");
+        .expect("failed to run kibbr parse");
     let mut stdin = child.stdin.take().expect("stdin was piped");
     let input = input.as_bytes().to_vec();
     let writer = std::thread::spawn(move || {

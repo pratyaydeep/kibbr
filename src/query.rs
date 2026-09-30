@@ -1,4 +1,4 @@
-//! `triedb query`. Flags or TrieQL in, `QueryResult` out.
+//! `kibbr query`. Flags or TrieQL in, `QueryResult` out.
 //!
 //! Two ways in and one `Query` out. The flags construct it directly; a TrieQL string goes
 //! through `trieql` and arrives at the same struct, carrying nothing the flags could not
@@ -38,7 +38,7 @@ const EXPLAIN_LEAVES: usize = 12;
 pub enum Format {
     Table,
     Json,
-    /// One JSON object per line and no envelope: `triedb query … | triedb query -` is the
+    /// One JSON object per line and no envelope: `kibbr query … | kibbr query -` is the
     /// point, so what comes out has to be what goes in. `jsonl` is the same thing under
     /// the name the file extension uses.
     ///
@@ -113,7 +113,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
 fn note(stats: db::LoadStats) {
     if stats.rejected > 0 {
         eprintln!(
-            "triedb query: {} of {} lines rejected; the answer covers the other {}",
+            "kibbr query: {} of {} lines rejected; the answer covers the other {}",
             commas(stats.rejected),
             commas(stats.read),
             commas(stats.ingested)
@@ -461,7 +461,7 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
         )
         .map_err(CliError::Write)?;
     }
-    // The limit and the order belong on the plan, not only in `triedb explain`: a limit
+    // The limit and the order belong on the plan, not only in `kibbr explain`: a limit
     // that is `Query::new`'s default rather than the operator's is the one they most need
     // to see before the query runs, and the order is what decides which rows it keeps.
     if let Some(width) = query.bucket_width() {
@@ -495,11 +495,11 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
     .map_err(CliError::Write)
 }
 
-/// `triedb explain '<trieql>'` - what the parser made of the string, and nothing else.
+/// `kibbr explain '<trieql>'` - what the parser made of the string, and nothing else.
 ///
 /// Ideally this would print the execution plan, but a plan needs a trie and this command
 /// takes no file: nothing persists a trie yet, so the only one that exists is the one
-/// `triedb query <file>` builds for the length of a run. `query --explain` is the half
+/// `kibbr query <file>` builds for the length of a run. `query --explain` is the half
 /// that plans; this one reports the `Query` the text denotes, which is the whole of what
 /// the parser is answerable for. Persisting the trie would let this grow the plan without
 /// the parser changing.
@@ -513,14 +513,14 @@ pub fn describe<W: Write>(out: &mut W, text: &str, limits: Limits) -> Result<(),
         parsed.mode,
         parsed.time,
         parsed.limit,
-        // Not decoded against a `Query` here: `triedb explain` takes no file, so there is
+        // Not decoded against a `Query` here: `kibbr explain` takes no file, so there is
         // no answer for a cursor to be a page of. `AFTER`'s shape was checked by the
         // parser; whether it belongs to this query is `query --explain`'s to say.
         None,
         system_time(now),
         limits,
     );
-    // The same refusal `query` makes, at the same point: `triedb explain` is where an
+    // The same refusal `query` makes, at the same point: `kibbr explain` is where an
     // operator checks a query before running it, and a plan for a query that will be
     // refused is not the answer they came for.
     engine::check_buckets(&query).map_err(engine::ExecError::from)?;
@@ -762,7 +762,7 @@ fn row_json(row: &crate::store::Row) -> Value {
 ///
 /// The envelope `--format json` prints - `exists`, `count`, `meta` - has no place in a
 /// stream whose every line is a record, so none of it is here. The output feeds straight
-/// back into `triedb query -`, and into anything else that reads NDJSON: a row goes
+/// back into `kibbr query -`, and into anything else that reads NDJSON: a row goes
 /// through `row_json`, so a `Datetime` leaves as RFC 3339 and comes back as one.
 ///
 /// The two empty answers stay apart on stderr. "No such template" prints no lines and
@@ -782,7 +782,7 @@ fn row_json(row: &crate::store::Row) -> Value {
 fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
     if !result.exists {
         eprintln!(
-            "triedb query: no template matches [{}]",
+            "kibbr query: no template matches [{}]",
             query.tokens().join(", ")
         );
         return Ok(());
@@ -823,7 +823,7 @@ fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<
     }
     if let Some(c) = &result.meta.next_cursor {
         eprintln!(
-            "triedb query: more rows{}; next page: AFTER \"{c}\"",
+            "kibbr query: more rows{}; next page: AFTER \"{c}\"",
             backstop_note(result)
         );
     }
