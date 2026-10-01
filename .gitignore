@@ -1,109 +1,17 @@
 /target
-
-# Generated on demand - `kibbr gen-logs` reproduces it from the seed.
-/testdata/sample.ndjson
 .dev
 sample.ndjson
-
-# Reordered copies of sample.ndjson, which the in-memory trie must build the same tree
-# from - scratch, and `gen-logs` plus `tail -r` rebuilds them.
-/testdata/trie-order/
-
-# Malformed-input repros for the F1/F5 checks - scratch, not fixtures.
-/testdata/f1/
-/testdata/f2/
-/testdata/f3/
-/testdata/f4/
-/testdata/f5/
-
-# The query engine's timing inputs - scratch, `gen-logs --seed 5` rebuilds them.
-/testdata/query-timing/
-
-# `scripts/dump_store.sh` output - the in-memory trie and leaf stores written down.
-# Scratch, and the script rebuilds it from the seed.
-/testdata/store/
-
-# Request bodies for the HTTP API - scratch, `gen-logs` plus tests/serve.rs rebuild them.
-/testdata/serve/
-
-# Hostile-input repros for the black-box malformed-input sweep - scratch.
-/testdata/hostile/
-
-# The max_rows peak-RSS runs and the binary they were measured against - scratch, and
-# `gen-logs` plus scripts/backstop_rss.sh rebuild them.
-/testdata/backstop/
-
-# The GROUP BY time(...) fixture with a deliberately empty hour - scratch, and the
-# generator in this session rebuilds it.
-/testdata/buckets/
-
-# The 1M-line corpus the browser viewer was driven against - scratch, `gen-logs --seed 42`
-# rebuilds it.
-/testdata/viewer/
-
-# Vector itself, the configs scripts/vector_check.sh writes and the corpus it ships -
-# scratch. The script re-downloads and rebuilds all of it.
-/testdata/vector/
-
-# File counts before and after one segment file per batch replaced one file per column -
-# scratch, and `gen-logs --seed 42` plus a server on a scratch --data-dir rebuild them.
-/testdata/segment-file-counts/
-
-# The seed-42 corpus the template-catalog scripts (lost_trie, crash_templates) were first
-# run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
-/testdata/template-catalog/
 
 /lab
 /lab-rs
 
-# The seed-42 corpus and the /templates sample the per-template time-source scripts were
-# first run by hand against - scratch, `gen-logs --seed 42` rebuilds it.
-/testdata/time-source/
-
-# The seed-42 corpora the open-files, disk-full and scaling scripts were first run by
-# hand against - scratch, `gen-logs --seed 42` rebuilds them.
-/testdata/ingest-limits/
-
-# The before/after runs of the leaf-unwritable and bad-version scripts, the suite and
-# the differential pairs - scratch, and the scripts rebuild them.
-/testdata/ingest-refusals/
-
-# The farm-profile corpora, the old profile's before/after checksums and the side-by-side
-# reports - scratch, and `gen-logs` plus scripts/log_report.sh rebuild them.
-/testdata/farm/
-
-# The before/after runs of the fixture, the agreement scripts and the ingest measurements
-# for the epoch window - scratch, and `gen-logs` plus the scripts rebuild them.
-/testdata/epoch-window/
-
-/testdata/type-inference-seams
-
-# The corpora, the prepared data directory and the builds the live-door measurements
-# (search_under_load, shutdown_time) were run against - scratch, and the scripts rebuild them.
-/testdata/live-door/
-
-# The 200,000-line corpus the two-doors differential sends through /ingest and through
-# `kibbr load` - scratch, `gen-logs --seed 1` rebuilds it.
-/testdata/two-doors/
-
-# The farm corpus the kill -9 rounds of `kibbr load` run against - scratch, `gen-logs
-# --profile farm` rebuilds it.
-/testdata/load-kill/
-
-# The farm corpus `bench-storage` was first run against - scratch, `gen-logs --profile farm`
-# rebuilds it.
-/testdata/bench-storage/
-
-# Smoke-test corpora and data directories for the bulk door, run by hand - scratch.
-/testdata/bulk-door/
-
-# The black-box runs of `kibbr load` - the two-doors differential, the repeat refusal,
-# kill -9 rounds, replace-a-day, the arrival-share check and load-under-live-traffic.
-# Scratch, and `gen-logs` rebuilds every corpus.
-/testdata/load-blackbox/
-
-# AddressSanitizer builds and the runs made under them - scratch.
-/testdata/asan/
-
-# Before/after runs of the snapshot, own-day, streaming-loader and arrival-check fixes - scratch.
-/testdata/m6e/
+# Everything under testdata/ is scratch - corpora, data dirs, builds and run output that
+# `gen-logs` and the scripts rebuild - except the committed fixtures named below.
+# Ignoring a path never untracks a file already committed, so testdata/hostile/ stays
+# tracked; a new file there still needs `git add -f`, as it did before.
+/testdata/*
+!/testdata/FIXTURE.md
+!/testdata/fixture.ndjson
+!/testdata/roundtrip.ndjson
+!/testdata/sample_logs.ndjson
+!/testdata/v3/
