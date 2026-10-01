@@ -3,7 +3,7 @@
 
 Counts and shapes only. Everything here is derived from `common/frontend.py`, which
 `00_frontend_agree.py` has certified against the binary, so a template id in this table
-is the template id TrieDB would assign.
+is the template id kibbr would assign.
 
 Run over every dataset that exists and printed side by side, because the point of the
 table is the comparison: if the generator's shape does not resemble `real`, every later
@@ -171,7 +171,7 @@ class Profile:
             for key in keys:
                 folded_per_template[tid][key] = None
         # Second pass is avoided by folding the global column type per key, then asking
-        # per template - a key's type is folded over the whole dataset in TrieDB too
+        # per template - a key's type is folded over the whole dataset in kibbr too
         # only within one template, so this over-reports widening at worst. The datasets
         # here have no key that is Datetime in one template and String in another.
         global_types = {k: fold_types(v) for k, v in self.col_types.items()}

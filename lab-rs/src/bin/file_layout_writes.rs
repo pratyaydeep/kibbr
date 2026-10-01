@@ -19,8 +19,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use triedb_lab_rs::workload::{pick_template, DEFAULT_TEMPLATES};
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::{pick_template, DEFAULT_TEMPLATES};
+use kibbr_lab_rs::*;
 
 const SIZES: [usize; 4] = [64 << 10, 256 << 10, 1 << 20, 4 << 20];
 const ROW_GROUPS: usize = 128;

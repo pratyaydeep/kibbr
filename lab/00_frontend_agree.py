@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does the Python frontend agree with the binary? Nothing else is trusted until it does.
 
-5,000 lines through `triedb parse --json` and through `common/frontend.py`, comparing
+5,000 lines through `kibbr parse --json` and through `common/frontend.py`, comparing
 template id, fingerprint, the key list, and the inferred type of every key. Zero
 disagreements is the pass condition. A non-zero count is itself a finding and is printed
 case by case, because every later script reads types and template ids out of the port.

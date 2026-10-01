@@ -14,9 +14,9 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::time::Instant;
-use triedb_lab_rs::crc32c;
-use triedb_lab_rs::workload::{Columns, Gen};
-use triedb_lab_rs::*;
+use kibbr_lab_rs::crc32c;
+use kibbr_lab_rs::workload::{Columns, Gen};
+use kibbr_lab_rs::*;
 
 const HEADER: usize = 4 + 8 + 8 + 4;
 

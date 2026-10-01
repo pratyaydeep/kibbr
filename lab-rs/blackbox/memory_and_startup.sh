@@ -20,7 +20,7 @@ for T in 100 1000 10000; do
     /usr/bin/time -l "$BIN" serve --port 7730 --data-dir "$dir" > "$dir.server.log" 2> "$dir.time" &
     TIME_PID=$!
     for _ in $(seq 1 600); do curl -sf http://127.0.0.1:7730/health >/dev/null 2>&1 && break; sleep 0.05; done
-    SERVER_PID=$(pgrep -P $TIME_PID -f 'triedb serve' | head -1); SERVER_PORT=7730
+    SERVER_PID=$(pgrep -P $TIME_PID -f 'kibbr serve' | head -1); SERVER_PORT=7730
     [[ -n "$SERVER_PID" ]] || { echo "no server under time(1); $(tail -2 "$dir.time")"; exit 1; }
     # ps-sampled peak while ingesting, in case the process's own peak is later in the flush.
     ( while kill -0 $SERVER_PID 2>/dev/null; do rss_kb $SERVER_PID; sleep 0.2; done ) > "$dir.rss" &
@@ -40,7 +40,7 @@ for T in 100 1000 10000; do
     t2=$SECONDS; kill -TERM $SERVER_PID; wait $TIME_PID 2>/dev/null; kill $SAMPLER 2>/dev/null; wait $SAMPLER 2>/dev/null
     shut+=("$(( SECONDS - t2 ))")
     # The server's stderr shares the .time file with time's own summary.
-    err=$(grep -v 'maximum resident\|real \|page \|swaps\|block \|messages \|signals\|context sw\|shared memory\|unshared\|instructions\|cycles\|peak memory\|triedb: \(SIGTERM\|stop\|in-flight\|WAL\|trie.json\|close\|exit\)' "$dir.time" | grep -v '^ *$' | sed 's/leaf_[0-9]*/leaf_N/; s#/[^ ]*seg_[0-9]*.col#SEG#' | sort | uniq -c | sort -rn | head -1)
+    err=$(grep -v 'maximum resident\|real \|page \|swaps\|block \|messages \|signals\|context sw\|shared memory\|unshared\|instructions\|cycles\|peak memory\|kibbr: \(SIGTERM\|stop\|in-flight\|WAL\|trie.json\|close\|exit\)' "$dir.time" | grep -v '^ *$' | sed 's/leaf_[0-9]*/leaf_N/; s#/[^ ]*seg_[0-9]*.col#SEG#' | sort | uniq -c | sort -rn | head -1)
     errs+=("$err")
     peak+=("$(sort -n "$dir.rss" | tail -1)")
     maxrss+=("$(awk '/maximum resident set size/{print $1}' "$dir.time")")

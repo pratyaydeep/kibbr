@@ -11,8 +11,8 @@
 
 use std::collections::HashMap;
 use std::time::Instant;
-use triedb_lab_rs::workload::{Columns, Gen, Value, COLUMN_NAMES};
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::{Columns, Gen, Value, COLUMN_NAMES};
+use kibbr_lab_rs::*;
 
 const ROWS: usize = 1_000_000;
 

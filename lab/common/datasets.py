@@ -2,8 +2,8 @@
 
 Five shapes, because the questions need different ones:
 
-  flat30  what `triedb gen-logs` makes by default - 200,000 lines over 31 days.
-  farm    `triedb gen-logs --profile farm`: one simulated day of a ten-service estate,
+  flat30  what `kibbr gen-logs` makes by default - 200,000 lines over 31 days.
+  farm    `kibbr gen-logs --profile farm`: one simulated day of a ten-service estate,
           in time order, uneven across templates, with request ids, users and addresses
           that recur across services. 200,000 lines, or 2,000,000 as `farm_big`.
   oneday  the same lines, timestamps squeezed into one day, so a per-day layout is
@@ -37,9 +37,9 @@ from pathlib import Path
 
 from .measure import DATA, LAB
 
-# `LAB_TRIEDB` points the lab at a binary built elsewhere - a worktree of this branch has
+# `LAB_KIBBR` points the lab at a binary built elsewhere - a worktree of this branch has
 # no build of its own, and the farm profile exists only in newer builds.
-BINARY = Path(os.environ.get("LAB_TRIEDB") or LAB.parent / "target" / "release" / "triedb")
+BINARY = Path(os.environ.get("LAB_KIBBR") or LAB.parent / "target" / "release" / "kibbr")
 
 # The generator's time fields, by leaf segment name. `order_id` is also ten digits and is
 # deliberately NOT here: rung 2 mistaking it for a timestamp is a fact about the data we
@@ -248,7 +248,7 @@ def _build_flat30(size: str) -> Dataset:
     return _write(
         "flat30",
         raws,
-        f"triedb gen-logs --lines {lines} --templates 12 --seed 42, unmodified; "
+        f"kibbr gen-logs --lines {lines} --templates 12 --seed 42, unmodified; "
         "31 days, flat across templates",
     )
 
@@ -360,7 +360,7 @@ def _build_farm(size: str, name: str = "farm") -> Dataset:
         ds = _write(
             name,
             (ln.rstrip(b"\n") for ln in fh if ln.strip()),
-            f"triedb gen-logs --profile farm --lines {lines:,} --seed 42, unmodified; one "
+            f"kibbr gen-logs --profile farm --lines {lines:,} --seed 42, unmodified; one "
             "simulated day in time order, ten services, each with its own time field "
             "(@timestamp, time, ts, ts_ms), a request's id recurring across services, "
             "0.5% dirty values on five named keys",

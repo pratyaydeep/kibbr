@@ -1,5 +1,5 @@
 //! Shared helpers for the design benchmarks: the synthetic workload, the results CSV,
-//! timing and the statistics every table reports. Nothing here imports TrieDB.
+//! timing and the statistics every table reports. Nothing here imports kibbr.
 pub mod crc32c;
 pub mod workload;
 

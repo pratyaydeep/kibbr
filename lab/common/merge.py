@@ -1,6 +1,6 @@
 """Schema merging, prototyped - the planned rule with its knobs turned into parameters.
 
-TrieDB does not merge yet; `LinearMergeIndex` (the naive scan, kept as the test oracle)
+kibbr does not merge yet; `LinearMergeIndex` (the naive scan, kept as the test oracle)
 and `BucketedMergeIndex` are a plan, not code on disk. So this is a clean-room prototype
 whose only job is to say what each rule would do to the template count, the null share
 and the rows a search has to scan.

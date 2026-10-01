@@ -63,8 +63,8 @@ Read with the caveats in each section. Part A numbers are today's binary on this
 - **B12:** trying every encoding and keeping the smallest costs 3.0x the CPU of one fixed choice per column type for 4% fewer bytes. Fixed choices win.
 """
 out = []
-out.append("# TrieDB lab-rs - speed, locks, memory\n")
-out.append("Throwaway benchmarks. Part A measures today's binary from outside; Part B models one design choice each and imports none of TrieDB's code. Every number is the median of 3 runs, `±` is (max-min)/median. `--release` throughout. Nothing here ships.\n")
+out.append("# kibbr lab-rs - speed, locks, memory\n")
+out.append("Throwaway benchmarks. Part A measures today's binary from outside; Part B models one design choice each and imports none of kibbr's code. Every number is the median of 3 runs, `±` is (max-min)/median. `--release` throughout. Nothing here ships.\n")
 out.append(f"Regenerated {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} from `results/results.csv` by `report.sh`.\n")
 out.append(FINDINGS)
 if "machine" in by:

@@ -12,8 +12,8 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use triedb_lab_rs::workload::{Columns, Gen, Row};
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::{Columns, Gen, Row};
+use kibbr_lab_rs::*;
 
 const ROWS: usize = 1_000_000;
 const BATCH: usize = 64;

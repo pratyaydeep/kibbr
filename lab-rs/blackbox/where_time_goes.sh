@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A1 - lines per second for `triedb parse` alone, the CLI load, and HTTP /ingest with
+# A1 - lines per second for `kibbr parse` alone, the CLI load, and HTTP /ingest with
 # 1, 2, 4, 8 senders; the drain rate from buffer to disk; and the crash-replay estimate.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 BENCH=A1_where_time_goes
@@ -7,19 +7,19 @@ machine_info; ensure_data
 LINES_1M=1000000; LINES_300K=300000
 wall() { $PY -c 'import subprocess,sys,time; t=time.perf_counter(); subprocess.run(sys.argv[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); print(f"{time.perf_counter()-t:.3f}")' "$@"; }
 
-echo "== A1.1 triedb parse alone (1M lines, stdout to /dev/null)"
+echo "== A1.1 kibbr parse alone (1M lines, stdout to /dev/null)"
 for mode in table json; do
   v=()
   for run in 1 2 3; do
     if [[ $mode == json ]]; then s=$(wall "$BIN" parse "$DATA_1M" --json); else s=$(wall "$BIN" parse "$DATA_1M"); fi
     v+=("$($PY -c "print(f'{$LINES_1M/$s:.1f}')")")
   done
-  record3 $BENCH "parse_$mode" lines_per_sec lines_per_sec "triedb parse $mode output > /dev/null, 1M lines" "${v[@]}"
+  record3 $BENCH "parse_$mode" lines_per_sec lines_per_sec "kibbr parse $mode output > /dev/null, 1M lines" "${v[@]}"
 done
 
-echo "== A1.2 CLI ingest: there is no 'triedb ingest' subcommand (ABSENT). The nearest thing is"
-echo "   'triedb query FILE --count', which parses every line into the in-memory trie and stores."
-csv_row $BENCH cli_ingest status 0 absent "no 'triedb ingest' subcommand; measured 'query FILE --count' (parse + trie + in-memory store) instead"
+echo "== A1.2 CLI ingest: there is no 'kibbr ingest' subcommand (ABSENT). The nearest thing is"
+echo "   'kibbr query FILE --count', which parses every line into the in-memory trie and stores."
+csv_row $BENCH cli_ingest status 0 absent "no 'kibbr ingest' subcommand; measured 'query FILE --count' (parse + trie + in-memory store) instead"
 v=(); secs=()
 for run in 1 2 3; do
   s=$(wall "$BIN" query "$DATA_1M" --count --format json); secs+=("$s")

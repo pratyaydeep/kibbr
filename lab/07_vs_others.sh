@@ -7,7 +7,7 @@
 #
 # Sizes here are exact and are the point. The timings are labelled
 # "rough, one machine, default settings" and mean it: one laptop, no tuning of any
-# system including TrieDB's, containers competing for the same disk, and clp-s running
+# system including kibbr's, containers competing for the same disk, and clp-s running
 # under x86_64 emulation on Apple Silicon. They say which order of magnitude, nothing
 # finer.
 set -uo pipefail
@@ -147,7 +147,7 @@ res.add("Elasticsearch", "heap", "1g", "setting",
 if "es" not in wanted:
     print("\n  elasticsearch: not in --systems, skipped")
 elif compose_up("elasticsearch") and O.wait_for(f"{O.ES}/_cluster/health"):
-    for index, logsdb in (("triedb_standard", False), ("triedb_logsdb", True)):
+    for index, logsdb in (("kibbr_standard", False), ("kibbr_logsdb", True)):
         label = f"Elasticsearch {'logsdb' if logsdb else 'standard'}"
         try:
             O.es_create(index, logsdb)
@@ -247,7 +247,7 @@ finally:
     if "clps" in wanted:
         compose_stop("clps")
 
-# -- TrieDB's own best, from scripts 02 and 05 --------------------------------------
+# -- kibbr's own best, from scripts 02 and 05 --------------------------------------
 import csv
 best = {}
 if measure.RESULTS_CSV.exists():
@@ -261,7 +261,7 @@ if measure.RESULTS_CSV.exists():
                 if key not in best or r["when"] > best[key][0]:
                     best[key] = (r["when"], int(float(r["value"])))
 for (script, variant, _m), (_when, value) in best.items():
-    rows.append([f"TrieDB {variant} ({script})", value,
+    rows.append([f"kibbr {variant} ({script})", value,
                  round(value / raw_bytes, 4), "-", "-", "-", "-", "-"])
 
 measure.table(

@@ -11,8 +11,8 @@
 //! trying every encoding per chunk is affordable.
 
 use std::time::Instant;
-use triedb_lab_rs::workload::{Columns, Gen};
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::{Columns, Gen};
+use kibbr_lab_rs::*;
 
 const ROWS: usize = 8192;
 const CHUNKS: usize = 50;

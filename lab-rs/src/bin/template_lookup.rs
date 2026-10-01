@@ -14,7 +14,7 @@ use rand::rngs::StdRng;
 use rand_distr::Zipf;
 use std::collections::HashMap;
 use std::time::Instant;
-use triedb_lab_rs::*;
+use kibbr_lab_rs::*;
 
 const POOL: u64 = 2000;
 const LOOKUPS: usize = 10_000;

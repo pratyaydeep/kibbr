@@ -1,4 +1,4 @@
-# TrieDB experiment lab - results
+# kibbr experiment lab - results
 
 Measurements, not opinions. Every size figure comes from a real file under
 `lab/out/`, counted twice: `st_size` for the bytes a format spends and
@@ -6,7 +6,7 @@ Measurements, not opinions. Every size figure comes from a real file under
 
 **Speed figures appear only where a C library or the disk did the work**
 (zstd, fsync, file reads), and each says so. No throughput number measured over
-Python code is a TrieDB number.
+Python code is a kibbr number.
 
 ## Machine
 
@@ -23,17 +23,17 @@ python       3.12.2
 
 ## Further reading
 
-[`CLP_S_NOTES.md`](CLP_S_NOTES.md) - how clp-s works, read off its source at tag v0.13.0, and what TrieDB could take from it. It is the only comparison system in script 07 that shares TrieDB's central idea (one columnar table per distinct key set), so where it differs is where the design choices actually are.
+[`CLP_S_NOTES.md`](CLP_S_NOTES.md) - how clp-s works, read off its source at tag v0.13.0, and what kibbr could take from it. It is the only comparison system in script 07 that shares kibbr's central idea (one columnar table per distinct key set), so where it differs is where the design choices actually are.
 
 ## Findings so far
 
-- **The Python frontend agrees with the binary**: 0 disagreements over 5 datasets. Every template id and inferred type below is the one TrieDB would assign.
+- **The Python frontend agrees with the binary**: 0 disagreements over 5 datasets. Every template id and inferred type below is the one kibbr would assign.
 - **The byte model is calibrated on `flat30`**: it predicts +0.00% of the segment bytes the real binary wrote (bound: 10%).
 - **The byte model is calibrated on `uneven`**: it predicts +0.00% of the segment bytes the real binary wrote (bound: 10%).
-- **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.33x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
-- **`flat30`**: the smallest layout is zstd -19 at 8,282,006 bytes. Per-template Parquet loses to gzip -9 by 1.14x on bytes; what TrieDB does today (one Parquet per template per day) costs 1.81x of raw NDJSON.
-- **`oneday`**: the smallest layout is zstd -19 at 8,059,807 bytes. Per-template Parquet loses to gzip -9 by 1.15x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.26x of raw NDJSON.
-- **`farm`**: the smallest layout is zstd -19 at 5,995,347 bytes. Per-template Parquet beats gzip -9 by 0.77x on bytes; what TrieDB does today (one Parquet per template per day) costs 0.09x of raw NDJSON.
+- **`uneven`**: the smallest layout is zstd -19 at 2,896,966 bytes. Per-template Parquet loses to gzip -9 by 6.33x on bytes; what kibbr does today (one Parquet per template per day) costs 0.57x of raw NDJSON.
+- **`flat30`**: the smallest layout is zstd -19 at 8,282,006 bytes. Per-template Parquet loses to gzip -9 by 1.14x on bytes; what kibbr does today (one Parquet per template per day) costs 1.81x of raw NDJSON.
+- **`oneday`**: the smallest layout is zstd -19 at 8,059,807 bytes. Per-template Parquet loses to gzip -9 by 1.15x on bytes; what kibbr does today (one Parquet per template per day) costs 0.26x of raw NDJSON.
+- **`farm`**: the smallest layout is zstd -19 at 5,995,347 bytes. Per-template Parquet beats gzip -9 by 0.77x on bytes; what kibbr does today (one Parquet per template per day) costs 0.09x of raw NDJSON.
 - **Encodings on `flat30`**: picking the smallest encoding per chunk reaches 0.144x of raw NDJSON and 0.618x of gzip -9; sorting rows inside each chunk is worth a further 2.52%.
 - **Encodings on `uneven`**: picking the smallest encoding per chunk reaches 0.096x of raw NDJSON and 1.052x of gzip -9; sorting rows inside each chunk is worth a further 0.68%.
 - **Encodings on `farm`**: picking the smallest encoding per chunk reaches 0.068x of raw NDJSON and 0.608x of gzip -9; sorting rows inside each chunk is worth a further -4.60%.
@@ -42,15 +42,15 @@ python       3.12.2
 - **Which durability call matters as much as batching**: a per-record `fsync(2)` reaches 30,664 records/sec on this platform, the same loop with `F_FULLFSYNC` reaches 369 - Darwin's `fsync` stops at the drive cache. Shape only.
 - **WAL batching pays twice**: zstd 3 over batches of 500 lines compresses to 0.114 of raw, against 0.864 at one line per batch.
 - **Grouping a template's row groups together** turns 51 separate byte ranges into 1 for a one-template search - on S3 at 15 ms a range, the difference between a second and nothing.
-- **Against other systems on `flat30`**: Elasticsearch standard 1.249x of raw, Elasticsearch logsdb 0.982x of raw, ClickHouse 0.377x of raw, clp-s 0.182x of raw; TrieDB's best measured layout is BEST_PER_CHUNK sorted at 0.144x.
-- **TrieDB's best layout is smaller than clp-s**: 0.144x of raw against 0.182x. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression.
-- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
-- **Against other systems on `messy`**: Elasticsearch standard 1.078x of raw, Elasticsearch logsdb 0.924x of raw, ClickHouse 0.327x of raw, clp-s 0.178x of raw; TrieDB's best measured layout is BEST_PER_CHUNK sorted at 0.153x.
-- **TrieDB's best layout is smaller than clp-s**: 0.153x of raw against 0.178x. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression.
-- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
-- **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; TrieDB's best measured layout is WIDE rg=122,880 at 0.086x.
-- **clp-s stores these logs smaller than TrieDB does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
-- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw payloads, so their ratios are flattered by that much.
+- **Against other systems on `flat30`**: Elasticsearch standard 1.249x of raw, Elasticsearch logsdb 0.982x of raw, ClickHouse 0.377x of raw, clp-s 0.182x of raw; kibbr's best measured layout is BEST_PER_CHUNK sorted at 0.144x.
+- **kibbr's best layout is smaller than clp-s**: 0.144x of raw against 0.182x. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression.
+- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and kibbr were fed the raw payloads, so their ratios are flattered by that much.
+- **Against other systems on `messy`**: Elasticsearch standard 1.078x of raw, Elasticsearch logsdb 0.924x of raw, ClickHouse 0.327x of raw, clp-s 0.178x of raw; kibbr's best measured layout is BEST_PER_CHUNK sorted at 0.153x.
+- **kibbr's best layout is smaller than clp-s**: 0.153x of raw against 0.178x. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression.
+- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and kibbr were fed the raw payloads, so their ratios are flattered by that much.
+- **Against other systems on `uneven`**: Elasticsearch standard 0.695x of raw, Elasticsearch logsdb 0.540x of raw, ClickHouse 0.158x of raw, clp-s 0.067x of raw; kibbr's best measured layout is WIDE rg=122,880 at 0.086x.
+- **clp-s stores these logs smaller than kibbr does**: 0.067x of raw against 0.086x, on the same 200,000 lines. Its archive was decompressed and counted back to 200,000 lines, so the ratio is not a partial compression. Its searches are the slower side of that trade, but on the storage question this lab was built to answer, clp-s wins.
+- **One asymmetry in that comparison**: Elasticsearch and ClickHouse each received an added `@timestamp` field, roughly 30 bytes per document, because logsdb mode requires one and the dataset carries `ts`/`ts_unix`/`ts_ms` instead. clp-s and kibbr were fed the raw payloads, so their ratios are flattered by that much.
 - **Type widening is a ladder cost, not a merging cost** (`farm`, 7 keys carrying two types): 1.5% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (PER_EVENT) takes that to 2.9% and adds no new keys. The monotonic type join does the damage inside a single template; merging contributes a few points on top.
 - **Type widening is a ladder cost, not a merging cost** (`messy`, 7 keys carrying two types): 44.0% of columns are already String by widening with NO merging at all, across 8 distinct keys. The worst merge rule (J70) takes that to 50.0% and adds no new keys. The monotonic type join does the damage inside a single template; merging contributes a few points on top.
 - **Scanning every template for an unpromoted key bends the wrong way**: 100x the templates costs 2.2x more than linear, not the same. A key-to-templates map is flat.
@@ -119,8 +119,8 @@ Run 2026-09-22T20:10:50+00:00, git `7e42f16`, 10 rows.
 
 **Notes**
 
-- triedb gen-logs --profile farm --lines 200,000 --seed 42, unmodified; one simulated day in time order, ten services, each with its own time field (@timestamp, time, ts, ts_ms), a request's id recurring across services, 0.5% dirty values on five named keys
-- triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
+- kibbr gen-logs --profile farm --lines 200,000 --seed 42, unmodified; one simulated day in time order, ten services, each with its own time field (@timestamp, time, ts, ts_ms), a request's id recurring across services, 0.5% dirty values on five named keys
+- kibbr gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
 - HAND-AUTHORED BY THE LAB, NOT REAL LOGS. 200,000 lines over one day, 8 services and 20 event types, written to carry the type inconsistency that `gen-logs` never produces - across flat30, oneday, uneven and testdata, zero keys carry two types, so every `columns widened to String` figure was vacuous. Injected fault rates, as realised: duration_ms_na 1.20% (2,400 lines); duration_ms_null 0.38% (766 lines); user_id_legacy 1.98% (3,955 lines); order_id_alpha 0.39% (785 lines); http_status_empty 0.23% (461 lines); retry_stringy 1.49% (2,975 lines); bytes_sent_float 3.05% (6,108 lines); error_code_symbol 0.57% (1,147 lines); tags_scalar 1.00% (1,994 lines); ts_epoch 4.95% (9,902 lines); trace_id_empty 0.78% (1,559 lines); client_ip_unknown 0.57% (1,134 lines). Every number derived from this dataset is a statement about these rates and about nothing else.
 - flat30's lines, generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); line order unchanged, so oneday differs from flat30 in timestamps and nothing else
 - generator cannot skew template shares, so built by sampling: pool of 300,000 lines at --templates 60 --seed 7, grouped by the binary's template_id, 4931 templates drawn to a Zipf profile where the top 10 hold 80% of 200,000 rows (seed 1315); generator has no one-day flag; timestamps rewritten in Python - every ts/ts_unix/ts_ms mapped linearly from its 30.0-day span onto 2024-01-15, each field keeping its own form (RFC 3339 / 10 digits / 13 digits); sorted by timestamp; 70.56% of rows are repeats of a pool line, drawn where a tail template had fewer distinct lines than its quota
@@ -672,7 +672,7 @@ Run 2026-09-22T15:48:59+00:00, git `7f71d96`, 514 rows.
 
 **Notes**
 
-- triedb gen-logs --profile farm --lines 200,000 --seed 42, unmodified; one simulated day in time order, ten services, each with its own time field (@timestamp, time, ts, ts_ms), a request's id recurring across services, 0.5% dirty values on five named keys
+- kibbr gen-logs --profile farm --lines 200,000 --seed 42, unmodified; one simulated day in time order, ten services, each with its own time field (@timestamp, time, ts, ts_ms), a request's id recurring across services, 0.5% dirty values on five named keys
 - a template whose time column is not named `ts` has no row-group min/max to skip on: its rows land in `undated/` and a time-range search reads every one
 - type=String distinct=521 distinct/rows=0.0060 avg_len=115.1 null_wide=56.69% null_json=0.00% templates=2
 - type=String distinct=521 distinct/rows=0.0100 avg_len=100.7 null_wide=73.90% null_json=0.00% templates=24
@@ -851,7 +851,7 @@ Run 2026-09-22T15:48:59+00:00, git `7f71d96`, 514 rows.
 - type=Int64 distinct=2 distinct/rows=0.2500 avg_len=3.0 null_wide=100.00% null_json=0.00% templates=2
 - type=Int64 distinct=6 distinct/rows=1.0000 avg_len=4.0 null_wide=100.00% null_json=0.00% templates=1
 - type=Int64 distinct=2 distinct/rows=1.0000 avg_len=5.0 null_wide=100.00% null_json=0.00% templates=2
-- triedb gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
+- kibbr gen-logs --lines 200000 --templates 12 --seed 42, unmodified; 31 days, flat across templates
 - type=Datetime distinct=114166 distinct/rows=0.9779 avg_len=20.0 null_wide=41.62% null_json=0.00% templates=722
 - type=String distinct=6 distinct/rows=0.0000 avg_len=11.5 null_wide=16.62% null_json=0.00% templates=864
 - type=String distinct=8 distinct/rows=0.0001 avg_len=21.5 null_wide=66.72% null_json=0.00% templates=528
@@ -1655,7 +1655,7 @@ Run 2026-09-22T15:55:26+00:00, git `90152d2`, 621 rows.
 
 - C zlib, level 9
 - C zstd, level 19
-- what TrieDB does today
+- what kibbr does today
 - per-template bytes without per-file block rounding
 - 43 merged templates, from script 04
 - 60 merged templates, from script 04
@@ -2394,7 +2394,7 @@ Run 2026-09-19T10:01:36+00:00, git `90152d2`, 690 rows.
 - lines in memory and not yet in a closed row group - what a crash replays
 - 32 bytes of WAL record header per line plus 233 bytes of line; zstd 3 over batches of 500 lines, from script 08
 - zstd 3 over batches of 500 lines, from script 08
-- what TrieDB does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung
+- what kibbr does today: one segment per leaf per day, resealed whenever a row would widen a column's kind or change a Datetime column's rung
 - one day (2024-01-19); the one-template search is template 1055466456870197778
 - one shared file per day, rolled at 128.0MB
 - 55,183 row groups x 39 columns x 12 bytes, plus 24 per row group, at the size limit
@@ -4593,7 +4593,7 @@ Run 2026-09-22T15:55:51+00:00, git `90152d2`, 1441 rows.
 - chunks of 8,192 rows, one column type
 - chunks where the encoder declines are charged plain in the tables above
 - one zstd call over every plain chunk concatenated
-- median of 3 runs; zstd is a C library and this is its speed, not TrieDB's
+- median of 3 runs; zstd is a C library and this is its speed, not kibbr's
 - a per-file word list stores each distinct value once for the whole column; a per-chunk one repeats it, but indexes into a smaller list
 - type String
 - 105,279 bytes, 0.0102 of plain
@@ -5536,15 +5536,15 @@ Run 2026-09-19T09:43:08+00:00, git `90152d2`, 40 rows.
 
 **Notes**
 
-- shape only - one laptop, Python around the call; not a TrieDB throughput; the disk does this work. fsync(2) on Darwin returns at the drive's write cache, not the platter
-- shape only - one laptop, Python around the call; not a TrieDB throughput
-- shape only - one laptop, Python around the call; not a TrieDB throughput; the disk does this work. F_FULLFSYNC is Darwin's real barrier to the platter
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 56.1
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 296.7
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 714.9
-- shape only - one laptop, Python around the call; not a TrieDB throughput; zstd is a C library, so the MB/s is its own: 863.2
-- shape only - one laptop, Python around the call; not a TrieDB throughput; the filesystem does this
-- shape only - one laptop, Python around the call; not a TrieDB throughput; a range count multiplied by a per-seek constant, not a timed read. Day 2024-01-15, template 1055466456870197778
+- shape only - one laptop, Python around the call; not a kibbr throughput; the disk does this work. fsync(2) on Darwin returns at the drive's write cache, not the platter
+- shape only - one laptop, Python around the call; not a kibbr throughput
+- shape only - one laptop, Python around the call; not a kibbr throughput; the disk does this work. F_FULLFSYNC is Darwin's real barrier to the platter
+- shape only - one laptop, Python around the call; not a kibbr throughput; zstd is a C library, so the MB/s is its own: 56.1
+- shape only - one laptop, Python around the call; not a kibbr throughput; zstd is a C library, so the MB/s is its own: 296.7
+- shape only - one laptop, Python around the call; not a kibbr throughput; zstd is a C library, so the MB/s is its own: 714.9
+- shape only - one laptop, Python around the call; not a kibbr throughput; zstd is a C library, so the MB/s is its own: 863.2
+- shape only - one laptop, Python around the call; not a kibbr throughput; the filesystem does this
+- shape only - one laptop, Python around the call; not a kibbr throughput; a range count multiplied by a per-seek constant, not a timed read. Day 2024-01-15, template 1055466456870197778
 
 ## 09_template_lookup
 

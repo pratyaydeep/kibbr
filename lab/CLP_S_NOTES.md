@@ -1,4 +1,4 @@
-# clp-s: what it does, and what TrieDB could take from it
+# clp-s: what it does, and what kibbr could take from it
 
 Notes from reading `y-scope/clp` at tag `v0.13.0` while getting script 07 to run against
 it. Source paths below are inside `components/core/src/clp_s/`. Everything here is either
@@ -17,16 +17,16 @@ file record the four things that cost a failed build.
 
 ---
 
-## 1. It already does TrieDB's central idea
+## 1. It already does kibbr's central idea
 
 `SchemaTree.hpp` gives every distinct JSON path an integer node id. A `Schema` is the
 ordered set of node ids one record touched. `SchemaMap.hpp` interns each distinct schema to
 a `schema_id`, and every schema gets its own columnar table.
 
-That is TrieDB's template mechanism, arrived at independently: flatten a record to its key
+That is kibbr's template mechanism, arrived at independently: flatten a record to its key
 set, intern the key set to an id, give each id its own column store.
 
-**So "one table per distinct shape" is not what differentiates TrieDB.** Script 07 measures
+**So "one table per distinct shape" is not what differentiates kibbr.** Script 07 measures
 both on identical input, and the shape idea is not where the difference lands — the column
 encodings underneath it are.
 
@@ -37,7 +37,7 @@ encodings underneath it are.
 part of the node**, so a field that is an integer in one record and a string in another
 becomes **two nodes**, and each stays natively typed.
 
-TrieDB instead joins them over a type lattice (`Int64` with `Float64` gives `Float64`, any
+kibbr instead joins them over a type lattice (`Int64` with `Float64` gives `Float64`, any
 other mix gives `String`) and the column widens to `String` permanently, never narrowing.
 Script 04 on the `messy` dataset measures what that costs: **44% of all columns are
 already String-by-widening with no merging at all**, across 8 distinct keys, from fault
@@ -46,7 +46,7 @@ an 8-byte integer into text, forever.
 
 clp-s never has to make that trade. Two nodes cost two columns; they do not cost a type.
 
-**And the knock-on is worse than the type.** Script 03's calibration found that TrieDB's
+**And the knock-on is worse than the type.** Script 03's calibration found that kibbr's
 writer *seals the segment* when a type widens or a datetime rung changes
 (`src/store/disk.rs` `row_fits` / `extend_shape`), a trigger missing from the segment
 format's documented ones: 128 MB, the day boundary, shutdown, a template gaining a key. On
@@ -62,7 +62,7 @@ A type-in-the-node design has no equivalent failure.
 `ColumnWriter.hpp` ships: `Int64`, `DeltaEncodedInt64`, `Float`, `FormattedFloat`,
 `DictionaryFloat`, `Boolean`, `ClpString`, `VariableString`, `Timestamp`.
 
-Script 05 independently found the same winners on TrieDB's data — delta-varint for
+Script 05 independently found the same winners on kibbr's data — delta-varint for
 timestamps, dictionary for low-cardinality strings. Two clp-s has that the lab did not
 test: `FormattedFloat` (keeping a float's original textual form, so `1.50` round-trips as
 written) and `DictionaryFloat`.
@@ -80,10 +80,10 @@ a fixed part and its changing parts. Even crude it helped — 0.79x–0.88x of t
 encoding on the email columns of `flat30`. The real thing is that idea tuned, with
 dictionaries scoped to the whole archive rather than per chunk.
 
-**Dictionary scope is the part TrieDB gets wrong for small templates.** Script 05 measured
+**Dictionary scope is the part kibbr gets wrong for small templates.** Script 05 measured
 per-chunk against per-file word lists and found per-file barely ahead (15,217,492 vs
 15,227,549 bytes on `flat30`). clp-s shares its dictionaries across the entire archive,
-which is why fragmentation costs it almost nothing and costs TrieDB everything — see
+which is why fragmentation costs it almost nothing and costs kibbr everything — see
 "What the lab measured" below.
 
 ## 5. Queries resolve against the dictionaries first
@@ -101,16 +101,16 @@ dictionary lookup hits, it scans.
 
 Ratios are bytes on disk over raw NDJSON. Full tables in RESULTS.md under `07_vs_others`.
 
-| dataset | templates | rows/template median | clp-s | TrieDB best | winner |
+| dataset | templates | rows/template median | clp-s | kibbr best | winner |
 |---|---|---|---|---|---|
 | `uneven` | 4,931 | 6 | **0.067** | 0.086 | clp-s |
-| `flat30` | 870 | 69 | 0.182 | **0.144** | TrieDB |
-| `messy` | 130 | 1,116 | 0.178 | **0.153** | TrieDB |
+| `flat30` | 870 | 69 | 0.182 | **0.144** | kibbr |
+| `messy` | 130 | 1,116 | 0.178 | **0.153** | kibbr |
 
 **The crossover is template size, not anything intrinsic to the encodings.** clp-s wins
 exactly where templates fragment into single-digit row counts, because its dictionaries are
-archive-wide and amortise over everything; TrieDB's are per-chunk, so a 6-row chunk pays
-full price for a dictionary it cannot amortise. Give TrieDB templates with real rows in
+archive-wide and amortise over everything; kibbr's are per-chunk, so a 6-row chunk pays
+full price for a dictionary it cannot amortise. Give kibbr templates with real rows in
 them and its column encodings win.
 
 That makes script 04's merging load-bearing rather than optional: J70 collapses `uneven`
@@ -131,7 +131,7 @@ counting, rather than trusting the exit code).
    rungs to `Mixed` (the variant `extend_shape` declines to build) or keep the rung per row
    group rather than per segment.
 3. **Type in the node, not a lattice join.** The larger design question. It removes the
-   failure TrieDB's own design already warns about — one `N/A` in ten million timestamps
+   failure kibbr's own design already warns about — one `N/A` in ten million timestamps
    turns the column to `String` for good and every time-range query on it into a full scan
    — and removes the sealing cost with it. It also breaks the trie's "one leaf per key set"
    assumption, so it is not a small change.
@@ -139,7 +139,7 @@ counting, rather than trusting the exit code).
    already paid on the biggest text columns.
 5. **`FormattedFloat`.** Cheap, and it makes float round-tripping exact.
 
-## What TrieDB has that clp-s does not
+## What kibbr has that clp-s does not
 
 The trie over promoted values, which turns a dimension lookup into an edge walk rather than
 a dictionary probe; and a planned Elasticsearch-compatible surface on `:9200` (not built

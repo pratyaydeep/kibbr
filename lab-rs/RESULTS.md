@@ -1,6 +1,6 @@
-# TrieDB lab-rs - speed, locks, memory
+# kibbr lab-rs - speed, locks, memory
 
-Throwaway benchmarks. Part A measures today's binary from outside; Part B models one design choice each and imports none of TrieDB's code. Every number is the median of 3 runs, `±` is (max-min)/median. `--release` throughout. Nothing here ships.
+Throwaway benchmarks. Part A measures today's binary from outside; Part B models one design choice each and imports none of kibbr's code. Every number is the median of 3 runs, `±` is (max-min)/median. `--release` throughout. Nothing here ships.
 
 Regenerated 2026-09-19 14:31 UTC from `results/results.csv` by `report.sh`.
 
@@ -91,9 +91,9 @@ Run at 2026-09-19T11:34:38Z, git 8920fb2.
 
 | variant | metric | value | unit | note |
 |---|---|---|---|---|
-| parse_table | lines_per_sec | 35,630.3 ±1% | lines_per_sec | triedb parse table output > /dev/null, 1M lines |
-| parse_json | lines_per_sec | 19,071.6 ±7% | lines_per_sec | triedb parse json output > /dev/null, 1M lines |
-| cli_ingest | status | ABSENT |  | no 'triedb ingest' subcommand; measured 'query FILE --count' (parse + trie + in-memory store) instead |
+| parse_table | lines_per_sec | 35,630.3 ±1% | lines_per_sec | kibbr parse table output > /dev/null, 1M lines |
+| parse_json | lines_per_sec | 19,071.6 ±7% | lines_per_sec | kibbr parse json output > /dev/null, 1M lines |
+| cli_ingest | status | ABSENT |  | no 'kibbr ingest' subcommand; measured 'query FILE --count' (parse + trie + in-memory store) instead |
 | cli_query_count_load | lines_per_sec | 29,547.3 ±4% | lines_per_sec | query 1m.ndjson --count: every line parsed into trie + memory store |
 | cli_query_count_load | seconds_per_1M_lines | 33.844 ±5% | s | estimate of crash replay time per 1,000,000 lines of WAL backlog |
 | http_disk_1_senders | lines_per_sec | 29,664.1 ±1% | lines_per_sec | 300k lines, batches of 2000 lines, 1 concurrent senders, --storage disk; rate at which /ingest answered 200 |
@@ -123,7 +123,7 @@ Run at 2026-09-19T12:17:00Z, git 7c787eb.
 | templates_100 | rows_still_buffered_at_cap | -1 ±-165400% | rows | buffered_rows when the drain wait ended (0 = drained) |
 | templates_100 | write_failures | -1 ±-91200% | count | /stats write_failures (EMFILE flush ticks) |
 | templates_100 | shutdown_seconds | 28 ±7% | s | SIGTERM until exit: the final flush writes every leaf |
-| templates_100 | top_stderr_line |  |  | most frequent server stderr line, run 3: 8940 triedb: SEG: File exists (os error 17) |
+| templates_100 | top_stderr_line |  |  | most frequent server stderr line, run 3: 8940 kibbr: SEG: File exists (os error 17) |
 | templates_100 | rows_after_restart | 18,356 ±0% | rows | COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200 |
 | templates_100 | cold_start_seconds | 8.473 ±4% | s | spawn until /health answers, on the data dir just written |
 | templates_1000 | peak_rss_kb | 195,424 ±7% | kB | ps-sampled every 0.2s during ingest+flush; gen-logs --lines 20000 --templates 1000 --seed 42; 4 senders |
@@ -134,7 +134,7 @@ Run at 2026-09-19T12:17:00Z, git 7c787eb.
 | templates_1000 | rows_still_buffered_at_cap | -1 ±-0% | rows | buffered_rows when the drain wait ended (0 = drained) |
 | templates_1000 | write_failures | -1 ±-0% | count | /stats write_failures (EMFILE flush ticks) |
 | templates_1000 | shutdown_seconds | 36 ±19% | s | SIGTERM until exit: the final flush writes every leaf |
-| templates_1000 | top_stderr_line |  |  | most frequent server stderr line, run 3: 61209 triedb: SEG: File exists (os error 17) |
+| templates_1000 | top_stderr_line |  |  | most frequent server stderr line, run 3: 61209 kibbr: SEG: File exists (os error 17) |
 | templates_1000 | rows_after_restart | 12,940 ±0% | rows | COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200 |
 | templates_1000 | cold_start_seconds | 27.889 ±5% | s | spawn until /health answers, on the data dir just written |
 | templates_10000 | peak_rss_kb | 265,424 ±12% | kB | ps-sampled every 0.2s during ingest+flush; gen-logs --lines 20000 --templates 10000 --seed 42; 4 senders |
@@ -145,7 +145,7 @@ Run at 2026-09-19T12:17:00Z, git 7c787eb.
 | templates_10000 | rows_still_buffered_at_cap | 9,375 ±100% | rows | buffered_rows when the drain wait ended (0 = drained) |
 | templates_10000 | write_failures | 72,744 ±100% | count | /stats write_failures (EMFILE flush ticks) |
 | templates_10000 | shutdown_seconds | 32 ±59% | s | SIGTERM until exit: the final flush writes every leaf |
-| templates_10000 | top_stderr_line |  |  | most frequent server stderr line, run 3: 127330 triedb: SEG: File exists (os error 17) |
+| templates_10000 | top_stderr_line |  |  | most frequent server stderr line, run 3: 127330 kibbr: SEG: File exists (os error 17) |
 | templates_10000 | rows_after_restart | 10,625 ±0% | rows | COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200 |
 | templates_10000 | cold_start_seconds | 38.762 ±17% | s | spawn until /health answers, on the data dir just written |
 

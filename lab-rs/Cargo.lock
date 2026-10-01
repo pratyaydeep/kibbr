@@ -169,6 +169,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kibbr-lab-rs"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "hdrhistogram",
+ "parking_lot",
+ "rand",
+ "rand_distr",
+ "rayon",
+ "serde_json",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -468,21 +483,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
-]
-
-[[package]]
-name = "triedb-lab-rs"
-version = "0.0.0"
-dependencies = [
- "crossbeam-channel",
- "hdrhistogram",
- "parking_lot",
- "rand",
- "rand_distr",
- "rayon",
- "serde_json",
- "tokio",
- "zstd",
 ]
 
 [[package]]

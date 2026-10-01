@@ -21,8 +21,8 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use triedb_lab_rs::workload::{Columns, Gen};
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::{Columns, Gen};
+use kibbr_lab_rs::*;
 
 const FILES: usize = 200;
 const GROUPS_PER_FILE: usize = 8;

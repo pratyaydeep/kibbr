@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use triedb_lab_rs::*;
+use kibbr_lab_rs::*;
 
 const THREADS: usize = 8;
 const PER_THREAD: u64 = 10_000_000;

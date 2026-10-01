@@ -39,11 +39,11 @@ when,git_sha,bench,variant,metric,value,unit,note
 2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4,count,300000,rows,matching rows (S4: total rows the LIMIT paged over)
 2026-09-19T11:31:46Z,8920fb2,A4_baseline_searches,S4_via_9200,status,0,absent,no :9200 _search surface; S4 uses TrieQL LIMIT 500 on :7700
 2026-09-19T11:34:44Z,8920fb2,A4_baseline_searches,corpus_300k,emfile_lines_in_log,0,count,periodic flush ticks that hit kern.maxfilesperproc before the shutdown (none in the 12 s before SIGTERM)
-2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_table,lines_per_sec,35630.3000,lines_per_sec,"triedb parse table output > /dev/null, 1M lines"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_table,lines_per_sec,35630.3000,lines_per_sec,"kibbr parse table output > /dev/null, 1M lines"
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_table,lines_per_sec_spread,1.2,pct_of_median,max-min over 3 runs: 35706.6 35630.3 35289.6
-2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_json,lines_per_sec,19071.6000,lines_per_sec,"triedb parse json output > /dev/null, 1M lines"
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_json,lines_per_sec,19071.6000,lines_per_sec,"kibbr parse json output > /dev/null, 1M lines"
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,parse_json,lines_per_sec_spread,7.4,pct_of_median,max-min over 3 runs: 19071.6 19439.0 18030.0
-2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_ingest,status,0,absent,no 'triedb ingest' subcommand; measured 'query FILE --count' (parse + trie + in-memory store) instead
+2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_ingest,status,0,absent,no 'kibbr ingest' subcommand; measured 'query FILE --count' (parse + trie + in-memory store) instead
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_query_count_load,lines_per_sec,29547.3000,lines_per_sec,query 1m.ndjson --count: every line parsed into trie + memory store
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_query_count_load,lines_per_sec_spread,4.5,pct_of_median,max-min over 3 runs: 29575.3 29547.3 28249.4
 2026-09-19T11:34:38Z,8920fb2,A1_where_time_goes,cli_query_count_load,seconds_per_1M_lines,33.8440,s,"estimate of crash replay time per 1,000,000 lines of WAL backlog"
@@ -82,7 +82,7 @@ when,git_sha,bench,variant,metric,value,unit,note
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,write_failures_spread,-91200.0,pct_of_median,max-min over 3 runs: 911 -1 -1
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,shutdown_seconds,28.0000,s,SIGTERM until exit: the final flush writes every leaf
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,shutdown_seconds_spread,7.1,pct_of_median,max-min over 3 runs: 28 30 28
-2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,top_stderr_line,0,text,"most frequent server stderr line, run 3: 8940 triedb: SEG: File exists (os error 17)"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,top_stderr_line,0,text,"most frequent server stderr line, run 3: 8940 kibbr: SEG: File exists (os error 17)"
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,rows_after_restart,18356.0000,rows,COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,rows_after_restart_spread,0.2,pct_of_median,max-min over 3 runs: 18354 18396 18356
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_100,cold_start_seconds,8.4730,s,"spawn until /health answers, on the data dir just written"
@@ -103,7 +103,7 @@ when,git_sha,bench,variant,metric,value,unit,note
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,write_failures_spread,-0.0,pct_of_median,max-min over 3 runs: -1 -1 -1
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,shutdown_seconds,36.0000,s,SIGTERM until exit: the final flush writes every leaf
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,shutdown_seconds_spread,19.4,pct_of_median,max-min over 3 runs: 36 37 30
-2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,top_stderr_line,0,text,"most frequent server stderr line, run 3: 61209 triedb: SEG: File exists (os error 17)"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,top_stderr_line,0,text,"most frequent server stderr line, run 3: 61209 kibbr: SEG: File exists (os error 17)"
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,rows_after_restart,12940.0000,rows,COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,rows_after_restart_spread,0.0,pct_of_median,max-min over 3 runs: 12940 12942 12939
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_1000,cold_start_seconds,27.8890,s,"spawn until /health answers, on the data dir just written"
@@ -124,7 +124,7 @@ when,git_sha,bench,variant,metric,value,unit,note
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,write_failures_spread,100.0,pct_of_median,max-min over 3 runs: -1 72746 72744
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,shutdown_seconds,32.0000,s,SIGTERM until exit: the final flush writes every leaf
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,shutdown_seconds_spread,59.4,pct_of_median,max-min over 3 runs: 49 30 32
-2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,top_stderr_line,0,text,"most frequent server stderr line, run 3: 127330 triedb: SEG: File exists (os error 17)"
+2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,top_stderr_line,0,text,"most frequent server stderr line, run 3: 127330 kibbr: SEG: File exists (os error 17)"
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,rows_after_restart,10625.0000,rows,COUNT LOG {} after SIGTERM + restart; 20000 were accepted with a 200
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,rows_after_restart_spread,0.0,pct_of_median,max-min over 3 runs: 10626 10625 10625
 2026-09-19T12:17:00Z,7c787eb,A2_memory_and_startup,templates_10000,cold_start_seconds,38.7620,s,"spawn until /health answers, on the data dir just written"

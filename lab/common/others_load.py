@@ -209,7 +209,7 @@ def ch_count() -> int:
 def ch_load(lines: list) -> float:
     """A `ts` column beside a `JSON` payload, sorted on `ts`.
 
-    ClickHouse is given the same help Elasticsearch's logsdb gets and TrieDB's day
+    ClickHouse is given the same help Elasticsearch's logsdb gets and kibbr's day
     partitions get: the table is ordered by time. Leaving the sort key empty would make
     "newest 500" a full scan and the comparison a straw man.
     """

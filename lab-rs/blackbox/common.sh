@@ -5,7 +5,7 @@ set -uo pipefail
 
 LABRS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_DIR="$(dirname "$LABRS_DIR")"
-BIN="$REPO_DIR/target/release/triedb"
+BIN="$REPO_DIR/target/release/kibbr"
 OUT="$LABRS_DIR/out"
 CSV="$LABRS_DIR/results/results.csv"
 DATA_1M="$OUT/data/1m.ndjson"

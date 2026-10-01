@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does splitting by template help or hurt compression?
 
-The same lines written every way TrieDB could write them, measured on real files under
+The same lines written every way kibbr could write them, measured on real files under
 `lab/out/`. Two numbers for every layout: `st_size`, the bytes the format spends, and
 `st_blocks * 512`, what the filesystem charges. The gap between them is the tiny-file
 waste, and on a per-template layout it is not a rounding error - it is the answer.
@@ -54,7 +54,7 @@ class Group:
 
 
 def groups_none(P: rowlib.Parsed) -> list:
-    """One group per template - what TrieDB does with merging off."""
+    """One group per template - what kibbr does with merging off."""
     return [
         Group(str(t.tid), list(t.keys), dict(t.types), list(t.rows))
         for t in P.templates.values()
@@ -388,7 +388,7 @@ def main() -> int:
     record(
         f"PER_TEMPLATE_DAY rg={DEFAULT_RG:,}",
         layout_per_group(P, base, out, DEFAULT_RG, "per_template_day", True),
-        "what TrieDB does today",
+        "what kibbr does today",
     )
     for rg in ROW_GROUP_SIZES:
         record(

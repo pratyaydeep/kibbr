@@ -2,7 +2,7 @@
 """Disk-dominated shapes. Every number here is SHAPE ONLY.
 
 These are the measurements where the work is genuinely done by the disk or by a C
-library, so a time means something. What it does not mean is a TrieDB throughput: the
+library, so a time means something. What it does not mean is a kibbr throughput: the
 loop around each call is Python, the machine is one laptop, and the figures are here to
 show how a curve bends, not to predict a server. Every row says so.
 
@@ -41,7 +41,7 @@ FILE_COUNTS = [1_000, 10_000, 100_000]
 RUNS = 3
 SSD_MS = 0.1
 S3_MS = 15.0
-SHAPE = "shape only - one laptop, Python around the call; not a TrieDB throughput"
+SHAPE = "shape only - one laptop, Python around the call; not a kibbr throughput"
 
 HAS_FULLFSYNC = platform.system() == "Darwin" and hasattr(fcntl, "F_FULLFSYNC")
 

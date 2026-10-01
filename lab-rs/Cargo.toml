@@ -1,5 +1,5 @@
 [package]
-name = "triedb-lab-rs"
+name = "kibbr-lab-rs"
 version = "0.0.0"
 edition = "2021"
 publish = false

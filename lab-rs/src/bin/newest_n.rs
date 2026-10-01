@@ -17,7 +17,7 @@ use rand::prelude::*;
 use rand::rngs::StdRng;
 use std::collections::BinaryHeap;
 use std::time::Instant;
-use triedb_lab_rs::*;
+use kibbr_lab_rs::*;
 
 const TEMPLATES: usize = 500;
 const GROUPS: usize = 40;

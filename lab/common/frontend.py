@@ -1,4 +1,4 @@
-"""TrieDB's frontend, ported to Python: one JSON line -> tokens, fingerprint, typed keys.
+"""kibbr's frontend, ported to Python: one JSON line -> tokens, fingerprint, typed keys.
 
 The binary has `parse --json`, and `00_frontend_agree.py` uses it as the oracle. The port
 exists anyway because script 04 has to change which keys are promoted, and the binary's
@@ -11,7 +11,7 @@ epoch window the ladder's second rung reads).
 
 The one deliberate divergence: the depth limits are checked against the parsed value
 rather than by re-scanning the raw bytes. The binary scans bytes first so that a
-100,000-deep array is rejected by TrieDB's rule instead of serde_json's recursion limit.
+100,000-deep array is rejected by kibbr's rule instead of serde_json's recursion limit.
 Nothing in this lab feeds hostile input, and `json.loads` has its own ceiling well below
 the point where the distinction matters.
 """
@@ -179,15 +179,15 @@ def _epoch_window() -> tuple:
     naming anything else are not timestamps: they fall through to rung 6 and are the
     integers they are, which is what keeps an order id naming 2112 out of a date column.
     """
-    text = os.environ.get("TRIEDB__SCHEMA__EPOCH_WINDOW")
+    text = os.environ.get("KIBBR__SCHEMA__EPOCH_WINDOW")
     if text is None:  # unset is absence; set to anything unreadable is an error, as there
         return (946_684_800 * 1_000_000_000, 4_102_444_800 * 1_000_000_000)
     ends = [part.strip() for part in text.split(",")]
     if len(ends) != 2:
-        raise ValueError(f"TRIEDB__SCHEMA__EPOCH_WINDOW={text!r}: not two instants")
+        raise ValueError(f"KIBBR__SCHEMA__EPOCH_WINDOW={text!r}: not two instants")
     start, end = (_parse_rfc3339(part, exact=False) for part in ends)
     if start is None or end is None or start >= end:
-        raise ValueError(f"TRIEDB__SCHEMA__EPOCH_WINDOW={text!r}: not a window")
+        raise ValueError(f"KIBBR__SCHEMA__EPOCH_WINDOW={text!r}: not a window")
     return (start, end)
 
 

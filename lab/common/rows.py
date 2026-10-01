@@ -2,10 +2,10 @@
 
 Every script from 02 on wants the same thing: rows grouped by template, each template
 carrying its own column list and the folded type of every column - which is exactly what
-a TrieDB leaf holds. Parsing is the slow part in Python, so it happens here once and the
+a kibbr leaf holds. Parsing is the slow part in Python, so it happens here once and the
 result is handed round.
 
-The column type is folded *per template*, not globally, because that is where TrieDB
+The column type is folded *per template*, not globally, because that is where kibbr
 folds it: `LeafMeta.columns` is per leaf. A key that is Datetime under one template and
 String under another is two columns with two types, and flattening that distinction here
 would quietly answer a different question than the one being asked.

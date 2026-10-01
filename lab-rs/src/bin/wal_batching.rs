@@ -18,8 +18,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use triedb_lab_rs::workload::Gen;
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::Gen;
+use kibbr_lab_rs::*;
 
 struct Msg {
     line: Arc<Vec<u8>>,

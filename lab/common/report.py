@@ -121,7 +121,7 @@ def findings(kept: dict) -> list:
         out.append(
             f"- **The Python frontend agrees with the binary**: {bad} disagreements over "
             f"{len(agree)} datasets. Every template id and inferred type below is the one "
-            "TrieDB would assign."
+            "kibbr would assign."
             if bad == 0
             else f"- **The Python frontend DISAGREES with the binary on {bad} points.** "
             "Nothing below is trusted."
@@ -151,7 +151,7 @@ def findings(kept: dict) -> list:
             )
             if ptd:
                 line += (
-                    f"; what TrieDB does today (one Parquet per template per day) costs "
+                    f"; what kibbr does today (one Parquet per template per day) costs "
                     f"{float(ptd['value']):.2f}x of raw NDJSON"
                 )
             out.append(line + ".")
@@ -240,7 +240,7 @@ def findings(kept: dict) -> list:
         # The metric name differs by script - 02 distinguishes bytes from blocks and
         # calls it `ratio_to_raw_bytes`, 05 has only bytes and calls it `ratio_to_raw`.
         # Looking for one name found only 05 and quietly reported the larger figure as
-        # TrieDB's best.
+        # kibbr's best.
         for script, variant, metric in (
             ("02_split_vs_wide", "WIDE rg=122,880", "ratio_to_raw_bytes"),
             ("05_encodings", "BEST_PER_CHUNK sorted", "ratio_to_raw"),
@@ -252,7 +252,7 @@ def findings(kept: dict) -> list:
         out.append(
             f"- **Against other systems on `{ds}`**: "
             + ", ".join(f"{n} {v:.3f}x of raw" for n, v in others)
-            + (f"; TrieDB's best measured layout is {best_ours[0]} at "
+            + (f"; kibbr's best measured layout is {best_ours[0]} at "
                f"{best_ours[1]:.3f}x" if best_ours else "")
             + "."
         )
@@ -267,7 +267,7 @@ def findings(kept: dict) -> list:
             )
             if clps < best_ours[1]:
                 out.append(
-                    f"- **clp-s stores these logs smaller than TrieDB does**: "
+                    f"- **clp-s stores these logs smaller than kibbr does**: "
                     f"{clps:.3f}x of raw against {best_ours[1]:.3f}x, on the same "
                     f"200,000 lines.{verified} Its searches are the slower side of that "
                     "trade, but on the storage question this lab was built to answer, "
@@ -275,7 +275,7 @@ def findings(kept: dict) -> list:
                 )
             else:
                 out.append(
-                    f"- **TrieDB's best layout is smaller than clp-s**: "
+                    f"- **kibbr's best layout is smaller than clp-s**: "
                     f"{best_ours[1]:.3f}x of raw against {clps:.3f}x.{verified}"
                 )
 
@@ -285,7 +285,7 @@ def findings(kept: dict) -> list:
                 "- **One asymmetry in that comparison**: Elasticsearch and ClickHouse "
                 "each received an added `@timestamp` field, roughly 30 bytes per "
                 "document, because logsdb mode requires one and the dataset carries "
-                "`ts`/`ts_unix`/`ts_ms` instead. clp-s and TrieDB were fed the raw "
+                "`ts`/`ts_unix`/`ts_ms` instead. clp-s and kibbr were fed the raw "
                 "payloads, so their ratios are flattered by that much."
             )
 
@@ -353,7 +353,7 @@ def render() -> str:
     kept = newest_per_script(rows)
 
     parts = [
-        "# TrieDB experiment lab - results",
+        "# kibbr experiment lab - results",
         "",
         "Measurements, not opinions. Every size figure comes from a real file under",
         "`lab/out/`, counted twice: `st_size` for the bytes a format spends and",
@@ -361,7 +361,7 @@ def render() -> str:
         "",
         "**Speed figures appear only where a C library or the disk did the work**",
         "(zstd, fsync, file reads), and each says so. No throughput number measured over",
-        "Python code is a TrieDB number.",
+        "Python code is a kibbr number.",
         "",
         "## Machine",
         "",
@@ -375,8 +375,8 @@ def render() -> str:
         parts.append("")
         parts.append(
             "[`CLP_S_NOTES.md`](CLP_S_NOTES.md) - how clp-s works, read off its source at "
-            "tag v0.13.0, and what TrieDB could take from it. It is the only comparison "
-            "system in script 07 that shares TrieDB's central idea (one columnar table per "
+            "tag v0.13.0, and what kibbr could take from it. It is the only comparison "
+            "system in script 07 that shares kibbr's central idea (one columnar table per "
             "distinct key set), so where it differs is where the design choices actually "
             "are."
         )

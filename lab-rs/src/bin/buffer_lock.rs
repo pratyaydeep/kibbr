@@ -24,8 +24,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use triedb_lab_rs::workload::{Columns, Gen, Row};
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::{Columns, Gen, Row};
+use kibbr_lab_rs::*;
 
 const ROW_GROUP: usize = 8192;
 

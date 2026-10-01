@@ -384,7 +384,7 @@ def assign(sim: SimResult, costs: dict, kind: str, **kw) -> Layout:
                 seg = bisect.bisect_right(starts, rg.start) - 1
             lay.put((rg.tid, rg.day, seg), rg)
         lay.note = (
-            "what TrieDB does today: one segment per leaf per day, resealed whenever a "
+            "what kibbr does today: one segment per leaf per day, resealed whenever a "
             "row would widen a column's kind or change a Datetime column's rung"
         )
 
@@ -559,7 +559,7 @@ def calibrate(ds, P: rowlib.Parsed, costs: dict) -> dict:
             except Exception:
                 time.sleep(0.25)
         else:
-            raise RuntimeError("triedb serve did not come up")
+            raise RuntimeError("kibbr serve did not come up")
 
         ingested = 0
         chunk: list = []
@@ -581,7 +581,7 @@ def calibrate(ds, P: rowlib.Parsed, costs: dict) -> dict:
         except subprocess.TimeoutExpired:
             proc.kill()
             raise RuntimeError(
-                "triedb did not finish its shutdown inside 30 minutes; the data dir is "
+                "kibbr did not finish its shutdown inside 30 minutes; the data dir is "
                 "half-written and the calibration would be measuring a torn run"
             )
 
@@ -946,7 +946,7 @@ def main() -> int:
                 ["directories", r["dirs"], "-", "-"],
             ],
             headers=["", "real binary", "model", "model - real %"],
-            title=f"{ds.name} ingested into triedb, data dir under lab/out/03/calib",
+            title=f"{ds.name} ingested into kibbr, data dir under lab/out/03/calib",
         )
         for k, v in [
             ("real_col_bytes", r["col_bytes"]),

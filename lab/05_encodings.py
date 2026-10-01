@@ -6,7 +6,7 @@ row group. Every encoder produces real bytes; nothing here is a size model.
 
 The only speed figure is zstd's, because zstd is a C library doing the work. It is run
 three times at each level and the median is reported. No other number in this script is
-a rate, and none of them is a TrieDB throughput.
+a rate, and none of them is a kibbr throughput.
 
 Two orders are measured throughout: rows as they arrived, and rows sorted inside each
 chunk by the columns with the fewest distinct values first and then by time. The sort is
@@ -275,7 +275,7 @@ def main() -> int:
                 "one zstd call over every plain chunk concatenated")
         res.add(f"zstd level {level}", "compress_MBps", round(mbps, 2), "MB/s",
                 f"median of {TIMING_RUNS} runs; zstd is a C library and this is its "
-                "speed, not TrieDB's")
+                "speed, not kibbr's")
     measure.table(
         zrows,
         headers=["zstd level", "bytes", "ratio over plain", "MB/s (C library)"],
@@ -388,7 +388,7 @@ def main() -> int:
     )
     # -- the fixed rule: the prediction a build is measured against ---------------
     # Raw here counts each line's newline, since that is the file gzip, zstd and
-    # `triedb bench-storage` read; the ratios above leave it out.
+    # `kibbr bench-storage` read; the ratios above leave it out.
     raw_file = raw + ds.lines
     fixed_total = {v: sum(c[v] for c in fixed_col.values())
                    for v in ("none",) + tuple(f"zstd{z}" for z in FIXED_ZSTD_LEVELS)}

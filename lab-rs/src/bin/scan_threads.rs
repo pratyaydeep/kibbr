@@ -8,8 +8,8 @@
 
 use rayon::prelude::*;
 use std::time::Instant;
-use triedb_lab_rs::workload::Gen;
-use triedb_lab_rs::*;
+use kibbr_lab_rs::workload::Gen;
+use kibbr_lab_rs::*;
 
 const CHUNKS: usize = 2000;
 
