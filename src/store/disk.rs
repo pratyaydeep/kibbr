@@ -1106,10 +1106,12 @@ impl DiskStore {
 
         // ── 1. Move the rows that are due aside: one short hold of each leaf's lock ──
         let mut moved: Vec<Moved> = Vec::new();
+        let relieving = !kind.is_final() && only.is_none();
+        let whole = relieving && self.buffered.load(Ordering::Relaxed) > self.max_buffer_bytes;
         for leaf in &leaves {
-            leaf.move_due(kind, now, only, &mut moved);
+            leaf.move_due(kind, now, only, whole, &mut moved);
         }
-        if !kind.is_final() && only.is_none() {
+        if relieving {
             done.forced = self.relieve(&leaves, &mut moved);
         }
 
@@ -1616,7 +1618,24 @@ struct Batch {
     bytes: usize,
     held: usize,
     span: Option<(i64, i64)>,
-    opened_at: Option<Instant>,
+    /// The row groups the rows were cut into while buffered, for `restore` to put back.
+    groups: Vec<Group>,
+}
+
+/// One row group a buffer is filling: where it starts in the buffer, when its first row
+/// arrived, and what its rows weigh.
+///
+/// **Cut as `jobs_of` cuts**, at 8,192 rows or once 8MB is reached, so the groups a tick
+/// counts as full are the row groups the flush then writes. Only the last can be short.
+#[derive(Clone, Copy)]
+struct Group {
+    start: usize,
+    /// When the row group's oldest row arrived: what the timeout is measured from once the
+    /// rows before it are written. A clock read per row group, not per row.
+    opened_at: Instant,
+    bytes: usize,
+    held: usize,
+    span: Option<(i64, i64)>,
 }
 
 /// A batch on its way to a file: whose, and which day.
@@ -1661,9 +1680,18 @@ struct Day {
     buffer_bytes: usize,
     buffer_held: usize,
     buffer_span: Option<(i64, i64)>,
-    /// When the oldest buffered row arrived, which is when the current row group opened.
-    /// Read from a clock but never driven by one: whoever owns the tick asks.
-    opened_at: Option<Instant>,
+    /// The row groups the buffer is cut into, oldest first; the first one's `opened_at` is
+    /// when the oldest buffered row arrived. Read from a clock but never driven by one:
+    /// whoever owns the tick asks.
+    groups: Vec<Group>,
+}
+
+impl Group {
+    /// Whether the row group is full with the buffer `end` rows long: `jobs_of` would end
+    /// it here rather than add the next row.
+    fn is_full(&self, end: usize, limits: &RowGroupLimits) -> bool {
+        end - self.start >= limits.rows || self.bytes >= limits.bytes
+    }
 }
 
 impl Day {
@@ -1686,17 +1714,75 @@ impl Day {
         )
     }
 
-    /// Hand the buffer to a flush and start an empty one. The rows stay readable here, as
-    /// `closing`, until the flush publishes their row groups.
-    fn move_aside(&mut self) -> Arc<Batch> {
-        let batch = Arc::new(Batch {
+    /// Buffer one row: into the last row group, or the first of a new one if that is full.
+    /// `arrived` is asked only when a row group opens.
+    fn push(
+        &mut self,
+        row: Arc<Buffered>,
+        limits: &RowGroupLimits,
+        arrived: impl FnOnce() -> Instant,
+    ) {
+        let at = self.buffer.len();
+        if self.groups.last().is_none_or(|g| g.is_full(at, limits)) {
+            self.groups.push(Group {
+                start: at,
+                opened_at: arrived(),
+                bytes: 0,
+                held: 0,
+                span: None,
+            });
+        }
+        if let Some(g) = self.groups.last_mut() {
+            g.bytes += row.bytes;
+            g.held += row.held;
+            widen(&mut g.span, row.time, row.time);
+        }
+        self.buffer_bytes += row.bytes;
+        self.buffer_held += row.held;
+        widen(&mut self.buffer_span, row.time, row.time);
+        self.buffer.push(row);
+    }
+
+    /// How many of the buffer's row groups are full: all but the last, and the last too
+    /// once it reaches a threshold.
+    fn full_groups(&self, limits: &RowGroupLimits) -> usize {
+        match self.groups.last() {
+            Some(last) if !last.is_full(self.buffer.len(), limits) => self.groups.len() - 1,
+            _ => self.groups.len(),
+        }
+    }
+
+    /// Hand the buffer's first `groups` row groups to a flush - all of them, or only the
+    /// full ones - and keep the rest buffered as they were. The rows moved stay readable
+    /// here, as `closing`, until the flush publishes their row groups.
+    fn move_aside(&mut self, groups: usize) -> Arc<Batch> {
+        let rest = self.groups.split_off(groups);
+        let moved = std::mem::replace(&mut self.groups, rest);
+        let rows = match self.groups.first() {
+            Some(g) => {
+                let rest = self.buffer.split_off(g.start);
+                std::mem::replace(&mut self.buffer, rest)
+            }
             // `take` leaves a `Vec` with no capacity at all: the next buffer grows from
             // nothing, as the first did.
-            rows: std::mem::take(&mut self.buffer),
-            bytes: std::mem::take(&mut self.buffer_bytes),
-            held: std::mem::take(&mut self.buffer_held),
-            span: self.buffer_span.take(),
-            opened_at: self.opened_at.take(),
+            None => std::mem::take(&mut self.buffer),
+        };
+        let bytes: usize = moved.iter().map(|g| g.bytes).sum();
+        let held: usize = moved.iter().map(|g| g.held).sum();
+        let span = moved.iter().fold(None, |s, g| union(s, g.span));
+        let cut = rows.len();
+        self.buffer_bytes -= bytes;
+        self.buffer_held -= held;
+        self.buffer_span = self.groups.iter().fold(None, |s, g| union(s, g.span));
+        for g in &mut self.groups {
+            g.start -= cut;
+        }
+        let batch = Arc::new(Batch {
+            rows,
+            bytes,
+            held,
+            span,
+            groups: moved,
         });
         self.closing = Some(Arc::clone(&batch));
         batch
@@ -1759,33 +1845,54 @@ impl DiskLeaf {
         lock(&self.state)
     }
 
-    fn due(&self, part: &Day, kind: FlushKind, now: Instant) -> bool {
-        part.closing.is_none()
-            && !part.buffer.is_empty()
-            && (kind.is_final()
-                || part.buffer.len() >= self.limits.rows
-                || part.buffer_bytes >= self.limits.bytes
-                || part
-                    .opened_at
-                    .is_some_and(|t| now.saturating_duration_since(t) >= self.limits.age))
+    /// How many of a day's row groups are due to close, if any.
+    ///
+    /// **A size threshold closes the row groups it fired on and no more.** Every row group
+    /// a final flush or the timeout closes, and with them the short one at the end; on a
+    /// tick that the timeout has not reached, only the full ones - the rows past the last
+    /// full row group stay buffered until they fill one or their oldest has waited the
+    /// timeout. Closing the whole buffer once it held 8,192 rows made a row group of
+    /// whatever had arrived past them, and under steady ingest up to half the row groups
+    /// were short. `whole` is the memory limit's: past it a due buffer closes entirely, as
+    /// every buffer the limit forces does.
+    fn due(&self, part: &Day, kind: FlushKind, now: Instant, whole: bool) -> Option<usize> {
+        if part.closing.is_some() || part.buffer.is_empty() {
+            return None;
+        }
+        let timed_out = part
+            .groups
+            .first()
+            .is_some_and(|g| now.saturating_duration_since(g.opened_at) >= self.limits.age);
+        if kind.is_final() || timed_out {
+            return Some(part.groups.len());
+        }
+        match part.full_groups(&self.limits) {
+            0 => None,
+            _ if whole => Some(part.groups.len()),
+            full => Some(full),
+        }
     }
 
-    /// Move aside every buffer a threshold says is due - every buffer, on a final flush -
-    /// of every day, or of `only`.
+    /// Move aside every row group a threshold says is due, of every day or of `only`: every
+    /// buffer whole, on a final flush. `whole`: see `due`.
     fn move_due(
         self: &Arc<Self>,
         kind: FlushKind,
         now: Instant,
         only: Option<i64>,
+        whole: bool,
         out: &mut Vec<Moved>,
     ) {
         let mut state = self.state();
         for (day, part) in state.days.iter_mut() {
-            if only.is_none_or(|d| d == *day) && self.due(part, kind, now) {
+            if only.is_some_and(|d| d != *day) {
+                continue;
+            }
+            if let Some(groups) = self.due(part, kind, now, whole) {
                 out.push(Moved {
                     leaf: Arc::clone(self),
                     day: *day,
-                    batch: part.move_aside(),
+                    batch: part.move_aside(groups),
                 });
             }
         }
@@ -1798,10 +1905,11 @@ impl DiskLeaf {
         if part.closing.is_some() || part.buffer.is_empty() {
             return None;
         }
+        let groups = part.groups.len();
         Some(Moved {
             leaf: Arc::clone(self),
             day,
-            batch: part.move_aside(),
+            batch: part.move_aside(groups),
         })
     }
 
@@ -1896,16 +2004,38 @@ impl DiskLeaf {
         let Some(batch) = part.closing.take() else {
             return;
         };
-        let mut rows = batch.rows.clone();
-        rows.append(&mut part.buffer);
-        part.buffer = rows;
-        part.buffer_bytes += batch.bytes;
-        part.buffer_held += batch.held;
-        part.buffer_span = union(part.buffer_span, batch.span);
-        part.opened_at = match (batch.opened_at, part.opened_at) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        // Cut into row groups again from the head: the moved rows' last row group may be
+        // short, and the rows that arrived since go on filling it. Each row group opens when
+        // the one its first row was in did before - never later than that row arrived.
+        let marks: Vec<(usize, Instant)> = batch
+            .groups
+            .iter()
+            .map(|g| (g.start, g.opened_at))
+            .chain(
+                part.groups
+                    .iter()
+                    .map(|g| (g.start + batch.rows.len(), g.opened_at)),
+            )
+            .collect();
+        let rows: Vec<Arc<Buffered>> = batch
+            .rows
+            .iter()
+            .cloned()
+            .chain(std::mem::take(&mut part.buffer))
+            .collect();
+        part.groups.clear();
+        part.buffer_bytes = 0;
+        part.buffer_held = 0;
+        part.buffer_span = None;
+        let mut mark = 0;
+        for (at, row) in rows.into_iter().enumerate() {
+            while marks.get(mark + 1).is_some_and(|m| m.0 <= at) {
+                mark += 1;
+            }
+            part.push(row, &self.limits, || {
+                marks.get(mark).map_or_else(Instant::now, |m| m.1)
+            });
+        }
     }
 
     /// Every day a query over `[since, until)` can use, newest first, copied in one hold of
@@ -2134,13 +2264,7 @@ impl LeafStore for DiskLeaf {
             state.buffered += 1;
             let part = state.days.entry(day_of(time)).or_default();
             let seq = part.stored_rows + part.in_memory();
-            if part.buffer.is_empty() {
-                part.opened_at = Some(Instant::now());
-            }
-            part.buffer.push(row);
-            part.buffer_bytes += bytes;
-            part.buffer_held += held;
-            widen(&mut part.buffer_span, time, time);
+            part.push(row, &self.limits, Instant::now);
             seq
         };
         self.held.fetch_add(held as u64, Ordering::Relaxed);
@@ -2631,6 +2755,89 @@ mod tests {
         for (n, seq) in seqs {
             assert_eq!(n, Some(ColValue::Int64(seq as i64)));
         }
+    }
+
+    /// Row groups of `rows` rows and `bytes` payload, and a timeout that never comes.
+    fn thresholds(rows: usize, bytes: usize) -> DiskOptions {
+        DiskOptions {
+            row_groups: RowGroupLimits {
+                rows,
+                bytes,
+                age: Duration::from_secs(3600),
+            },
+            max_open_files: 8,
+            ..DiskOptions::default()
+        }
+    }
+
+    /// A tick closes the full row groups and leaves the short rest buffered, by either
+    /// threshold; the final flush closes the rest.
+    #[test]
+    fn a_tick_closes_the_full_row_groups_and_leaves_the_rest() {
+        let scratch = Scratch::new("tick-rows");
+        let s = store_with(&scratch, thresholds(4, usize::MAX));
+        let leaf = s.open(7, "ts").expect("leaf");
+        for n in 0..10 {
+            leaf.append(row(T0 + n, n));
+        }
+        let done = s.flush(FlushKind::Tick);
+        assert_eq!((done.rows, done.row_groups, leaf.buffered()), (8, 2, 2));
+        assert_eq!(s.flush(FlushKind::Tick).rows, 0, "the short rest closed");
+        for n in 10..12 {
+            leaf.append(row(T0 + n, n));
+        }
+        let done = s.flush(FlushKind::Tick);
+        assert_eq!((done.rows, done.row_groups, leaf.buffered()), (4, 1, 0));
+        leaf.append(row(T0 + 12, 12));
+        let done = s.flush(FlushKind::Final);
+        assert_eq!((done.rows, done.row_groups, leaf.buffered()), (1, 1, 0));
+        assert_eq!(ns(leaf.as_ref()), (0..13).collect::<Vec<_>>());
+
+        // By payload: three rows' worth fills a row group.
+        let scratch = Scratch::new("tick-bytes");
+        let each = {
+            let probe = store_with(&scratch, DiskOptions::default());
+            let leaf = probe.open(9, "ts").expect("leaf");
+            leaf.append(row(T0, 0));
+            leaf.approx_bytes() as usize
+        };
+        let s = store_with(&scratch, thresholds(usize::MAX, 3 * each));
+        let leaf = s.open(7, "ts").expect("leaf");
+        for n in 0..8 {
+            leaf.append(row(T0 + n, n));
+        }
+        let done = s.flush(FlushKind::Tick);
+        assert_eq!((done.rows, done.row_groups, leaf.buffered()), (6, 2, 2));
+        assert_eq!(ns(leaf.as_ref()), (0..8).collect::<Vec<_>>());
+    }
+
+    /// Rows a flush could not write go back ahead of the rest and are cut into row groups
+    /// again from the head: the next tick closes the full ones and no more.
+    #[test]
+    #[cfg(unix)]
+    fn rows_put_back_are_cut_into_row_groups_again() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("tick-restore");
+        let s = store_with(&scratch, thresholds(4, usize::MAX));
+        let leaf = s.open(7, "ts").expect("leaf");
+        for n in 0..10 {
+            leaf.append(row(T0 + n, n));
+        }
+        let data = scratch.0.join(DATA_DIR);
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o555)).expect("chmod");
+        let done = s.flush(FlushKind::Tick);
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o755)).expect("chmod");
+        assert_eq!(done.failed.len(), 1, "the flush did not fail");
+        assert_eq!(leaf.buffered(), 10);
+
+        leaf.append(row(T0 + 10, 10));
+        let done = s.flush(FlushKind::Tick);
+        assert!(done.failed.is_empty(), "{:?}", done.failed);
+        assert_eq!((done.rows, done.row_groups, leaf.buffered()), (8, 2, 3));
+        leaf.append(row(T0 + 11, 11));
+        let done = s.flush(FlushKind::Tick);
+        assert_eq!((done.rows, done.row_groups, leaf.buffered()), (4, 1, 0));
+        assert_eq!(ns(leaf.as_ref()), (0..12).collect::<Vec<_>>());
     }
 
     /// A load's file for template `id`, rows `ns` on T0's day: staged under the load's own

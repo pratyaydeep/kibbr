@@ -442,7 +442,8 @@ impl Default for DiskOptions {
 /// close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlushKind {
-    /// The interval. Closes a row group only where a threshold says so.
+    /// The interval. Closes a row group only where a threshold says so: every full one a
+    /// buffer holds, and the short rest only once its oldest row has waited the timeout.
     Tick,
     /// Graceful shutdown. Closes every buffer and seals every open file.
     Final,

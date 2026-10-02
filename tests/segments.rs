@@ -285,9 +285,8 @@ fn a_widening_column_costs_no_file_and_each_row_keeps_its_type() {
 #[test]
 fn a_window_over_one_row_group_reads_one_and_says_so() {
     let db = Db::new();
-    // No tick while the body is applied: one landing on a buffer past 8,192 rows closes
-    // all of it, the short rest included, and the count would be the clock's and not this
-    // test's. The shutdown's final flush is the one close.
+    // No tick and no timeout while the body is applied: the shutdown's final flush is the
+    // one close.
     let first = db.start_with(&[
         "--flush-interval-ms",
         "3600000",
@@ -323,6 +322,96 @@ fn a_window_over_one_row_group_reads_one_and_says_so() {
     assert!(
         last["count"].as_u64().is_some_and(|n| n > 0),
         "the window matched nothing, so the prune proves nothing"
+    );
+}
+
+/// The row groups a query reads, and the rows still buffered: what the tick has closed so
+/// far, as a client sees it.
+fn closed(server: &Server) -> (u64, u64) {
+    let whole = server.query("COUNT LOG {}");
+    assert_eq!(whole["count"], 20_000, "a row went missing: {whole}");
+    let groups = whole["meta"]["row_groups_read"]
+        .as_u64()
+        .expect("row_groups_read");
+    let buffered = server.stats()["storage"]["buffered_rows"]
+        .as_u64()
+        .expect("buffered_rows");
+    (groups, buffered)
+}
+
+/// Poll `closed` until it says `want`, or give up after `within` and return what it last
+/// said.
+fn closed_by(server: &Server, want: (u64, u64), within: std::time::Duration) -> (u64, u64) {
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        let now = closed(server);
+        if now == want || std::time::Instant::now() >= deadline {
+            return now;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// A tick closes as many full row groups as a buffer holds and no more: the rows past the
+/// last full one wait to fill a row group of their own or for the timeout. A tick that
+/// closed the whole buffer once it held 8,192 rows made a short row group of whatever
+/// had arrived past them, and under steady ingest up to half the row groups were short.
+#[test]
+fn a_tick_closes_only_full_row_groups_and_the_rest_waits_for_the_timeout() {
+    // A tick every millisecond, landing all through the body, and a timeout that never
+    // comes: only the 8,192-row threshold may close anything.
+    let db = Db::new();
+    let server = db.start_with(&[
+        "--flush-interval-ms",
+        "1",
+        "--row-group-timeout-ms",
+        "3600000",
+    ]);
+    server.ingest(&one_template(20_000));
+    let ticked = closed_by(&server, (2, 3_616), std::time::Duration::from_secs(10));
+    // Hundreds of ticks more, none of which may close the rest.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let settled = closed(&server);
+    assert_eq!(
+        (ticked, settled),
+        ((2, 3_616), (2, 3_616)),
+        "the ticks did not close exactly two full row groups and leave 20,000 - 2 x 8,192 \
+         buffered"
+    );
+    drop(server);
+
+    // The same, with a timeout that does come: it closes the rest as the third.
+    let db = Db::new();
+    let server = db.start_with(&[
+        "--flush-interval-ms",
+        "1",
+        "--row-group-timeout-ms",
+        "15000",
+    ]);
+    // The rest's oldest row arrives after this, so what is seen before 15s from it is seen
+    // before the timeout.
+    let started = std::time::Instant::now();
+    server.ingest(&one_template(20_000));
+    let timeout = std::time::Duration::from_secs(15);
+    let ticked = closed_by(
+        &server,
+        (2, 3_616),
+        timeout.saturating_sub(started.elapsed()),
+    );
+    assert!(
+        started.elapsed() < timeout,
+        "too slow to tell the ticks from the timeout"
+    );
+    assert_eq!(
+        ticked,
+        (2, 3_616),
+        "the ticks did not close exactly the full row groups"
+    );
+    let timed_out = closed_by(&server, (3, 0), std::time::Duration::from_secs(20));
+    assert_eq!(
+        timed_out,
+        (3, 0),
+        "the timeout did not close the rest as one row group"
     );
 }
 
