@@ -285,7 +285,15 @@ fn a_widening_column_costs_no_file_and_each_row_keeps_its_type() {
 #[test]
 fn a_window_over_one_row_group_reads_one_and_says_so() {
     let db = Db::new();
-    let first = db.start();
+    // No tick while the body is applied: one landing on a buffer past 8,192 rows closes
+    // all of it, the short rest included, and the count would be the clock's and not this
+    // test's. The shutdown's final flush is the one close.
+    let first = db.start_with(&[
+        "--flush-interval-ms",
+        "3600000",
+        "--row-group-timeout-ms",
+        "3600000",
+    ]);
     // 20,000 rows of one shape: two full row groups at 8,192 and a third holding the rest,
     // all in one day partition. The shutdown closes and seals them.
     first.ingest(&one_template(20_000));
@@ -297,7 +305,10 @@ fn a_window_over_one_row_group_reads_one_and_says_so() {
     let groups = whole["meta"]["row_groups_read"]
         .as_u64()
         .expect("row_groups_read");
-    assert_eq!(groups, 3, "20,000 rows did not make three row groups");
+    assert_eq!(
+        groups, 3,
+        "one close of 20,000 rows did not make three row groups"
+    );
 
     // The first row group holds the oldest 8,192 rows, which are the first 8,192 seconds
     // of the day: a window inside the last one must not read the other two.
