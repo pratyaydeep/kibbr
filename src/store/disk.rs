@@ -64,7 +64,7 @@ use std::time::Instant;
 use chrono::{DateTime, NaiveDate};
 
 use super::manifest::{self, FileRecord, Manifest, Record};
-use super::v3::build::{self, schema_of, Encoded};
+use super::v3::build::{self, schema_of, Encoded, Level};
 use super::v3::file::{self, Entry, Index, Mark, Reader, Writer};
 use super::v3::{day_of, FormatError, Source, DAY_NS};
 use super::{
@@ -587,6 +587,7 @@ fn encode_all(moved: &[Moved], jobs: &[Job], threads: usize) -> Vec<EncodedRowGr
                 &refs,
                 &times,
                 Source::NotRecorded,
+                Level::Live,
             )?;
             Ok((columns, encoded))
         }));
@@ -2871,6 +2872,7 @@ mod tests {
                 first: ns.start as u64 + 1,
                 last: ns.end as u64,
             },
+            Level::Finished,
         )
         .expect("encode");
         let schema_id = writer.schema_id(&columns).expect("schema");

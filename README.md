@@ -471,7 +471,8 @@ kibbr bench-storage day.ndjson            # add --es http://localhost:9200 to co
 
 prints the file's size raw, under `gzip -9` and `zstd -19`, and as kibbr holds it - data
 files, catalog and manifest, in bytes and in disk blocks, with the data files broken down
-into column data, row group headers, schema records and footers.
+into column data, row group headers, schema records and footers - and kibbr's total as a
+share of each compressor's.
 
 ## Look at it in a browser
 

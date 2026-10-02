@@ -73,7 +73,7 @@ use crate::error::{DetectorError, DetectorErrorKind};
 use crate::flatten::{parse_line, ParsedLog};
 use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
 use crate::store::disk::{day_name, Committed, LoadCommit, StagedFile};
-use crate::store::v3::build::{self, schema_of};
+use crate::store::v3::build::{self, schema_of, Level};
 use crate::store::v3::file::Writer;
 use crate::store::v3::{day_of, Source};
 use crate::store::{
@@ -1329,6 +1329,8 @@ fn write_due(
                 first: d.batch.first,
                 last: d.batch.last,
             },
+            // A load writes finished files, read for months: the slower, smaller level.
+            Level::Finished,
         )
         .map_err(StoreError::from)?;
         Ok((columns, encoded))

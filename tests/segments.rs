@@ -415,23 +415,57 @@ fn a_tick_closes_only_full_row_groups_and_the_rest_waits_for_the_timeout() {
     );
 }
 
+/// Seven columns of one template whose every value is new - sixteen hex digits mixed out of
+/// the row's number - so no encoding makes one column much smaller than another, and a
+/// time column beside them.
+fn seven_even_columns(count: usize) -> Vec<u8> {
+    let mix = |mut z: u64| {
+        z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut out = Vec::new();
+    for i in 0..count {
+        let second = i % 3600;
+        let mut line = format!(
+            "{{\"ts\":\"2024-01-15T{:02}:{:02}:{:02}Z\"",
+            10 + i / 3600,
+            second / 60,
+            second % 60
+        );
+        for column in 1..=7u64 {
+            let value = mix((i as u64) << 3 | column);
+            line.push_str(&format!(",\"k{column}\":\"x{value:016x}\""));
+        }
+        line.push_str("}\n");
+        out.extend_from_slice(line.as_bytes());
+    }
+    out
+}
+
 /// Naming one column of eight reads its chunks and the timestamp's, nothing else.
-/// `bytes_read` is the only place that is visible.
+/// `bytes_read` is the only place that is visible. The columns are of even size whatever
+/// their encoding, so reading two of eight is far less than reading them all.
 #[test]
 fn naming_one_column_reads_far_fewer_bytes_than_the_whole_row() {
     let db = Db::new();
     let first = db.start();
-    first.ingest(&one_template(20_000));
+    let lines = seven_even_columns(20_000);
+    first.ingest(&lines);
     first.shutdown();
 
+    // Row 5's value of k3, read back off the line it is in.
+    let line = lines.split(|b| *b == b'\n').nth(5).expect("a sixth line");
+    let k3 = json(std::str::from_utf8(line).expect("UTF-8"))["k3"].clone();
     let second = db.start();
-    let counted = second.query(r#"COUNT LOG { "host": "h3" }"#);
+    let counted = second.query(&format!(r#"COUNT LOG {{ "k3": {k3} }}"#));
     let whole = second.query("MATCH LOG {} LIMIT 1");
 
     let narrow = counted["meta"]["bytes_read"].as_u64().expect("bytes_read");
     let wide = whole["meta"]["bytes_read"].as_u64().expect("bytes_read");
     assert!(narrow > 0, "a count that matched rows read no bytes");
-    assert_eq!(counted["count"], 2_500);
+    assert_eq!(counted["count"], 1);
     assert!(
         narrow * 3 < wide,
         "naming one column of eight read {narrow} bytes against {wide} for the whole row"
@@ -508,7 +542,11 @@ fn a_data_file_from_a_pre_rename_build_is_refused_by_path() {
     let day = db.dir.join("data").join("2024-01-15");
     fs::create_dir_all(&day).expect("create the day directory");
     // The pre-rename magic, then version 3.
-    fs::write(day.join("seg_0_000001.col"), b"\x54\x52\x44\x42\x03\x00\x00\x00").expect("write");
+    fs::write(
+        day.join("seg_0_000001.col"),
+        b"\x54\x52\x44\x42\x03\x00\x00\x00",
+    )
+    .expect("write");
 
     let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["serve", "--port", "0"])

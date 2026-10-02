@@ -366,6 +366,15 @@ fn measure(
         }
     }
     lines.push(String::new());
+    // How far kibbr's total is from the two compressors - which keep no index and answer
+    // no query - in bytes: what the encodings are measured by.
+    if gz.bytes > 0 && zst.bytes > 0 {
+        lines.push(format!(
+            "  kibbr total is {:.3} of gzip -9 and {:.3} of zstd -19",
+            total.bytes as f64 / gz.bytes as f64,
+            total.bytes as f64 / zst.bytes as f64
+        ));
+    }
     lines.push(format!(
         "  disk blocks are {} bytes: what each file takes on this disk, rounded up to whole \
          blocks",

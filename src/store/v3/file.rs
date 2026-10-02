@@ -1002,7 +1002,7 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::v3::build::{build, schema_of};
+    use crate::store::v3::build::{build, schema_of, Level};
     use crate::store::v3::Source;
     use crate::store::Row;
     use crate::types::ColValue;
@@ -1024,6 +1024,7 @@ mod tests {
             &[&row],
             &[T0 + n],
             Source::NotRecorded,
+            Level::Live,
         )
         .expect("build");
         w.append(7, &rg).expect("append");

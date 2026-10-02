@@ -23,7 +23,8 @@
 #      and that cursor is compared too. A refusal - a grouping past the row budget - is an answer
 #      as well, compared text and all. /templates agrees on every template's id, column
 #      names and types, time source and row count.
-#   4. Both servers stop on SIGTERM with exit 0, and 3 holds again after both restart.
+#   4. Both servers stop on SIGTERM with exit 0, and 3 holds again after both restart -
+#      with every answer the same as before the restart, on both doors.
 #   5. At least a quarter of the queries returned rows: agreeing on a hundred empty answers
 #      checks nothing.
 #
@@ -32,6 +33,11 @@
 # rows sit in finished files. The load has to be visible to /query without a restart,
 # which is also the evidence that it went through the server rather than behind its back.
 # Round 2 restarts both, so every answer on both sides comes from files.
+#
+# RESTART_BIN names the build round 2 restarts with - the default is BIN. Files one build
+# wrote, read by another, must answer exactly what the build that wrote them answered: how
+# a new build is held to the files an older one left, since every chunk says how it was
+# written.
 #
 # Not compared: files_opened, row_groups_read and _pruned, bytes_read, rows_scanned and
 # duration. The loader writes full row groups where the live door writes whatever the
@@ -47,11 +53,15 @@
 # clock.
 #
 # The input is agree.sh's generator, flag for flag, cached under testdata/two-doors/, so
-# agree.sh pointed at it with INPUT draws from the same lines. The TrieQL is built in python
-# and the answers compared there: splitting JSON in shell is how a harness starts lying
-# about what it tested.
+# agree.sh pointed at it with INPUT draws from the same lines. PROFILE=farm asks the same
+# of a farm day (gen-logs --profile farm) instead - time-ordered, with dirty values and
+# services that spell their time four ways - which is the data the storage encodings are
+# measured on. The TrieQL is built in python and the answers compared there: splitting
+# JSON in shell is how a harness starts lying about what it tested.
 #
 #   NLINES=200000 COMBOS=100 SEED=7 GEN_SEED=1 scripts/two_doors.sh
+#   PROFILE=farm scripts/two_doors.sh
+#   BIN=$PWD/old/kibbr RESTART_BIN=$PWD/target/release/kibbr scripts/two_doors.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -59,6 +69,7 @@ cd "$(dirname "$0")/.."
 BIN=${BIN:-./target/release/kibbr}
 NLINES=${NLINES:-200000}
 GEN_SEED=${GEN_SEED:-1}
+PROFILE=${PROFILE:-hostile}
 COMBOS=${COMBOS:-100}
 SEED=${SEED:-7}
 BATCH=2000
@@ -68,13 +79,22 @@ BATCH=2000
 # Absolute from here on, which agree.sh reads as another build and so does not build again:
 # one build per run, and none replacing the binary under servers already running from it.
 case "$BIN" in /*) ;; *) BIN=$PWD/${BIN#./} ;; esac
+RESTART_BIN=${RESTART_BIN:-$BIN}
+case "$RESTART_BIN" in /*) ;; *) RESTART_BIN=$PWD/${RESTART_BIN#./} ;; esac
 
 # Written aside and renamed: an interrupted generation left in place would be cached as the
 # corpus and every later run would ask about a truncated file.
 mkdir -p testdata/two-doors
-INPUT=testdata/two-doors/${NLINES}-seed${GEN_SEED}.ndjson
+# The clock agree.sh draws its windows from: the generator's, or the farm's one day.
+case "$PROFILE" in
+  hostile) INPUT=testdata/two-doors/${NLINES}-seed${GEN_SEED}.ndjson
+           GEN=(--templates 12); CLOCK=(BASE=1705314600 SPAN=2592000) ;;
+  farm)    INPUT=testdata/two-doors/farm-${NLINES}-seed${GEN_SEED}.ndjson
+           GEN=(--profile farm); CLOCK=(BASE=1705276800 SPAN=86400) ;;
+  *)       echo "PROFILE=$PROFILE: hostile or farm" >&2; exit 1 ;;
+esac
 if [ ! -s "$INPUT" ]; then
-  "$BIN" gen-logs --lines "$NLINES" --templates 12 --seed "$GEN_SEED" > "$INPUT.tmp" &&
+  "$BIN" gen-logs --lines "$NLINES" "${GEN[@]}" --seed "$GEN_SEED" > "$INPUT.tmp" &&
     mv "$INPUT.tmp" "$INPUT" || exit 1
 fi
 
@@ -95,15 +115,15 @@ trap cleanup EXIT
 # The query set, drawn while the doors fill: it reads only the file. Printed once and asked
 # of both servers in both rounds - agree.sh's term draws are reseeded from the clock, so a
 # second harvest would not be the same list.
-INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS SEED=$SEED GEN_SEED=$GEN_SEED NLINES=$NLINES BIN=$BIN \
-  scripts/agree.sh > "$WORK/combos.tsv" 2>"$WORK/harvest.log" &
+env "${CLOCK[@]}" INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS SEED=$SEED GEN_SEED=$GEN_SEED \
+  NLINES=$NLINES BIN=$BIN scripts/agree.sh > "$WORK/combos.tsv" 2>"$WORK/harvest.log" &
 HARVEST_PID=$!
 
 # Sets PID and PORT in this shell; see store_agree.sh for why not a subshell.
 PID=""
 PORT=""
-start() {  # start <logfile> <data-dir>
-  "$BIN" serve --port 0 --data-dir "$2" 2>"$1" &
+start() {  # start <logfile> <data-dir> [binary]
+  "${3:-$BIN}" serve --port 0 --data-dir "$2" 2>"$1" &
   PID=$!
   PORT=""
   # Up to 60s: a restart reopens everything the round before wrote.
@@ -229,7 +249,7 @@ PY
 cat > "$WORK/round.py" <<'PY'
 import json, sys, urllib.error, urllib.request
 
-label, live, bulk, path, tally = sys.argv[1:6]
+label, live, bulk, path, tally, answers = sys.argv[1:7]
 queries = [q for q in open(path).read().splitlines() if q]
 
 def ask(port, method, route, body=None):
@@ -281,7 +301,11 @@ def explain(a, b):
             print("  %-17s live %s" % (k, clip(pa.get(k))))
             print("  %-17s bulk %s" % ("", clip(pb.get(k))))
 
+# Every answer, both doors', for the next round to be held to.
+asked = []
+
 def differs(q, a, b):
+    asked.append({"q": q, "live": comparable(a[1]), "bulk": comparable(b[1])})
     if comparable(a[1]) == comparable(b[1]):
         return 0
     print("DISAGREE  %s" % q)
@@ -365,13 +389,14 @@ if nonempty * 4 < n:
 json.dump({"known": known, "unknown": n - known - refused, "refused": refused,
            "nonempty": nonempty, "cut": cut, "halved": halved, "templates": len(tl)},
           open(tally, "w"))
+json.dump({"answers": asked, "templates": {"live": tl, "bulk": tb}}, open(answers, "w"))
 # 3, not 1: a traceback also exits 1, and that is a harness that checked nothing.
 sys.exit(3 if failed else 0)
 PY
 
 # Its FAIL lines are round.py's own; any other exit is the comparison falling over.
-round() {  # round <label> <tally file>
-  python3 "$WORK/round.py" "$1" "$LIVE_PORT" "$BULK_PORT" "$WORK/queries.txt" "$2"
+round() {  # round <label> <tally file> <answers file>
+  python3 "$WORK/round.py" "$1" "$LIVE_PORT" "$BULK_PORT" "$WORK/queries.txt" "$2" "$3"
   case $? in
     0) ;;
     3) FAIL=1 ;;
@@ -436,18 +461,43 @@ while IFS= read -r q; do
 done < "$WORK/queries.txt"
 
 echo "round 1    the live door holds $(buffered "$LIVE_PORT") of its rows in buffers"
-round "round 1 (live door buffered)" "$WORK/tally.1"
+round "round 1 (live door buffered)" "$WORK/tally.1" "$WORK/answers.1"
 
 stop "$LIVE_PID"; LIVE_PID=""
 [ "$CODE" = 0 ] || { echo "FAIL the live server's SIGTERM exit was $CODE, want 0"; FAIL=1; }
 stop "$BULK_PID"; BULK_PID=""
 [ "$CODE" = 0 ] || { echo "FAIL the bulk server's SIGTERM exit was $CODE, want 0"; FAIL=1; }
-start "$WORK/live2.log" "$WORK/live" || exit 1
+start "$WORK/live2.log" "$WORK/live" "$RESTART_BIN" || exit 1
 LIVE_PID=$PID; LIVE_PORT=$PORT
-start "$WORK/bulk2.log" "$WORK/bulk" || exit 1
+start "$WORK/bulk2.log" "$WORK/bulk" "$RESTART_BIN" || exit 1
 BULK_PID=$PID; BULK_PORT=$PORT
 
-round "round 2 (both restarted)" "$WORK/tally.2"
+[ "$RESTART_BIN" = "$BIN" ] || echo "round 2    restarted with $RESTART_BIN"
+round "round 2 (both restarted)" "$WORK/tally.2" "$WORK/answers.2"
+# A restart changes no answer: each door's round 2 against its own round 1.
+python3 - "$WORK/answers.1" "$WORK/answers.2" <<'PY' || FAIL=1
+import json, sys
+one, two = (json.load(open(p)) for p in sys.argv[1:3])
+bad = 0
+for door in ("live", "bulk"):
+    for a, b in zip(one["answers"], two["answers"]):
+        if a[door] != b[door]:
+            bad += 1
+            if bad <= 10:
+                print("CHANGED   %s door: %s" % (door, a["q"]))
+                print("  round 1  %s" % json.dumps(a[door], sort_keys=True)[:300])
+                print("  round 2  %s" % json.dumps(b[door], sort_keys=True)[:300])
+    if one["templates"][door] != two["templates"][door]:
+        bad += 1
+        print("CHANGED   %s door: /templates" % door)
+if len(one["answers"]) != len(two["answers"]):
+    bad += 1
+    print("CHANGED   round 1 asked %d queries and round 2 %d"
+          % (len(one["answers"]), len(two["answers"])))
+print("restart    %d answers of %d changed across the restart, on either door"
+      % (bad, 2 * len(one["answers"])))
+sys.exit(1 if bad else 0)
+PY
 stop "$LIVE_PID"; LIVE_PID=""
 [ "$CODE" = 0 ] || { echo "FAIL the live server's second SIGTERM exit was $CODE, want 0"; FAIL=1; }
 stop "$BULK_PID"; BULK_PID=""

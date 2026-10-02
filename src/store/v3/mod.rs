@@ -43,6 +43,8 @@ use thiserror::Error;
 use crate::types::ColumnType;
 
 pub mod build;
+#[cfg(test)]
+mod encodings;
 pub mod file;
 pub mod read;
 #[cfg(test)]
@@ -223,6 +225,48 @@ impl<'a> Bytes<'a> {
             n => Err(self.bad(format!("{n} byte(s) left over at the end of {what}"))),
         }
     }
+
+    /// An unsigned LEB128 of at most ten bytes, in its one shortest form: a last byte of 0
+    /// after others is a byte the number did not need, and a tenth byte above 1 holds bits
+    /// past the 64th. Either is refused, so a value has exactly one spelling.
+    pub fn varint(&mut self, what: &str) -> Result<u64, Bad> {
+        let at = self.offset();
+        let mut value = 0u64;
+        for n in 0..10 {
+            let byte = self.u8(what)?;
+            if n == 9 && byte > 1 {
+                return Err(Bad::at(at, format!("{what} holds more than 64 bits")));
+            }
+            value |= u64::from(byte & 0x7f) << (7 * n);
+            if byte & 0x80 == 0 {
+                if byte == 0 && n > 0 {
+                    return Err(Bad::at(at, format!("{what} has a byte it does not need")));
+                }
+                return Ok(value);
+            }
+        }
+        Err(Bad::at(at, format!("{what} runs past ten bytes")))
+    }
+}
+
+/// A signed number as an unsigned one with its sign in the lowest bit, so a small negative
+/// number is a small number: 0, -1, 1, -2 become 0, 1, 2, 3.
+pub fn zigzag(n: i64) -> u64 {
+    ((n << 1) ^ (n >> 63)) as u64
+}
+
+pub fn unzigzag(n: u64) -> i64 {
+    ((n >> 1) as i64) ^ -((n & 1) as i64)
+}
+
+/// An unsigned LEB128: seven bits a byte, lowest first, the high bit set on every byte but
+/// the last.
+pub fn put_varint(mut n: u64, out: &mut Vec<u8>) {
+    while n >= 0x80 {
+        out.push(n as u8 | 0x80);
+        n >>= 7;
+    }
+    out.push(n as u8);
 }
 
 // ── Numbers ────────────────────────────────────────────────────────────────────────
@@ -253,14 +297,51 @@ pub fn type_of_byte(b: u8) -> Option<ColumnType> {
     })
 }
 
-/// Encoding 0, plain. Every type has it and it is the only one built here; the other
-/// numbers are assigned (constant 1, dictionary 2, varint 3, delta 4, bits 5) and a
-/// reader refuses them as it refuses an unknown one - a byte this build cannot decode is
-/// not a byte it may guess at.
+/// Encodings: how a piece's values are laid out. Plain and constant hold every
+/// type, and each of the others one type. A reader refuses any other number, and any
+/// encoding on a type outside its row of the table, as it refuses an unknown one - a byte
+/// this build cannot decode is not a byte it may guess at.
 pub const PLAIN: u8 = 0;
+/// One value, in plain layout, that every row of the piece holds.
+pub const CONSTANT: u8 = 1;
+/// `String`: `[4]` word count, at least 1; the distinct words in plain layout, in the order
+/// they first appear; one index per row - 1 byte if there are at most 256 words, 2 if at
+/// most 65,536, else 4 - little-endian.
+pub const DICTIONARY: u8 = 2;
+/// `Int64`: per value zigzag, then LEB128, at most 10 bytes.
+pub const VARINT: u8 = 3;
+/// `Datetime`: the first value, then each value minus the one before it, wrapping in i64;
+/// each zigzag, then LEB128.
+pub const DELTA: u8 = 4;
+/// `Bool`: `ceil(n/8)` bytes, bit i = row i, the bits past the last row zero.
+pub const BITS: u8 = 5;
 
-/// Compression 0, none. 1 is zstd, assigned and refused here for the same reason.
+/// Whether this build reads a piece of type `ty` laid out with `encoding`.
+pub fn encodes(ty: ColumnType, encoding: u8) -> bool {
+    match encoding {
+        PLAIN | CONSTANT => true,
+        DICTIONARY => ty == ColumnType::String,
+        VARINT => ty == ColumnType::Int64,
+        DELTA => ty == ColumnType::Datetime,
+        BITS => ty == ColumnType::Bool,
+        _ => false,
+    }
+}
+
+/// The width of a dictionary's indexes, by how many words it has.
+pub fn index_width(words: usize) -> usize {
+    match words {
+        0..=256 => 1,
+        257..=65_536 => 2,
+        _ => 4,
+    }
+}
+
+/// Compression 0, none: the body is stored as it is.
 pub const NO_COMPRESSION: u8 = 0;
+/// Compression 1, zstd: one zstd frame (RFC 8878) holding the whole body, and nothing else,
+/// decompressing to exactly `body_len` bytes.
+pub const ZSTD: u8 = 1;
 
 /// Where a row group's rows came from.
 ///

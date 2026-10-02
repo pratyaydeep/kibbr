@@ -17,16 +17,24 @@
 //! rest are one group that is piece B, and if not they are written as text - in piece B,
 //! or in piece A when A is the String group. A reader never needs this rule, but it is
 //! fixed so the same rows always make the same bytes.
+//!
+//! **How a piece is laid out** is fixed the same way: one value on every row is
+//! stored once, and otherwise each type has its one encoding - a word list for text,
+//! zigzag LEB128 for integers, differences for times, bits for booleans, plain bytes for
+//! the rest. A chunk goes through zstd unless every piece in it is a constant, bits or a
+//! UUID's raw bytes, at the level its caller names: 3 live, 9 for a finished file.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 use thiserror::Error;
 
 use super::{
-    bitmap, day_of, epoch_of, float_json, ip_bytes, print_float, print_int, print_ip,
-    print_rfc3339, print_uuid, type_byte, uuid_bytes, Form, JsonKind, Source, EPOCH_MILLIS,
-    EPOCH_SECS, KIND_ROW_GROUP, NO_COMPRESSION, PER_ROW, PLAIN, RFC3339,
+    bitmap, day_of, epoch_of, float_json, index_width, ip_bytes, print_float, print_int, print_ip,
+    print_rfc3339, print_uuid, put_varint, type_byte, uuid_bytes, zigzag, Form, JsonKind, Source,
+    BITS, CONSTANT, DELTA, DICTIONARY, EPOCH_MILLIS, EPOCH_SECS, KIND_ROW_GROUP, MAX_BODY,
+    NO_COMPRESSION, PER_ROW, PLAIN, RFC3339, VARINT, ZSTD,
 };
 use crate::store::Row;
 use crate::types::{ColValue, ColumnType};
@@ -45,6 +53,30 @@ pub enum BuildError {
     Schema(String),
     #[error("column `{0}` holds more than a u32 length can describe")]
     TooLong(String),
+    #[error("column `{0}`: a typed piece was handed a value its group did not type")]
+    Piece(String),
+    #[error("column `{0}`: zstd: {1}")]
+    Zstd(String, String),
+}
+
+/// How hard zstd works on a row group's chunks. Level 3 where the live door closes a
+/// row group, at about 389MB a second; level 9 where a file is written whole - by a bulk
+/// load, or by compaction - and then read for months, at 87MB a second and 6.8% smaller.
+/// Not 19: 3.6MB a second for another 6%. A frame decodes the same whatever level wrote
+/// it, so the level is not recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    Live,
+    Finished,
+}
+
+impl Level {
+    pub fn zstd(self) -> i32 {
+        match self {
+            Level::Live => 3,
+            Level::Finished => 9,
+        }
+    }
 }
 
 /// One encoded row group: the header frame and the chunk area that follows it.
@@ -84,8 +116,9 @@ pub fn build(
     rows: &[&Row],
     times: &[i64],
     source: Source,
+    level: Level,
 ) -> Result<RowGroup, BuildError> {
-    Ok(encode(template_id, columns, rows, times, source)?.frame(schema_id))
+    Ok(encode(template_id, columns, rows, times, source, level)?.frame(schema_id))
 }
 
 /// A row group with every column encoded and no schema number yet: `build` less the one
@@ -114,6 +147,7 @@ pub fn encode(
     rows: &[&Row],
     times: &[i64],
     source: Source,
+    level: Level,
 ) -> Result<Encoded, BuildError> {
     if rows.is_empty() {
         return Err(BuildError::NoRows);
@@ -142,7 +176,7 @@ pub fn encode(
     let mut directory = Vec::new();
     let mut chunks = Vec::new();
     for name in columns {
-        let chunk = encode_column(name, rows)?;
+        let chunk = encode_column(name, rows, level)?;
         directory.extend_from_slice(&chunk.entry);
         chunks.extend_from_slice(&chunk.body);
     }
@@ -272,7 +306,7 @@ struct Present<'a> {
     class: Class,
 }
 
-fn encode_column(name: &str, rows: &[&Row]) -> Result<Chunk, BuildError> {
+fn encode_column(name: &str, rows: &[&Row], level: Level) -> Result<Chunk, BuildError> {
     // The JSON values, held for the rows that have one; `printed` owns the ones a row
     // does not record separately, so a borrow of either lives as long as this call.
     let mut printed: Vec<Option<Value>> = Vec::with_capacity(rows.len());
@@ -340,27 +374,67 @@ fn encode_column(name: &str, rows: &[&Row]) -> Result<Chunk, BuildError> {
         }
         body.extend(bitmap(in_b.into_iter()));
         let a_len =
-            u32::try_from(encoded[0].1.len()).map_err(|_| BuildError::TooLong(name.to_string()))?;
+            u32::try_from(encoded[0].2.len()).map_err(|_| BuildError::TooLong(name.to_string()))?;
         body.extend_from_slice(&a_len.to_le_bytes());
     }
     let mut forms = Vec::new();
-    for (form, bytes) in encoded {
+    for (form, encoding, bytes) in encoded {
         body.extend_from_slice(&bytes);
-        forms.push(form);
+        forms.push((form, encoding));
     }
 
+    // zstd once over the whole body, bitmaps included: one frame over a chunk compresses
+    // better than one per piece, and is one call to decode.
+    let compression = compression_of(
+        forms
+            .iter()
+            .map(|(form, encoding)| (form.column_type(), *encoding)),
+    );
+    let body_len = u32::try_from(body.len())
+        .ok()
+        .filter(|len| *len <= MAX_BODY)
+        .ok_or_else(|| BuildError::TooLong(name.to_string()))?;
+    let stored = match compression {
+        ZSTD => zstd::bulk::compress(&body, level.zstd())
+            .map_err(|e| BuildError::Zstd(name.to_string(), e.to_string()))?,
+        _ => body,
+    };
     let stored_len =
-        u32::try_from(body.len()).map_err(|_| BuildError::TooLong(name.to_string()))?;
+        u32::try_from(stored.len()).map_err(|_| BuildError::TooLong(name.to_string()))?;
     let layout = u8::from(some_null) | (u8::from(two) << 1);
-    let mut entry = vec![layout, NO_COMPRESSION];
+    let mut entry = vec![layout, compression];
     entry.extend_from_slice(&stored_len.to_le_bytes());
-    entry.extend_from_slice(&crate::frame::crc32c(&body).to_le_bytes());
-    for form in forms {
+    entry.extend_from_slice(&crate::frame::crc32c(&stored).to_le_bytes());
+    if compression != NO_COMPRESSION {
+        entry.extend_from_slice(&body_len.to_le_bytes());
+    }
+    for (form, encoding) in forms {
         entry.push(type_byte(form.column_type()));
-        entry.push(PLAIN);
+        entry.push(encoding);
         entry.extend(form.bytes());
     }
-    Ok(Chunk { entry, body })
+    Ok(Chunk {
+        entry,
+        body: stored,
+    })
+}
+
+/// The one compression a chunk gets: zstd, unless every piece in it is one zstd
+/// has nothing to do for - a constant, which is one value already; bits, which are as
+/// small as booleans get; or a `Uuid`'s sixteen raw bytes, which are random. Everything
+/// else is zstd, a piece of any of those beside it included: one frame over the whole
+/// body.
+fn compression_of(pieces: impl IntoIterator<Item = (ColumnType, u8)>) -> u8 {
+    let raw = |(ty, encoding): (ColumnType, u8)| match encoding {
+        CONSTANT | BITS => true,
+        PLAIN => ty == ColumnType::Uuid,
+        _ => false,
+    };
+    if pieces.into_iter().all(raw) {
+        NO_COMPRESSION
+    } else {
+        ZSTD
+    }
 }
 
 /// A piece: its group, and the positions in `present` of the rows it holds, in order.
@@ -495,15 +569,13 @@ fn form_of(piece: &Piece, present: &[Present<'_>]) -> Form {
     }
 }
 
-/// A piece's form and bytes: the kind bitmap, the per-row digits, then the values.
-///
-/// A row reaching a String piece from a typed group is written as text here - the JSON it
-/// arrived as - so the text fallback is decided in one place.
+/// A piece's form, its encoding and its bytes: the kind bitmap, the per-row digits, then
+/// the values in that encoding's layout.
 fn encode_piece(
     name: &str,
     piece: &Piece,
     present: &[Present<'_>],
-) -> Result<(Form, Vec<u8>), BuildError> {
+) -> Result<(Form, u8, Vec<u8>), BuildError> {
     let rows: Vec<&Present<'_>> = piece.members.iter().map(|at| &present[*at]).collect();
     let form = form_of(piece, present);
     let mut out = Vec::new();
@@ -513,28 +585,171 @@ fn encode_piece(
     if form.per_row_digits() {
         out.extend(rows.iter().map(|p| if p.lit { 0 } else { digits_of(p) }));
     }
-    for p in rows {
-        match (&form, &p.class) {
-            (Form::String { .. }, _) | (_, Class::Text) => {
-                let text = match p.json {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                let len =
-                    u32::try_from(text.len()).map_err(|_| BuildError::TooLong(name.to_string()))?;
-                out.extend_from_slice(&len.to_le_bytes());
-                out.extend_from_slice(text.as_bytes());
-            }
-            (_, Class::Typed { val, .. }) => match val {
-                Val::Int(i) | Val::Time(i) => out.extend_from_slice(&i.to_le_bytes()),
-                Val::Float(f) => out.extend_from_slice(&f.to_bits().to_le_bytes()),
-                Val::Bool(b) => out.push(u8::from(*b)),
-                Val::Uuid(bytes) => out.extend_from_slice(bytes),
-                Val::Ip(bytes) => out.extend_from_slice(bytes),
-            },
+    let values = Values::of(&form, &rows).ok_or_else(|| BuildError::Piece(name.to_string()))?;
+    let encoding = values.encoding();
+    let too_long = || BuildError::TooLong(name.to_string());
+    match (encoding, &values) {
+        (CONSTANT, _) => values.plain(0..1, &mut out).ok_or_else(too_long)?,
+        (DICTIONARY, Values::Text(texts)) => dictionary(texts, &mut out).ok_or_else(too_long)?,
+        (VARINT, Values::Int(ints)) => ints.iter().for_each(|i| put_varint(zigzag(*i), &mut out)),
+        (DELTA, Values::Time(times)) => delta(times, &mut out),
+        (BITS, Values::Bool(bools)) => out.extend(bitmap(bools.iter().copied())),
+        _ => values
+            .plain(0..values.len(), &mut out)
+            .ok_or_else(too_long)?,
+    }
+    Ok((form, encoding, out))
+}
+
+/// A piece's values, as the type its form names: what an encoding lays out.
+enum Values<'a> {
+    Text(Vec<Cow<'a, str>>),
+    Int(Vec<i64>),
+    Float(Vec<f64>),
+    Time(Vec<i64>),
+    Bool(Vec<bool>),
+    Uuid(Vec<[u8; 16]>),
+    Ip(Vec<&'a [u8]>),
+}
+
+impl<'a> Values<'a> {
+    /// The rows' values. A row reaching a String piece from a typed group is text here -
+    /// the JSON it arrived as - so the text fallback is decided in one place. `None` when
+    /// a typed piece holds a row its group did not type, which grouping never does.
+    fn of(form: &Form, rows: &[&'a Present<'_>]) -> Option<Self> {
+        macro_rules! all {
+            ($variant:ident, $pat:pat => $out:expr) => {
+                Values::$variant(
+                    rows.iter()
+                        .map(|p| match &p.class {
+                            Class::Typed { val: $pat, .. } => Some($out),
+                            _ => None,
+                        })
+                        .collect::<Option<_>>()?,
+                )
+            };
+        }
+        Some(match form {
+            Form::String { .. } => Values::Text(
+                rows.iter()
+                    .map(|p| match p.json {
+                        Value::String(s) => Cow::Borrowed(s.as_str()),
+                        other => Cow::Owned(other.to_string()),
+                    })
+                    .collect(),
+            ),
+            Form::Int64 { .. } => all!(Int, Val::Int(i) => *i),
+            Form::Float64 { .. } => all!(Float, Val::Float(f) => *f),
+            Form::Datetime { .. } => all!(Time, Val::Time(t) => *t),
+            Form::Bool { .. } => all!(Bool, Val::Bool(b) => *b),
+            Form::Uuid { .. } => all!(Uuid, Val::Uuid(u) => *u),
+            Form::Ip { .. } => all!(Ip, Val::Ip(bytes) => bytes.as_slice()),
+        })
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Values::Text(v) => v.len(),
+            Values::Int(v) | Values::Time(v) => v.len(),
+            Values::Float(v) => v.len(),
+            Values::Bool(v) => v.len(),
+            Values::Uuid(v) => v.len(),
+            Values::Ip(v) => v.len(),
         }
     }
-    Ok((form, out))
+
+    /// Every row the same value, byte for byte in plain layout - so `-0.0` is not `0.0`.
+    fn constant(&self) -> bool {
+        fn same<T: PartialEq>(v: &[T]) -> bool {
+            v.windows(2).all(|w| w[0] == w[1])
+        }
+        match self {
+            Values::Text(v) => same(v),
+            Values::Int(v) | Values::Time(v) => same(v),
+            Values::Float(v) => v.windows(2).all(|w| w[0].to_bits() == w[1].to_bits()),
+            Values::Bool(v) => same(v),
+            Values::Uuid(v) => same(v),
+            Values::Ip(v) => same(v),
+        }
+    }
+
+    /// The one encoding a piece gets: the same value on every row is stored once,
+    /// and anything else is laid out the way its type is - text as a word list. Never
+    /// several tried and the smallest kept: that measured at three times the CPU for 4%
+    /// fewer bytes.
+    fn encoding(&self) -> u8 {
+        if self.constant() {
+            return CONSTANT;
+        }
+        match self {
+            Values::Text(_) => DICTIONARY,
+            Values::Int(_) => VARINT,
+            Values::Time(_) => DELTA,
+            Values::Bool(_) => BITS,
+            _ => PLAIN,
+        }
+    }
+
+    /// The values at `range` in plain layout. `None` for a string past a `u32` length.
+    fn plain(&self, range: std::ops::Range<usize>, out: &mut Vec<u8>) -> Option<()> {
+        match self {
+            Values::Text(v) => {
+                for text in &v[range] {
+                    out.extend_from_slice(&u32::try_from(text.len()).ok()?.to_le_bytes());
+                    out.extend_from_slice(text.as_bytes());
+                }
+            }
+            Values::Int(v) | Values::Time(v) => {
+                v[range]
+                    .iter()
+                    .for_each(|i| out.extend_from_slice(&i.to_le_bytes()));
+            }
+            Values::Float(v) => v[range]
+                .iter()
+                .for_each(|f| out.extend_from_slice(&f.to_bits().to_le_bytes())),
+            Values::Bool(v) => out.extend(v[range].iter().map(|b| u8::from(*b))),
+            Values::Uuid(v) => v[range].iter().for_each(|u| out.extend_from_slice(u)),
+            Values::Ip(v) => v[range].iter().for_each(|ip| out.extend_from_slice(ip)),
+        }
+        Some(())
+    }
+}
+
+/// A word list: the distinct words in the order they first appear, in plain
+/// layout, then each row's word by its number. `None` for a word past a `u32` length.
+fn dictionary(texts: &[Cow<'_, str>], out: &mut Vec<u8>) -> Option<()> {
+    let mut numbers: HashMap<&str, u32> = HashMap::new();
+    let mut words: Vec<&str> = Vec::new();
+    let indexes: Vec<u32> = texts
+        .iter()
+        .map(|text| {
+            *numbers.entry(text.as_ref()).or_insert_with(|| {
+                words.push(text.as_ref());
+                // At most one word per row, and a row group's rows fit a `u32`.
+                (words.len() - 1) as u32
+            })
+        })
+        .collect();
+    out.extend_from_slice(&u32::try_from(words.len()).ok()?.to_le_bytes());
+    for word in &words {
+        out.extend_from_slice(&u32::try_from(word.len()).ok()?.to_le_bytes());
+        out.extend_from_slice(word.as_bytes());
+    }
+    let width = index_width(words.len());
+    for index in indexes {
+        out.extend_from_slice(&index.to_le_bytes()[..width]);
+    }
+    Some(())
+}
+
+/// Differences: the first value, then each value minus the one before it, wrapping
+/// in i64, each zigzag and LEB128. Times a few seconds apart are a few bytes each.
+fn delta(values: &[i64], out: &mut Vec<u8>) {
+    let mut before = 0i64;
+    for value in values {
+        put_varint(zigzag(value.wrapping_sub(before)), out);
+        before = *value;
+    }
 }
 
 // ── Classifying one value ──────────────────────────────────────────────────────────

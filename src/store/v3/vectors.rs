@@ -2,18 +2,21 @@
 //!
 //! `testdata/v3/` holds three files built by hand to the bytes, each with an annotated dump
 //! beside it, and the nine lines they hold. A reader written from the byte specification
-//! must read them back value for value; the builder must write the same rows to the same
-//! bytes; and recovery must append the exact footer the cut file's dump ends with.
+//! must read them back value for value; the builder must make the same rows into the same
+//! pieces; and recovery must append the exact footer the cut file's dump ends with. Beside
+//! them is `encodings.col`, which the encoding writer made: every later build must read
+//! it, and the builder must remake it body for body.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::build::{build, schema_of};
+use super::build::{build, schema_of, Level};
 use super::file::{open_sealed, recover, walk, Index, Reader, Writer};
-use super::{FormatError, Source};
+use super::{read, FormatError, Source};
 use crate::db::row_of;
 use crate::flatten::parse_line;
+use crate::frame::Next;
 use crate::store::{effective_ts, Row};
 
 fn vectors() -> PathBuf {
@@ -121,18 +124,40 @@ fn the_two_template_vector_reads_back_value_for_value() {
     assert_eq!(walked.index.schemas, index.schemas);
 }
 
-/// The builder writes these rows to exactly the vector's bytes: the choice of groups,
-/// pieces and forms is a rule, so the same rows always make the same bytes. Row groups 0
-/// and 2; row group 1 carries an optional section no writer here produces.
+/// The builder makes these rows into the vector's row groups: the choice of groups, pieces
+/// and forms is a rule, so the same rows always make the same pieces. The vector was built
+/// by hand before the encodings and is plain throughout, where the builder lays
+/// each piece out in its own encoding - so the header, every chunk's layout and every
+/// piece's form must be the vector's, and every value must read back the same; the bytes
+/// the encodings change are held to `encodings.col`. Row groups 0 and 2; row group 1
+/// carries an optional section no writer here produces.
 #[test]
-fn the_builder_writes_the_vectors_row_groups_byte_for_byte() {
+fn the_builder_makes_the_vectors_row_groups_into_the_same_pieces() {
     let bytes = std::fs::read(vectors().join("two_templates.col")).expect("read");
     let text = std::fs::read_to_string(vectors().join("two_templates.ndjson")).expect("read");
     let lines: Vec<&str> = text.lines().collect();
     let stream = u64::from_le_bytes(*b"WAL12345");
-    for (picked, first, last, at, len) in [
-        ([0usize, 2, 4], 10u64, 14u64, 0x53usize, 134 + 98),
-        ([6, 7, 8], 20, 27, 0x317, 140 + 96),
+    // A row group's header frame, read: the schema has as many columns as its directory.
+    let header = |frame: &[u8], columns: usize| {
+        let Next::Frame { payload, .. } = crate::frame::read(frame, 0, u32::MAX) else {
+            panic!("not a frame");
+        };
+        read::header(payload, 0, |_| Some(columns)).expect("header")
+    };
+    let cells = |h: &read::Header, area: &[u8]| -> Vec<Vec<read::Cell>> {
+        let offsets = h.chunk_offsets();
+        h.chunks
+            .iter()
+            .zip(offsets)
+            .map(|(dir, at)| {
+                let body = &area[at as usize..at as usize + dir.stored_len as usize];
+                read::chunk(body, 0, dir, h.row_count as usize).expect("chunk")
+            })
+            .collect()
+    };
+    for (picked, first, last, at, frame_len) in [
+        ([0usize, 2, 4], 10u64, 14u64, 0x53usize, 134),
+        ([6, 7, 8], 20, 27, 0x317, 140),
     ] {
         let rows: Vec<Row> = picked.iter().map(|n| row(lines[*n])).collect();
         let refs: Vec<&Row> = rows.iter().collect();
@@ -152,11 +177,146 @@ fn the_builder_writes_the_vectors_row_groups_byte_for_byte() {
                 first,
                 last,
             },
+            Level::Live,
         )
         .expect("build");
-        let mut built = rg.frame.clone();
-        built.extend_from_slice(&rg.chunks);
-        assert_eq!(built, bytes[at..at + len], "row group at 0x{at:x}");
+        let want = header(&bytes[at..at + frame_len], columns.len());
+        let got = header(&rg.frame, columns.len());
+        assert_eq!(
+            (got.template_id, got.schema_id, got.row_count),
+            (want.template_id, want.schema_id, want.row_count),
+            "row group at 0x{at:x}"
+        );
+        assert_eq!(
+            (got.min_time, got.max_time, got.source),
+            (want.min_time, want.max_time, want.source),
+            "row group at 0x{at:x}"
+        );
+        assert_eq!(got.chunks.len(), want.chunks.len());
+        for (n, (g, w)) in got.chunks.iter().zip(&want.chunks).enumerate() {
+            let form = |p: Option<read::PieceDir>| p.map(|p| p.form);
+            assert_eq!(
+                (g.layout, form(g.a), form(g.b)),
+                (w.layout, form(w.a), form(w.b)),
+                "row group at 0x{at:x}, column {n} `{}`",
+                columns[n]
+            );
+        }
+        let area = &bytes[at + frame_len..at + frame_len + want.chunks_len as usize];
+        assert_eq!(
+            cells(&got, &rg.chunks),
+            cells(&want, area),
+            "row group at 0x{at:x}"
+        );
+    }
+}
+
+// ── What the encodings wrote ──────────────────────────────────────────────────────
+
+/// `encodings.col` is the file the loader wrote from `encodings.ndjson`'s twelve lines: one
+/// row group holding every encoding and both compressions - constants, word lists
+/// with nulls and with literal rows, differences in two units, integers beside a text piece,
+/// bits of two JSON kinds, raw UUIDs, addresses in two pieces, floats beside a text piece.
+/// Every later build is held to reading it value for value, as this one is to the plain
+/// vector.
+#[test]
+fn the_encodings_vector_reads_back_value_for_value() {
+    let path = vectors().join("encodings.col");
+    let index = open_sealed(&path).expect("readable").expect("sealed");
+    assert!(index.finished);
+    let text = std::fs::read_to_string(vectors().join("encodings.ndjson")).expect("read");
+    let want: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("json"))
+        .collect();
+    assert_eq!(rows_of(&path, &index), want);
+
+    let entry = &index.entries[0];
+    let columns = index.schemas[entry.schema_id as usize].len();
+    let header = Reader::open(&path)
+        .expect("reader")
+        .header(entry, columns)
+        .expect("header");
+    let mut encodings: Vec<u8> = header
+        .chunks
+        .iter()
+        .flat_map(|c| [c.a, c.b])
+        .flatten()
+        .map(|p| p.encoding)
+        .collect();
+    encodings.sort_unstable();
+    encodings.dedup();
+    let mut compressions: Vec<u8> = header.chunks.iter().map(|c| c.compression).collect();
+    compressions.sort_unstable();
+    compressions.dedup();
+    assert_eq!(
+        (encodings, compressions),
+        (vec![0, 1, 2, 3, 4, 5], vec![0, 1])
+    );
+}
+
+/// The builder makes the vector's row group from its lines, piece for piece and body for
+/// body: the encodings are rules too, so the same rows always make the same bytes. Bodies
+/// are compared before zstd, whose bytes belong to the library's version, not the format.
+#[test]
+fn the_builder_makes_the_encodings_vector_body_for_body() {
+    let path = vectors().join("encodings.col");
+    let bytes = std::fs::read(&path).expect("read");
+    let index = open_sealed(&path).expect("readable").expect("sealed");
+    let entry = index.entries[0];
+    let columns = index.schemas[entry.schema_id as usize].clone();
+    let want = Reader::open(&path)
+        .expect("reader")
+        .header(&entry, columns.len())
+        .expect("header");
+    let text = std::fs::read_to_string(vectors().join("encodings.ndjson")).expect("read");
+    let rows: Vec<Row> = text.lines().map(row).collect();
+    let refs: Vec<&Row> = rows.iter().collect();
+    let times: Vec<i64> = rows
+        .iter()
+        .map(|r| effective_ts(r, "ts").expect("a time"))
+        .collect();
+    assert_eq!(schema_of(refs.iter().copied()), columns);
+    let rg = build(
+        entry.template_id,
+        entry.schema_id,
+        &columns,
+        &refs,
+        &times,
+        want.source,
+        Level::Finished,
+    )
+    .expect("build");
+    let Next::Frame { payload, .. } = crate::frame::read(&rg.frame, 0, u32::MAX) else {
+        panic!("not a frame");
+    };
+    let got = read::header(payload, 0, |_| Some(columns.len())).expect("header");
+    assert_eq!(
+        (got.row_count, got.min_time, got.max_time, got.source),
+        (want.row_count, want.min_time, want.max_time, want.source)
+    );
+    let body = |dir: &read::ChunkDir, stored: &[u8]| match dir.compression {
+        super::ZSTD => zstd::bulk::decompress(stored, dir.body_len as usize).expect("zstd"),
+        _ => stored.to_vec(),
+    };
+    let area = (entry.offset + u64::from(entry.frame_len)) as usize;
+    for (n, ((g, w), (g_at, w_at))) in got
+        .chunks
+        .iter()
+        .zip(&want.chunks)
+        .zip(got.chunk_offsets().into_iter().zip(want.chunk_offsets()))
+        .enumerate()
+    {
+        let column = &columns[n];
+        assert_eq!(
+            (g.layout, g.compression, g.body_len, g.a, g.b),
+            (w.layout, w.compression, w.body_len, w.a, w.b),
+            "column `{column}`"
+        );
+        let g_stored = &rg.chunks[g_at as usize..(g_at + u64::from(g.stored_len)) as usize];
+        let w_from = area + w_at as usize;
+        let w_stored = &bytes[w_from..w_from + w.stored_len as usize];
+        assert_eq!(body(g, g_stored), body(w, w_stored), "column `{column}`");
     }
 }
 
@@ -243,6 +403,7 @@ fn built_file(dir: &Path) -> (PathBuf, Vec<Value>) {
             &refs,
             &times,
             Source::NotRecorded,
+            Level::Live,
         )
         .expect("build");
         writer.append(template, &rg).expect("append");
@@ -329,6 +490,18 @@ fn the_vector_cut_at_every_byte_offset_recovers_the_whole_row_groups_before_the_
     );
 }
 
+/// The encodings vector, cut anywhere inside its compressed chunks, is a tear like any other.
+#[test]
+fn the_encodings_vector_cut_at_every_byte_offset_recovers_the_whole_row_groups_before_the_cut() {
+    let scratch = Scratch::new("every-encodings");
+    let text = std::fs::read_to_string(vectors().join("encodings.ndjson")).expect("read");
+    let want: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("json"))
+        .collect();
+    every_cut(&vectors().join("encodings.col"), &want, &scratch);
+}
+
 #[test]
 fn a_built_file_cut_at_every_byte_offset_recovers_the_whole_row_groups_before_the_cut() {
     let scratch = Scratch::new("every-built");
@@ -412,6 +585,7 @@ fn every_named_spelling_comes_back_as_it_was_ingested() {
             &[&r],
             &times,
             Source::NotRecorded,
+            Level::Live,
         )
         .expect("build");
         writer.append(template, &rg).expect("append");
@@ -433,7 +607,16 @@ fn every_named_spelling_comes_back_as_it_was_ingested() {
         .iter()
         .map(|r| effective_ts(r, "ts").expect("t"))
         .collect();
-    let rg = build(999, schema_id, &columns, &refs, &times, Source::NotRecorded).expect("build");
+    let rg = build(
+        999,
+        schema_id,
+        &columns,
+        &refs,
+        &times,
+        Source::NotRecorded,
+        Level::Live,
+    )
+    .expect("build");
     writer.append(999, &rg).expect("append");
     for l in &lines {
         let mut v: serde_json::Map<String, Value> = serde_json::from_str(l).expect("json");

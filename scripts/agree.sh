@@ -41,9 +41,11 @@ NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
 PRINT_QUERIES=${PRINT_QUERIES:-}
 
-# The generator's clock: 2024-01-15T10:30:00Z, plus up to 30 days (src/gen.rs).
-BASE=1705314600
-SPAN=2592000
+# The generator's clock: 2024-01-15T10:30:00Z, plus up to 30 days (src/gen.rs). A caller
+# drawing from other lines names theirs - a farm day is BASE=1705276800 SPAN=86400 - so the
+# windows and the boundary draws stay inside the data.
+BASE=${BASE:-1705314600}
+SPAN=${SPAN:-2592000}
 
 [ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 WORK=$(mktemp -d)

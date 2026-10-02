@@ -23,13 +23,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./target/release/kibbr
+# BIN names another build, as in the other scripts; the default is built first.
+BIN=${BIN:-./target/release/kibbr}
 COMBOS=${COMBOS:-120}
 SEED=${SEED:-7}
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
 
-cargo build --release --quiet || exit 1
+[ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 WORK=$(mktemp -d)
 
 MEM_PID=""
