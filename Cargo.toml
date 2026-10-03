@@ -18,6 +18,11 @@ flate2 = "1.1"
 # The global allocator, in place of the system's - why is at `#[global_allocator]` in
 # src/main.rs. C under the hood, like zstd.
 mimalloc = "0.1.52"
+# `statvfs`, and nothing else: compaction writes a day a second time beside the files it
+# reads, and asks how much room the volume has before it writes a byte. std has no call
+# for it. Already in the build under tokio and mimalloc; named here because src/ now
+# calls it.
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"

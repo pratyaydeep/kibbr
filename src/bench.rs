@@ -20,17 +20,32 @@
 //! With `--es`, the same lines are indexed into a scratch Elasticsearch index - one shard,
 //! no replica, force-merged to one segment so the number does not depend on when it was
 //! read - and its primary store size is printed beside the rest.
+//!
+//! **Then the same lines as a live day, before and after compaction.** A file through the
+//! bulk door is stored the way compaction leaves a day, so the table above cannot say what
+//! compaction saves. A second scratch directory takes the lines through the live door,
+//! flushed 1,440 times over the file, or once a line if it has fewer - a day that arrives
+//! evenly, flushed once a minute - and is measured as that leaves it: many short row
+//! groups, each with a header of its own. Every day in it is then compacted by the call
+//! `kibbr compact` makes, and it is measured again. The two totals are printed with the
+//! same parts as the first, and the second as a share of the first in bytes, files and
+//! row groups.
 
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::config::{Schema, Storage};
-use crate::error::CliError;
+use crate::db::{self, SinkError};
+use crate::error::{CliError, DetectorErrorKind};
 use crate::fmt::commas;
 use crate::load::{self, LoadError};
+use crate::store::disk::{self, CompactOptions};
 use crate::store::v3::{HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN};
+use crate::store::{FlushKind, FlushSummary};
 
 pub struct Args {
     pub input: PathBuf,
@@ -132,6 +147,115 @@ fn parts_of(path: &Path) -> Result<Parts, LoadError> {
     }
 }
 
+/// What a data directory takes: its data files, sorted into their parts, and its two logs.
+struct Held {
+    files: Size,
+    parts: Parts,
+    catalog: Size,
+    manifest: Size,
+    total: Size,
+}
+
+/// Measure a data directory no process has open. **Only once its stores are dropped**: a
+/// file a compaction replaced is unlinked when the last reader lets go of it, and a walk
+/// before that counts the day twice.
+fn held(data: &Path, block: u64) -> Result<Held, LoadError> {
+    let io_at = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| LoadError::Read { path, source }
+    };
+    let mut files = Size::default();
+    let mut parts = Parts::default();
+    for path in disk::data_files(data) {
+        files += size_of(&path, block).map_err(io_at(&path))?;
+        let p = parts_of(&path)?;
+        parts.columns += p.columns;
+        parts.row_group_headers += p.row_group_headers;
+        parts.schemas += p.schemas;
+        parts.footers += p.footers;
+        parts.file_headers += p.file_headers;
+        parts.other += p.other;
+    }
+    let catalog_path = crate::catalog::path_in(data);
+    let manifest_path = crate::store::manifest::path_in(data);
+    let catalog = size_of(&catalog_path, block).map_err(io_at(&catalog_path))?;
+    let manifest = size_of(&manifest_path, block).map_err(io_at(&manifest_path))?;
+    let mut total = files;
+    total += catalog;
+    total += manifest;
+    Ok(Held {
+        files,
+        parts,
+        catalog,
+        manifest,
+        total,
+    })
+}
+
+impl Held {
+    /// The table's rows for this directory, its total under `name`.
+    fn rows(&self, name: &str, row: &dyn Fn(&str, Option<Size>, u64) -> String) -> Vec<String> {
+        let parts = &self.parts;
+        let mut rows = vec![
+            row(name, Some(self.total), self.total.bytes),
+            row("  data files", Some(self.files), self.files.bytes),
+            row("    column data", None, parts.columns),
+            row("    row group headers", None, parts.row_group_headers),
+            row("    schema records", None, parts.schemas),
+            row("    footers", None, parts.footers),
+            row("    file headers", None, parts.file_headers),
+        ];
+        if parts.other > 0 {
+            rows.push(row("    optional frames", None, parts.other));
+        }
+        rows.push(row("  catalog.log", Some(self.catalog), self.catalog.bytes));
+        rows.push(row(
+            "  manifest.log",
+            Some(self.manifest),
+            self.manifest.bytes,
+        ));
+        rows
+    }
+}
+
+/// A data directory's files, counted from their footers.
+#[derive(Debug, Default)]
+struct Counts {
+    files: u64,
+    /// Files written whole: every one of them, once each day is compacted.
+    finished: u64,
+    row_groups: u64,
+    rows: u64,
+    /// The day directories that hold a file, by name.
+    days: BTreeSet<String>,
+}
+
+fn counts_of(data: &Path) -> Result<Counts, LoadError> {
+    let mut counts = Counts::default();
+    for path in disk::data_files(data) {
+        let index = crate::store::v3::file::open_sealed(&path)?.ok_or_else(|| {
+            LoadError::Input(format!("{}: not a sealed data file", path.display()))
+        })?;
+        counts.files += 1;
+        counts.finished += u64::from(index.finished);
+        counts.row_groups += index.entries.len() as u64;
+        counts.rows += index.row_count();
+        if let Some(day) = path.parent().and_then(Path::file_name) {
+            counts.days.insert(day.to_string_lossy().into_owned());
+        }
+    }
+    Ok(counts)
+}
+
+/// `part` as a share of `whole`, to three places.
+fn share(part: u64, whole: u64) -> String {
+    if whole == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.3}", part as f64 / whole as f64)
+    }
+}
+
 /// A compressor's output, written where its blocks can be measured.
 fn compressed(
     input: &Path,
@@ -227,29 +351,11 @@ fn measure(
     drop(trie);
     drop(lock);
 
+    let bulk = held(&data, block)?;
     let io_at = |path: &Path| {
         let path = path.to_path_buf();
         move |source| LoadError::Read { path, source }
     };
-    let mut files = Size::default();
-    let mut parts = Parts::default();
-    for path in crate::store::disk::data_files(&data) {
-        files += size_of(&path, block).map_err(io_at(&path))?;
-        let p = parts_of(&path)?;
-        parts.columns += p.columns;
-        parts.row_group_headers += p.row_group_headers;
-        parts.schemas += p.schemas;
-        parts.footers += p.footers;
-        parts.file_headers += p.file_headers;
-        parts.other += p.other;
-    }
-    let catalog_path = crate::catalog::path_in(&data);
-    let manifest_path = crate::store::manifest::path_in(&data);
-    let catalog = size_of(&catalog_path, block).map_err(io_at(&catalog_path))?;
-    let manifest = size_of(&manifest_path, block).map_err(io_at(&manifest_path))?;
-    let mut total = files;
-    total += catalog;
-    total += manifest;
 
     // ── The raw bytes, and the two compressors ──
     let raw_copy = scratch.join("raw.ndjson");
@@ -306,12 +412,19 @@ fn measure(
     };
 
     // ── The table ──
-    let ratio = |bytes: u64| {
-        if raw.bytes == 0 {
-            "-".to_string()
-        } else {
-            format!("{:.3}", bytes as f64 / raw.bytes as f64)
-        }
+    let ratio = |bytes: u64| share(bytes, raw.bytes);
+    let heading = format!(
+        "  {:<24}{:>14}{:>14}{:>9}",
+        "", "bytes", "disk blocks", "x raw"
+    );
+    let row = |name: &str, size: Option<Size>, bytes: u64| {
+        format!(
+            "  {:<24}{:>14}{:>14}{:>9}",
+            name,
+            commas(bytes),
+            size.map_or_else(String::new, |s| commas(s.blocks)),
+            ratio(bytes)
+        )
     };
     let mut lines = vec![
         format!("bench-storage {}", args.input.display()),
@@ -327,37 +440,14 @@ fn measure(
             report.seconds
         ),
         String::new(),
-        format!(
-            "  {:<24}{:>14}{:>14}{:>9}",
-            "", "bytes", "disk blocks", "x raw"
-        ),
+        heading.clone(),
+        row("raw", Some(raw), raw.bytes),
+        row("gzip -9", Some(gz), gz.bytes),
+        row("zstd -19", Some(zst), zst.bytes),
     ];
-    let mut row = |name: &str, size: Option<Size>, bytes: u64| {
-        lines.push(format!(
-            "  {:<24}{:>14}{:>14}{:>9}",
-            name,
-            commas(bytes),
-            size.map_or_else(String::new, |s| commas(s.blocks)),
-            ratio(bytes)
-        ));
-    };
-    row("raw", Some(raw), raw.bytes);
-    row("gzip -9", Some(gz), gz.bytes);
-    row("zstd -19", Some(zst), zst.bytes);
-    row("kibbr total", Some(total), total.bytes);
-    row("  data files", Some(files), files.bytes);
-    row("    column data", None, parts.columns);
-    row("    row group headers", None, parts.row_group_headers);
-    row("    schema records", None, parts.schemas);
-    row("    footers", None, parts.footers);
-    row("    file headers", None, parts.file_headers);
-    if parts.other > 0 {
-        row("    optional frames", None, parts.other);
-    }
-    row("  catalog.log", Some(catalog), catalog.bytes);
-    row("  manifest.log", Some(manifest), manifest.bytes);
+    lines.extend(bulk.rows("kibbr total", &row));
     if let Some((bytes, rejected)) = es {
-        row("Elasticsearch store", None, bytes);
+        lines.push(row("Elasticsearch store", None, bytes));
         if rejected > 0 {
             lines.push(format!(
                 "  ({} line(s) Elasticsearch refused are not in its number)",
@@ -371,8 +461,8 @@ fn measure(
     if gz.bytes > 0 && zst.bytes > 0 {
         lines.push(format!(
             "  kibbr total is {:.3} of gzip -9 and {:.3} of zstd -19",
-            total.bytes as f64 / gz.bytes as f64,
-            total.bytes as f64 / zst.bytes as f64
+            bulk.total.bytes as f64 / gz.bytes as f64,
+            bulk.total.bytes as f64 / zst.bytes as f64
         ));
     }
     lines.push(format!(
@@ -380,7 +470,236 @@ fn measure(
          blocks",
         commas(block)
     ));
+    // Written before the live day is tried, and not with it: the compressors are most of a
+    // run, and a live day that cannot be measured must not cost the table they went into.
+    writeln!(out, "{}", lines.join("\n"))
+        .and_then(|()| out.flush())
+        .map_err(CliError::Write)?;
+
+    // ── The same lines as a live day, before and after compaction ──
+    let live =
+        live_day(args, &schema, &scratch.join("live"), block, report.lines).map_err(|e| {
+            LoadError::Input(format!(
+                "the table above stands, but the same lines could not be measured as a live \
+                 day: {}",
+                crate::error::chain(&e)
+            ))
+        })?;
+    let (before, was) = &live.before;
+    let (after, is) = &live.after;
+    let mut lines = vec![
+        String::new(),
+        format!(
+            "the same lines as a live day: flushed {} time(s) over the file, as a day that \
+             arrives evenly is flushed once a minute, then compacted",
+            commas(live.flushes)
+        ),
+        format!(
+            "  before compaction: {} lines, {} rows, {} row groups in {} file(s) over {} \
+             day(s), ingested in {:.1}s",
+            commas(live.lines),
+            commas(was.rows),
+            commas(was.row_groups),
+            commas(was.files),
+            was.days.len(),
+            live.ingested_in
+        ),
+        format!(
+            "  after compaction: {} rows, {} row groups in {} file(s) over {} day(s), \
+             compacted in {:.1}s",
+            commas(is.rows),
+            commas(is.row_groups),
+            commas(is.files),
+            is.days.len(),
+            live.compacted_in
+        ),
+        String::new(),
+        heading,
+    ];
+    lines.extend(before.rows("kibbr total, before", &row));
+    lines.extend(after.rows("kibbr total, after", &row));
+    lines.push(String::new());
+    lines.push(format!(
+        "  after compaction is {} of before in bytes, {} in files and {} in row groups",
+        share(after.total.bytes, before.total.bytes),
+        share(is.files, was.files),
+        share(is.row_groups, was.row_groups)
+    ));
     writeln!(out, "{}", lines.join("\n")).map_err(|e| CliError::Write(e).into())
+}
+
+/// Flushes in a day that is flushed once a minute: the runs the live day's lines are cut
+/// into.
+const FLUSHES_A_DAY: u64 = 24 * 60;
+
+/// How many of a day's flushes are behind line `at` of `lines`, counted from 1: flush `k`
+/// falls after line `ceil(k * lines / 1,440)`.
+///
+/// **Placed by share of the file, not every so-many lines.** A flush every
+/// `ceil(lines / 1,440)` lines makes 1,440 of them only when the lines divide evenly: one
+/// line more and it is every second line, 721 flushes, and half the row group headers
+/// compaction is being measured against. This makes exactly 1,440 for any file of at least
+/// that many lines, and one a line for a shorter one.
+fn flushes_due(at: u64, lines: u64) -> u64 {
+    at.saturating_mul(FLUSHES_A_DAY) / lines.max(1)
+}
+
+/// The input as a day the live door took: what it left, and what compaction made of it.
+struct LiveDay {
+    /// Flushes made over the file, before the one that closes it.
+    flushes: u64,
+    lines: u64,
+    before: (Held, Counts),
+    ingested_in: f64,
+    after: (Held, Counts),
+    compacted_in: f64,
+}
+
+/// A flush that left rows unwritten ends the live day: its sizes would be those of a day
+/// with rows missing. The flush has said which, and why, on stderr.
+fn written(flush: FlushSummary) -> Result<(), LoadError> {
+    if flush.failed == 0 {
+        return Ok(());
+    }
+    Err(LoadError::Input(format!(
+        "the live door could not write the rows of {} template(s); each is reported above",
+        commas(flush.failed as u64)
+    )))
+}
+
+/// Put the input through the live door into a data directory of its own, measure it,
+/// compact every day it holds and measure it again.
+///
+/// **A day that arrives evenly, flushed once a minute.** The lines are cut into 1,440
+/// runs as near equal as whole lines allow - one line each when there are fewer - and
+/// every buffer is closed after each, however few rows it holds: what a server is left
+/// with after a day whose templates each see a few rows a minute, and the case compaction
+/// exists for. It is counted in lines and not left to a clock: a timeout measures how fast
+/// this machine read the file, and the same file would give other row groups on every run.
+///
+/// **Each measurement is of a closed directory.** A file compaction replaced is unlinked
+/// when its last reader lets go, so the stores are dropped before either walk - and
+/// opened again between the two, as `kibbr compact` alone would find them.
+///
+/// **It can fail where the bulk door did not**, on what is the disk's and not the
+/// file's: a flush that cannot write, or a volume without room for a day a second time
+/// beside the two reserves compaction keeps free. The caller says so over the table it has
+/// already printed.
+fn live_day(
+    args: &Args,
+    schema: &Schema,
+    data: &Path,
+    block: u64,
+    lines: u64,
+) -> Result<LiveDay, LoadError> {
+    fs::create_dir_all(data).map_err(|source| LoadError::Read {
+        path: data.to_path_buf(),
+        source,
+    })?;
+    let mut storage = Storage::load(
+        true,
+        Some(data.to_path_buf()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .map_err(CliError::from)?;
+    // No row waits out a timeout, whatever the environment sets one to: a flush closes
+    // every buffer that holds a row.
+    storage.row_group_timeout = Duration::ZERO;
+
+    let lock = crate::lock::DataLock::acquire(data)?;
+    let (trie, stores) = crate::serve::open_durable(&storage, schema).map_err(CliError::from)?;
+    // One arrival time for the whole file, as the bulk door gives it one: a row with no
+    // time of its own is filed under it, and a clock read per line could split the file
+    // over midnight.
+    let now = chrono::Utc::now();
+    let started = Instant::now();
+    // Compared against the flushes already behind, and not against a line number: a
+    // flush that falls after a line this is never called for - a blank one, one that does
+    // not parse - is made at the next line that is.
+    let (mut behind, mut flushes) = (0u64, 0u64);
+    let stats = db::read_lines(
+        BufReader::new(load::open_decoded(&args.input)?),
+        &mut |at, parsed| {
+            db::ingest_line(&trie, Some(&stores), &parsed, now)?;
+            let due = flushes_due(at as u64, lines);
+            if due > behind {
+                behind = due;
+                flushes += 1;
+                written(stores.flush_all(FlushKind::Tick))
+                    .map_err(|e| SinkError::Fatal(e.into()))?;
+            }
+            Ok(())
+        },
+        // A line that does not parse was reported when the bulk door read it. One that
+        // parsed and this door could not keep is new.
+        &mut |e| {
+            if matches!(
+                e.kind,
+                DetectorErrorKind::NotDurable { .. } | DetectorErrorKind::NotStored { .. }
+            ) {
+                crate::error::report(&e);
+            }
+        },
+    )?;
+    written(stores.flush_all(FlushKind::Final))?;
+    let ingested_in = started.elapsed().as_secs_f64();
+    drop(stores);
+    drop(trie);
+    drop(lock);
+    let before = (held(data, block)?, counts_of(data)?);
+    if before.1.rows != stats.ingested {
+        return Err(LoadError::Input(format!(
+            "the live door took {} rows and its files hold {}",
+            commas(stats.ingested),
+            commas(before.1.rows)
+        )));
+    }
+
+    let lock = crate::lock::DataLock::acquire(data)?;
+    let (trie, stores) = crate::serve::open_durable(&storage, schema).map_err(CliError::from)?;
+    let store = stores.disk_store().ok_or(LoadError::NoDisk)?;
+    let opts = CompactOptions {
+        threads: load::alone_threads(),
+        cancel: Arc::default(),
+    };
+    let started = Instant::now();
+    for name in &before.1.days {
+        let day = disk::day_of_name(name).ok_or_else(|| {
+            LoadError::Input(format!(
+                "{name}: a directory of data files that is not named for a day"
+            ))
+        })?;
+        store.compact_day(day, &opts)?;
+    }
+    let compacted_in = started.elapsed().as_secs_f64();
+    drop(stores);
+    drop(trie);
+    drop(lock);
+    let after = (held(data, block)?, counts_of(data)?);
+    // The two a reader takes on trust when comparing the blocks: the same rows, and no
+    // file left as the live door wrote it.
+    if after.1.rows != before.1.rows || after.1.finished != after.1.files {
+        return Err(LoadError::Input(format!(
+            "compaction left {} of {} rows, and {} of {} file(s) finished",
+            commas(after.1.rows),
+            commas(before.1.rows),
+            commas(after.1.finished),
+            commas(after.1.files)
+        )));
+    }
+    Ok(LiveDay {
+        flushes,
+        lines: stats.read,
+        before,
+        ingested_in,
+        after,
+        compacted_in,
+    })
 }
 
 /// The same lines in a scratch Elasticsearch index: its primary store size once
@@ -469,4 +788,40 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
     })();
     let _ = call("DELETE", at(""), None);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The flushes a file of `lines` lines is given, when every line reaches the sink.
+    fn flushes(lines: u64) -> u64 {
+        let mut behind = 0;
+        (1..=lines)
+            .filter(|at| {
+                let due = flushes_due(*at, lines);
+                std::mem::replace(&mut behind, due) < due
+            })
+            .count() as u64
+    }
+
+    #[test]
+    fn a_live_day_is_flushed_1440_times_or_once_a_line_if_it_has_fewer() {
+        for lines in [1_440, 1_441, 1_500, 2_880, 2_881, 3_000, 14_401, 200_000] {
+            assert_eq!(flushes(lines), FLUSHES_A_DAY, "{lines} lines");
+        }
+        for lines in [1, 2, 590, 1_439] {
+            assert_eq!(flushes(lines), lines, "{lines} lines");
+        }
+        // The last line is the last flush, so the flush that closes the day finds nothing
+        // buffered and adds no row group of its own.
+        for lines in [1, 590, 1_441, 200_000] {
+            assert_eq!(flushes_due(lines, lines), FLUSHES_A_DAY, "{lines} lines");
+            assert!(
+                flushes_due(lines - 1, lines) < FLUSHES_A_DAY,
+                "{lines} lines"
+            );
+        }
+        assert_eq!(flushes_due(0, 0), 0);
+    }
 }

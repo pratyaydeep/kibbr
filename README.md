@@ -258,6 +258,7 @@ kibbr serve
               POST /ingest      NDJSON body, one log line per line
               POST /query       {"q": "<trieql>"}
               POST /load        a bulk load job: what `kibbr load` sends
+              POST /compact     a compaction job: what `kibbr compact` sends
               GET  /templates   every template, its columns and row count
               GET  /stats       throughput, template count, storage size
               GET  /health      {"ok":true}
@@ -463,6 +464,39 @@ zcat archive.gz | kibbr load --data-dir kibbr-data -       # standard input
 `scripts/two_doors.sh` sends the same 200,000 lines through both doors into two data
 directories and asks both `scripts/agree.sh`'s query set: they must answer identically.
 
+## Compact a finished day
+
+The live door closes a row group whenever its timeout fires, so a day arrives as thousands
+of small row groups over several files. `kibbr compact` rebuilds them: each template's
+rows of the day into 8,192-row groups at zstd 9, in finished files, swapped in with one
+`manifest.log` record.
+
+```
+kibbr compact --data-dir kibbr-data                     # every day that is due
+kibbr compact --data-dir kibbr-data --day 2024-01-15    # that day, now
+```
+
+- **Nothing a query can see moves.** Not a row, not a count, and not a row's position
+  among its template's rows of the day - so a cursor handed out before a compaction
+  resumes after it, and a query already running finishes on the old files.
+  `scripts/compact_agree.sh` asks `scripts/agree.sh`'s query set of a live day, compacts
+  it three ways, and asks again.
+- **When.** A day is due the day after its last live row. A server looks every
+  `--compact-interval-ms` - a minute; `0` never looks - and compacts what is due;
+  `--day` compacts a day whatever its age. A day with nothing to compact, as a loaded day
+  is, is left untouched: no record, and `2024-01-15: nothing to compact`.
+- **Where it runs** is decided as for `load`. A server holding the directory is asked
+  (`POST /compact`), one compaction at a time; with none, the command takes the directory
+  and runs alone - under its own `KIBBR__SCHEMA__EPOCH_WINDOW`, so give it the server's.
+  A path that is not a kibbr data directory - no `manifest.log` in it - is refused with
+  exit 1, and nothing is created or deleted there.
+- **Killed at any moment, every row is there once.** The rebuilt files are files nobody
+  has named until the one record names them, and a start deletes what the manifest does
+  not name. `scripts/compact_kill.sh` kills it twenty times, alone and under a server.
+- `/stats` has `storage.compaction`: whether one is running, how many days were rebuilt,
+  the last one's report - the one `--json` prints - and the last error. A day that fails
+  is left for twice as long each time, and never makes `/ingest` refuse.
+
 **What a file costs to store**, by one command:
 
 ```
@@ -472,7 +506,11 @@ kibbr bench-storage day.ndjson            # add --es http://localhost:9200 to co
 prints the file's size raw, under `gzip -9` and `zstd -19`, and as kibbr holds it - data
 files, catalog and manifest, in bytes and in disk blocks, with the data files broken down
 into column data, row group headers, schema records and footers - and kibbr's total as a
-share of each compressor's.
+share of each compressor's. A second table is the same lines as a live day: through the
+live door into a directory of its own, flushed 1,440 times over the file, or once a line
+if it has fewer - a day that arrives evenly, flushed once a minute - measured as that
+leaves it and again once compacted, with the second as a share of the first in bytes,
+files and row groups.
 
 ## Look at it in a browser
 
@@ -560,9 +598,10 @@ src/trieql.rs     the query grammar
 src/query.rs      the `query` command, and the result JSON both surfaces answer with
 src/serve.rs      the HTTP surface, the banner, the shutdown sequence
 src/load.rs       `kibbr load` - the bulk door: staging, the load id, the commit
+src/compact.rs    `kibbr compact` - the command, and a server's compaction jobs
 src/lock.rs       the LOCK file: one process owns a data directory
 src/bench.rs      `kibbr bench-storage`
-src/http.rs       the small HTTP client `load` and `bench-storage --es` speak
+src/http.rs       the small HTTP client `load`, `compact` and `bench-storage --es` speak
 src/viewer.html   the log viewer served at `/` - one file, compiled into the binary
 tests/fixture.rs  outer-surface tests
 tests/serve.rs    the HTTP contract, over a bare TcpStream

@@ -301,6 +301,20 @@ impl Log {
     pub fn len(&self) -> u64 {
         self.end
     }
+
+    /// Whether a failed append could not be cut back: see `LogError::Torn`.
+    pub fn is_torn(&self) -> bool {
+        self.torn.is_some()
+    }
+
+    /// Flush the file as it stands. After a failed append that was cut back, this is what
+    /// makes the cut durable: once it returns, no part of that append can be on disk.
+    pub fn sync(&mut self) -> Result<(), LogError> {
+        self.file.sync_all().map_err(|source| LogError::Io {
+            path: self.path.display().to_string(),
+            source,
+        })
+    }
 }
 
 /// The directory holding `path`; `.` for a bare file name.

@@ -2,6 +2,7 @@
 
 mod bench;
 mod catalog;
+mod compact;
 mod config;
 mod db;
 mod demo;
@@ -189,6 +190,12 @@ enum Command {
         /// Overrides `KIBBR__STORAGE__MAX_BUFFER_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         max_buffer_bytes: Option<usize>,
+        /// How often to look for a day that has ended and compact it, in milliseconds: a
+        /// day is due the day after its last live row. `0` never looks, and `kibbr compact`
+        /// still compacts on demand.
+        /// Overrides `KIBBR__STORAGE__COMPACT_INTERVAL_MS`. [default: 60000]
+        #[arg(long, value_name = "MS")]
+        compact_interval_ms: Option<usize>,
         /// The key names a new template's time column is chosen from, in order; the
         /// first one the template holds as a Datetime wins, and a template holding none
         /// takes its rows' arrival time. Comma-separated.
@@ -257,9 +264,41 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Compact a day the live door has finished with: its many small row groups rebuilt
+    /// into full ones, in finished files, published in one step. Nothing a query can see
+    /// moves - not a row, not its position - and a day with nothing to compact is left
+    /// untouched. A server holding the directory is asked to run it; with none, this command
+    /// takes the directory and runs it alone - and then reads values back under this
+    /// process's own settings, so give it the `KIBBR__SCHEMA__EPOCH_WINDOW` the server that
+    /// wrote the day runs with, as for `kibbr load`.
+    Compact {
+        /// Compact this UTC day now, whatever its age. Without it, every day that is due:
+        /// each day before today whose last live row was written before today.
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        day: Option<String>,
+        /// The data directory, which must be one already: a path that is not a kibbr data
+        /// directory is refused, and nothing is created there.
+        /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+        #[arg(long, value_name = "PATH")]
+        data_dir: Option<PathBuf>,
+        /// Threads to encode on, at most one per core. [default: one per core up to 8
+        /// alone, half that inside a server]
+        #[arg(long, value_name = "N")]
+        threads: Option<usize>,
+        /// A rebuilt file is sealed at this many bytes and the next one opened, when no
+        /// server holds the directory - a server uses its own.
+        /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
+        #[arg(long, value_name = "BYTES")]
+        segment_max_bytes: Option<usize>,
+        /// Print the report as one JSON object instead of a line a day.
+        #[arg(long)]
+        json: bool,
+    },
     /// Measure what a file costs to store: load it into a scratch data directory and print
     /// its size raw, under gzip -9 and zstd -19, and as kibbr holds it - data files,
-    /// catalog and manifest - in bytes and in disk blocks.
+    /// catalog and manifest - in bytes and in disk blocks. Then the same lines as a live
+    /// day - through the live door, flushed 1,440 times over the file, or once a line if
+    /// it has fewer - as it is before compaction and after.
     BenchStorage {
         /// NDJSON, gzip or zstd.
         #[arg(value_name = "FILE")]
@@ -454,6 +493,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_open_segments,
             segment_max_bytes,
             max_buffer_bytes,
+            compact_interval_ms,
             time_columns,
         } => serve::run(
             &host,
@@ -469,7 +509,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 max_open_segments,
                 segment_max_bytes,
                 max_buffer_bytes,
-            )?,
+            )?
+            .with_compact_interval(compact_interval_ms)?,
             config::Schema::load(time_columns),
         ),
         Command::Load {
@@ -510,6 +551,36 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 json,
             };
             load::command(args, storage, schema, &mut out).map_err(CliError::from)
+        }
+        Command::Compact {
+            day,
+            data_dir,
+            threads,
+            segment_max_bytes,
+            json,
+        } => {
+            // Before the settings are loaded, which creates the directory they name: a
+            // compaction of a path that is not a data directory makes nothing there.
+            let base = config::Storage::base_named(data_dir.clone());
+            let day_number = compact::precheck(day.as_deref(), &base)?;
+            let storage = config::Storage::load(
+                true,
+                data_dir,
+                None,
+                None,
+                None,
+                None,
+                segment_max_bytes,
+                None,
+            )?;
+            let args = compact::Args {
+                day,
+                threads,
+                segment_max_bytes,
+                json,
+            };
+            let schema = config::Schema::load(None);
+            compact::command(args, day_number, storage, schema, &mut out).map_err(CliError::from)
         }
         Command::BenchStorage {
             input,

@@ -103,6 +103,22 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The file id 32 hex digits spell: `hex` read back.
+pub fn file_id_of(hex: &str) -> Option<[u8; 16]> {
+    if hex.len() != 32 || !hex.is_ascii() {
+        return None;
+    }
+    let mut id = [0u8; 16];
+    for (at, byte) in id.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[at * 2..at * 2 + 2], 16).ok()?;
+    }
+    Some(id)
+}
+
+/// A compaction's `source`. Not a load's, so no load id is read out of it and no file it
+/// added is ever looked for in `staging/`: compaction writes its files in place.
+pub const COMPACT_SOURCE: &str = "compact";
+
 /// A bulk load's `source`: `load:` and its id as 16 hex digits.
 pub fn load_source(load_id: u64) -> String {
     format!("load:{load_id:016x}")
@@ -287,6 +303,27 @@ impl Manifest {
     pub fn len(&self) -> u64 {
         self.log.len()
     }
+
+    /// Whether a failed append could not be cut back, so no record is written until a
+    /// restart.
+    pub fn is_torn(&self) -> bool {
+        self.log.is_torn()
+    }
+
+    /// Flush the log as it stands: what tells a failed append that was cut back - and is
+    /// then certainly not on disk - from one that may be.
+    pub fn sync(&mut self) -> Result<(), ManifestError> {
+        Ok(self.log.sync()?)
+    }
+
+    /// A manifest whose every append fails, and cannot be cut back: what a full disk or a
+    /// dead mount looks like.
+    #[cfg(test)]
+    pub fn read_only(path: &Path) -> Result<Self, ManifestError> {
+        Ok(Self {
+            log: Log::read_only(path)?,
+        })
+    }
 }
 
 pub fn path_in(base: &Path) -> PathBuf {
@@ -330,6 +367,19 @@ mod tests {
         ];
         let live = live(&records);
         assert_eq!(live.keys().collect::<Vec<_>>(), vec!["d/c.col"]);
+    }
+
+    #[test]
+    fn a_file_id_reads_back_from_its_hex_and_nothing_else_does() {
+        let id: [u8; 16] = std::array::from_fn(|at| at as u8 * 17);
+        assert_eq!(file_id_of(&hex(&id)), Some(id));
+        assert_eq!(file_id_of("00ff"), None);
+        assert_eq!(file_id_of(&"g".repeat(32)), None);
+        assert_eq!(
+            load_of(COMPACT_SOURCE),
+            None,
+            "a compaction reads as a load"
+        );
     }
 
     /// A load's id comes back from its `source`, on an `add` and on a `replace` alike, and a

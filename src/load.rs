@@ -1931,10 +1931,10 @@ pub struct Args {
 
 /// How long `kibbr load` waits for a server that holds the directory's lock to say where
 /// it listens: a server writes its address once it can answer, a moment after it starts.
-const SERVER_STARTING_WAIT: Duration = Duration::from_secs(30);
+pub(crate) const SERVER_STARTING_WAIT: Duration = Duration::from_secs(30);
 
 /// How often a client asks a server how its load is going.
-const POLL: Duration = Duration::from_millis(100);
+pub(crate) const POLL: Duration = Duration::from_millis(100);
 
 /// Run `kibbr load`: alone, if no process holds the data directory; otherwise as a
 /// client of the server that does.
@@ -2121,7 +2121,7 @@ fn client(
 
 /// A server's answer as JSON, or what it said instead, with its status - a proxy's error
 /// page or a body-size refusal is not JSON, and "not JSON" alone would hide which it was.
-fn json_of(status: u16, answer: &[u8]) -> Result<serde_json::Value, String> {
+pub(crate) fn json_of(status: u16, answer: &[u8]) -> Result<serde_json::Value, String> {
     serde_json::from_slice(answer).map_err(|_| {
         let text = String::from_utf8_lossy(&answer[..answer.len().min(300)]);
         format!("answered {status}: {}", text.trim())

@@ -90,6 +90,7 @@ const ROW_GROUP_TIMEOUT_ENV: &str = "KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS";
 const MAX_OPEN_SEGMENTS_ENV: &str = "KIBBR__STORAGE__MAX_OPEN_SEGMENTS";
 const SEGMENT_MAX_BYTES_ENV: &str = "KIBBR__STORAGE__SEGMENT_MAX_BYTES";
 const MAX_BUFFER_BYTES_ENV: &str = "KIBBR__STORAGE__MAX_BUFFER_BYTES";
+const COMPACT_INTERVAL_ENV: &str = "KIBBR__STORAGE__COMPACT_INTERVAL_MS";
 const TIME_COLUMNS_ENV: &str = "KIBBR__SCHEMA__TIME_COLUMNS";
 const EPOCH_WINDOW_ENV: &str = "KIBBR__SCHEMA__EPOCH_WINDOW";
 
@@ -121,6 +122,14 @@ pub const DEFAULT_FLUSH_INTERVAL_MS: usize = 500;
 /// in rows can turn it down. It cannot go below the flush interval - the tick is what
 /// notices it has expired.
 pub const DEFAULT_ROW_GROUP_TIMEOUT_MS: usize = 60_000;
+
+/// How often a server looks for a day that has ended and compacts it.
+///
+/// A minute, where the flush tick is half a second: a day becomes due once, at the first
+/// look after midnight UTC, and a minute's delay in rebuilding a day nobody is writing
+/// costs nothing. `0` is "off", as it is for the query limits - the look is what is
+/// switched off, and `kibbr compact` still compacts a day when asked.
+pub const DEFAULT_COMPACT_INTERVAL_MS: usize = 60_000;
 
 /// Where `serve` keeps day partitions when nothing says otherwise.
 ///
@@ -289,6 +298,8 @@ pub struct Storage {
     pub segment_max_bytes: u64,
     /// Memory every buffer together may hold before the largest are closed early.
     pub max_buffer_bytes: u64,
+    /// How often a server looks for a day that is due for compaction. Zero is never.
+    pub compact_interval: Duration,
 }
 
 impl Default for Storage {
@@ -301,6 +312,7 @@ impl Default for Storage {
             max_open_segments: crate::store::DEFAULT_MAX_OPEN_SEGMENTS,
             segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
             max_buffer_bytes: crate::store::DEFAULT_MAX_BUFFER_BYTES,
+            compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
         }
     }
 }
@@ -362,6 +374,11 @@ impl Storage {
             crate::store::DEFAULT_MAX_BUFFER_BYTES,
             "max buffer bytes",
         )?;
+        // The default here, and the variable not read: only `serve` looks for days that
+        // are due, and it resolves its flag over the variable in `with_compact_interval` -
+        // read here, a malformed variable would refuse the flag that overrides it, and
+        // every command that never looks.
+        let compact_interval = Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64);
 
         if !durable {
             return Ok(Self {
@@ -372,11 +389,11 @@ impl Storage {
                 max_open_segments,
                 segment_max_bytes,
                 max_buffer_bytes,
+                compact_interval,
             });
         }
 
-        let base = resolve_path(data_dir, BASE_PATH_ENV)
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
+        let base = Self::base_named(data_dir);
         // Created and canonicalised now, before a line is accepted: an unwritable data
         // directory should stop the process at startup, where an operator is watching,
         // rather than at the first flush tick half a minute later. Absolute afterwards, so
@@ -398,7 +415,27 @@ impl Storage {
             max_open_segments,
             segment_max_bytes,
             max_buffer_bytes,
+            compact_interval,
         })
+    }
+
+    /// The data directory a command was pointed at - flag > environment > default - as it
+    /// was named, and **without creating it**. `load` creates what this names, which is
+    /// right for a command that fills a directory; one that only works on a directory
+    /// already there asks this first, so a mistyped path is refused and not made.
+    pub fn base_named(data_dir: Option<PathBuf>) -> PathBuf {
+        resolve_path(data_dir, BASE_PATH_ENV).unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR))
+    }
+
+    /// How often `serve` looks for a day that is due: `--compact-interval-ms` >
+    /// environment > default. Apart from `load` because only `serve` has the flag and
+    /// only `serve` looks: a ninth positional `None` at every other caller would say
+    /// nothing, and the variable is read here so that the flag, when given, is never
+    /// refused for a variable it overrides.
+    pub fn with_compact_interval(mut self, flag_ms: Option<usize>) -> Result<Self, ConfigError> {
+        let ms = resolve(flag_ms, COMPACT_INTERVAL_ENV, DEFAULT_COMPACT_INTERVAL_MS)?;
+        self.compact_interval = Duration::from_millis(ms as u64);
+        Ok(self)
     }
 
     pub fn is_durable(&self) -> bool {

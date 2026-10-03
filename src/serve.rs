@@ -23,9 +23,9 @@
 //! that will make it a type, and neither exists yet.
 
 use std::borrow::Cow;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -47,6 +47,7 @@ use tokio_util::sync::CancellationToken;
 use std::path::Path;
 
 use crate::catalog::Catalog;
+use crate::compact;
 use crate::config::{ApiLimits, Limits, Schema, Storage};
 use crate::db;
 use crate::engine;
@@ -54,6 +55,7 @@ use crate::error::{self, CliError, DetectorError, DetectorErrorKind, ServeError}
 use crate::fmt::{commas, rfc3339_at};
 use crate::load;
 use crate::query;
+use crate::store::disk::CompactOptions;
 use crate::store::{FlushKind, StoreError, StoreManager};
 use crate::trie::Trie;
 
@@ -160,14 +162,43 @@ pub struct Server {
     /// What `/load` and `/load/<job>` are asked with, as `LOCK` holds it. `None` without a
     /// data directory, where there is nothing to load into.
     load_token: Option<String>,
+    /// The compactions this server has been asked to run or found due: at most one at a
+    /// time, on a thread of its own as a load is, and in a slot apart from the load's - a
+    /// load and a compaction run side by side. Their counters are `/stats`'s
+    /// `storage.compaction`, read under this lock and no other.
+    compactions: std::sync::Mutex<compact::Jobs>,
+    /// Set once, when shutdown begins, and the one switch every compaction here is run
+    /// with: whichever is running then stops before its record and removes what it wrote.
+    compact_cancel: Arc<AtomicBool>,
 }
 
-/// The header a `/load` request carries its token in.
+/// The header a `/load` or `/compact` request carries its token in.
 const LOAD_TOKEN_HEADER: &str = "x-kibbr-load-token";
 
 /// Whether a request shows the server's load token. First, before the body is read or a
 /// path is looked at, so a caller without it learns nothing - not even which paths exist.
 fn load_refused(server: &Server, headers: &HeaderMap) -> Option<Response> {
+    token_refused(
+        server,
+        headers,
+        "a load is taken from `kibbr load` on this machine, which shows the token this \
+         server wrote to its data directory's LOCK",
+    )
+}
+
+/// As `load_refused`, for `/compact`. A compaction reads no file its caller names, but it
+/// is a day rewritten on every core it is given: taken, as a load is, only from an account
+/// that can read the directory it rewrites.
+fn compact_refused(server: &Server, headers: &HeaderMap) -> Option<Response> {
+    token_refused(
+        server,
+        headers,
+        "a compaction is taken from `kibbr compact` on this machine, which shows the token \
+         this server wrote to its data directory's LOCK",
+    )
+}
+
+fn token_refused(server: &Server, headers: &HeaderMap, why: &str) -> Option<Response> {
     let shown = headers
         .get(LOAD_TOKEN_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -181,11 +212,24 @@ fn load_refused(server: &Server, headers: &HeaderMap) -> Option<Response> {
             .zip(ours.bytes())
             .fold(0u8, |acc, (a, b)| acc | (a ^ b))
             == 0;
-    (!same).then(|| {
+    (!same).then(|| fail(StatusCode::FORBIDDEN, why))
+}
+
+/// Whether a request meant another data directory than the one this server serves.
+/// `LOCK` can still name the last holder's address in the moment before a new holder
+/// announces its own, and a job sent there would be run on whatever that address now
+/// serves. `done` is what did not happen: "loaded", "compacted".
+fn wrong_directory(server: &Server, asked: Option<&Path>, done: &str) -> Option<Response> {
+    let (asked, ours) = (asked?, server.storage.base_path.as_ref()?);
+    let ours = std::fs::canonicalize(ours).unwrap_or_else(|_| ours.clone());
+    (asked != ours).then(|| {
         fail(
-            StatusCode::FORBIDDEN,
-            "a load is taken from `kibbr load` on this machine, which shows the token this \
-             server wrote to its data directory's LOCK",
+            StatusCode::CONFLICT,
+            &format!(
+                "this server serves {}, not {}; nothing was {done}",
+                ours.display(),
+                asked.display()
+            ),
         )
     })
 }
@@ -254,6 +298,8 @@ impl Server {
             write_health,
             loads: std::sync::Mutex::new(Loads::default()),
             load_token,
+            compactions: std::sync::Mutex::new(compact::Jobs::default()),
+            compact_cancel: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -1234,18 +1280,8 @@ async fn post_load(State(server): State<Arc<Server>>, headers: HeaderMap, body: 
         Ok(r) => r,
         Err(e) => return fail(StatusCode::BAD_REQUEST, &format!("load request: {e}")),
     };
-    if let (Some(asked), Some(ours)) = (&request.data_dir, &server.storage.base_path) {
-        let ours = std::fs::canonicalize(ours).unwrap_or_else(|_| ours.clone());
-        if *asked != ours {
-            return fail(
-                StatusCode::CONFLICT,
-                &format!(
-                    "this server serves {}, not {}; nothing was loaded",
-                    ours.display(),
-                    asked.display()
-                ),
-            );
-        }
+    if let Some(refused) = wrong_directory(&server, request.data_dir.as_deref(), "loaded") {
+        return refused;
     }
     let options = match load_options(request) {
         Ok(o) => o,
@@ -1388,6 +1424,384 @@ fn stop_loads(server: &Server) {
     let _ = running.join();
 }
 
+/// Whether a load job is running: the scheduler leaves compaction until it is not.
+fn load_running(server: &Server) -> bool {
+    let loads = server.loads.lock().unwrap_or_else(|e| e.into_inner());
+    loads.jobs.values().any(|job| {
+        matches!(
+            *job.state.lock().unwrap_or_else(|e| e.into_inner()),
+            LoadState::Running
+        )
+    })
+}
+
+// ── Compaction ─────────────────────────────────────────────────────────────────────
+
+/// A compaction as `kibbr compact` sends it.
+#[derive(Debug, Deserialize)]
+struct CompactRequest {
+    /// The UTC day to compact now, YYYY-MM-DD. Absent or null, every day that is due.
+    #[serde(default)]
+    day: Option<String>,
+    #[serde(default)]
+    threads: Option<usize>,
+    /// The data directory the client meant, canonical: see `wrong_directory`.
+    #[serde(default)]
+    data_dir: Option<std::path::PathBuf>,
+}
+
+/// Start a compaction job and answer at once with its number; `GET /compact/<job>` says how
+/// it went. Not held open for the compaction, for the reasons `post_load` is not.
+///
+/// **One at a time, and apart from the load slot.** A second compaction is a 409. A load
+/// beside one is not: the two meet only under the store's own lock, and a load that
+/// replaces the day being compacted wins it - the compaction finds its inputs retired and
+/// removes what it rebuilt.
+async fn post_compact(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if server.stores.disk_store().is_none() {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &compact::CompactError::NoDisk.to_string(),
+        );
+    }
+    if let Some(refused) = compact_refused(&server, &headers) {
+        return refused;
+    }
+    let request: CompactRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, &format!("compact request: {e}")),
+    };
+    if let Some(refused) = wrong_directory(&server, request.data_dir.as_deref(), "compacted") {
+        return refused;
+    }
+    let day = match request.day.as_deref() {
+        None => None,
+        Some(text) => match crate::store::disk::day_of_name(text) {
+            Some(day) => Some(day),
+            None => {
+                return fail(
+                    StatusCode::BAD_REQUEST,
+                    &format!("day `{text}` is not a YYYY-MM-DD day"),
+                )
+            }
+        },
+    };
+    let threads = request.threads.unwrap_or_else(load::server_threads).max(1);
+
+    let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
+    if jobs.is_stopping() {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "this server is shutting down; nothing was compacted",
+        );
+    }
+    let Some(id) = jobs.start() else {
+        return fail(
+            StatusCode::CONFLICT,
+            &match jobs.running() {
+                Some(id) => {
+                    format!("compaction job {id} is still running; one compaction runs at a time")
+                }
+                None => "a compaction is still running; one runs at a time".to_string(),
+            },
+        );
+    };
+    // Reap the last one's thread, which has finished: no job was running, and a job's
+    // state is the last thing its thread touches here.
+    if let Some(done) = jobs.asked.take() {
+        let _ = done.join();
+    }
+    let held = Arc::clone(&server);
+    let spawned = std::thread::Builder::new()
+        .name(format!("compact-{id}"))
+        .spawn(move || compaction(&held, day, threads, Some(id)));
+    match spawned {
+        Ok(handle) => {
+            jobs.asked = Some(handle);
+            (StatusCode::ACCEPTED, Json(json!({"ok": true, "job": id}))).into_response()
+        }
+        Err(e) => {
+            jobs.forget(id);
+            fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("starting the compaction job: {e}"),
+            )
+        }
+    }
+}
+
+/// `GET /compact/<job>`: running, done with its report, or failed with why - and with the
+/// days it had finished before it failed.
+async fn get_compact(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<u64>,
+) -> Response {
+    if let Some(refused) = compact_refused(&server, &headers) {
+        return refused;
+    }
+    let state = server
+        .compactions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .state(id);
+    let body = match state {
+        None => return fail(StatusCode::NOT_FOUND, &format!("no compaction job {id}")),
+        Some(compact::State::Running) => json!({"ok": true, "job": id, "state": "running"}),
+        Some(compact::State::Done(report)) => {
+            json!({"ok": true, "job": id, "state": "done", "report": report})
+        }
+        Some(compact::State::Failed(error, report)) => {
+            json!({"ok": true, "job": id, "state": "failed", "error": error, "report": report})
+        }
+    };
+    Json(body).into_response()
+}
+
+/// A compaction thread, from its first look to its job's last word: which days, each of
+/// them in turn, and how the job ended.
+///
+/// `job` is the number a request was answered with. The scheduler's thread comes with
+/// none, and **takes one only once it has a day to try**: a look that finds nothing due,
+/// or only days still waiting out a failure, is not a job - it would fill the kept jobs
+/// with empty ones and refuse a request that arrived while it looked.
+///
+/// **The due days are listed here, on this thread.** The listing takes the flush's lock,
+/// which a flush holds across its writes; taken on the runtime it would park a worker
+/// behind the disk.
+///
+/// **A failure here is not a write failure.** It is logged, kept for `/stats` and
+/// remembered by the scheduler; the store's health, which `/ingest` and `/health` answer
+/// from, is the flush's alone and is not touched.
+fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64>) {
+    let jobs = || server.compactions.lock().unwrap_or_else(|e| e.into_inner());
+    let every = server.storage.compact_interval;
+    let scheduled = job.is_none();
+    // Held from the moment there is a job, so that nothing which ends this thread - the
+    // panic caught below, or one that is not - leaves the job `running`.
+    let ending = |id| compact::Ending::of(&server.compactions, id);
+    let asked = job.map(ending);
+    let Some(store) = server.stores.disk_store() else {
+        if let Some(asked) = asked {
+            let why = compact::CompactError::NoDisk.to_string();
+            let state = compact::State::Failed(why, compact::Report::default());
+            asked.finish(state, false);
+        }
+        return;
+    };
+    let mut days = compact::plan(store, day);
+    let (id, ending) = match job.zip(asked) {
+        Some(asked) => asked,
+        None => {
+            // A day that failed and has nothing left to compact - a load replaced it - is
+            // never tried again, so its failure is dropped here or never. Listed before
+            // the jobs' lock is taken: the two locks are never held together.
+            let compactable = store.compactable_days();
+            let mut jobs = jobs();
+            jobs.forget_except(&compactable);
+            days.retain(|planned| jobs.wait(*planned, every).is_none());
+            if days.is_empty() {
+                return;
+            }
+            // None while a request's job runs, or once shutdown began: the next look.
+            let Some(id) = jobs.start() else {
+                return;
+            };
+            (id, ending(id))
+        }
+    };
+    log(&format!(
+        "compaction job {id} - {}",
+        match day {
+            Some(day) => crate::store::disk::day_name(day),
+            None => format!("{} day(s) due", days.len()),
+        }
+    ));
+    let opts = CompactOptions {
+        threads,
+        cancel: Arc::clone(&server.compact_cancel),
+    };
+    let mut noted = 0;
+    // A panic is a failed job and not a job running for ever, as for a load. Whatever it
+    // had written is unnamed, and the next start removes it.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compact::run(store, &days, &opts, &mut |planned, result| {
+            noted += 1;
+            let wait = {
+                let mut jobs = jobs();
+                jobs.note(planned, result);
+                jobs.wait(planned, every).filter(|_| scheduled)
+            };
+            log(&match result {
+                Ok(done) => format!("compaction job {id} - {}", compact::line(done)),
+                Err(e @ (StoreError::Cancelled { .. } | StoreError::InputsChanged { .. })) => {
+                    format!("compaction job {id} - {}", error::chain(e))
+                }
+                Err(e) => format!(
+                    "WARN compaction job {id} - {}{}",
+                    error::chain(e),
+                    wait.map_or_else(String::new, |left| format!(
+                        "; the day is left for {}s, unless its files change first",
+                        left.as_secs().max(1)
+                    ))
+                ),
+            });
+        })
+    }));
+    let state = match result {
+        Ok(ran) => match ran.failed.first() {
+            None => compact::State::Done(ran.report),
+            Some(first) => {
+                let mut why = error::chain(first);
+                if ran.failed.len() > 1 {
+                    why.push_str(&format!(
+                        "; and {} more day(s) failed, each in this server's log",
+                        ran.failed.len() - 1
+                    ));
+                }
+                compact::State::Failed(why, ran.report)
+            }
+        },
+        Err(_) => {
+            let why = "the compaction failed on a bug in this build (a panic); a file it wrote \
+                       and had not named is removed by the next start";
+            log(&format!("WARN compaction job {id} - {why}"));
+            // The day it was on, remembered as failed: a look every interval would
+            // otherwise walk into the same panic every interval.
+            if let Some(planned) = days.get(noted) {
+                let failed = Err(StoreError::CompactFailed {
+                    day: crate::store::disk::day_name(planned.0),
+                    source: Box::new(StoreError::Io {
+                        template_id: 0,
+                        source: std::io::Error::other(why),
+                    }),
+                });
+                jobs().note(*planned, &failed);
+            }
+            compact::State::Failed(why.to_string(), compact::Report::default())
+        }
+    };
+    ending.finish(state, !days.is_empty());
+}
+
+/// Look for days that are due, every interval, until the token is cancelled.
+///
+/// **This task keeps the clock and nothing else.** It watches the token, asks whether a
+/// load or a compaction is running, and starts a thread; the thread lists the due days and
+/// compacts them (`compaction`). Nothing here takes the store's flush lock, so a slow
+/// flush cannot park a runtime worker behind it.
+///
+/// Not part of `flush_loop`: a compaction awaited there would hold up every tick and the
+/// memory relief with it.
+///
+/// A look is skipped while a load runs - a load that replaces a day would make a rebuild
+/// of it wasted work, and the two would share the cores - and while the last flush tick
+/// could not write, since a rebuild needs the day's size again on a disk that is already
+/// refusing.
+async fn compact_loop(server: Arc<Server>, token: CancellationToken) {
+    let every = server.storage.compact_interval;
+    // Zero is "never look", and is returned on before it reaches an interval, which
+    // panics on a period of zero.
+    if !server.storage.is_durable() || every.is_zero() {
+        return;
+    }
+    let mut tick = tokio::time::interval(every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The first tick completes immediately, and is consumed: nothing is compacted the
+    // moment a server starts, so one that a compaction brought down comes back up and
+    // serves for an interval before it tries again.
+    tick.tick().await;
+    loop {
+        tokio::select! {
+            () = token.cancelled() => return,
+            _ = tick.tick() => {}
+        }
+        look_for_due_days(&server);
+    }
+}
+
+/// Whether this look is left to the next tick: a load is running, or the last flush tick
+/// could not write. Why each is in `compact_loop`.
+fn look_waits(server: &Server) -> bool {
+    server.stores.is_degraded() || load_running(server)
+}
+
+/// One look: start the scheduler's thread, unless the look waits (`look_waits`), a
+/// compaction is running, shutdown has begun, or the last look's thread is still at it.
+fn look_for_due_days(server: &Arc<Server>) {
+    if look_waits(server) {
+        return;
+    }
+    let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
+    if jobs.is_stopping() || jobs.running().is_some() {
+        return;
+    }
+    // Joined only once it has finished: a thread still looking may be waiting for the
+    // lock held here.
+    match jobs.scheduled.take() {
+        Some(last) if !last.is_finished() => {
+            jobs.scheduled = Some(last);
+            return;
+        }
+        Some(last) => {
+            let _ = last.join();
+        }
+        None => {}
+    }
+    let held = Arc::clone(server);
+    let spawned = std::thread::Builder::new()
+        .name("compact-due".to_string())
+        .spawn(move || compaction(&held, None, load::server_threads(), None));
+    match spawned {
+        Ok(handle) => jobs.scheduled = Some(handle),
+        Err(e) => log(&format!(
+            "WARN compaction - starting the look for due days: {e}"
+        )),
+    }
+}
+
+/// Shutdown has begun: tell the running compaction to stop, and start no other.
+///
+/// Called the moment the signal arrives, while the last requests are still draining,
+/// rather than when the compaction is waited for: the earlier it hears, the less there is
+/// to wait for. The flag is raised under the jobs' lock, which both ways of starting a job
+/// take their number under, so none starts after it.
+fn cancel_compactions(server: &Server) {
+    let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
+    jobs.stop();
+    server.compact_cancel.store(true, Ordering::Relaxed);
+}
+
+/// Wait for the compaction threads: after the final flush, before the lock is let go.
+///
+/// **After the final flush and not before it.** Rows in a buffer have never been anywhere
+/// but memory, and a process told to stop may be killed before it has finished: waiting
+/// here first would put a compaction's last file between a SIGTERM and the only write that
+/// loses rows if it is skipped. After it, a kill during this wait costs nothing - a rebuilt
+/// file the manifest does not name is removed by the next start. Waiting later is safe
+/// because a compaction adds no row and no template: it and the flush meet only under the
+/// store's lock, one after the other.
+///
+/// **Before the lock is released**, because a thread still writing the directory after it
+/// would be writing beside whichever process took the lock next.
+fn join_compactions(server: &Server) {
+    cancel_compactions(server);
+    let threads = {
+        let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
+        [jobs.asked.take(), jobs.scheduled.take()]
+    };
+    for thread in threads.into_iter().flatten() {
+        if !thread.is_finished() {
+            log("waiting for the running compaction to stop");
+        }
+        let _ = thread.join();
+    }
+}
+
 /// The log viewer. One HTML file, inline CSS and JS, no other request needed.
 ///
 /// `no-store`, because the page is rebuilt with the binary. A cached viewer against a
@@ -1482,7 +1896,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "kind": stores.kind(),
             "durable": server.storage.is_durable(),
             "note": if server.storage.is_durable() {
-                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that seals the least recently written and opens its own day's, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
+                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that seals the least recently written and opens its own day's, a day is rebuilt into full row groups in finished files the day after its last live row, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
@@ -1512,6 +1926,18 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // how many have been, which is nonzero only when the buffers could not keep up.
             "buffered_bytes": buffered_bytes,
             "max_buffer_bytes": max_buffer_bytes,
+            // How often a day that has ended is looked for; 0 is never. And what the
+            // looks and `kibbr compact` have done: `runs` counts the jobs that tried a
+            // day, `days_compacted` the days rebuilt - one found with nothing to compact
+            // is not one - `last` is the last of those, and `last_error` the latest
+            // failure among the days still failing. From the jobs' own lock: this does
+            // not wait on a flush.
+            "compact_interval_ms": server.storage.compact_interval.as_millis() as u64,
+            "compaction": server
+                .compactions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .stats(),
             "forced_closes": stores.forced_closes(),
             "write_failures": stores.write_failures(),
             "last_write_error": stores.last_write_error(),
@@ -1586,6 +2012,8 @@ fn router(server: Arc<Server>) -> Router {
             post(post_load).layer(DefaultBodyLimit::max(MAX_LOAD_REQUEST_BYTES)),
         )
         .route("/load/{job}", get(get_load))
+        .route("/compact", post(post_compact))
+        .route("/compact/{job}", get(get_compact))
         // Order matters. `.layer()` wraps what is already there, so the *last* added is
         // outermost: `admit` runs first, and a shed body never reaches the extractor that
         // would have buffered it.
@@ -1697,7 +2125,7 @@ async fn serve(
         let holder = crate::lock::Holder::server(Some(reach.to_string()), load_token);
         if let Err(e) = lock.announce(&holder) {
             log(&format!(
-                "WARN {e}; `kibbr load` will not find this server"
+                "WARN {e}; `kibbr load` and `kibbr compact` will not find this server"
             ));
         }
     }
@@ -1713,12 +2141,18 @@ async fn serve(
     // still running after the final flush would write behind the `trie.json` snapshot, and
     // the two would then disagree about what exists.
     let flusher = tokio::spawn(flush_loop(Arc::clone(&server), token.clone()));
+    // And the clock compaction is looked for by. Held for the same reason: a look after
+    // the wind-down would start a compaction nothing waits for.
+    let compactor = tokio::spawn(compact_loop(Arc::clone(&server), token.clone()));
 
     let shutdown = {
         let token = token.clone();
         let server = Arc::clone(&server);
         async move {
             token.cancelled().await;
+            // A compaction hears of it now, while the requests below finish, and is
+            // waited for after the final flush: see `join_compactions`.
+            cancel_compactions(&server);
             // Shutdown, step one. Everything after this is the wind-down; the log names each
             // step so an operator can see which ones this build actually has.
             log(&format!(
@@ -1745,6 +2179,9 @@ async fn serve(
     // the final flush and the trie snapshot would write rows the snapshot does not
     // describe, and a tick beside the final flush would only queue behind it.
     let _ = flusher.await;
+    // No look starts a compaction from here on; the one running, if any, has been told to
+    // stop and is waited for inside the sequence, behind the final flush.
+    let _ = compactor.await;
     let result = shutdown_sequence(&server);
     drop(lock);
     result
@@ -1917,6 +2354,10 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
         log("final flush - skipped, storage is memory (--data-dir puts the stores on disk)");
     }
 
+    // Not one of the six steps: it writes nothing a restart needs. Here because this is
+    // the first moment a wait costs no row.
+    join_compactions(server);
+
     log("WAL checkpoint - skipped, there is no WAL yet");
 
     match server.storage.trie_file.as_deref() {
@@ -2030,6 +2471,9 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20                       recently written and opens its own day's. Keep\n\
                  \x20                       it under `ulimit -n`.\n\
                  \x20                       SIGTERM closes and seals everything before exiting.\n\
+                 \x20             compact   a day's small row groups are rebuilt into full ones,\n\
+                 \x20                       in finished files, the day after its last live\n\
+                 \x20                       row. {}\n\
                  \x20             catalog   {}/catalog.log - a template is written here, and\n\
                  \x20                       fsynced, before the line that made it counts as\n\
                  \x20                       ingested; trie.json is a readable snapshot nothing\n\
@@ -2044,6 +2488,15 @@ fn banner(addr: SocketAddr, server: &Server) {
                 server.storage.row_group_timeout.as_millis(),
                 server.storage.flush_interval.as_millis(),
                 commas(server.storage.max_open_segments as u64),
+                match server.storage.compact_interval.as_millis() {
+                    0 => "Not looked for (--compact-interval-ms 0):\n\
+                          \x20                       `kibbr compact` does it when asked."
+                        .to_string(),
+                    ms => format!(
+                        "Looked for every {ms}ms; `kibbr compact`\n\
+                         \x20                       does it when asked."
+                    ),
+                },
                 base.display(),
                 server.storage.row_group_timeout.as_millis(),
             ),
@@ -2060,6 +2513,7 @@ fn banner(addr: SocketAddr, server: &Server) {
         "              POST /ingest      NDJSON body, one log line per line; gzip ok".to_string(),
         "              POST /query       {\"q\": \"<trieql>\"}".to_string(),
         "              POST /load        a bulk load job: what `kibbr load` sends".to_string(),
+        "              POST /compact     a compaction job: what `kibbr compact` sends".to_string(),
         "              GET  /templates   every template, its columns and row count".to_string(),
         "              GET  /stats       throughput, template count, storage size".to_string(),
         "              GET  /health      {\"ok\":true}".to_string(),
@@ -2104,6 +2558,178 @@ fn banner(addr: SocketAddr, server: &Server) {
 
 /// One lifecycle line. stderr for the reason the banner is there - these are logs, and
 /// this surface's data goes out over HTTP.
+///
+/// **A line that cannot be written is dropped, as `error::report` drops one.** `eprintln!`
+/// panics when stderr is gone - the log collector at the other end of the pipe went
+/// away - and this is called from the flush task and from the threads a load and a
+/// compaction run on: the panic would end the work for want of somewhere to say it was
+/// being done.
 fn log(message: &str) {
-    eprintln!("kibbr: {message}");
+    let _ = writeln!(std::io::stderr().lock(), "kibbr: {message}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A server over a store in memory: the job registries and the shutdown steps are the
+    /// same, and nothing is opened.
+    fn server() -> Arc<Server> {
+        let server = Server::new(
+            Utc::now(),
+            Limits::default(),
+            ApiLimits::default(),
+            Storage::default(),
+            Schema::default(),
+            None,
+        );
+        Arc::new(server.expect("a server in memory"))
+    }
+
+    /// The wait is what keeps a compaction's last writes inside the directory's lock: a
+    /// shutdown that dropped the thread's handle would let the lock go with the thread
+    /// still writing. A thread that was told to stop is usually gone by the time it is
+    /// waited for, so only one that takes its time shows the wait is there.
+    #[test]
+    fn shutdown_waits_for_a_compaction_thread_still_running() {
+        for by_request in [true, false] {
+            let server = server();
+            let ended = Arc::new(AtomicBool::new(false));
+            let thread = {
+                let ended = Arc::clone(&ended);
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(200));
+                    ended.store(true, Ordering::SeqCst);
+                })
+            };
+            {
+                let mut jobs = server.compactions.lock().expect("the lock");
+                match by_request {
+                    true => jobs.asked = Some(thread),
+                    false => jobs.scheduled = Some(thread),
+                }
+            }
+
+            join_compactions(&server);
+            assert!(
+                ended.load(Ordering::SeqCst),
+                "shutdown went on past a compaction thread still running (asked: {by_request})"
+            );
+            assert!(server.compact_cancel.load(Ordering::Relaxed));
+            let mut jobs = server.compactions.lock().expect("the lock");
+            assert!(jobs.is_stopping() && jobs.start().is_none());
+            assert!(jobs.asked.is_none() && jobs.scheduled.is_none());
+        }
+    }
+
+    /// The scheduler's look is left to the next tick while a load job runs - no thread is
+    /// started for it - and taken once the load has ended, done or failed.
+    #[test]
+    fn a_look_for_due_days_waits_while_a_load_job_runs() {
+        let server = server();
+        let job = Arc::new(LoadJob {
+            control: load::Control::default(),
+            state: std::sync::Mutex::new(LoadState::Running),
+        });
+        server
+            .loads
+            .lock()
+            .expect("the lock")
+            .jobs
+            .insert(1, Arc::clone(&job));
+        let looked = || {
+            server
+                .compactions
+                .lock()
+                .expect("the lock")
+                .scheduled
+                .take()
+        };
+
+        assert!(look_waits(&server));
+        look_for_due_days(&server);
+        assert!(looked().is_none(), "a look was taken beside a running load");
+
+        *job.state.lock().expect("the lock") = LoadState::Failed("why".to_string());
+        assert!(!look_waits(&server));
+        look_for_due_days(&server);
+        let thread = looked().expect("no look was taken once the load had ended");
+        thread.join().expect("the look's thread");
+    }
+
+    /// And while the last flush tick could not write: the data directory is made
+    /// read-only under a row, so the tick that would write it fails, and writable again
+    /// for the tick that clears it.
+    #[cfg(unix)]
+    #[test]
+    fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("kibbr-serve-look-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage = Storage {
+            base_path: Some(dir.clone()),
+            trie_file: Some(dir.join("trie.json")),
+            row_group_timeout: Duration::ZERO,
+            ..Storage::default()
+        };
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let server = Server::new(
+            Utc::now(),
+            Limits::default(),
+            ApiLimits::default(),
+            storage,
+            Schema::default(),
+            None,
+        );
+        let server = Arc::new(server.expect("a server on disk"));
+        let data = dir.join(crate::store::disk::DATA_DIR);
+        let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
+        mode(0o555).expect("chmod -w");
+        if std::fs::create_dir(data.join("probe")).is_ok() {
+            // Root, or a filesystem that ignores the mode: nothing here can fail a flush.
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let looked = || {
+            server
+                .compactions
+                .lock()
+                .expect("the lock")
+                .scheduled
+                .take()
+        };
+
+        let line = &b"{\"ts\":\"2024-01-15T00:00:00Z\",\"level\":\"info\"}\n"[..];
+        let now = Utc::now();
+        db::read_lines(
+            line,
+            &mut |_, parsed| db::ingest_line(&server.trie, Some(&server.stores), &parsed, now),
+            &mut |_| {},
+        )
+        .expect("the line is read");
+        let flushed = server.stores.flush_all(FlushKind::Tick);
+        let waited = look_waits(&server);
+        look_for_due_days(&server);
+        let taken = looked();
+        let _ = mode(0o755);
+        assert_eq!(
+            flushed.failed, 1,
+            "the flush wrote to a read-only directory"
+        );
+        assert!(waited, "a store that could not write did not hold the look");
+        assert!(
+            taken.is_none(),
+            "a look was taken on a disk that is refusing"
+        );
+
+        let again = server.stores.flush_all(FlushKind::Tick);
+        assert_eq!(again.failed, 0, "the flush still fails on a writable disk");
+        assert!(!look_waits(&server));
+        look_for_due_days(&server);
+        let thread = looked().expect("no look was taken once a flush had written");
+        thread.join().expect("the look's thread");
+        drop(server);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

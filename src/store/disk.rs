@@ -43,15 +43,21 @@
 //! **Startup.** The manifest names the live files. A file a bulk load committed and a stop
 //! left in `staging/` is moved into place - the commit happened, so it is finished rather
 //! than undone - and then `staging/` is deleted, taking any load that never committed with
-//! it. A file the manifest does not name is deleted. A named file that is sealed opens
-//! through its footer and nothing else; one that is not was left by a crash, and is
-//! recovered - walked, cut at the tear, sealed - and the seal recorded. A directory holding
-//! the per-template layout is refused by path.
+//! it. A named file that is sealed opens through its footer and nothing else; one that is
+//! not was left by a crash, and is recovered - walked, cut at the tear, sealed - and the
+//! seal recorded. Only then is a file the manifest does not name deleted: a start that
+//! refuses a named file has deleted nothing under `data/`. A directory holding the
+//! per-template layout is refused by path, and so is a manifest naming a compacted file
+//! beside a file it replaced: every row of that one would be read twice.
 //!
 //! **The bulk door.** A load writes whole, finished files into `staging/<load id>/`, and
 //! `commit_load` publishes them: one manifest record, then the move into `data/`, then the
 //! row groups into the leaves - under the flush's lock, so a load and a flush never
 //! interleave. See `commit_load`.
+//!
+//! **Compaction** rebuilds the small row groups the live door left in a day that has ended
+//! into full ones in finished files, and swaps the two sets with one manifest record. It
+//! holds the flush's lock to begin and to commit and not in between: see `compact`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -59,7 +65,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use chrono::{DateTime, NaiveDate};
 
@@ -72,6 +78,12 @@ use super::{
     Flushed, LeafStore, Predicate, Row, RowGroupLimits, Scan, ScanOptions, Snapshot, Store,
     StoreError, Visitor, DEFAULT_TS_COLUMN,
 };
+
+mod compact;
+
+// Named through here by whoever runs a compaction: the command, the server's job and its
+// scheduler, the bench.
+pub use compact::{CompactOptions, Compacted, Due};
 
 pub const DATA_DIR: &str = "data";
 pub const STAGING_DIR: &str = "staging";
@@ -102,6 +114,12 @@ pub fn day_of_name(name: &str) -> Option<i64> {
             .timestamp()
             .div_euclid(86_400),
     )
+}
+
+/// Today, as days since the epoch, UTC: the `today` a caller with no clock of its own
+/// hands `DiskStore::due_days`.
+pub fn today() -> i64 {
+    day_of(nanos_of(SystemTime::now()))
 }
 
 fn file_name(number: u32) -> String {
@@ -199,6 +217,10 @@ impl DataFile {
     fn retire(&self) {
         self.retired.store(true, Ordering::Relaxed);
     }
+
+    fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for DataFile {
@@ -269,6 +291,20 @@ struct Files {
     max_bytes: u64,
     /// Flushes so far: the clock `Open::written` is kept by.
     flushes: u64,
+    /// The UTC day, as days since the epoch, on which each day's directory last took a row
+    /// group from the live door: what "the day after a day's last live row" is counted
+    /// from. Kept in memory. A start has only the files to go by, and takes the newest
+    /// modification time among a day's unfinished ones - later than the last row where a
+    /// shutdown's seal or a recovery touched the file since, which only makes the day due
+    /// later.
+    last_live: BTreeMap<i64, i64>,
+    /// The day a compaction has begun and not yet committed or given up: one at a time.
+    compacting: Option<i64>,
+    /// Files a compaction wrote whose `replace` record may or may not be on disk: kept,
+    /// because if it is they are the day. No day is compacted while any is here. The next
+    /// record the manifest takes is written where that one would have been, so from then
+    /// on it is certainly not there, and they are deleted.
+    uncertain: Vec<PathBuf>,
 }
 
 impl Files {
@@ -276,6 +312,11 @@ impl Files {
     /// live set this store keeps.
     fn record(&mut self, records: Vec<Record>) -> Result<(), manifest::ManifestError> {
         self.manifest.append(&records)?;
+        // These records are durable, and they start at the offset a compaction's uncertain
+        // record was cut back to: that record is not on disk, so its files are nobody's.
+        for path in std::mem::take(&mut self.uncertain) {
+            let _ = fs::remove_file(&path);
+        }
         self.loads.extend(manifest::load_ids(&records));
         for record in &records {
             manifest::apply(&mut self.live, record);
@@ -693,9 +734,15 @@ pub struct DiskStore {
 
 impl DiskStore {
     /// Open the data directory: refuse an earlier layout, read the manifest, finish moving
-    /// any load it names as committed out of staging, delete what it does not name and the
-    /// rest of staging, recover every file a crash left unsealed, and index every row group
-    /// by template. The caller holds the directory's `LOCK`.
+    /// any load it names as committed out of staging, delete the rest of staging, recover
+    /// every file a crash left unsealed, index every row group by template - refusing a
+    /// compacted file named beside one of the files it replaced - and delete what the
+    /// manifest does not name. The caller holds the directory's `LOCK`.
+    ///
+    /// **Nothing under `data/` is deleted until every named file has opened.** After a
+    /// compaction's record, the files it was rebuilt from are unnamed and still whole. If
+    /// a rebuilt file is then found damaged the start is refused, and those are the only
+    /// whole copy of the day's rows left: deleted first, the refusal would have cost them.
     pub fn open(base: PathBuf, options: DiskOptions) -> Result<Self, StoreError> {
         fs::create_dir_all(&base).map_err(|source| StoreError::Io {
             template_id: 0,
@@ -745,11 +792,11 @@ impl DiskStore {
                 source,
             })?;
         }
-        delete_unnamed(&data, &live)?;
 
         let mut next: BTreeMap<i64, u32> = BTreeMap::new();
         let mut stored: BTreeMap<u64, Vec<Stored>> = BTreeMap::new();
         let mut mixed: BTreeMap<i64, String> = BTreeMap::new();
+        let mut last_live: BTreeMap<i64, i64> = BTreeMap::new();
         let mut seals = Vec::new();
         for (rel, record) in &live {
             let path = data.join(rel);
@@ -813,6 +860,27 @@ impl DiskStore {
                 }
                 .into());
             }
+            // The parent names a compacted file carries, held against the live set: the
+            // record that added it removed every one of them, so a parent still live under
+            // its id is a manifest no compaction wrote, and its rows are here twice.
+            for (parent, id) in &index.replaced {
+                if live
+                    .get(parent)
+                    .is_some_and(|named| named.file_id == manifest::hex(id))
+                {
+                    return Err(StoreError::ReplacedLive {
+                        child: path,
+                        parent: data.join(parent),
+                    });
+                }
+            }
+            if !index.finished {
+                let written = fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .map_or_else(|_| today(), |at| day_of(nanos_of(at)));
+                let last = last_live.entry(day).or_insert(written);
+                *last = (*last).max(written);
+            }
             // A row group of another day than its directory's: filed there, past the cap on
             // open days, by a build that sent a late row into today's file. Both days are
             // noted, with the file, for `day_files` to refuse.
@@ -825,6 +893,9 @@ impl DiskStore {
             }
             index_rows(&mut stored, Arc::new(DataFile::new(path)), &index);
         }
+        // Every named file is there and opens. Still before this returns, so no file is
+        // ever created under a number an unnamed one holds.
+        delete_unnamed(&data, &live)?;
         if !seals.is_empty() {
             let record = Record::Seal { files: seals };
             manifest.append(std::slice::from_ref(&record))?;
@@ -850,6 +921,9 @@ impl DiskStore {
                 max_open: options.max_open_files,
                 max_bytes: options.segment_max_bytes,
                 flushes: 0,
+                last_live,
+                compacting: None,
+                uncertain: Vec::new(),
             }),
             leaves: RwLock::new(BTreeMap::new()),
             publish: RwLock::new(()),
@@ -1103,6 +1177,7 @@ impl DiskStore {
             .cloned()
             .collect();
         let now = Instant::now();
+        let today = today();
         let mut done = Flushed::default();
 
         // ── 1. Move the rows that are due aside: one short hold of each leaf's lock ──
@@ -1199,6 +1274,7 @@ impl DiskStore {
                         .iter()
                         .map(|s| u64::from(s.entry.frame_len) + u64::from(s.entry.chunks_len))
                         .sum::<u64>();
+                    files.last_live.insert(m.day, today);
                     m.leaf.publish(m.day, stored);
                 }
                 Err(e) => {
@@ -1994,6 +2070,39 @@ impl DiskLeaf {
         out
     }
 
+    /// A compaction's row groups into `day` where their files' paths put them, and every
+    /// row group of the files at `gone` out, in one hold of the lock.
+    ///
+    /// **By path, where `swap` appends.** A compaction's files take the numbers reserved
+    /// when it began, so a file the live door opened for the day while it ran is numbered
+    /// after them, and has published row groups here already. Appended, the rebuilt rows
+    /// would sit behind those until a restart ordered the day by path and put them back in
+    /// front: every position in the day would move twice. Put where the path says - where
+    /// the files they replace were - no position moves at all.
+    ///
+    /// The files taken out are not handed back: the compaction holds each of them, and
+    /// retires them once the flush's lock is released, so nothing is deleted under it.
+    fn replace(&self, day: i64, gone: &BTreeSet<PathBuf>, stored: Vec<Stored>) {
+        let mut state = self.state();
+        let held = state
+            .days
+            .get(&day)
+            .is_some_and(|part| part.stored.iter().any(|s| gone.contains(&s.file.path)));
+        if !held && stored.is_empty() {
+            return;
+        }
+        let part = state.days.entry(day).or_default();
+        let list = spliced(&part.stored, gone, stored);
+        // A query holding the old list keeps it; this leaf starts a new one.
+        part.stored = Arc::new(Vec::new());
+        part.stored_rows = 0;
+        part.stored_bytes = 0;
+        part.stored_span = None;
+        for s in list {
+            part.note(s);
+        }
+    }
+
     /// The flush could not write a day's moved rows: put them back at the head of the
     /// buffer, before anything that arrived since - the order, and so every row's position,
     /// is what it would have been had they never moved.
@@ -2305,6 +2414,25 @@ impl LeafStore for DiskLeaf {
     }
 }
 
+/// `list` less every row group of the files at `gone`, with `new` - in path order - put in
+/// by path: each before the first row group left whose file sorts after its own, and at the
+/// end when none does. A day's row groups are in path order, so they still are.
+fn spliced(list: &[Stored], gone: &BTreeSet<PathBuf>, new: Vec<Stored>) -> Vec<Stored> {
+    let mut out = Vec::with_capacity(list.len() + new.len());
+    let mut new = new.into_iter().peekable();
+    for s in list {
+        if gone.contains(&s.file.path) {
+            continue;
+        }
+        while let Some(n) = new.next_if(|n| n.file.path < s.file.path) {
+            out.push(n);
+        }
+        out.push(s.clone());
+    }
+    out.extend(new);
+    out
+}
+
 /// Every data file under `base`, in path order: what `find <data> -type f` would count
 /// among the rows' files.
 pub fn data_files(base: &Path) -> BTreeSet<PathBuf> {
@@ -2325,10 +2453,10 @@ mod tests {
     use crate::types::ColValue;
     use std::time::Duration;
 
-    struct Scratch(PathBuf);
+    pub(super) struct Scratch(pub(super) PathBuf);
 
     impl Scratch {
-        fn new(name: &str) -> Self {
+        pub(super) fn new(name: &str) -> Self {
             let dir = std::env::temp_dir().join(format!(
                 "kibbr-disk-{name}-{}-{:?}",
                 std::process::id(),
@@ -2346,10 +2474,10 @@ mod tests {
         }
     }
 
-    const T0: i64 = 1_705_314_600_000_000_000;
+    pub(super) const T0: i64 = 1_705_314_600_000_000_000;
 
     /// A row group closes on every flush: nothing waits for a threshold.
-    fn eager() -> DiskOptions {
+    pub(super) fn eager() -> DiskOptions {
         DiskOptions {
             row_groups: RowGroupLimits {
                 age: Duration::ZERO,
@@ -2360,15 +2488,15 @@ mod tests {
         }
     }
 
-    fn store(scratch: &Scratch) -> DiskStore {
+    pub(super) fn store(scratch: &Scratch) -> DiskStore {
         store_with(scratch, eager())
     }
 
-    fn store_with(scratch: &Scratch, options: DiskOptions) -> DiskStore {
+    pub(super) fn store_with(scratch: &Scratch, options: DiskOptions) -> DiskStore {
         DiskStore::open(scratch.0.clone(), options).expect("open")
     }
 
-    fn row(ts: i64, n: i64) -> Row {
+    pub(super) fn row(ts: i64, n: i64) -> Row {
         let mut row = Row::new();
         row.insert("ts".into(), ColValue::Datetime(ts));
         row.insert_written(
@@ -2393,7 +2521,7 @@ mod tests {
 
     /// Each row's `n`, sorted: what a leaf holds, however it is split between the disk and
     /// memory.
-    fn ns(leaf: &dyn LeafStore) -> Vec<i64> {
+    pub(super) fn ns(leaf: &dyn LeafStore) -> Vec<i64> {
         let mut out: Vec<i64> = all(leaf)
             .iter()
             .map(|r| match r.get("n") {
@@ -2843,7 +2971,7 @@ mod tests {
 
     /// A load's file for template `id`, rows `ns` on T0's day: staged under the load's own
     /// name, sealed and flagged finished, as the loader leaves one.
-    fn staged(dir: &Path, name: &str, id: u64, ns: std::ops::Range<i64>) -> StagedFile {
+    pub(super) fn staged(dir: &Path, name: &str, id: u64, ns: std::ops::Range<i64>) -> StagedFile {
         staged_at(dir, name, id, T0, ns)
     }
 
@@ -3192,7 +3320,7 @@ mod tests {
     }
 
     /// Each row's `n` from one template of a snapshot, sorted.
-    fn snapshot_ns(snap: &mut dyn Snapshot, id: u64) -> Vec<i64> {
+    pub(super) fn snapshot_ns(snap: &mut dyn Snapshot, id: u64) -> Vec<i64> {
         let mut out = Vec::new();
         let opts = ScanOptions {
             ts_column: Some("ts".into()),

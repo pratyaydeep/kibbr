@@ -341,6 +341,98 @@ pub enum StoreError {
         #[source]
         source: v3::FormatError,
     },
+    /// A day compaction will not take as it stands: a file a failed seal left for the next
+    /// start, a file from before every row went into its own day's, a commit only a restart
+    /// can settle. Refused before a byte is written, but for the one seal that can fail
+    /// inside the compaction - of the day's open file, as it begins - whose refusal carries
+    /// the cause: the flush before it wrote what the day had in memory.
+    #[error("compact {day}: {path}: {why}. Nothing was compacted")]
+    CompactRefused {
+        day: String,
+        path: String,
+        why: String,
+    },
+    /// One day is compacted at a time, and `busy` is the day that is.
+    #[error(
+        "compact {day}: {busy} is being compacted, and one day is compacted at a time. \
+         Nothing was compacted"
+    )]
+    CompactBusy { day: String, busy: String },
+    /// Compaction writes a day again beside the files it reads, and the volume has no room
+    /// for both and for the live door's next flush.
+    #[error(
+        "compact {day}: {path} has {free} bytes free, and compacting the day needs {needed}: \
+         its files a second time, one more file and the buffer limit. Nothing was compacted"
+    )]
+    NoSpace {
+        day: String,
+        path: std::path::PathBuf,
+        free: u64,
+        needed: u64,
+    },
+    /// A file the compaction was reading was retired under it - a load replaced the day.
+    /// Not a failure: the day is the load's, and holds nothing left to compact.
+    #[error(
+        "compact {day}: {path} was retired while the day was being rebuilt - a load replaced \
+         the day. The rebuilt files were removed and the day is as the load left it"
+    )]
+    InputsChanged { day: String, path: String },
+    /// Stopped by its caller before the record. Not a failure.
+    #[error(
+        "compact {day}: cancelled. The rebuilt files were removed and the day's files are as \
+         they were"
+    )]
+    Cancelled { day: String },
+    /// The record that commits a compaction failed partway, and could not be shown to be
+    /// off the disk: it may be there whole, in which case the rebuilt files are the day.
+    /// Both sets stay, each whole, for the next start's manifest to choose between.
+    #[error(
+        "compact {day}: writing its manifest record failed ({source}), and the record may be \
+         on disk. The day's files and the rebuilt ones are both kept - the next start keeps \
+         the set manifest.log names and deletes the other - and no day is compacted before \
+         manifest.log next takes a record"
+    )]
+    CompactUncertain {
+        day: String,
+        #[source]
+        source: manifest::ManifestError,
+    },
+    /// The flush a compaction begins with - the day's buffered rows written, its open file
+    /// sealed - failed. Not `CompactFailed`, which says the day's files are as they were:
+    /// the flush may have written row groups, or named a file, before the write that
+    /// failed.
+    #[error(
+        "compact {day}: the flush before the compaction failed ({source}). Nothing was \
+         compacted and no file was rebuilt; rows the flush could not write are still \
+         buffered, and the next flush writes them"
+    )]
+    CompactFlushFailed {
+        day: String,
+        #[source]
+        source: Box<StoreError>,
+    },
+    /// A compaction that could not finish: the day, then why.
+    #[error(
+        "compact {day}: {source}. Nothing was compacted: no rebuilt file is kept and the \
+         day's files are as they were"
+    )]
+    CompactFailed {
+        day: String,
+        #[source]
+        source: Box<StoreError>,
+    },
+    /// A compacted file and a file it was rebuilt from, both named live: every row of the
+    /// parent is in the child too. No record this build writes leaves the two together, so
+    /// the manifest is not what a compaction left, and the start stops rather than answer
+    /// with rows counted twice.
+    #[error(
+        "{child}: its footer says it replaced {parent}, and manifest.log names both as live - \
+         the rows of {parent} would be stored twice. Nothing was opened"
+    )]
+    ReplacedLive {
+        child: std::path::PathBuf,
+        parent: std::path::PathBuf,
+    },
 }
 
 /// What one scan produced and what it cost.

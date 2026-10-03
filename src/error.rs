@@ -396,6 +396,8 @@ pub enum CliError {
     Serve(#[from] ServeError),
     #[error(transparent)]
     Load(#[from] crate::load::LoadError),
+    #[error(transparent)]
+    Compact(#[from] crate::compact::CompactError),
 }
 
 /// The error and every cause below it on one line.

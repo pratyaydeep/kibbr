@@ -873,6 +873,14 @@ impl Writer {
         self.index.finished = true;
     }
 
+    /// Name the files this one replaces, by path under `data/` and file id: what
+    /// compaction read to write it. They go into the footer, so like `finish` this takes
+    /// effect at `seal`; the manifest's `replace` record is what retires them, and these
+    /// are the cross-check a start holds it to.
+    pub fn replaces(&mut self, parents: Vec<(String, [u8; 16])>) {
+        self.index.replaced = parents;
+    }
+
     /// Whether a write could not be cut back, so the file takes nothing more.
     pub fn is_torn(&self) -> bool {
         self.torn
@@ -957,6 +965,39 @@ impl Reader {
             return Err(corrupt("the row group's header disagrees with the index"));
         }
         Ok(header)
+    }
+
+    /// A row group as it is stored, renumbered as schema `schema_id` of another file: its
+    /// header checked as `header` checks it, its chunk area byte for byte and undecoded.
+    ///
+    /// What compaction copies when it cannot rebuild - a template whose time column
+    /// nothing in the process knows. The schema number is the one field of a row group
+    /// that belongs to its file, so it is the one field rewritten, and the frame's CRC
+    /// with it; the chunks' CRCs are over their stored bytes and go across as they are.
+    /// **The area's length is the header's `chunks_len`**, not the entry's: a sealed
+    /// file's index measures an entry up to the next row group, and a schema record
+    /// written between the two is inside that measure.
+    pub fn copy(
+        &mut self,
+        entry: &Entry,
+        columns: usize,
+        schema_id: u32,
+    ) -> Result<RowGroup, FormatError> {
+        let header = self.header(entry, columns)?;
+        let framed = self.read_at(entry.offset, entry.frame_len as usize)?;
+        let mut payload = framed[frame::HEADER..].to_vec();
+        payload[9..13].copy_from_slice(&schema_id.to_le_bytes());
+        let chunks = self.read_at(
+            entry.offset + u64::from(entry.frame_len),
+            header.chunks_len as usize,
+        )?;
+        Ok(RowGroup {
+            frame: frame::frame(&payload),
+            chunks,
+            row_count: header.row_count,
+            min_time: header.min_time,
+            max_time: header.max_time,
+        })
     }
 
     /// The chunks of the columns at `wanted`, each CRC-checked before it is decoded; and
