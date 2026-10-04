@@ -321,6 +321,18 @@ def render_key(segments) -> str:
     return "".join(out)
 
 
+def key_token(key: str) -> str:
+    r"""A rendered key as a token: `=` becomes `\=` (`key_token` in src/flatten.rs).
+
+    `=` is what promotion writes between a key and its value, so a literal key holding one
+    could spell a promoted token: `{"event=login":1}` and `{"event":"login"}` both read
+    `event=login`. `render_key` has already doubled every `\` the key holds, so `\=` is
+    only ever this escape. In the token only - `keys`, `values` and the template id keep
+    the key as rendered.
+    """
+    return key.replace("=", "\\=")
+
+
 def _fmt_number(v) -> str:
     """serde_json's rendering of a JSON number, which is what `raw_text` returns.
 
@@ -526,11 +538,11 @@ def parse_obj(obj, rule: PromotionRule = DEFAULT_RULE) -> ParsedLog:
         if rule(path[-1] if path else "", t, raw):
             tokens.append((True, key, raw))
             promoted.append(key)
-            parts.append(f"{key}={raw}")
+            parts.append(f"{key_token(key)}={raw}")
         else:
             tokens.append((False, key, ""))
             typed[key] = t
-            parts.append(key)
+            parts.append(key_token(key))
 
         values[key] = raw
         keys.append(key)
