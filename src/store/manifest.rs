@@ -395,6 +395,10 @@ impl Manifest {
         self.log.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.log.is_empty()
+    }
+
     /// Whether a failed append could not be cut back, so no record is written until a
     /// restart.
     pub fn is_torn(&self) -> bool {

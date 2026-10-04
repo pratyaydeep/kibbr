@@ -490,7 +490,7 @@ fn as_segment(bytes: &[u8], every_way: bool) -> Option<Read> {
     // second time, or just under it, where the segment reads as it did and what was
     // found is what was there plus what it holds.
     let first = whole.records.first().map_or(1, |r| r.0);
-    let under = bytes.len() % 2 == 0 || whole.records.is_empty();
+    let under = bytes.len().is_multiple_of(2) || whole.records.is_empty();
     let before = (
         Scanned {
             segments: 3,

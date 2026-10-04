@@ -321,6 +321,10 @@ impl Log {
         self.end
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.end == 0
+    }
+
     /// Whether a failed append could not be cut back: see `LogError::Torn`.
     pub fn is_torn(&self) -> bool {
         self.torn.is_some()

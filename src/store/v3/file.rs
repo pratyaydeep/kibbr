@@ -792,6 +792,10 @@ impl Writer {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     /// Bytes are written whole or the file is cut back to where they began.
     fn write(&mut self, bytes: &[u8]) -> Result<(), FormatError> {
         if self.torn {

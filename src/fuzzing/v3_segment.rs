@@ -542,14 +542,14 @@ fn hold_dir(dir: &ChunkDir) {
 /// field of a form, with the combinations it forbids.
 fn hold_piece(piece: &PieceDir) {
     let lit = piece.form.kind() == JsonKind::Lit;
-    let in_table = match (piece.form, piece.encoding) {
-        (_, 0 | 1) => true,
-        (Form::String { .. }, 2) => true,
-        (Form::Int64 { .. }, 3) => true,
-        (Form::Datetime { .. }, 4) => true,
-        (Form::Bool { .. }, 5) => true,
-        _ => false,
-    };
+    let in_table = matches!(
+        (piece.form, piece.encoding),
+        (_, 0 | 1)
+            | (Form::String { .. }, 2)
+            | (Form::Int64 { .. }, 3)
+            | (Form::Datetime { .. }, 4)
+            | (Form::Bool { .. }, 5)
+    );
     assert!(in_table, "encoding {} on {:?}", piece.encoding, piece.form);
     let in_range = match piece.form {
         Form::String { .. } => true,
