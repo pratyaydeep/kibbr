@@ -474,14 +474,31 @@ BULK_PID=$PID; BULK_PORT=$PORT
 
 [ "$RESTART_BIN" = "$BIN" ] || echo "round 2    restarted with $RESTART_BIN"
 round "round 2 (both restarted)" "$WORK/tally.2" "$WORK/answers.2"
-# A restart changes no answer: each door's round 2 against its own round 1.
-python3 - "$WORK/answers.1" "$WORK/answers.2" <<'PY' || FAIL=1
+# A restart changes no answer: each door's round 2 against its own round 1. Between two
+# builds a cursor is held to its rank alone - the row the page stopped at - and not to its
+# guard, the last eight hex digits: the guard is a hash of the pattern, a build may spell
+# what it hashes another way, and it says nothing of the files. How many cursors differed
+# only there is printed.
+CROSS=""; [ "$RESTART_BIN" = "$BIN" ] || CROSS=1
+python3 - "$WORK/answers.1" "$WORK/answers.2" "$CROSS" <<'PY' || FAIL=1
 import json, sys
 one, two = (json.load(open(p)) for p in sys.argv[1:3])
+cross = sys.argv[3] == "1"
+def rank(x):
+    """The answer with every next_cursor cut to its rank."""
+    if isinstance(x, dict):
+        return {k: v[:-8] if k == "next_cursor" and isinstance(v, str) else rank(v)
+                for k, v in x.items()}
+    if isinstance(x, list):
+        return [rank(v) for v in x]
+    return x
 bad = 0
+guards = 0
 for door in ("live", "bulk"):
     for a, b in zip(one["answers"], two["answers"]):
-        if a[door] != b[door]:
+        if cross and a[door] != b[door] and rank(a[door]) == rank(b[door]):
+            guards += 1
+        elif a[door] != b[door]:
             bad += 1
             if bad <= 10:
                 print("CHANGED   %s door: %s" % (door, a["q"]))
@@ -496,6 +513,8 @@ if len(one["answers"]) != len(two["answers"]):
           % (len(one["answers"]), len(two["answers"])))
 print("restart    %d answers of %d changed across the restart, on either door"
       % (bad, 2 * len(one["answers"])))
+if cross:
+    print("restart    %d more differ only in a cursor's guard, which is the build's" % guards)
 sys.exit(1 if bad else 0)
 PY
 stop "$LIVE_PID"; LIVE_PID=""
