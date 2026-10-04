@@ -15,3 +15,5 @@ sample.ndjson
 !/testdata/roundtrip.ndjson
 !/testdata/sample_logs.ndjson
 !/testdata/v3/
+
+/brag*

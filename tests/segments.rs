@@ -73,7 +73,8 @@ impl Db {
         }
     }
 
-    /// Every segment file under the data directory, in path order.
+    /// Every data file under the data directory, in path order. By its extension: the
+    /// write-ahead log's segments are `seg_` files too, and are not what a row group is in.
     fn segments(&self) -> Vec<PathBuf> {
         let mut out = Vec::new();
         let mut stack = vec![self.dir.clone()];
@@ -85,7 +86,9 @@ impl Db {
                 let path = entry.path();
                 if path.is_dir() {
                     stack.push(path);
-                } else if entry.file_name().to_string_lossy().starts_with("seg_") {
+                } else if entry.file_name().to_string_lossy().starts_with("seg_")
+                    && path.extension().is_some_and(|e| e == "col")
+                {
                     out.push(path);
                 }
             }
@@ -229,10 +232,11 @@ fn one_line_is_queryable_before_any_row_group_closes() {
     assert_eq!(answer["count"], 1, "the row was not visible: {answer}");
     assert_eq!(answer["rows"][0]["event"], "one");
 
-    // Visible, and on nobody's disk. `/stats` says so, because that is what a kill -9
-    // would cost.
+    // Visible, and in no data file: in the write-ahead log and in memory. `/stats` says
+    // so, because that is what the next start would have to put back.
     assert!(db.segments().is_empty(), "a row group closed for one row");
     assert_eq!(server.stats()["storage"]["buffered_rows"], 1);
+    assert_eq!(server.stats()["storage"]["wal"]["last_seq"], 1);
 }
 
 // ── A schema change ────────────────────────────────────────────────────────────────
@@ -568,8 +572,9 @@ fn a_data_file_from_a_pre_rename_build_is_refused_by_path() {
 // ── The banner ─────────────────────────────────────────────────────────────────────
 
 /// What the operator is told a crash costs. It changed with the format - rows wait for a
-/// row group, not for the next tick - and a banner still promising the flush interval
-/// would be promising something nothing implements.
+/// row group, not for the next tick - and again with the write-ahead log: nothing that was
+/// acknowledged. A banner still promising the flush interval, or still warning of a lost
+/// row group, would be describing something nothing implements.
 #[test]
 fn the_banner_states_the_row_group_window_and_not_the_flush_interval() {
     let db = Db::new();
@@ -580,7 +585,9 @@ fn the_banner_states_the_row_group_window_and_not_the_flush_interval() {
         server.banner
     );
     assert!(
-        server.banner.contains("one row group of rows"),
+        server.banner.contains("loses no")
+            && server.banner.contains("acknowledged line")
+            && !server.banner.contains("NO WRITE-AHEAD LOG"),
         "the banner does not say what a kill -9 costs:\n{}",
         server.banner
     );

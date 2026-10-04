@@ -12,6 +12,11 @@
 //! {"kind":"replace","add":[…],"remove":[…],"source":"load:…"}   one step: compaction, or replace-a-day
 //! ```
 //!
+//! A replace-a-day under a write-ahead log also carries `"wal":{"stream":"…","day":
+//! "2024-01-15","through":81234}`: the lines of that day the log held up to that position
+//! were in the files this record retired, and a replay must not bring them back
+//! (`WalMark`).
+//!
 //! **A file the manifest does not name is not part of the database.** Startup deletes
 //! such files. A load's files it does name but that a crash left in `staging/` are moved
 //! into place first - the record was the commit - and then the rest of `staging/` is
@@ -173,6 +178,36 @@ pub fn published_by_load(records: &[Record]) -> BTreeMap<String, u64> {
     out
 }
 
+/// What a replace-a-day tells the write-ahead log's replay: every line of `day` the log
+/// `stream` holds at a position up to `through` was replaced, and is not to be stored
+/// again.
+///
+/// **Without it a replaced day comes back.** A replay stores every line no durable row
+/// group's range covers, and the row groups that covered this day's lines are in the
+/// files the record retires: after a crash the lines the log still holds past its
+/// checkpoint would be covered by nothing, and stored again beside the load that replaced
+/// them. `through` is the last position applied when the day was written out and retired,
+/// with the log's applier held still across both - so it is exactly the lines the retired
+/// files held, and a line applied after it is one that arrived after the replace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalMark {
+    /// The log's id, as 16 hex digits.
+    pub stream: String,
+    /// The day's directory name.
+    pub day: String,
+    pub through: u64,
+}
+
+impl WalMark {
+    pub fn new(stream: u64, day: String, through: u64) -> Self {
+        Self {
+            stream: format!("{stream:016x}"),
+            day,
+            through,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Record {
@@ -193,6 +228,10 @@ pub enum Record {
         remove: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
+        /// A replace-a-day's word to the write-ahead log. Never a compaction's: its
+        /// rebuilt row groups carry the ranges of the ones they replace.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wal: Option<WalMark>,
     },
 }
 
@@ -363,6 +402,7 @@ mod tests {
                 add: vec![file("d/c.col", true)],
                 remove: vec!["d/a.col".into()],
                 source: None,
+                wal: None,
             },
         ];
         let live = live(&records);
@@ -399,6 +439,7 @@ mod tests {
                 add: vec![file("d/b.col", true)],
                 remove: vec!["d/a.col".into()],
                 source: Some(load_source(id + 1)),
+                wal: None,
             },
         ];
         assert_eq!(

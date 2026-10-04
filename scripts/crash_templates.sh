@@ -8,6 +8,10 @@
 # only a clean stop writes, so every template created since the last clean stop became an
 # orphan directory and the count came back 0.
 #
+# The rows are all in closed row groups before the kill, so this is about the catalog and
+# the files. A kill with rows still in memory is scripts/crash_test.sh's: the write-ahead
+# log puts those back.
+#
 #   ROUNDS=20 NLINES=2000 scripts/crash_templates.sh
 
 set -uo pipefail

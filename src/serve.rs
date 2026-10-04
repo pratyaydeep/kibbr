@@ -2,15 +2,16 @@
 //!
 //! One `Trie` and one `StoreManager`, held for the life of the process, wrapped in the
 //! five endpoints below. Nothing here knows how a line becomes a row: `/query` builds the
-//! same `Query` the CLI builds and calls the same `engine::execute`, and `/ingest` goes
-//! through `db::ingest_line`, which is what `db::load` calls.
+//! same `Query` the CLI builds and calls the same `engine::execute`, and `/ingest` parses
+//! and routes a line by the functions `db::load` does (`db::parse_and_prepare`,
+//! `db::place_in`) - with the write-ahead log between the routing and the store.
 //!
-//! **What survives, and what does not.** With a data directory, rows go to day partitions
-//! on a timer and the trie is snapshotted on a graceful shutdown, so `SIGTERM` and restart
-//! give the same answers. There is no write-ahead log, so a `kill -9` loses whatever had
-//! not reached a flush - up to one interval. With `--storage memory` nothing is written at
+//! **What survives, and what does not.** With a data directory, a line is in the
+//! write-ahead log, flushed, before `/ingest` acknowledges it; its row reaches a day's file
+//! when its row group closes, and until then a restart puts it back from the log, once -
+//! after `SIGTERM` and after `kill -9` alike. With `--storage memory` nothing is written at
 //! all. The banner says which of the two this process is, `/stats` repeats it as a field,
-//! and the shutdown log names every step including the ones still skipped.
+//! and the shutdown log names every step including the ones a memory server skips.
 //!
 //! **The flush clock lives here and not in the store.** A `LeafStore` has a buffer and a
 //! synchronous `flush()` and no timer, so it can be driven from a test with no runtime;
@@ -19,10 +20,11 @@
 //!
 //! A future `Ingestor` would sit between the API and the trie. There is no such type here:
 //! `ingest` is a plain function with one implementation, and a trait with one caller is a
-//! guess at what the second one will need. The WAL and the detector cache are the arrows
-//! that will make it a type, and neither exists yet.
+//! guess at what the second one will need. The write-ahead log is beside it (`wal`); the
+//! detector cache is the arrow that would make it a type, and does not exist yet.
 
 use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -51,13 +53,14 @@ use crate::compact;
 use crate::config::{ApiLimits, Limits, Schema, Storage};
 use crate::db;
 use crate::engine;
-use crate::error::{self, CliError, DetectorError, DetectorErrorKind, ServeError};
+use crate::error::{self, CliError, DetectorError, DetectorErrorKind, IngestError, ServeError};
 use crate::fmt::{commas, rfc3339_at};
 use crate::load;
 use crate::query;
 use crate::store::disk::CompactOptions;
 use crate::store::{FlushKind, StoreError, StoreManager};
-use crate::trie::Trie;
+use crate::trie::{Trie, TrieError};
+use crate::wal::{self, Wal};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
@@ -72,6 +75,31 @@ pub const DEFAULT_PORT: u16 = 7700;
 /// statement about the machine. A longer wait only moves the refusal closer to the
 /// shipper's own timeout, which is the outcome the shed exists to avoid.
 const INGEST_QUEUE_WAIT: Duration = Duration::from_millis(100);
+
+/// How many `/ingest` bodies may be between the door and their answer at once: being
+/// parsed, or waiting on the write-ahead log's flush.
+///
+/// Each is a thread of the blocking pool, parked while it waits, and the wait is as long
+/// as the log's disk makes it. The permits for the parse do not bound it - they go back
+/// before the log is asked, so that one flush can carry more bodies than there are
+/// cores - and with nothing bounding it a log volume that stalled took every thread of
+/// the pool: queries and the flush tick queued behind bodies that could not be answered,
+/// and the server went quiet, which is the one thing the door must never do. Past this
+/// many the door sheds, before it reads the body.
+const INGEST_BODIES: usize = 256;
+
+/// What the blocking pool holds beyond the bodies at the door: for queries and the flush
+/// tick, which must not queue behind bodies a stalled log cannot answer.
+const OTHER_BLOCKING_THREADS: usize = 256;
+
+/// The bodies that may be between the door and their answer on this server:
+/// `INGEST_BODIES`, or twice the permits for the parse where an operator has asked for
+/// more of those than half of it. Always more places than permits, so that running out of
+/// places means what the refusal says - the bodies inside are waiting on the log, not
+/// being parsed.
+fn ingest_bodies(api: &ApiLimits) -> usize {
+    INGEST_BODIES.max(api.ingest_concurrency.saturating_mul(2))
+}
 
 /// The `Retry-After` on a shed body, in seconds.
 ///
@@ -120,7 +148,18 @@ const VIEWER: &str = include_str!("viewer.html");
 /// sees a row twice or loses one it could see before.
 pub struct Server {
     trie: Trie,
-    stores: StoreManager,
+    /// Shared with the write-ahead log's applier, which is the one thread that appends a
+    /// row behind a log; everything else here reads it, flushes it, or loads into it.
+    stores: Arc<StoreManager>,
+    /// The write-ahead log. `None` with `--storage memory`: nothing is durable there, and
+    /// a line is applied by the body that carried it.
+    wal: Option<Wal>,
+    /// Rows the store would not take from the log, and what that holds back.
+    held: Arc<Held>,
+    /// What the start read back from the log: `/stats`'s `storage.wal.replay`.
+    replayed: Replayed,
+    /// Whether the last move of the checkpoint failed: said once when it starts.
+    checkpoint_failing: AtomicBool,
     /// Wakes the flush before its next tick: an ingest body that left the buffers past
     /// their memory limit rings it, so the limit is enforced within a body and not within
     /// half a second of bodies.
@@ -133,9 +172,11 @@ pub struct Server {
     queries: AtomicU64,
     /// Requests currently in a handler. Read at shutdown, to say what is being waited on.
     in_flight: AtomicU64,
-    /// Bodies refused for want of a permit, or while the buffers were past twice their
-    /// limit. In no other counter - `lines_read` never saw them - and the only number that
-    /// says the shed is firing rather than merely present.
+    /// Bodies shed: refused for want of a permit, while the buffers were past twice their
+    /// limit, or because the write-ahead log had as much waiting as it may hold. The only
+    /// number that says the shed is firing rather than merely present. The first two are
+    /// in no other counter - `lines_read` never saw them; a body the log sheds was read
+    /// and routed first, and its lines are in `lines_read` and `lines_rejected` too.
     requests_shed: AtomicU64,
     /// The caps, held on the server and not negotiated per request: all clients get the
     /// same limits, because a client that could override one could sidestep the
@@ -145,15 +186,22 @@ pub struct Server {
     storage: Storage,
     /// How many bodies may be in the parse-and-walk at once.
     ///
-    /// The whole of the backpressure answer. Without it every body takes a blocking-pool
-    /// slot, the pool queues 512 deep, and a shipper waiting on a request that will not
-    /// finish in time gives up and opens another - which is how a slow server becomes an
-    /// unreachable one. No permit within `INGEST_QUEUE_WAIT` is a 503, which Vector's
-    /// adaptive concurrency reads as "send fewer" rather than "the server is gone".
+    /// The backpressure answer for the part that is CPU. Without it every body takes a
+    /// blocking-pool slot, the pool queues 512 deep, and a shipper waiting on a request
+    /// that will not finish in time gives up and opens another - which is how a slow
+    /// server becomes an unreachable one. No permit within `INGEST_QUEUE_WAIT` is a 503,
+    /// which Vector's adaptive concurrency reads as "send fewer" rather than "the server
+    /// is gone".
+    ///
+    /// **Given back before the write-ahead log is asked**, so one flush carries as many
+    /// bodies as have queued and not as many as there are cores. A body waiting on the
+    /// log still holds a blocking-pool thread; what bounds those is `ingest_bodies`.
     ingest_permits: Arc<Semaphore>,
+    /// How many bodies may be between the door and their answer: `ingest_bodies`. Taken
+    /// at the door with the permit above, and kept until the body's task has returned.
+    ingest_bodies: Arc<Semaphore>,
     /// Whether the last flush tick could write. Shared with the registry and read without
-    /// its lock, because `/health` must not queue behind a flush and `/ingest` must not
-    /// buffer a body it is about to refuse.
+    /// its lock, because `/health` must not queue behind a flush.
     write_health: Arc<crate::store::WriteHealth>,
     /// The bulk loads this server has been asked to run: at most one at a time, on a
     /// thread of its own with its own pool, never on the runtime or the blocking pool the
@@ -270,11 +318,57 @@ impl Server {
         schema: Schema,
         load_token: Option<String>,
     ) -> Result<Self, ServeError> {
-        let (trie, stores) = match storage.base_path {
-            Some(_) => open_durable(&storage, &schema)?,
+        let (trie, stores, wal, held, replayed) = match storage.base_path.as_deref() {
+            Some(base) => {
+                let restored = restore(&storage, &schema, true)?;
+                let stores = Arc::new(restored.stores);
+                let held = Arc::new(restored.held);
+                // A directory with no log yet gets one, and a new stream with it.
+                let wal = match restored.wal {
+                    Some(wal) => wal,
+                    None => Wal::create(base)?,
+                };
+                if let Some(disk) = stores.disk_store() {
+                    disk.attach_wal(wal.stream(), wal.checkpoint());
+                }
+                // The one applier: every row the log has made durable, in the log's order.
+                let apply: wal::Apply = {
+                    let (stores, held) = (Arc::clone(&stores), Arc::clone(&held));
+                    Box::new(move |rows| {
+                        // Held across the batch: a replace-a-day waits for it, and
+                        // retires its day with no row applied meanwhile.
+                        let disk = stores.disk_store();
+                        let _applying = disk.map(|disk| disk.applying());
+                        // What a replace-a-day retires through: every position handed
+                        // over, stored or refused - a refused row arrived before the
+                        // replace too, and the replay that would store it must not put
+                        // it into the day the replace made.
+                        if let (Some(disk), Some((last, _))) = (disk, rows.last()) {
+                            disk.note_applied(*last);
+                        }
+                        for (position, placed) in rows {
+                            let template_id = placed.template_id;
+                            // A panic in the store is a row it did not take, and no more
+                            // than that: this thread is the one every body waits on.
+                            let applied =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    held.apply(&stores, position, placed)
+                                }));
+                            if applied.is_err() {
+                                held.defer(template_id, position, "the store panicked");
+                            }
+                        }
+                    })
+                };
+                wal.start(storage.wal_options(), apply)?;
+                (restored.trie, stores, Some(wal), held, restored.replayed)
+            }
             None => (
                 Trie::new().with_time_columns(schema.time_columns.clone()),
-                StoreManager::memory(),
+                Arc::new(StoreManager::memory()),
+                None,
+                Arc::new(Held::new()),
+                Replayed::default(),
             ),
         };
 
@@ -282,6 +376,10 @@ impl Server {
         Ok(Self {
             trie,
             stores,
+            wal,
+            held,
+            replayed,
+            checkpoint_failing: AtomicBool::new(false),
             flush_now: Notify::new(),
             started: Instant::now(),
             started_at: now,
@@ -295,6 +393,7 @@ impl Server {
             api,
             storage,
             ingest_permits: Arc::new(Semaphore::new(api.ingest_concurrency)),
+            ingest_bodies: Arc::new(Semaphore::new(ingest_bodies(&api))),
             write_health,
             loads: std::sync::Mutex::new(Loads::default()),
             load_token,
@@ -314,11 +413,36 @@ impl Server {
 /// template, nothing in it" answer, which is a different thing from "no such template" and
 /// has to stay different across a restart.
 ///
+/// **The write-ahead log is the server's to put back, and a command running alone leaves
+/// it be.** A server's start stores every line the log holds that no row group does
+/// (`replay`). A load or a compaction needs none of those rows: it reads where the log
+/// ends - what a replace-a-day says it retired through - and which days it still holds
+/// lines of, applies nothing, starts no writer and moves no checkpoint. The log's lines
+/// are as the next server finds them; all it may remove is a segment a stop cut short as
+/// it was made, which holds none.
+///
 /// The caller holds the directory's `LOCK`: recovery writes.
 pub(crate) fn open_durable(
     storage: &Storage,
     schema: &Schema,
 ) -> Result<(Trie, StoreManager), ServeError> {
+    let restored = restore(storage, schema, false)?;
+    Ok((restored.trie, restored.stores))
+}
+
+/// A data directory, restored: see `open_durable`.
+struct Restored {
+    trie: Trie,
+    stores: StoreManager,
+    /// The log the directory holds, read back and not yet started; `None` if it has none.
+    wal: Option<Wal>,
+    held: Held,
+    replayed: Replayed,
+}
+
+/// `apply`: whether the lines the log holds are stored - a server's start - or only
+/// counted.
+fn restore(storage: &Storage, schema: &Schema, apply: bool) -> Result<Restored, ServeError> {
     let Some(base) = storage.base_path.clone() else {
         return Err(ServeError::Storage {
             detail: "no data directory".to_string(),
@@ -327,7 +451,7 @@ pub(crate) fn open_durable(
     let data_dir = storage.data_dir();
     let trie = open_catalog(&base, storage.trie_file.as_deref(), &data_dir, schema)?;
 
-    let stores = StoreManager::disk(base, storage.disk_options()).map_err(storage_fatal)?;
+    let stores = StoreManager::disk(base.clone(), storage.disk_options()).map_err(storage_fatal)?;
 
     // Applied whatever the snapshot said, including when it parsed cleanly:
     // the hazard is a trie that does not know about stored rows, and a stale
@@ -367,7 +491,413 @@ pub(crate) fn open_durable(
             }
         }
     }
-    Ok((trie, stores))
+
+    // Last, once every template has its leaf and every row group is in one: the log is
+    // held against them.
+    let held = Held::new();
+    let wal = Wal::open(&base, &mut |m| log(&format!("WARN wal - {m}")))?;
+    let replayed = match &wal {
+        Some(wal) => replay(&trie, &stores, wal, &held, apply)?,
+        None => Replayed::default(),
+    };
+    Ok(Restored {
+        trie,
+        stores,
+        wal,
+        held,
+        replayed,
+    })
+}
+
+/// What a start read back from the write-ahead log.
+#[derive(Debug, Default, Clone, Copy)]
+struct Replayed {
+    /// Lines past the checkpoint: the ones looked at.
+    records: u64,
+    /// Put back in memory: no row group held them.
+    applied: u64,
+    /// Skipped: a durable row group's range covers their position.
+    covered: u64,
+    /// Left in the log: the store would not take them, or nothing says what they are.
+    held: u64,
+    /// Skipped: lines of a day a load has since replaced.
+    replaced: u64,
+    /// Lines at or behind the checkpoint, not looked at.
+    behind: u64,
+    /// Segments that ended in a record a stop cut short.
+    torn: usize,
+    corrupt: u64,
+    seconds: f64,
+}
+
+/// Put back every line the write-ahead log holds that no row group does, and no other.
+///
+/// **A line is skipped only if a durable row group's range covers its position** - a row
+/// group of the line's template and its UTC day, written from this log (`wal_ranges`).
+/// Not by the checkpoint: that says where every line before it is, and says nothing of
+/// the row groups that reached the disk since it last moved, which are most of them. A
+/// replay that went by the checkpoint alone would store each of those rows again, and a
+/// test that only asked whether anything acknowledged was lost would pass it.
+///
+/// **Routed by the record, not decided again.** The record names the template the line
+/// went to, whose catalog record was durable before the log's, and beside it the time its
+/// row was filed under. So the day a position is held against is the day the row *was*
+/// stored on, whatever would parse the line today; a line a row group holds is skipped
+/// without being parsed at all; and only a line that has to be put back is read again -
+/// by the same parse, with the arrival time the record carries where the line has none
+/// of its own.
+///
+/// **A line that would not go back where it was is not put anywhere.** If the row read
+/// back now has another time than the record's - the epoch window was changed, or the
+/// build's reading of a value was - filing it would put it on a day its position was
+/// never held against. It is held instead, with its template, and said: start once under
+/// the settings it was logged with.
+///
+/// A line that cannot be put back is never dropped: it stays in the log (`Held`), and the
+/// checkpoint stays behind it. That is a line whose template the catalog does not know,
+/// that no longer parses, that reads to another time, or whose day has a row group that
+/// will not read - none of which a kill does - and a row the store refuses.
+///
+/// Rows put back are buffered as any others are. Past the memory limit the buffers are
+/// flushed as the tick would flush them, so a long log does not have to fit in memory.
+///
+/// With `apply` false - a command running alone - nothing is put back: see
+/// `open_durable`.
+fn replay(
+    trie: &Trie,
+    stores: &StoreManager,
+    wal: &Wal,
+    held: &Held,
+    apply: bool,
+) -> Result<Replayed, ServeError> {
+    let began = Instant::now();
+    let Some(disk) = stores.disk_store() else {
+        return Ok(Replayed::default());
+    };
+    let stream = wal.stream();
+    disk.attach_wal(stream, wal.checkpoint());
+    let mut warn = |m: String| log(&format!("WARN wal - {m}"));
+    if !apply {
+        // Read for where the log ends, for the template ids it names - none of which
+        // this command may hand to a template of its own making - and for the day each
+        // line is of: a day the log still holds lines for is not behind its checkpoint,
+        // and the days this command finds due do not include it.
+        let replaced = disk.replaced_days(stream);
+        let mut highest_template = 0u64;
+        let scanned = wal.replay(&mut warn, &mut |record| {
+            highest_template = highest_template.max(record.template_id);
+            let day = crate::store::v3::day_of(record.time);
+            if replaced
+                .get(&day)
+                .is_none_or(|through| record.seq > *through)
+            {
+                disk.note_position(day, record.seq);
+            }
+            Ok(())
+        })?;
+        trie.reserve_template_ids_through(highest_template);
+        disk.note_applied(scanned.last_seq);
+        if scanned.records > 0 {
+            log(&format!(
+                "wal - {} holds {} line(s) past its checkpoint; they are the server's to \
+                 put back at its next start, and are left as they are",
+                wal.dir().display(),
+                commas(scanned.records),
+            ));
+        }
+        return Ok(Replayed {
+            records: scanned.records,
+            behind: scanned.behind,
+            torn: scanned.torn,
+            corrupt: scanned.corrupt,
+            ..Replayed::default()
+        });
+    }
+    let time_columns: HashMap<u64, String> = trie
+        .all_leaves()
+        .iter()
+        .filter_map(|leaf| {
+            leaf.leaf_meta.read().ok().and_then(|slot| {
+                slot.as_ref()
+                    .map(|meta| (meta.template_id, meta.time_source.column().to_string()))
+            })
+        })
+        .collect();
+
+    let replaced = disk.replaced_days(stream);
+    let mut out = Replayed::default();
+    let mut ranges: HashMap<(u64, i64), Vec<(u64, u64)>> = HashMap::new();
+    // The first of each kind of line that could not be put back, to say once.
+    let mut unknown: Option<(u64, u64)> = None;
+    let mut unreadable: Option<(u64, String)> = None;
+    let mut moved: Option<(u64, i64, i64)> = None;
+    let mut damaged: Option<(u64, String)> = None;
+    let mut highest_template = 0u64;
+    // When the buffers are next flushed for memory, and whether a flush has failed: one
+    // that cannot write is not tried again for every line after it.
+    let mut flush_at = 0u64;
+    let mut flush_failed = false;
+    let scanned = wal.replay(&mut warn, &mut |record| {
+        highest_template = highest_template.max(record.template_id);
+        let day = crate::store::v3::day_of(record.time);
+        // A day a load replaced: the lines the log held of it then were in the files the
+        // replace retired, and no row group covers them any more.
+        if replaced
+            .get(&day)
+            .is_some_and(|through| record.seq <= *through)
+        {
+            out.replaced += 1;
+            return Ok(());
+        }
+        disk.note_position(day, record.seq);
+        let covering = match ranges.entry((record.template_id, day)) {
+            std::collections::hash_map::Entry::Occupied(slot) => slot.into_mut(),
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                match disk.wal_ranges(record.template_id, day, stream) {
+                    Ok(found) => slot.insert(found),
+                    // A row group whose header will not read: whether it holds this line
+                    // cannot be known, so the line is neither stored nor let go. It and
+                    // its template's later lines stay in the log, and the start goes on -
+                    // the damaged file is a query's to report.
+                    Err(e) => {
+                        damaged.get_or_insert_with(|| (record.seq, e.to_string()));
+                        held.set_aside(record.template_id, record.seq);
+                        out.held += 1;
+                        // Remembered as nothing covered: the headers are not read again
+                        // for every later line of the day, and those lines - their
+                        // template set aside - are held as this one is.
+                        slot.insert(Vec::new());
+                        return Ok(());
+                    }
+                }
+            }
+        };
+        // The ranges are in order and apart: the one that could hold the position is
+        // the last that begins at or before it.
+        let after = covering.partition_point(|(first, _)| *first <= record.seq);
+        if after > 0 && covering[after - 1].1 >= record.seq {
+            out.covered += 1;
+            return Ok(());
+        }
+
+        // To be put back: only now is the line read.
+        let Some(time_column) = time_columns.get(&record.template_id) else {
+            unknown.get_or_insert((record.seq, record.template_id));
+            held.hold(record.seq);
+            out.held += 1;
+            return Ok(());
+        };
+        let row = match db::row_from_log(record.line, time_column, record.received_at) {
+            Ok(row) => row,
+            Err(e) => {
+                unreadable.get_or_insert_with(|| (record.seq, e.kind.to_string()));
+                held.set_aside(record.template_id, record.seq);
+                out.held += 1;
+                return Ok(());
+            }
+        };
+        let time = crate::store::effective_ts(&row, time_column).unwrap_or(0);
+        if time != record.time {
+            moved.get_or_insert((record.seq, record.time, time));
+            held.set_aside(record.template_id, record.seq);
+            out.held += 1;
+            return Ok(());
+        }
+        let placed = db::Placed {
+            template_id: record.template_id,
+            time_column: time_column.clone(),
+            row,
+        };
+        if held.apply(stores, record.seq, placed) {
+            out.applied += 1;
+        } else {
+            out.held += 1;
+        }
+        if !flush_failed && stores.over_buffer_limit() && stores.buffer_bytes().0 >= flush_at {
+            flush_failed = stores.flush_all(FlushKind::Tick).failed > 0;
+            let (left, limit) = stores.buffer_bytes();
+            flush_at = left + limit / 8;
+        }
+        Ok(())
+    })?;
+    out.records = scanned.records;
+    out.behind = scanned.behind;
+    out.torn = scanned.torn;
+    out.corrupt = scanned.corrupt;
+    out.seconds = began.elapsed().as_secs_f64();
+
+    // No id a record names is handed out again: a template that took one would be given
+    // that record's line by a later start.
+    trie.reserve_template_ids_through(highest_template);
+    disk.note_applied(scanned.last_seq);
+    // The rows put back have waited already: the first tick closes them, and the
+    // checkpoint moves past them, where they would otherwise wait their wait again.
+    disk.age_buffers();
+
+    let stays = "it and any like it stay in the log, and the checkpoint behind them";
+    if let Some((seq, template_id)) = unknown {
+        log(&format!(
+            "WARN wal - position {seq} names template {template_id}, which catalog.log does \
+             not define; {stays}"
+        ));
+    }
+    if let Some((seq, why)) = unreadable {
+        log(&format!(
+            "WARN wal - the line at position {seq} no longer parses ({why}); {stays}"
+        ));
+    }
+    if let Some((seq, was, now)) = moved {
+        log(&format!(
+            "WARN wal - the line at position {seq} was stored under {} and now reads as {}: \
+             the epoch window or the build differs from the one that logged it. {stays} - \
+             start once under the settings it was logged with",
+            rfc3339_nanos(was),
+            rfc3339_nanos(now),
+        ));
+    }
+    if let Some((seq, why)) = damaged {
+        log(&format!(
+            "WARN wal - whether a row group holds the line at position {seq} cannot be \
+             read ({why}); {stays}"
+        ));
+    }
+    if out.records > 0 || out.torn > 0 || out.corrupt > 0 {
+        log(&format!(
+            "wal - {} read back {} line(s) past checkpoint {}: {} put back in memory, {} \
+             already in row groups{}{}, {:.2}s",
+            wal.dir().display(),
+            commas(out.records),
+            commas(wal.checkpoint()),
+            commas(out.applied),
+            commas(out.covered),
+            match out.replaced {
+                0 => String::new(),
+                n => format!(", {} of a day since replaced", commas(n)),
+            },
+            match out.held {
+                0 => String::new(),
+                n => format!(", {} left in the log", commas(n)),
+            },
+            out.seconds,
+        ));
+    }
+    Ok(out)
+}
+
+/// An instant as replay's warnings print it.
+fn rfc3339_nanos(ns: i64) -> String {
+    crate::fmt::rfc3339(ns)
+}
+
+/// Rows the store would not take from the write-ahead log, and what that holds back.
+///
+/// **A store write that fails after the log has the line is not an error.** The line is
+/// durable and was, or is about to be, acknowledged: answering its sender with a failure
+/// would be a lie, and a shipper would send again a line that is already safe. So the
+/// failure is logged here and goes no further - `apply` returns no `Result`, and the
+/// type `/ingest` fails with cannot hold a store's error (`error::IngestError`).
+///
+/// **What it costs is time, not the row.** The checkpoint never passes the lowest position
+/// held here, so the line's segment is not deleted and the next start's replay stores it.
+///
+/// **And the template takes nothing more from this process.** A row group's range says
+/// every line of its template and day inside it is durable; a later row group of the
+/// template, cut around a row that was skipped, would say that of the skipped line, and
+/// the replay that should store it would step over it. Every later row of the template
+/// waits in the log with the first.
+struct Held {
+    /// The lowest position held; `u64::MAX` while there is none.
+    from: AtomicU64,
+    rows: AtomicU64,
+    templates: std::sync::Mutex<BTreeSet<u64>>,
+}
+
+impl Held {
+    fn new() -> Self {
+        Self {
+            from: AtomicU64::new(u64::MAX),
+            rows: AtomicU64::new(0),
+            templates: std::sync::Mutex::new(BTreeSet::new()),
+        }
+    }
+
+    /// Hand one row to the store at its position in the log; 0 is a row with no log
+    /// behind it. Whether the store took it.
+    fn apply(&self, stores: &StoreManager, position: u64, placed: db::Placed) -> bool {
+        let template_id = placed.template_id;
+        let deferred = self
+            .templates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&template_id);
+        if deferred {
+            self.hold(position);
+            return false;
+        }
+        match stores.append_at(template_id, &placed.time_column, placed.row, position) {
+            Ok(()) => true,
+            // `to_string`: a `StoreError` prints its cause itself.
+            Err(e) => {
+                self.defer(template_id, position, &e.to_string());
+                false
+            }
+        }
+    }
+
+    /// The row at `position` could not be stored, and no later row of its template will
+    /// be by this process: said once for the template, and held.
+    fn defer(&self, template_id: u64, position: u64, why: &str) {
+        let first = self
+            .templates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(template_id);
+        if first {
+            log(&format!(
+                "ERROR store - {why}; the line was acknowledged and is {}",
+                if position > 0 {
+                    format!(
+                        "in the write-ahead log at position {position}: its row, and every \
+                         later row of template {template_id}, is stored by the next start's \
+                         replay"
+                    )
+                } else {
+                    "nowhere: storage is memory".to_string()
+                }
+            ));
+        }
+        self.hold(position);
+    }
+
+    /// As `defer`, for a line replay could not put back: its template waits with it, for
+    /// the reason a refused row's does, and replay says why once for all of them.
+    fn set_aside(&self, template_id: u64, position: u64) {
+        self.templates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(template_id);
+        self.hold(position);
+    }
+
+    /// Keep the checkpoint behind `position`; 0 is a row with no log behind it, which
+    /// nothing can keep.
+    fn hold(&self, position: u64) {
+        self.rows.fetch_add(1, Ordering::Relaxed);
+        if position > 0 {
+            self.from.fetch_min(position, Ordering::Relaxed);
+        }
+    }
+
+    fn from(&self) -> Option<u64> {
+        match self.from.load(Ordering::Relaxed) {
+            u64::MAX => None,
+            position => Some(position),
+        }
+    }
+
+    fn rows(&self) -> u64 {
+        self.rows.load(Ordering::Relaxed)
+    }
 }
 
 /// A store that will not open, as the error startup exits on. An earlier layout or another
@@ -612,8 +1142,6 @@ fn decode<'a>(
 struct LineError {
     line: usize,
     msg: String,
-    /// Refused by the store, not by the parser: what makes the body a `503`.
-    not_stored: bool,
 }
 
 /// What one `/ingest` body did.
@@ -622,12 +1150,6 @@ struct IngestReport {
     errors: Vec<LineError>,
     /// Rejections past `MAX_REPORTED_ERRORS`, counted but not described.
     omitted: u64,
-    /// Lines the store refused, listed in `errors` up to its cap like any other rejection.
-    /// Any at all makes the answer a `503`: see `partly_stored`.
-    not_stored: u64,
-    /// Why the first of them was refused, for the `503`'s own `error`: past the cap, or
-    /// behind a thousand malformed lines, `errors` may not hold a single one.
-    store_error: Option<String>,
 }
 
 impl IngestReport {
@@ -664,13 +1186,22 @@ enum IngestFailure {
     Body(BodyError),
     /// A lock poisoned mid-body. Fails every line after it too, so the body is abandoned
     /// rather than answered with 500 copies of one message. A catalog append that fails
-    /// is not this: it costs its line, reported in `errors`, and the body goes on.
-    Fatal(CliError),
+    /// is not this: it costs its line, reported in `errors`, and the body goes on. Nor is
+    /// a store that cannot take a row, which costs nothing and is not an error at all.
+    Fatal(IngestError),
 }
 
-/// An NDJSON body into the database, one line at a time.
+/// An NDJSON body into the database: parsed, routed, logged, applied.
 ///
 /// A plain function, not an `Ingestor` - see the module header.
+///
+/// **The order is the durability.** Every line is parsed with nothing held; each is then
+/// routed to its template, which makes the template - or the widening the line causes -
+/// durable in the catalog first; then the body's lines go to the write-ahead log, whose
+/// record names that template; and this returns once the log has flushed them **and** the
+/// log's one applier has handed their rows to the store. The answer is sent after that:
+/// the flush is what makes a `200` true, and the wait for the applier is what lets a
+/// client that ingests and then queries see all of what it sent.
 ///
 /// **Per-line error isolation.** A bad line is recorded against its number and
 /// the loop continues, so line 400 of 500 costs line 400 and nothing else. This is not a
@@ -678,10 +1209,32 @@ enum IngestFailure {
 /// and the only thing this caller changes is where a rejection goes - to a `Vec` that
 /// becomes the response body, instead of to a stderr an HTTP client cannot read.
 ///
-/// The `Err` return is not a bad line. It is the trie's lock poisoned, which fails every
-/// line after it too, so the body is abandoned rather than answered with 500 copies of
-/// one message.
-fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestReport, CliError> {
+/// **A body the log cannot take is refused, and nothing else that parsed is.** Not a row
+/// the store cannot take: by then the line is durable, its sender is told `Ok`, and the
+/// failure is the applier's to log (`Held`). The error this returns cannot carry a
+/// store's - see `IngestError` - and is the log's, or the trie's lock poisoned, which
+/// fails every line after it too, so the body is abandoned rather than answered with 500
+/// copies of one message.
+fn ingest(
+    server: &Server,
+    body: &[u8],
+    now: DateTime<Utc>,
+    permit: Permit,
+) -> Result<IngestReport, IngestError> {
+    // `_inside` is this body's place among those between the door and their answer, kept
+    // until this returns; `permit` is for the parse and the routing.
+    let Permit {
+        parse: permit,
+        body: _inside,
+    } = permit;
+    // A body no write of the log would hold is refused before it is parsed: it would
+    // be refused after, and the parse of that many lines is the cost.
+    if let Some(wal::Refused::TooLarge { bytes, limit }) =
+        server.wal.as_ref().and_then(|_| wal::too_large(body))
+    {
+        return Err(IngestError::TooLarge { bytes, limit });
+    }
+
     // ── Half one: split and parse, holding nothing ─────────────────────────────────
     //
     // The lock used to be taken here, before the body had been split into lines, so every
@@ -695,48 +1248,94 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
             parse_errors.push(LineError {
                 line: e.line,
                 msg: e.kind.to_string(),
-                not_stored: false,
             });
         }
-    })?;
+    })
+    // Reading a body already in memory does not fail. What can is a body with no newline
+    // in more than a line may hold, which the default body cap rules out and a larger
+    // `--max-body-bytes` does not: a message, and a 500.
+    .map_err(|e| IngestError::Body(error::chain(&e)))?;
 
-    // ── Half two: apply them, in order ─────────────────────────────────────────────
+    // ── Half two: route each line to its template, durably ─────────────────────────
     //
-    // No lock over the stores: each append takes its own leaf's, for as long as it takes
-    // to push one row. Every line is applied before the response is sent, so a client
-    // that ingests 500 lines and then queries sees all 500.
+    // Before the log, because the log's record carries the template's id: the catalog
+    // record that defines the id is flushed by the time `place_in` returns.
     let mut apply_errors = Vec::new();
-    let mut ingested = 0u64;
     let mut rejected = stats.rejected;
-    let mut not_stored = 0u64;
-    let mut store_error = None;
-    {
-        let stores = &server.stores;
-        for (line, parsed, prepared) in parsed {
-            match db::ingest_prepared(&server.trie, Some(stores), &parsed, prepared, now) {
-                Ok(()) => ingested += 1,
-                // The line parsed and still did not land. Counted and reported exactly as
-                // a line that did not parse: to the client both are "this one is not in
-                // the database", and the message says which.
-                Err(db::SinkError::Line(kind)) => {
-                    rejected += 1;
-                    let refused = matches!(kind, DetectorErrorKind::NotStored { .. });
-                    if let DetectorErrorKind::NotStored { detail } = &kind {
-                        not_stored += 1;
-                        store_error.get_or_insert_with(|| detail.clone());
-                    }
-                    if apply_errors.len() < MAX_REPORTED_ERRORS {
-                        apply_errors.push(LineError {
-                            line,
-                            msg: kind.to_string(),
-                            not_stored: refused,
-                        });
-                    }
-                }
-                // The trie's lock poisoned, which fails every line after it too. The body
-                // is abandoned rather than answered with 500 copies of one message.
-                Err(db::SinkError::Fatal(e)) => return Err(e),
+    let mut lines: Vec<wal::Line> = Vec::with_capacity(parsed.len());
+    for (line, parsed, prepared) in parsed {
+        let kind = match db::place_in(&server.trie, &parsed, prepared, now) {
+            Ok(Some(placed)) => {
+                lines.push(wal::Line {
+                    raw: parsed.raw_line,
+                    // The time the row is filed under, as the store reads it: what the
+                    // log writes down beside the line, for replay to hold it to.
+                    time: crate::store::effective_ts(&placed.row, &placed.time_column).unwrap_or(0),
+                    placed,
+                });
+                continue;
             }
+            // The template's own lock is poisoned: nothing can say which template the
+            // line is, so there is no id to log it under. It used to be counted as
+            // ingested and stored nowhere.
+            Ok(None) => DetectorErrorKind::NotDurable {
+                detail: "the template's lock is poisoned".to_string(),
+            },
+            // The line parsed and its template could not be made durable. Counted and
+            // reported exactly as a line that did not parse: to the client both are
+            // "this one is not in the database", and the message says which.
+            Err(e @ TrieError::Catalog(_)) => DetectorErrorKind::NotDurable {
+                detail: error::chain(&e),
+            },
+            // The trie's lock poisoned, which fails every line after it too.
+            Err(e) => return Err(e.into()),
+        };
+        rejected += 1;
+        if apply_errors.len() < MAX_REPORTED_ERRORS {
+            apply_errors.push(LineError {
+                line,
+                msg: kind.to_string(),
+            });
+        }
+    }
+
+    // ── Half three: the log, and then the rows ─────────────────────────────────────
+    //
+    // With a log: the body's lines durable in one flush, then applied by the log's one
+    // applier in the log's order, and back here once both are done. With none - storage
+    // is memory - applied here, as it always was: nothing is durable, and the banner
+    // says so.
+    //
+    // **All of the body, or none of it.** A log that cannot take it has none of its
+    // lines, so the refusal is of the body: the sender keeps it, and sends it again
+    // without storing a line twice.
+    let ingested = lines.len() as u64;
+    match &server.wal {
+        Some(wal) => {
+            // The permit is for the parse and the routing, which are what a core is
+            // short of. Held across the flush as well, a flush could never carry more
+            // bodies than there are cores - and it is there to carry whatever has queued.
+            // What bounds the bodies waiting from here is `ingest_bodies`, at the door.
+            drop(permit);
+            if let Err(refused) = wal.commit(lines, db::arrival_nanos(now)) {
+                server.lines_read.fetch_add(stats.read, Ordering::Relaxed);
+                server
+                    .lines_rejected
+                    .fetch_add(rejected + ingested, Ordering::Relaxed);
+                return Err(match refused {
+                    wal::Refused::Cannot(why) => IngestError::Log(why),
+                    wal::Refused::Busy => IngestError::Busy,
+                    wal::Refused::TooLarge { bytes, limit } => {
+                        IngestError::TooLarge { bytes, limit }
+                    }
+                });
+            }
+        }
+        None => {
+            for line in lines {
+                server.held.apply(&server.stores, 0, line.placed);
+            }
+            drop(permit);
         }
     }
 
@@ -764,8 +1363,6 @@ fn ingest(server: &Server, body: &[u8], now: DateTime<Utc>) -> Result<IngestRepo
         ingested,
         omitted: rejected - errors.len() as u64,
         errors,
-        not_stored,
-        store_error,
     })
 }
 
@@ -776,11 +1373,12 @@ struct QueryRequest {
     q: String,
 }
 
-/// `{"ok":true,"status":"ok"}`, or `degraded` while the store cannot write.
+/// `{"ok":true,"status":"ok"}`, or `degraded` while something here cannot write: the
+/// write-ahead log, the store, or rows the store refused (`Server::degraded`).
 ///
-/// Still takes no lock and reads no data - a health check that blocks behind a long ingest
-/// reports the wrong thing - which is why the verdict lives on an `Arc<WriteHealth>`
-/// beside the registry rather than inside it.
+/// Waits on no flush and reads no data - a health check that blocks behind a long ingest
+/// reports the wrong thing - which is why each verdict is a flag beside what it is about
+/// and not a question put to it.
 ///
 /// **`ok` stays `true` when degraded, and the status says otherwise.** This is the
 /// liveness check an orchestrator kills the process on, and a process that cannot write
@@ -789,89 +1387,71 @@ struct QueryRequest {
 /// `/ingest` is where the refusal belongs, because that is the caller who would otherwise
 /// be told a lie.
 async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
-    if server.write_health.is_degraded() {
-        return Json(json!({
-            "ok": true,
-            "status": "degraded",
-            "detail": server
-                .write_health
-                .last_error()
-                .unwrap_or_else(|| "the last flush could not write".to_string()),
-        }));
+    match server.degraded() {
+        Some(detail) => Json(json!({ "ok": true, "status": "degraded", "detail": detail })),
+        None => Json(json!({ "ok": true, "status": "ok" })),
     }
-    Json(json!({ "ok": true, "status": "ok" }))
 }
 
-/// The refusal a shipper gets while the store cannot write.
+impl Server {
+    /// What is wrong with this server's writing, if anything is: the log first, because
+    /// that is the one `/ingest` refuses on.
+    ///
+    /// A store that cannot write is degraded and refuses nothing: its rows are in the log
+    /// and are written when it can, or put back by the next start.
+    fn degraded(&self) -> Option<String> {
+        if let Some(wal) = self.wal.as_ref().filter(|wal| !wal.is_healthy()) {
+            return Some(format!(
+                "the write-ahead log cannot write, and /ingest answers 503 until it can: {}",
+                wal.last_error()
+                    .unwrap_or_else(|| "the last flush could not write".to_string())
+            ));
+        }
+        if self.write_health.is_degraded() {
+            return Some(
+                self.write_health
+                    .last_error()
+                    .unwrap_or_else(|| "the last flush could not write".to_string()),
+            );
+        }
+        match self.held.rows() {
+            0 => None,
+            rows => Some(format!(
+                "{} line(s) are in the write-ahead log and not in the store - the store \
+                 refused their rows, or the start could not read them back. The log keeps \
+                 them, and the next start tries again",
+                commas(rows)
+            )),
+        }
+    }
+}
+
+/// The refusal a shipper gets while the write-ahead log cannot write.
 ///
 /// 503 and a `Retry-After`, the same shape as the shed at `busy`, and for a related
 /// reason: this server cannot take the batch now and the caller should keep it and come
 /// back. The difference is in the body, which names the write error - an operator reading
 /// a shipper's log needs to see `No space left on device` there and not "try later".
 ///
-/// **Why a refusal at all.** With no write-ahead log a `200` means *buffered*, and a
-/// buffer that cannot drain is not durability. Measured on a full disk: every batch got a
-/// `200`, the shutdown log said "90,000 rows written", and after a restart `COUNT LOG {}`
-/// was 0. A `503` is the only answer that keeps the line at the shipper, where it can
-/// still be sent somewhere else. When the WAL lands this moves to the WAL: a store append
-/// that fails after a durable WAL write is logged and answered `Ok`, because the data is
-/// safe by then and a 500 would make a shipper resend a line that is already stored.
-fn cannot_write(detail: &str) -> Response {
+/// **This is the one refusal that is about durability, and it is the log's.** A `200` means
+/// the line is in the log and flushed, so a log that cannot write has no `200` to give; a
+/// `503` keeps the line at the shipper, where it can still be sent again. It used to be
+/// the store's: with no log a `200` meant *buffered*, and on a full disk every batch got
+/// one, the shutdown log said "90,000 rows written", and after a restart `COUNT LOG {}`
+/// was 0. A store that cannot write is no longer a reason to refuse anything - the line is
+/// safe in the log, and a `503` would make a shipper resend a line that is already stored.
+fn cannot_log(detail: &str) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
         Json(json!({
             "ok": false,
             "error": format!(
-                "the store cannot write, so a 200 would be a lie - there is no \
-                 write-ahead log and a buffered line is not a durable one: {detail}"
+                "the write-ahead log cannot write, so nothing of this body was taken - a \
+                 200 means the line is durable. Keep the body and send it again: {detail}"
             ),
             "retry_after": RETRY_AFTER_SECONDS,
         })),
-    )
-        .into_response()
-}
-
-/// A body the store could not take all of: `503`, a `Retry-After`, and the ordinary
-/// report, so the lines that did land and the ones that did not are both named.
-///
-/// **A 503 and not a 200**, though most of the body may be in. With no write-ahead log a
-/// `200` over a line the store refused leaves the shipper believing it was delivered,
-/// and nothing after that can bring it back. A `503` keeps the whole batch at the shipper,
-/// and a retry that resends the lines that landed duplicates them - a cost that is visible
-/// and bounded, where the lost line was neither. Bounded because the store stays degraded
-/// until the leaf opens (`StoreManager::retry_unopened`), so every retry before then is
-/// refused at the door and stores nothing: the lines this body stored are stored twice at
-/// most. `errors` says which lines to resend for a client that reads it.
-///
-/// The message claims no more than the body holds. `errors` is capped, so past the cap -
-/// or behind a thousand malformed lines - it may list few of the refused lines or none,
-/// and the reason is carried here as well.
-fn partly_stored(report: &IngestReport) -> Response {
-    let listed = report.errors.iter().filter(|e| e.not_stored).count() as u64;
-    let where_listed = if listed == report.not_stored {
-        "each is in `errors` by line number".to_string()
-    } else {
-        format!(
-            "{listed} of them are in `errors` by line number, and `errors_omitted` counts \
-             the rest with the other rejections past the report's cap"
-        )
-    };
-    let mut body = report.to_json();
-    body["error"] = json!(format!(
-        "the store could not take {} line(s) of this body ({}); {where_listed}. A 200 would \
-         be a lie: there is no write-ahead log, and a line the store refused is nowhere",
-        report.not_stored,
-        report
-            .store_error
-            .as_deref()
-            .unwrap_or("no reason recorded"),
-    ));
-    body["retry_after"] = json!(RETRY_AFTER_SECONDS);
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
-        Json(body),
     )
         .into_response()
 }
@@ -896,6 +1476,7 @@ fn partly_stored(report: &IngestReport) -> Response {
 /// need a second.
 async fn post_ingest(
     State(server): State<Arc<Server>>,
+    axum::Extension(permit): axum::Extension<Permit>,
     uri: axum::http::Uri,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
@@ -942,28 +1523,37 @@ async fn post_ingest(
         .map(str::to_owned);
 
     let held = Arc::clone(&server);
-    // The parse and the trie walk are CPU work, and each append after them takes a `std`
-    // lock, so none of it belongs on a runtime thread that also answers `/health`.
+    // The parse and the trie walk are CPU work, and the wait for the log's flush after
+    // them blocks, so none of it belongs on a runtime thread that also answers `/health`.
     // Inflating joins them rather than running above: a gzip bomb is seconds of CPU, and
     // spending it on a runtime thread would stall every other endpoint while the server
     // was being attacked.
     let done = tokio::task::spawn_blocking(move || {
         let decoded = decode(&body, encoding.as_deref(), held.api.max_decompressed_bytes)
             .map_err(IngestFailure::Body)?;
-        ingest(&held, &decoded, now).map_err(IngestFailure::Fatal)
+        ingest(&held, &decoded, now, permit).map_err(IngestFailure::Fatal)
     })
     .await;
 
     match done {
-        // The server could not store some of it, which is not the client's fault and not
-        // a thing a 200 can say.
-        Ok(Ok(report)) if report.not_stored > 0 => partly_stored(&report),
         // 200 even with errors in it. The body was accepted and part of it was stored;
         // a 4xx would tell a shipper to retry the whole batch and duplicate the 497
         // lines that landed, and there is nothing the client could have sent differently
         // for the other 3 beyond not sending them.
         Ok(Ok(report)) => (StatusCode::OK, Json(report.to_json())).into_response(),
         Ok(Err(IngestFailure::Body(e))) => fail(e.status(), &e.message()),
+        // The log could not take the body, which is not the client's fault and not a
+        // thing a 200 can say: the door's own refusal, for a body that was already past it.
+        Ok(Err(IngestFailure::Fatal(IngestError::Log(why)))) => cannot_log(&why),
+        // And a shed: the log is behind what arrives, and the body waits at its sender.
+        Ok(Err(IngestFailure::Fatal(IngestError::Busy))) => {
+            server.requests_shed.fetch_add(1, Ordering::Relaxed);
+            log_busy()
+        }
+        // The sender's to fix, as a body past the wire cap is: no retry of it will fit.
+        Ok(Err(IngestFailure::Fatal(e @ IngestError::TooLarge { .. }))) => {
+            fail(StatusCode::PAYLOAD_TOO_LARGE, &e.to_string())
+        }
         Ok(Err(IngestFailure::Fatal(e))) => {
             fail(StatusCode::INTERNAL_SERVER_ERROR, &error::chain(&e))
         }
@@ -1026,8 +1616,8 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Admission control for `/ingest`: a 503 while the store cannot write, then a permit or
-/// a 503 that says when to come back.
+/// Admission control for `/ingest`: a 503 while the write-ahead log cannot write, then a
+/// permit or a 503 that says when to come back.
 ///
 /// **A layer, not a check inside the handler.** A layer wraps the handler, so it runs
 /// before the extractors - before a byte of the body is pulled off the socket. Shedding in
@@ -1042,36 +1632,45 @@ fn percent_decode(text: &str) -> String {
 /// the batch, times out, and opens another connection - so a merely slow server gathers
 /// connections until it is unreachable. The immediate refusal is the kinder answer
 /// precisely because a client knows what to do with it.
-async fn admit(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {
+async fn admit(State(server): State<Arc<Server>>, mut request: Request, next: Next) -> Response {
     // **First, and in the layer rather than in the handler**, for the reason the shed is
-    // here: a layer runs before the extractors, so a body this server cannot store is
-    // refused before ten megabytes of it are pulled off the socket. In the handler the
+    // here: a layer runs before the extractors, so a body this server cannot make durable
+    // is refused before ten megabytes of it are pulled off the socket. In the handler the
     // `Bytes` extractor has already buffered it.
     //
-    // Before the permit too. A server that cannot write has no use for the slot, and a
+    // Before the permit too. A server that cannot log has no use for the slot, and a
     // shipper told "at capacity" would read that as "send fewer" when the answer is "send
-    // none until the disk is back".
-    if server.write_health.is_degraded() {
-        let detail = server
-            .write_health
+    // none until the disk is back". The flush tick asks the log to try again
+    // (`Wal::probe`), so the door opens within a tick of the disk coming back.
+    //
+    // **The log, and not the store.** A store that cannot write refuses nothing here.
+    if let Some(wal) = server.wal.as_ref().filter(|wal| !wal.is_healthy()) {
+        let detail = wal
             .last_error()
             .unwrap_or_else(|| "the last flush could not write".to_string());
-        return cannot_write(&detail);
+        return cannot_log(&detail);
     }
     // Past twice the buffer limit the flush is falling behind what arrives, even closing
     // the largest buffers early, and a body taken now is memory the process may not have.
     // Refused like a shed - a shipper told to come back in a second keeps its batch - and
-    // counted as one.
+    // counted as one. A shed and not a verdict on durability: the log could take the line,
+    // and the row it becomes is memory this process has run out of.
     if server.stores.buffers_full() {
         server.requests_shed.fetch_add(1, Ordering::Relaxed);
-        return buffers_full(server.stores.buffer_bytes());
+        return buffers_full(
+            server.stores.buffer_bytes(),
+            server
+                .write_health
+                .is_degraded()
+                .then(|| server.write_health.last_error())
+                .flatten(),
+        );
     }
 
+    // One wait for both permits, so the refusal is no later for there being two.
+    let until = tokio::time::Instant::now() + INGEST_QUEUE_WAIT;
     let permits = Arc::clone(&server.ingest_permits);
-    // `acquire_owned`, so the permit outlives this scope and covers the blocking task,
-    // which is the part that is actually scarce.
-    let waited = tokio::time::timeout(INGEST_QUEUE_WAIT, permits.acquire_owned()).await;
-    let _permit = match waited {
+    let parse = match tokio::time::timeout_at(until, permits.acquire_owned()).await {
         Ok(Ok(permit)) => permit,
         // The semaphore is never closed, so this is the timeout and nothing else.
         _ => {
@@ -1079,22 +1678,79 @@ async fn admit(State(server): State<Arc<Server>>, request: Request, next: Next) 
             return busy(server.api.ingest_concurrency);
         }
     };
+    // After the parse's permit, so that running out of these means what the refusal
+    // says: the bodies inside are not being parsed - there is a permit free for that -
+    // they are waiting on the log.
+    let bodies = Arc::clone(&server.ingest_bodies);
+    let body = match tokio::time::timeout_at(until, bodies.acquire_owned()).await {
+        Ok(Ok(permit)) => permit,
+        _ => {
+            server.requests_shed.fetch_add(1, Ordering::Relaxed);
+            return log_busy();
+        }
+    };
+    // **Handed to the handler, which hands them to its blocking task.** Held only here
+    // they went back the moment a client hung up - this future is dropped then - while
+    // the task they were meant to cover ran on: a sender that timed out and tried again
+    // took the freed permit and queued a second copy of its body beside the first.
+    request.extensions_mut().insert(Permit {
+        parse: Arc::new(parse),
+        body: Arc::new(body),
+    });
     next.run(request).await
+}
+
+/// One `/ingest` body's permits, as the door hands them to the handler: see `admit`.
+/// `parse` goes back once the body is parsed and routed; `body` when its task returns.
+#[derive(Clone)]
+struct Permit {
+    parse: Arc<tokio::sync::OwnedSemaphorePermit>,
+    body: Arc<tokio::sync::OwnedSemaphorePermit>,
 }
 
 /// The refusal while the buffers are past twice their limit: the shed's shape, with what
 /// is held against what may be.
-fn buffers_full((held, limit): (u64, u64)) -> Response {
+///
+/// `failing` is the store's last write error while its flushes are failing: then the
+/// buffers are full because nothing leaves them, not because too much arrives, and the
+/// refusal says so - the remedy is the disk, not the shippers. The rows already
+/// acknowledged are in the write-ahead log either way.
+fn buffers_full((held, limit): (u64, u64), failing: Option<String>) -> Response {
+    let why = match failing {
+        Some(error) => format!(
+            "the store cannot write ({error}), so nothing leaves them - every line already \
+             acknowledged is in the write-ahead log"
+        ),
+        None => "the flush is behind what is arriving".to_string(),
+    };
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
         Json(json!({
             "ok": false,
             "error": format!(
-                "the buffers hold {} bytes of memory, past twice the {} byte limit: the \
-                 flush is behind what is arriving; retry in {RETRY_AFTER_SECONDS}s",
+                "the buffers hold {} bytes of memory, past twice the {} byte limit: {why}; \
+                 retry in {RETRY_AFTER_SECONDS}s",
                 commas(held),
                 commas(limit)
+            ),
+        })),
+    )
+        .into_response()
+}
+
+/// The shed of a body the write-ahead log had no room for - as many bodies waiting on it
+/// as may, or as many bytes: the disk is behind what arrives. Nothing of the body is in
+/// the log.
+fn log_busy() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(json!({
+            "ok": false,
+            "error": format!(
+                "the write-ahead log has more waiting to be written than it may hold: its \
+                 disk is behind what is arriving; retry in {RETRY_AFTER_SECONDS}s"
             ),
         })),
     )
@@ -1778,13 +2434,13 @@ fn cancel_compactions(server: &Server) {
 
 /// Wait for the compaction threads: after the final flush, before the lock is let go.
 ///
-/// **After the final flush and not before it.** Rows in a buffer have never been anywhere
-/// but memory, and a process told to stop may be killed before it has finished: waiting
-/// here first would put a compaction's last file between a SIGTERM and the only write that
-/// loses rows if it is skipped. After it, a kill during this wait costs nothing - a rebuilt
-/// file the manifest does not name is removed by the next start. Waiting later is safe
-/// because a compaction adds no row and no template: it and the flush meet only under the
-/// store's lock, one after the other.
+/// **After the final flush and not before it.** A process told to stop may be killed
+/// before it has finished, and a kill before the flush costs the next start a replay of
+/// every row still buffered: waiting here first would put a compaction's last file between
+/// a SIGTERM and the write that saves it. After it, a kill during this wait costs
+/// nothing: a rebuilt file the manifest does not name is removed by the next start. Waiting
+/// later is safe because a compaction adds no row and no template: it and the flush meet
+/// only under the store's lock, one after the other.
 ///
 /// **Before the lock is released**, because a thread still writing the directory after it
 /// would be writing beside whichever process took the lock next.
@@ -1876,15 +2532,17 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
 /// banner is seen once by whoever started it; this is the field a dashboard can read.
 ///
 /// `buffered_rows` and `write_failures` are the two numbers that are only visible here.
-/// The first is exactly what a `kill -9` would cost while there is no write-ahead log. The
-/// second exists because a disk that has gone away is otherwise invisible: `/ingest` keeps
-/// answering 200 - the line *was* parsed, and the trie *did* take it - while nothing
-/// reaches a file. A silent write failure behind a successful response is the worst
-/// outcome available here, so it gets a counter.
+/// The first is what the next start would put back from the write-ahead log - and, with
+/// storage in memory, what an exit costs. The second exists because a disk that has gone
+/// away under `data/` is otherwise invisible: `/ingest` keeps answering 200, rightly - the
+/// line is durable in the log - while no row reaches a file. `wal` is the log itself:
+/// where it has got to, where the store has, how far behind them the checkpoint is, and
+/// what this start had to read back.
 async fn get_stats(State(server): State<Arc<Server>>) -> Response {
     let stores = &server.stores;
     let (open_segments, max_open_segments) = stores.open_files();
     let (buffered_bytes, max_buffer_bytes) = stores.buffer_bytes();
+    let wal = server.wal.as_ref().map(Wal::stats);
     let uptime = server.started.elapsed().as_secs_f64();
     let ingested = server.lines_ingested.load(Ordering::Relaxed);
     let queries = server.queries.load(Ordering::Relaxed);
@@ -1896,7 +2554,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "kind": stores.kind(),
             "durable": server.storage.is_durable(),
             "note": if server.storage.is_durable() {
-                "one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that seals the least recently written and opens its own day's, a day is rebuilt into full row groups in finished files the day after its last live row, and there is no write-ahead log yet - so an unclean exit loses up to one row group"
+"a line is written to the write-ahead log under wal/ and flushed before /ingest acknowledges it, so an unclean exit loses no acknowledged line: the next start puts back every line no row group holds, once; one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that seals the least recently written and opens its own day's, and a day is rebuilt into full row groups in finished files the day after its last live row, once all of it is behind the log's checkpoint"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
@@ -1910,9 +2568,42 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // nothing loads while this exists.
             "catalog": server.trie.catalog_path().map(|p| p.display().to_string()),
             "flush_interval_ms": server.storage.flush_interval.as_millis() as u64,
-            // How long a row group may stay open, which is also what an unclean exit
-            // costs until the write-ahead log lands.
+            // How long a row group may stay open: what a quiet template's rows wait in
+            // the log and in memory before they reach a file.
             "row_group_timeout_ms": server.storage.row_group_timeout.as_millis() as u64,
+            // The write-ahead log; null when storage is memory. `last_seq` is the last
+            // position made durable, `applied` the last handed to the store, and every
+            // position up to `checkpoint` is in a row group - the segments wholly behind
+            // it are gone. `healthy` false is /ingest answering 503. `replay` is what
+            // this start read back: `applied` put back in memory, `covered` skipped
+            // because a row group already held them, `held` left in the log.
+            "wal": wal.as_ref().map(|wal| json!({
+                "dir": server.wal.as_ref().map(|w| w.dir().display().to_string()),
+                "stream": format!("{:016x}", wal.stream),
+                "segments": wal.segments,
+                "first_segment": wal.first_segment,
+                "bytes": wal.bytes,
+                "last_seq": wal.last_seq,
+                "applied": wal.applied,
+                "checkpoint": wal.checkpoint,
+                "flushes": wal.flushes,
+                "healthy": wal.healthy,
+                "last_error": wal.last_error,
+                "segment_bytes": server.storage.wal_segment_bytes,
+                "batch_size": server.storage.wal_batch_lines,
+                "held_rows": server.held.rows(),
+                "replay": {
+                    "records": server.replayed.records,
+                    "applied": server.replayed.applied,
+                    "covered": server.replayed.covered,
+                    "held": server.replayed.held,
+                    "replaced": server.replayed.replaced,
+                    "behind_checkpoint": server.replayed.behind,
+                    "torn": server.replayed.torn,
+                    "corrupt": server.replayed.corrupt,
+                    "seconds": server.replayed.seconds,
+                },
+            })),
             "stores_open": stores.open(),
             // Day files held open for writing, and the cap they are held under. Past it the
             // least recently written one is sealed.
@@ -1941,15 +2632,16 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "forced_closes": stores.forced_closes(),
             "write_failures": stores.write_failures(),
             "last_write_error": stores.last_write_error(),
-            // True while the last flush tick failed, which is also while /ingest answers
-            // 503 and /health says degraded. The first tick that writes everything
-            // clears it.
+            // True while the last flush tick failed, which is also while /health says
+            // degraded. The first tick that writes everything clears it. /ingest goes on
+            // answering 200 meanwhile: its lines are in the log.
             "degraded": stores.is_degraded(),
             // On disk this is the segments' bytes as of the last row group closed, plus what the
             // buffer would add. In memory it is payload bytes - key text, string values,
             // and a scalar's fixed width - and the resident size is larger, because
             // allocator slack and the hash tables are not in it. Estimated either way.
-            "approx_bytes": stores.approx_bytes(),
+            // The log's segments count toward it: they are bytes this database holds.
+            "approx_bytes": stores.approx_bytes() + wal.as_ref().map_or(0, |wal| wal.bytes),
         },
         "trie": {
             "templates": server.trie.template_count(),
@@ -1965,10 +2657,11 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // counter divided by a clock.
             "lines_per_second": rate(ingested, uptime),
             // Nonzero means the server was telling shippers to slow down, which is the
-            // design working. Only visible here: a shed body was never read, so it is in
-            // none of the line counters above.
+            // design working. A body shed at the door was never read, so it is in none
+            // of the line counters above; one the log shed was, and is in two of them.
             "requests_shed": server.requests_shed.load(Ordering::Relaxed),
             "ingest_concurrency": server.api.ingest_concurrency,
+            "ingest_bodies": ingest_bodies(&server.api),
         },
         "queries": {
             "served": queries,
@@ -2050,6 +2743,7 @@ pub fn run(
 ) -> Result<(), CliError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .max_blocking_threads(ingest_bodies(&api) + OTHER_BLOCKING_THREADS)
         .build()
         .map_err(ServeError::Runtime)?;
     runtime.block_on(serve(host, port, limits, api, storage, schema))?;
@@ -2168,7 +2862,15 @@ async fn serve(
         .map_err(ServeError::Serve)?;
 
     // `axum::serve` returns once every connection it accepted has finished, so reaching
-    // this line *is* "in-flight requests complete first".
+    // this line *is* "in-flight requests complete first" - but for a body whose client
+    // hung up: its connection is finished and its blocking task is not. Every body's
+    // permit taken back is every such task returned - its lines in the log and applied,
+    // or refused - so the final flush below writes all there will be, and nothing of
+    // `/ingest` runs on beside the shutdown or after the directory's lock is let go.
+    let _ingest_done = server
+        .ingest_bodies
+        .acquire_many(ingest_bodies(&server.api) as u32)
+        .await;
     //
     // Loads stop next: one past its commit finishes it, one before it removes its staging,
     // so the final flush and the trie snapshot below see the directory as it will stay - a
@@ -2224,7 +2926,13 @@ async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
             () = server.flush_now.notified() => {}
         }
         let held = Arc::clone(&server);
-        let flushed = tokio::task::spawn_blocking(move || held.stores.flush_all(FlushKind::Tick));
+        let flushed = tokio::task::spawn_blocking(move || {
+            let summary = held.stores.flush_all(FlushKind::Tick);
+            // Behind the flush, never ahead of it: the checkpoint moves past a row only
+            // once the row group holding it has been flushed and published.
+            move_checkpoint(&held);
+            summary
+        });
         match flushed.await {
             Ok(summary) => {
                 if summary.failed > 0 {
@@ -2256,6 +2964,43 @@ async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
             Err(join) => log(&format!("WARN flush task failed: {join}")),
         }
     }
+}
+
+/// After a flush: ask a log that cannot write to try again, and move its checkpoint up
+/// behind the oldest row that is still only in memory.
+///
+/// **The checkpoint moves while the server runs**, here, every tick. Left to anything
+/// rarer - a shutdown, a compaction - the log would grow for as long as the process lived.
+/// What bounds it is the oldest row no row group holds yet: a buffered one, or one the
+/// store refused (`Held`), which waits for the next start.
+fn move_checkpoint(server: &Server) -> Option<wal::Advanced> {
+    let wal = server.wal.as_ref()?;
+    wal.probe();
+    let (moved, problem) =
+        wal.advance(
+            || match (server.stores.oldest_position(), server.held.from()) {
+                (Some(buffered), Some(held)) => Some(buffered.min(held)),
+                (buffered, held) => buffered.or(held),
+            },
+        );
+    // Told whatever else happened: the checkpoint is where it is whether or not its file
+    // could be written, and the scheduler's compaction waits on it.
+    if let (Some(moved), Some(disk)) = (moved, server.stores.disk_store()) {
+        disk.note_checkpoint(moved.checkpoint);
+    }
+    match problem {
+        None => server.checkpoint_failing.store(false, Ordering::Relaxed),
+        // Said once, not every tick: nothing is lost by it - a start reads a little more
+        // of the log, or finds a segment this could not delete and deletes it.
+        Some(e) => {
+            if !server.checkpoint_failing.swap(true, Ordering::Relaxed) {
+                log(&format!(
+                    "WARN wal - the checkpoint moved and could not be kept: {e}"
+                ));
+            }
+        }
+    }
+    moved
 }
 
 /// SIGTERM and SIGINT, both cancelling the one token that every long-running part of the
@@ -2295,7 +3040,8 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
     }
 }
 
-/// The fixed shutdown order, with the steps this build does not have named as skipped.
+/// The fixed shutdown order, with the steps a memory server does not have named as
+/// skipped.
 ///
 /// ```text
 /// stop accepting → final flush → WAL checkpoint → trie.json → close stores → close WAL
@@ -2303,24 +3049,23 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
 ///
 /// Printing the skipped steps rather than omitting them is the point: an operator watching
 /// a clean shutdown scroll past should see exactly which durability they have and which
-/// they do not. Two of the six are real; the WAL's two are not yet.
+/// they do not.
+///
+/// **No row depends on this running to the end.** Every line a body was told `200` for is
+/// in the write-ahead log, so a final flush that fails - or a `SIGKILL` that lands halfway
+/// through - costs the next start a replay and nothing else. The flush is still done: a
+/// clean stop then leaves every row in a sealed file and nothing to read back.
 fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     log("in-flight requests complete");
 
-    // What the final flush could not write, if anything. Carried to the end rather than
-    // returned here: the trie snapshot and the close-stores line are still worth doing
-    // and still worth printing, and an operator reading a failed shutdown wants the whole
-    // sequence and not the first half of it.
-    let mut lost: Option<(usize, u64)> = None;
-
     if server.storage.is_durable() {
         let summary = server.stores.flush_all(FlushKind::Final);
-        // Rows still in a buffer once the final flush has done all it can. **This is the
-        // honest count of what was lost**: with no write-ahead log a buffered row has never
-        // been anywhere but memory, and this process is about to end.
-        if summary.failed > 0 {
-            lost = Some((summary.failed, server.stores.buffered()));
-        }
+        // Rows still in a buffer once the final flush has done all it can. Not lost: they
+        // are in the log, and the next start puts them back.
+        let unwritten = match summary.failed {
+            0 => None,
+            leaves => Some((leaves, server.stores.buffered())),
+        };
         // Bounded by the open days and not by the templates: one flush and one seal per day
         // file, however many templates' row groups went into it. Sealing a file per
         // template per day took 349 seconds for 200,000 rows, where Kubernetes sends
@@ -2334,18 +3079,11 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
             summary.sealed,
             commas(summary.bytes),
             summary.took.as_secs_f64(),
-            // Nought rows against a failed leaf is a real outcome and not a rounding: a
-            // leaf whose row groups all landed and whose `_leaf.json` would not write has
-            // failed without losing anything. Said in as many words, because "0 row(s)
-            // were NOT written" beside "FAILED" reads as a bug in the counter.
-            match lost {
+            match unwritten {
                 None => String::new(),
-                Some((leaves, 0)) => format!(
-                    ", {leaves} leaf/leaves FAILED - every row was written, so nothing is \
-                     lost, but something the shutdown had to do did not happen"
-                ),
                 Some((leaves, rows)) => format!(
-                    ", {leaves} leaf/leaves FAILED: {} row(s) were NOT written and are lost",
+                    ", {leaves} leaf/leaves FAILED: {} row(s) were not written to a row \
+                     group. They are in the write-ahead log, and the next start puts them back",
                     commas(rows)
                 ),
             },
@@ -2354,11 +3092,31 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
         log("final flush - skipped, storage is memory (--data-dir puts the stores on disk)");
     }
 
-    // Not one of the six steps: it writes nothing a restart needs. Here because this is
-    // the first moment a wait costs no row.
+    // Not one of the six steps: it writes nothing a restart needs. Here because a
+    // compaction's own flush belongs behind the one above.
     join_compactions(server);
 
-    log("WAL checkpoint - skipped, there is no WAL yet");
+    // Behind the final flush, so that a clean stop leaves the checkpoint at the end of the
+    // log and the next start with nothing to read back.
+    match &server.wal {
+        Some(wal) => {
+            let moved = move_checkpoint(server);
+            let stats = wal.stats();
+            log(&format!(
+                "WAL checkpoint - position {} of {}{}; {} segment(s), {} byte(s)",
+                commas(stats.checkpoint),
+                commas(stats.last_seq),
+                match moved {
+                    Some(moved) if moved.deleted > 0 =>
+                        format!(", {} segment(s) behind it deleted", moved.deleted),
+                    _ => String::new(),
+                },
+                stats.segments,
+                commas(stats.bytes),
+            ));
+        }
+        None => log("WAL checkpoint - skipped, storage is memory"),
+    }
 
     match server.storage.trie_file.as_deref() {
         Some(path) => match crate::triefile::save(&server.trie, path) {
@@ -2368,9 +3126,8 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
                 commas(bytes),
                 commas(server.trie.template_count())
             )),
-            // Not a reason to fail the exit. The rows are already written, and the next
-            // start relearns the templates from the lines it is sent - which is the same
-            // recovery an unparsable snapshot gets, for the same reason.
+            // Not a reason to fail the exit. Nothing loads the snapshot while the catalog
+            // exists: it is there for a human to read.
             Err(e) => log(&format!("WARN trie.json - {}", error::chain(&e))),
         },
         None => log("trie.json - skipped, storage is memory"),
@@ -2383,62 +3140,47 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     // contradicting the line above it.
     let held = stores.rows();
     let unwritten = stores.buffered();
-    let dropped = stores.rows_dropped();
     let kept = if server.storage.is_durable() {
         "written"
     } else {
         "discarded, they were only in memory"
     };
     log(&format!(
-        "close stores - {} store(s), {} row(s) {kept}{}",
+        "close stores - {} store(s), {} row(s) {kept}{}{}",
         commas(stores.open() as u64),
         commas(held.saturating_sub(unwritten)),
         match (server.storage.is_durable(), unwritten) {
             (true, 0) => String::new(),
-            (true, n) => format!(", {} row(s) still buffered and lost", commas(n)),
+            (true, n) => format!(
+                ", {} row(s) still buffered: in the write-ahead log, put back at the next start",
+                commas(n)
+            ),
             (false, _) => String::new(),
+        },
+        match server.held.rows() {
+            0 => String::new(),
+            n => format!(
+                ", {} row(s) the store refused: in the write-ahead log, stored at the next start",
+                commas(n)
+            ),
         },
     ));
 
-    log("close WAL - skipped, there is no WAL yet");
-
-    // **The exit code is the last honest thing a process says.** It used to be 0 whatever
-    // happened, including when leaves failed to flush and their rows went with the
-    // process: 20,000 lines accepted and 10,625 back after a restart, exit 0. An
-    // orchestrator reading that code has no other way to know.
-    //
-    // Rows the store refused while running count too, though each was refused to its
-    // sender: the process did not store what it was sent, and a clean exit would say it
-    // had. When both happened the final flush is the error, and the line names both.
-    let refused = match dropped {
-        0 => String::new(),
-        n => format!(
-            "{} row(s) the store refused while running were never stored",
-            commas(n)
-        ),
-    };
-    match lost {
-        None if dropped == 0 => {
-            log("exit 0");
-            Ok(())
+    match &server.wal {
+        Some(wal) => {
+            wal.close();
+            log("close WAL - closed");
         }
-        None => {
-            log(&format!("exit 1 - {refused}"));
-            Err(ServeError::RowsDropped { rows: dropped })
-        }
-        Some((leaves, rows)) => {
-            log(&format!(
-                "exit 1 - the final flush failed for {leaves} leaf/leaves, costing {} row(s){}",
-                commas(rows),
-                if refused.is_empty() {
-                    String::new()
-                } else {
-                    format!("; and {refused}")
-                }
-            ));
-            Err(ServeError::RowsLost { leaves, rows })
-        }
+        None => log("close WAL - skipped, storage is memory"),
     }
+
+    // **Always 0 once it gets here.** The exit code is the last thing a process says, and
+    // it used to be 1 for a final flush that could not write every row - rightly, while a
+    // buffered row was only ever in memory: 20,000 lines accepted, 10,625 back after a
+    // restart. Those rows are in the log now. A stop that leaves every acknowledged line
+    // durable has lost nothing, and an orchestrator told otherwise would be told a lie.
+    log("exit 0");
+    Ok(())
 }
 
 /// The startup banner.
@@ -2463,7 +3205,7 @@ fn banner(addr: SocketAddr, server: &Server) {
                 "  storage     {}\n\
                  \x20             trie      {}\n\
                  \x20             segments  a row is queryable the moment it is ingested; it\n\
-                 \x20                       reaches disk when its row group closes - 8,192\n\
+                 \x20                       reaches a file when its row group closes - 8,192\n\
                  \x20                       rows, 8MB, or {}ms, whichever comes first. The\n\
                  \x20                       thresholds are checked every {}ms. At most {} day\n\
                  \x20                       files are open for writing at once; past that a\n\
@@ -2478,9 +3220,9 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20                       fsynced, before the line that made it counts as\n\
                  \x20                       ingested; trie.json is a readable snapshot nothing\n\
                  \x20                       loads while the catalog exists.\n\
-                 \x20             NO WRITE-AHEAD LOG YET. A clean exit loses nothing. A\n\
-                 \x20             kill -9 or a power cut loses up to one row group of rows -\n\
-                 \x20             at most {}ms of them. Templates survive either.",
+                 \x20             wal       {}/wal - a line is flushed here before /ingest\n\
+                 \x20                       acknowledges it. A kill -9 or a power cut loses no\n\
+                 \x20                       acknowledged line: the next start puts each back, once.",
                 base.display(),
                 trie_file
                     .as_ref()
@@ -2498,7 +3240,7 @@ fn banner(addr: SocketAddr, server: &Server) {
                     ),
                 },
                 base.display(),
-                server.storage.row_group_timeout.as_millis(),
+                base.display(),
             ),
             (None, _) => {
                 "  STORAGE IS IN MEMORY. Everything ingested is lost when this process exits.\n\
@@ -2731,5 +3473,64 @@ mod tests {
         thread.join().expect("the look's thread");
         drop(server);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A store whose leaves will not open while `shut` is set: what the disk store never
+    /// does today, and what the log's applier has to survive if a store ever does.
+    struct Refusing(Arc<AtomicBool>);
+
+    impl crate::store::Store for Refusing {
+        fn open(
+            &self,
+            template_id: u64,
+            time_column: &str,
+        ) -> Result<Arc<dyn crate::store::LeafStore>, StoreError> {
+            if self.0.load(Ordering::Relaxed) {
+                return Err(StoreError::Io {
+                    template_id,
+                    source: std::io::Error::other("the leaf will not open"),
+                });
+            }
+            crate::store::MemoryStore::new().open(template_id, time_column)
+        }
+
+        fn kind(&self) -> &'static str {
+            "refusing"
+        }
+
+        fn base_path(&self) -> Option<&Path> {
+            None
+        }
+    }
+
+    /// A row the store refuses after the log has its line is not an error and not a
+    /// loss: it is held - the checkpoint stays behind it - and so is every later row of
+    /// its template, though the store would take them by then. A row group cut around
+    /// the one that was skipped would say its line was stored, and the replay that
+    /// should store it would step over it. Other templates go on.
+    #[test]
+    fn a_row_the_store_refuses_is_held_and_its_template_waits_with_it() {
+        let shut = Arc::new(AtomicBool::new(true));
+        let stores = StoreManager::new(Box::new(Refusing(Arc::clone(&shut))));
+        let held = Held::new();
+        let placed = |template_id| db::Placed {
+            template_id,
+            time_column: "ts".to_string(),
+            row: crate::store::Row::new(),
+        };
+        assert_eq!(held.from(), None);
+
+        assert!(!held.apply(&stores, 40, placed(7)));
+        assert_eq!((held.from(), held.rows()), (Some(40), 1));
+
+        shut.store(false, Ordering::Relaxed);
+        assert!(
+            !held.apply(&stores, 41, placed(7)),
+            "the template was let back in"
+        );
+        assert_eq!(stores.rows(), 0);
+        assert!(held.apply(&stores, 42, placed(8)));
+        assert_eq!(stores.rows(), 1);
+        assert_eq!((held.from(), held.rows()), (Some(40), 2));
     }
 }

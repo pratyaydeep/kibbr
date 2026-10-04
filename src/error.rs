@@ -20,9 +20,11 @@ pub enum DetectorErrorKind {
     NotDurable { detail: String },
 
     /// The line parsed and its template exists, and the store could not take the row - a
-    /// leaf whose directory would not open. With no write-ahead log the row is then
-    /// nowhere, so the line is refused rather than counted: `/ingest` answers `503` for
-    /// a body holding one of these, and the shutdown exits non-zero.
+    /// leaf whose directory would not open. **Only where there is no write-ahead log**:
+    /// the CLI, the bench, a bulk load. There the row is nowhere, so the line is refused
+    /// rather than counted. `/ingest` never builds one: its line is durable in the log
+    /// before the store is asked, and a store that fails then delays the row and is not
+    /// an error (`IngestError`).
     #[error("not ingested: store: {detail}")]
     NotStored { detail: String },
 
@@ -224,6 +226,83 @@ pub enum QueryError {
     BackwardsRange { from: String, to: String },
 }
 
+/// What stops the live door from taking a body at all. A line it refuses is not one of
+/// these: that is a `DetectorErrorKind` against the line's number, and the body goes on.
+///
+/// **No variant holds a `StoreError`, and none can be made from one.** A line is durable
+/// in the write-ahead log before the store is asked for anything, so a store that cannot
+/// take the row - a leaf that will not open, a full disk under `data/` - is not a reason
+/// to tell the sender its line was refused: a `500` would be a lie, and a shipper would
+/// send again a line that is already safe. The store's failure is logged, the row comes
+/// back at the next start's replay, and the sender is told `Ok`.
+///
+/// Two things hold that, and the compiler holds both. The store is asked by the log's
+/// applier, whose function returns nothing (`wal::Apply`) - or, with storage in memory
+/// and no log, through the same call the applier makes, which answers only whether the
+/// row was taken - so there is no store error for the ingest path to look at. And the
+/// assertions below stop building
+/// the day this type can be converted from a store's error or from either error that
+/// wraps one - which is how one would be carried in, by a `?`. What they cannot see is a
+/// variant built by hand from a store error's text; there is no store call here to take
+/// one from.
+#[derive(Debug, Error)]
+pub enum IngestError {
+    /// The body could not be split into lines.
+    #[error("{0}")]
+    Body(String),
+
+    /// The trie's lock poisoned mid-body, which fails every line after it too: the body
+    /// is abandoned rather than answered with 500 copies of one message. A catalog append
+    /// that fails is not this - it costs its line, reported by number.
+    #[error(transparent)]
+    Trie(#[from] crate::trie::TrieError),
+
+    /// The write-ahead log could not take the body. **The one refusal that is about
+    /// durability**, and the only way a body whose lines parsed is refused: none of it is
+    /// in the log - a body goes in whole or not at all - so nothing has it, the sender is
+    /// told `503`, and sending it again stores nothing twice. The text is the log's own
+    /// error; the log knows nothing of the store.
+    #[error("the write-ahead log could not take the body: {0}")]
+    Log(String),
+
+    /// More is waiting on the write-ahead log than it may hold: the disk is behind what
+    /// arrives. A shed, as the door's are - nothing of the body is in the log, and the
+    /// sender is told `503` and when to come back.
+    #[error("the write-ahead log has more waiting to be written than it may hold")]
+    Busy,
+
+    /// The body's lines, as log records, are more than one write of the log holds - a
+    /// body is written whole. The sender's to fix, by sending less at once: a `413`.
+    #[error(
+        "the body's lines come to {bytes} bytes as records of the write-ahead log, past \
+         the {limit} one body may; send it as smaller bodies"
+    )]
+    TooLarge { bytes: usize, limit: usize },
+}
+
+/// Fails to build if `$type: From<$from>`. With that conversion in scope the two impls
+/// below both apply and the compiler cannot choose between them.
+macro_rules! never_from {
+    ($type:ty, $from:ty) => {
+        const _: fn() = || {
+            trait Ambiguous<A> {
+                fn check() {}
+            }
+            impl<T: ?Sized> Ambiguous<()> for T {}
+            #[allow(dead_code)]
+            struct Converts;
+            impl<T: ?Sized + From<$from>> Ambiguous<Converts> for T {}
+            let _ = <$type as Ambiguous<_>>::check;
+        };
+    };
+}
+
+// A `#[from] StoreError` on a variant, or `?` on a store call inside the ingest path.
+never_from!(IngestError, crate::store::StoreError);
+// And the two errors that can hold one, which `?` would carry it in by.
+never_from!(IngestError, CliError);
+never_from!(IngestError, crate::db::SinkError);
+
 /// What stops `kibbr serve` from starting, or from finishing cleanly.
 ///
 /// Nothing a *request* gets wrong is in here. A bad query is a 400 with the parse error
@@ -293,27 +372,12 @@ pub enum ServeError {
     )]
     PreRename { path: std::path::PathBuf },
 
-    /// The final flush could not write every buffered row, so they went with the process.
-    ///
-    /// **An error and not a log line**, because the exit code is the only part of a
-    /// shutdown an orchestrator reads. It used to exit 0 whatever happened - 20,000 lines
-    /// accepted, 10,625 back after a restart, exit 0. Everything else in the shutdown
-    /// sequence still runs and still prints; this is what the process ends with.
-    #[error(
-        "the final flush failed for {leaves} leaf/leaves and {rows} buffered row(s) went \
-         with the process; with no write-ahead log a buffered row was only ever in memory"
-    )]
-    RowsLost { leaves: usize, rows: u64 },
-
-    /// Rows the store refused while the process ran - a leaf whose directory would not
-    /// open. Each line was refused to its sender, so none of them is a silent loss; the
-    /// exit code says so anyway, because it is the only part of a run an orchestrator
-    /// reads, and a process that could not store what it was sent did not run cleanly.
-    #[error(
-        "{rows} row(s) could not be stored while this process ran; each line was refused \
-         to its sender with the store error, and none of them is on disk"
-    )]
-    RowsDropped { rows: u64 },
+    /// The write-ahead log could not be opened, read back or started. At startup and
+    /// fatal: a server that cannot make a line durable has nothing true to answer `200`
+    /// with, and one that guessed at a log it could not read would store lines twice or
+    /// not at all.
+    #[error(transparent)]
+    Wal(#[from] crate::wal::WalError),
 
     /// Another process owns the data directory. Taken before anything is written and
     /// before the port - only the read-only version check comes first: a second writer of

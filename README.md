@@ -319,6 +319,18 @@ arrives while the rows waiting in memory hold more than twice `--max-buffer-byte
 past twice it the flush is behind what is arriving, so a body taken then would be
 memory the process may not have.
 
+With `--storage disk` the `200` waits for the write-ahead log's flush, so the log
+is the third place a body can be turned away. At most 256 bodies are between the
+door and their answer at once (twice `--ingest-concurrency`, where that is more),
+and at most 256 MiB of lines wait to be written:
+past either the log's disk is behind what is arriving, and the next body is shed
+the same way. And while the log cannot write at all - a full volume - every body is
+refused `503` with the write error, before it is read, until a write succeeds.
+A store that cannot write refuses nothing: the line is in the log, and the answer
+is `200`. A body is written to the log whole, so one whose lines come to more than
+1 GiB as log records - tens of millions of very short lines - is a `413`, decided
+before it is parsed: send it as smaller bodies.
+
 The status is the point. A shipper that gets no answer keeps the batch, times
 out, and opens *another* connection - so a server that is merely slow gathers
 connections until it is unreachable, and every shipper in the fleet is doing it
@@ -402,7 +414,7 @@ body you sent.
 
 **Ctrl-C finishes what it started.** SIGINT and SIGTERM both cancel one
 `CancellationToken`; the listener stops accepting, requests already running finish,
-and the shutdown walks a fixed order naming the steps this build does not have yet.
+and the shutdown walks a fixed order naming the steps a memory server skips.
 With `--storage memory`:
 
 ```
@@ -410,15 +422,19 @@ kibbr: SIGINT received - shutting down
 kibbr: stop accepting - 1 request(s) in flight
 kibbr: in-flight requests complete
 kibbr: final flush - skipped, storage is memory (--data-dir puts the stores on disk)
-kibbr: WAL checkpoint - skipped, there is no WAL yet
+kibbr: WAL checkpoint - skipped, storage is memory
 kibbr: trie.json - skipped, storage is memory
 kibbr: close stores - 328 store(s), 60,997 row(s) discarded, they were only in memory
-kibbr: close WAL - skipped, there is no WAL yet
+kibbr: close WAL - skipped, storage is memory
 kibbr: exit 0
 ```
 
 Naming the skipped steps is the point. Four of the six are the difference between
-this and a database that survives being restarted.
+this and a database that survives being restarted - which is what the default,
+`--storage disk`, is: a line is in the write-ahead log under `<data-dir>/wal/`, flushed,
+before `/ingest` answers `200`, and a start after `kill -9` puts back every line no data
+file holds yet, once. `scripts/crash_test.sh` kills a server twenty times mid-ingest and
+holds what is stored to what was acknowledged, line by line.
 
 ## Load closed days
 
@@ -597,6 +613,7 @@ src/engine.rs     the walk, the scan, the result
 src/trieql.rs     the query grammar
 src/query.rs      the `query` command, and the result JSON both surfaces answer with
 src/serve.rs      the HTTP surface, the banner, the shutdown sequence
+src/wal.rs        the write-ahead log: group commit, the one applier, replay, the checkpoint
 src/load.rs       `kibbr load` - the bulk door: staging, the load id, the commit
 src/compact.rs    `kibbr compact` - the command, and a server's compaction jobs
 src/lock.rs       the LOCK file: one process owns a data directory
@@ -610,4 +627,4 @@ tests/serve.rs    the HTTP contract, over a bare TcpStream
 One crate, no workspace. No traits - there is one implementation of everything so
 far, and an interface with a single caller is a guess. That includes the ingest
 path: a future `Ingestor` would sit between the API and the trie, and it is a plain
-function until the WAL and the flush timer give it a second caller to answer to.
+function until something gives it a second caller to answer to.

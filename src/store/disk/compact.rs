@@ -194,6 +194,10 @@ impl DiskStore {
     /// taking late rows is left until a day passes without one, rather than rebuilt after
     /// each. A day holding a file only a restart can seal is left out, as `compact_day`
     /// would refuse it; and so is every day while a commit is unsettled.
+    ///
+    /// **And only once all of it is behind the write-ahead log's checkpoint**
+    /// (`ahead_of_checkpoint`): the scheduler rebuilds no day the log could still replay
+    /// a line into.
     pub fn due_days(&self, today: i64) -> Vec<Due> {
         let files = lock(&self.files);
         if !files.uncertain.is_empty() || !files.unmoved.is_empty() {
@@ -204,12 +208,14 @@ impl DiskStore {
             .keys()
             .filter_map(|rel| day_of_name(rel.split_once('/')?.0))
             .collect();
+        let ahead = self.ahead_of_checkpoint(&files);
         days.into_iter()
             .filter(|day| {
                 *day < today
                     && !files.mixed.contains_key(day)
                     && files.last_live.get(day).is_none_or(|last| *last < today)
                     && stuck(&files, *day).is_none()
+                    && !ahead.contains(day)
             })
             .filter_map(|day| {
                 let run = trailing(&files.live, day);
@@ -219,6 +225,32 @@ impl DiskStore {
                 })
             })
             .collect()
+    }
+
+    /// The days the write-ahead log has delivered rows of that are not all in a row group
+    /// and behind its checkpoint: a day with a row still in memory, or one the checkpoint
+    /// has not passed the highest position this process has seen in. None, with no log.
+    /// One hold of each leaf's lock, whatever the number of days.
+    ///
+    /// What the scheduler waits for. A day asked for by name is not held to it - its
+    /// buffered rows are written as the compaction begins, and a replay holds a record
+    /// against a rebuilt row group's range as it does against any other (`wal_ranges`).
+    fn ahead_of_checkpoint(&self, files: &Files) -> BTreeSet<i64> {
+        if self.stream.load(Ordering::Relaxed) == 0 {
+            return BTreeSet::new();
+        }
+        let checkpoint = self.wal_checkpoint.load(Ordering::Relaxed);
+        let mut ahead: BTreeSet<i64> = files
+            .wal_through
+            .iter()
+            .filter(|(_, through)| **through > checkpoint)
+            .map(|(day, _)| *day)
+            .collect();
+        let leaves = self.leaves.read().unwrap_or_else(|e| e.into_inner());
+        for leaf in leaves.values() {
+            ahead.extend(leaf.days_in_memory());
+        }
+        ahead
     }
 
     /// The days that hold a file compaction would take, due or not: one short hold of the
@@ -795,6 +827,9 @@ fn replace_record(job: &Job, outputs: &Outputs) -> Record {
             .collect(),
         remove: job.inputs.iter().map(|input| input.rel.clone()).collect(),
         source: Some(manifest::COMPACT_SOURCE.to_string()),
+        // The rebuilt row groups carry their inputs' ranges: nothing for a replay to
+        // be told.
+        wal: None,
     }
 }
 
@@ -1382,6 +1417,7 @@ mod tests {
                     add,
                     remove,
                     source,
+                    wal: None,
                 } => {
                     assert_eq!(remove, &done.removed);
                     assert_eq!(
@@ -1890,6 +1926,78 @@ mod tests {
         assert_eq!(leaf.buffered(), 5, "the rows are not back in their buffer");
         assert_eq!(ns(leaf.as_ref()), (0..5).collect::<Vec<_>>());
         assert!(data_files(&scratch.0).is_empty());
+    }
+
+    /// Row groups written from the log keep, rebuilt, a range that holds every position
+    /// they held: a replay goes on skipping the lines a compacted day holds. The rebuilt
+    /// range is the smallest one holding its inputs', so it also spans positions between
+    /// them - other templates' and other days' lines, which it says nothing of - and it
+    /// reads the same after a restart.
+    #[test]
+    fn a_compacted_day_still_covers_the_log_positions_its_row_groups_held() {
+        let scratch = Scratch::new("compact-wal");
+        let day = day_of(T0);
+        let ranges = |s: &DiskStore, of: i64| s.wal_ranges(7, of, 0xabc).expect("ranges");
+        {
+            let s = store(&scratch);
+            s.attach_wal(0xabc, 0);
+            let leaf = s.open(7, "ts").expect("leaf");
+            for group in [vec![2u64, 3, 4], vec![10, 11], vec![20]] {
+                for pos in group {
+                    leaf.append_at(row(T0 + pos as i64, pos as i64), pos);
+                }
+                // The next day's rows of the same template, between them in the log.
+                leaf.append_at(row(T0 + crate::store::v3::DAY_NS, 0), 5);
+                s.flush(FlushKind::Tick);
+            }
+            assert_eq!(ranges(&s, day), [(2, 4), (10, 11), (20, 20)]);
+
+            let done = s.compact_day(day, &options()).expect("compact");
+            assert!(done.compacted, "{done:?}");
+            assert_eq!((done.row_groups_in, done.row_groups_out), (3, 1));
+            assert_eq!(ranges(&s, day), [(2, 20)]);
+            // The other day's row groups are their own, and were not touched.
+            assert_eq!(ranges(&s, day + 1), [(5, 5)]);
+            assert_eq!(ns(leaf.as_ref()), vec![0, 0, 0, 2, 3, 4, 10, 11, 20]);
+        }
+        let s = store(&scratch);
+        s.open(7, "ts").expect("leaf");
+        assert_eq!(ranges(&s, day), [(2, 20)]);
+    }
+
+    /// Under a write-ahead log the scheduler leaves a day until all of it is behind the
+    /// log's checkpoint: every position this process has seen in it passed, and no row of
+    /// it still in memory. Asked for by name the day is compacted regardless - the rows it
+    /// holds in memory are written out as the compaction begins.
+    #[test]
+    fn a_day_is_not_due_until_it_is_behind_the_logs_checkpoint() {
+        let scratch = Scratch::new("compact-checkpoint");
+        let day = day_of(T0);
+        let s = store(&scratch);
+        s.attach_wal(0xabc, 0);
+        let leaf = s.open(7, "ts").expect("leaf");
+        leaf.append_at(row(T0, 0), 5);
+        s.flush(FlushKind::Tick);
+        let now = lock(&s.files).last_live[&day];
+        assert!(
+            s.due_days(now + 1).is_empty(),
+            "due ahead of the checkpoint"
+        );
+        s.note_checkpoint(4);
+        assert!(
+            s.due_days(now + 1).is_empty(),
+            "due ahead of the checkpoint"
+        );
+        s.note_checkpoint(5);
+        assert_eq!(s.due_days(now + 1).len(), 1);
+
+        leaf.append_at(row(T0 + 1, 1), 6);
+        assert!(
+            s.due_days(now + 1).is_empty(),
+            "due with a row of the day still in memory"
+        );
+        let done = s.compact_day(day, &options()).expect("compact");
+        assert_eq!((done.compacted, done.rows), (true, 2));
     }
 
     /// Due by an explicit `today`: the day after the day's last live row group, never the

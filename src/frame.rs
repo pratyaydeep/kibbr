@@ -6,9 +6,10 @@
 //!         [N] payload
 //! ```
 //!
-//! **Three files read through this and nothing else**: `catalog.log`, `manifest.log`, and
-//! every frame of a v3 data file. One reader is one thing to fuzz, and one place where a
-//! length is checked against the bytes that remain before anything trusts it.
+//! **Four kinds of file read through this and nothing else**: `catalog.log`,
+//! `manifest.log`, every frame of a v3 data file, and every flush in a segment of the
+//! write-ahead log. One reader is one thing to fuzz, and one place where a length is
+//! checked against the bytes that remain before anything trusts it.
 //!
 //! **`payload_len` is never 0.** CRC-32C of nothing is 0, so without the rule a run of
 //! zero bytes - which some file systems leave past the last durable write after a crash -
@@ -164,6 +165,13 @@ impl Log {
     /// the directory. Once, on creation - an existing file's entry was made durable by the
     /// start that created it. If that fsync fails the new file is removed before the error
     /// is returned, so the next start does not find an empty file and take it for truth.
+    ///
+    /// **A file that was already there is flushed before its records are used.** A process
+    /// killed inside an append's flush leaves the record whole in the page cache, where
+    /// this start reads it like any other - and then acts on it: a template the record
+    /// defines is named by lines in the write-ahead log, a file it names takes row groups.
+    /// Those are flushed, and would outlive a power cut that the record they rest on did
+    /// not. One flush a start makes what was read what is on the disk.
     pub fn open_with(
         path: &Path,
         max: u32,
@@ -215,6 +223,8 @@ impl Log {
         }
         if end < bytes.len() as u64 {
             file.set_len(end).map_err(io)?;
+        }
+        if !created {
             file.sync_all().map_err(io)?;
         }
         file.seek(SeekFrom::Start(end)).map_err(io)?;

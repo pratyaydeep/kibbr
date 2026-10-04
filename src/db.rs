@@ -4,10 +4,12 @@
 //! Kept apart from `engine` so the engine can be handed a trie and stores from anywhere
 //! once something does persist them.
 //!
-//! `kibbr serve` is the caller that made that separation pay: it holds one `Db` for the
-//! process lifetime and appends to it a body at a time, where the CLI builds a fresh one
-//! per query. Both go through `ingest_line`, so the two surfaces cannot disagree about
-//! what putting a line in the database means.
+//! `kibbr serve` is the caller that made that separation pay: it holds one trie and one
+//! set of stores for the process lifetime and appends to them a body at a time, where the
+//! CLI builds a fresh `Db` per query. Both parse a line and route it by the functions
+//! here - the CLI through `ingest_line`, the server through `parse_and_prepare` and
+//! `place_in` with its write-ahead log between the routing and the append - so the two
+//! surfaces cannot disagree about what putting a line in the database means.
 
 use std::io::BufRead;
 
@@ -84,10 +86,9 @@ pub fn row_of(parsed: &ParsedLog) -> Row {
 
 /// One parsed line into the trie, and into its leaf's store unless `stores` is `None`.
 ///
-/// The whole write path. A future `Ingestor` would sit between the API and the trie; this
-/// is a plain function instead, because there is one implementation of it and an interface
-/// with one caller is a guess at what the second one will need. The WAL and the detector
-/// cache are the arrows that will make it a type, and neither exists yet.
+/// The whole write path of a store with no write-ahead log behind it: the CLI's, and the
+/// bench's. `/ingest` does these steps with the log between them - `place_in`, the log,
+/// then the append by the log's one applier (`serve::ingest`).
 ///
 /// It holds no clock and no store lifecycle, which is the third of the three-way split:
 /// the registry opens the leaf on first write and something else decides when the buffer
@@ -162,16 +163,31 @@ pub struct Placed {
 /// with an arrival time if it has no time of its own: everything the write path does but
 /// the append.
 ///
-/// **Both doors call this**, `/ingest` through `ingest_prepared` and the bulk loader
-/// directly, which is what makes a line's template, types and stored row the same whichever
-/// door it came through. `None` is a poisoned leaf lock and nothing else: `ingest` just
-/// wrote the meta. Dropping the row is the only option left and it is counted nowhere.
+/// **Both doors call this**, the bulk loader here and `/ingest` through `place_in`, which
+/// is what makes a line's template, types and stored row the same whichever door it came
+/// through. `None` is a poisoned leaf lock and nothing else: `ingest` just wrote the meta.
 pub fn place(
     trie: &Trie,
     parsed: &ParsedLog,
     prepared: Prepared,
     now: DateTime<Utc>,
 ) -> Result<Option<Placed>, SinkError> {
+    Ok(place_in(trie, parsed, prepared, now)?)
+}
+
+/// `place`, failing as the trie fails and as nothing else. What the live door calls: its
+/// error type has no room for a store's (`error::IngestError`), and `SinkError` does.
+///
+/// **This is the step that comes before the write-ahead log.** A line's log record names
+/// the template it was routed to, so the template - and any widening the line caused -
+/// is in the catalog, flushed, by the time this returns: an id is never in the log ahead
+/// of the record that defines it.
+pub fn place_in(
+    trie: &Trie,
+    parsed: &ParsedLog,
+    prepared: Prepared,
+    now: DateTime<Utc>,
+) -> Result<Option<Placed>, TrieError> {
     let (leaf, _) = trie.ingest(parsed, now)?;
     let placed = leaf.leaf_meta.read().ok().and_then(|slot| {
         slot.as_ref()
@@ -181,23 +197,50 @@ pub fn place(
         return Ok(None);
     };
     let Prepared { mut row } = prepared;
-    // The effective time: the time column where it holds an instant, and otherwise the
-    // arrival time - stored in the system column, **after** fingerprinting, so it is not a
-    // key and makes no template. A row with its own time does not get the column.
-    //
     // Left here rather than moved out with the row: which column holds the time is the
     // *template's* choice, and nothing outside the trie knows it yet.
-    if crate::store::ts_of(&row, source.column()).is_none() {
-        row.insert(
-            RECEIVED_AT_COLUMN.to_string(),
-            ColValue::Datetime(crate::store::nanos_of(crate::query::system_time(now))),
-        );
-    }
+    stamp(&mut row, source.column(), arrival_nanos(now));
     Ok(Some(Placed {
         template_id: id,
         time_column: source.column().to_string(),
         row,
     }))
+}
+
+/// An arrival time as a row stores it, and as the write-ahead log records it.
+pub fn arrival_nanos(now: DateTime<Utc>) -> i64 {
+    crate::store::nanos_of(crate::query::system_time(now))
+}
+
+/// The effective time: the time column where it holds an instant, and otherwise the
+/// arrival time - stored in the system column, **after** fingerprinting, so it is not a
+/// key and makes no template. A row with its own time does not get the column.
+fn stamp(row: &mut Row, time_column: &str, received_at: i64) {
+    if crate::store::ts_of(row, time_column).is_none() {
+        row.insert(
+            RECEIVED_AT_COLUMN.to_string(),
+            ColValue::Datetime(received_at),
+        );
+    }
+}
+
+/// A line read back from the write-ahead log, as the row it was first stored as.
+///
+/// **Routed by the record and not decided again**: the caller has the template's id from
+/// the record and its time column from the catalog, so this only rebuilds the row - the
+/// same parse, and the arrival time the record carries where the line has no time of its
+/// own. Stamped with the time of the replay instead, such a row would move to another
+/// instant and, across a midnight, to another day: its position would then be held
+/// against the wrong day's row groups, and the line stored twice.
+pub fn row_from_log(
+    line: &[u8],
+    time_column: &str,
+    received_at: i64,
+) -> Result<Row, DetectorError> {
+    let parsed = parse_line(line, 0)?;
+    let mut row = row_of(&parsed);
+    stamp(&mut row, time_column, received_at);
+    Ok(row)
 }
 
 /// Build the trie, and the stores unless `with_rows` is false.

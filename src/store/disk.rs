@@ -305,6 +305,14 @@ struct Files {
     /// record the manifest takes is written where that one would have been, so from then
     /// on it is certainly not there, and they are deleted.
     uncertain: Vec<PathBuf>,
+    /// The highest write-ahead log position this process has seen in each day: published
+    /// into one of its row groups, or met at startup's replay. A day is wholly behind the
+    /// log's checkpoint once the checkpoint has passed it - a day with no entry is one
+    /// every position of which was behind the checkpoint this process started from.
+    wal_through: BTreeMap<i64, u64>,
+    /// Every replace-a-day's word to the write-ahead log, as the manifest holds them and
+    /// as this process adds to them: what a replay must not bring back.
+    replaced: Vec<manifest::WalMark>,
 }
 
 impl Files {
@@ -495,7 +503,8 @@ impl Files {
         let mut errors = Vec::new();
         for day in days {
             // The file leaves the open set whatever happens: a seal that failed has still
-            // stopped taking rows, and the next start recovers it.
+            // stopped taking rows, and the next start recovers it - or, if the footer was
+            // written and only its flush failed, finds it whole and flushes it then.
             let Some(open) = self.open.remove(&day) else {
                 continue;
             };
@@ -507,7 +516,7 @@ impl Files {
         let sealed = records.len();
         if !records.is_empty() {
             // A seal the manifest never heard of is found sealed at the next start, which
-            // records it then.
+            // flushes the file again and records it then.
             if let Err(e) = self.record(vec![Record::Seal { files: records }]) {
                 errors.push(e.into());
             }
@@ -608,18 +617,50 @@ fn jobs_of(moved: &[Moved], limits: &RowGroupLimits) -> Vec<Job> {
     jobs
 }
 
+/// Where a row group's rows came from: the write-ahead log `stream`, from the lowest
+/// position among them to the highest.
+///
+/// **What the range promises is what replay skips by**: every row of this template and
+/// this day that the log holds at a position in the range is durable once this row group
+/// is. It holds because a buffer is filled in position order by the one applier - and by
+/// replay, in the same order, before the applier starts - and a row group is cut from a
+/// run of it, so no row of the template and day lies inside the range and outside the
+/// run unless it is already in an earlier row group.
+///
+/// Not recorded without a log, or for a row that came by no log: a range over a row
+/// with no position would promise lines it never held.
+fn source_of(stream: u64, rows: &[Arc<Buffered>]) -> Source {
+    if stream == 0 || rows.iter().any(|b| b.pos == 0) {
+        return Source::NotRecorded;
+    }
+    let first = rows.iter().map(|b| b.pos).min();
+    let last = rows.iter().map(|b| b.pos).max();
+    match (first, last) {
+        (Some(first), Some(last)) => Source::Wal {
+            stream,
+            first,
+            last,
+        },
+        _ => Source::NotRecorded,
+    }
+}
+
 /// Every job's row group, encoded on up to `threads` threads at once, in job order.
 ///
 /// **The rows are read, never moved or locked.** They are the batches' shared rows, which
 /// their leaves go on answering queries from the whole time. An encoder that panics fails
 /// its batch - its rows go back to their buffer - rather than the flush: a flush that died
 /// halfway would leave every batch it had moved aside neither written nor put back.
-fn encode_all(moved: &[Moved], jobs: &[Job], threads: usize) -> Vec<EncodedRowGroup> {
+///
+/// `stream` is the write-ahead log's id, or 0 with none: each row group records the first
+/// and last log position among its rows (`source_of`).
+fn encode_all(moved: &[Moved], jobs: &[Job], threads: usize, stream: u64) -> Vec<EncodedRowGroup> {
     let encode = |job: &Job| {
         let m = &moved[job.moved];
         let rows = &m.batch.rows[job.from..job.to];
         let refs: Vec<&Row> = rows.iter().map(|b| &b.row).collect();
         let times: Vec<i64> = rows.iter().map(|b| b.time).collect();
+        let source = source_of(stream, rows);
         let encoded = catch_unwind(AssertUnwindSafe(|| {
             let columns = schema_of(refs.iter().copied());
             let encoded = build::encode(
@@ -627,7 +668,7 @@ fn encode_all(moved: &[Moved], jobs: &[Job], threads: usize) -> Vec<EncodedRowGr
                 &columns,
                 &refs,
                 &times,
-                Source::NotRecorded,
+                source,
                 Level::Live,
             )?;
             Ok((columns, encoded))
@@ -730,6 +771,20 @@ pub struct DiskStore {
     /// Files open for writing as the last flush left them. Read by `/stats`, without the
     /// files lock a flush holds across the disk.
     open_count: AtomicUsize,
+    /// The write-ahead log's id, once one is attached; 0 with none. What a row group
+    /// written from positioned rows names as its stream.
+    stream: AtomicU64,
+    /// The log's checkpoint as this store was last told it: what a day is held to before
+    /// the scheduler compacts it (`due_days`).
+    wal_checkpoint: AtomicU64,
+    /// The highest log position the applier has handed over, a leaf has taken, or a
+    /// start has met in the log: see `note_applied`.
+    wal_applied: Arc<AtomicU64>,
+    /// Held in read by the log's applier across each batch it applies, and in write by a
+    /// replace-a-day from before it writes the day out until the day's files are retired
+    /// and out of the leaves: between the two, the positions applied are exactly the
+    /// lines the retired files hold. See `manifest::WalMark`.
+    applying: RwLock<()>,
 }
 
 impl DiskStore {
@@ -754,6 +809,13 @@ impl DiskStore {
         })?;
         let mut live = manifest::live(&records);
         let loads = manifest::load_ids(&records);
+        let replaced: Vec<manifest::WalMark> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Replace { wal, .. } => wal.clone(),
+                _ => None,
+            })
+            .collect();
 
         let data = base.join(DATA_DIR);
         fs::create_dir_all(&data).map_err(|source| FormatError::Io {
@@ -830,8 +892,20 @@ impl DiskStore {
                 })?
             } else {
                 let index = match file::open_sealed(&path)? {
-                    // Sealed, and the process stopped before the manifest heard.
-                    Some(index) => index,
+                    // Sealed, and the process stopped before the manifest heard - and
+                    // perhaps before the seal's own flush returned: the footer read here
+                    // may be in the page cache and nowhere else. Flushed before the
+                    // manifest is told it is sealed, or a power cut after this start
+                    // would leave a record promising a footer the file does not have.
+                    Some(index) => {
+                        fs::File::open(&path)
+                            .and_then(|f| f.sync_all())
+                            .map_err(|source| FormatError::Io {
+                                path: path.clone(),
+                                source,
+                            })?;
+                        index
+                    }
                     None => {
                         let recovered = file::recover(&path)?;
                         if let Some((at, len)) = recovered.torn_at {
@@ -924,6 +998,8 @@ impl DiskStore {
                 last_live,
                 compacting: None,
                 uncertain: Vec::new(),
+                wal_through: BTreeMap::new(),
+                replaced,
             }),
             leaves: RwLock::new(BTreeMap::new()),
             publish: RwLock::new(()),
@@ -932,7 +1008,170 @@ impl DiskStore {
             claimed,
             buffered: Arc::new(AtomicU64::new(0)),
             open_count: AtomicUsize::new(0),
+            stream: AtomicU64::new(0),
+            wal_checkpoint: AtomicU64::new(0),
+            wal_applied: Arc::new(AtomicU64::new(0)),
+            applying: RwLock::new(()),
         })
+    }
+
+    // ── The write-ahead log ────────────────────────────────────────────────────────
+
+    /// Attach the write-ahead log: its id, and the checkpoint it starts from. From here a
+    /// row group cut from positioned rows records their range under this stream.
+    pub fn attach_wal(&self, stream: u64, checkpoint: u64) {
+        self.stream.store(stream, Ordering::Relaxed);
+        self.wal_checkpoint.store(checkpoint, Ordering::Relaxed);
+        self.wal_applied.fetch_max(checkpoint, Ordering::Relaxed);
+    }
+
+    /// What the log's applier holds while it hands a batch of rows over: a replace-a-day
+    /// waits for it, and no row is applied while one retires its day.
+    pub fn applying(&self) -> std::sync::RwLockReadGuard<'_, ()> {
+        self.applying.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The days a replace-a-day retired under `stream`, each with the highest position
+    /// retired: a replay stores no line of the day at or below it.
+    pub fn replaced_days(&self, stream: u64) -> BTreeMap<i64, u64> {
+        let stream = format!("{stream:016x}");
+        let mut out: BTreeMap<i64, u64> = BTreeMap::new();
+        for mark in lock(&self.files)
+            .replaced
+            .iter()
+            .filter(|m| m.stream == stream)
+        {
+            if let Some(day) = day_of_name(&mark.day) {
+                let through = out.entry(day).or_insert(mark.through);
+                *through = (*through).max(mark.through);
+            }
+        }
+        out
+    }
+
+    /// Every position up to this one came before whatever happens next: what a
+    /// replace-a-day retires through. The log's applier says so for each batch it hands
+    /// over, stored or refused, and a start for the end of the log it read - a command
+    /// running alone reads that and applies nothing.
+    pub fn note_applied(&self, position: u64) {
+        self.wal_applied.fetch_max(position, Ordering::Relaxed);
+    }
+
+    /// Every row now buffered has already waited its wait: the next tick closes them all.
+    ///
+    /// What a start calls once it has put back the rows the log held. They were buffered
+    /// before the stop, some of them for most of the wait; started again from the moment
+    /// of the replay, a server stopped more often than the wait is long would never close
+    /// them, its checkpoint would never pass them, and every start would read a longer
+    /// log than the last.
+    pub fn age_buffers(&self) {
+        let Some(past) = Instant::now().checked_sub(self.limits.age) else {
+            return;
+        };
+        let leaves: Vec<Arc<DiskLeaf>> = self
+            .leaves
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        for leaf in leaves {
+            for part in leaf.state().days.values_mut() {
+                for group in &mut part.groups {
+                    group.opened_at = group.opened_at.min(past);
+                }
+            }
+        }
+    }
+
+    /// The log's checkpoint moved: every position up to it is in a row group.
+    pub fn note_checkpoint(&self, checkpoint: u64) {
+        self.wal_checkpoint.fetch_max(checkpoint, Ordering::Relaxed);
+    }
+
+    /// Replay met position `position` in `day`, stored by this start or already in a row
+    /// group: the day is not behind the checkpoint until the checkpoint passes it.
+    pub fn note_position(&self, day: i64, position: u64) {
+        self.wal_applied.fetch_max(position, Ordering::Relaxed);
+        let mut files = lock(&self.files);
+        let seen = files.wal_through.entry(day).or_insert(position);
+        *seen = (*seen).max(position);
+    }
+
+    /// The positions of `stream` that row groups of one template and one day hold, as
+    /// ranges in order with none overlapping: what replay skips.
+    ///
+    /// **Read from the row groups' own headers**, one read each, because nothing else
+    /// holds a range - not the footer, not the manifest - and nothing else may be trusted
+    /// to: the checkpoint is behind every row group written since it last moved, and a
+    /// replay that went by it alone would store those rows a second time. Every row group
+    /// of the day is read, a compacted file's among them: a rebuilt row group's range is
+    /// the smallest one that holds the ranges it was rebuilt from, and every position in
+    /// it was durable in those before it was merged.
+    ///
+    /// Asked once per template and day that replay meets, so what a start reads is the
+    /// headers of the days its log still names and not of the whole directory.
+    pub fn wal_ranges(
+        &self,
+        template_id: u64,
+        day: i64,
+        stream: u64,
+    ) -> Result<Vec<(u64, u64)>, StoreError> {
+        let leaf = self
+            .leaves
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&template_id)
+            .cloned();
+        let stored = match leaf {
+            Some(leaf) => match leaf.state().days.get(&day) {
+                Some(part) => Arc::clone(&part.stored),
+                None => return Ok(Vec::new()),
+            },
+            // No leaf has taken the template's row groups: they are where the start put
+            // them, and they cover what they cover all the same. Read as "nothing is
+            // stored", a replay would put back every line they hold.
+            None => Arc::new(
+                lock(&self.stored)
+                    .get(&template_id)
+                    .map(|all| {
+                        all.iter()
+                            .filter(|s| day_of(s.entry.min_time) == day)
+                            .cloned()
+                            .collect::<Vec<Stored>>()
+                    })
+                    .unwrap_or_default(),
+            ),
+        };
+        let mut ranges = Vec::new();
+        let mut reader: Option<(&Path, Reader)> = None;
+        for s in stored.iter() {
+            let path = s.file.path.as_path();
+            let open = match &mut reader {
+                Some((of, open)) if *of == path => open,
+                slot => &mut slot.insert((path, Reader::open(path)?)).1,
+            };
+            let header = open.header(&s.entry, s.schema.len())?;
+            if let Source::Wal {
+                stream: of,
+                first,
+                last,
+            } = header.source
+            {
+                if of == stream {
+                    ranges.push((first, last));
+                }
+            }
+        }
+        ranges.sort_unstable();
+        let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+        for (first, last) in ranges {
+            match merged.last_mut() {
+                Some(run) if first <= run.1.saturating_add(1) => run.1 = run.1.max(last),
+                _ => merged.push((first, last)),
+            }
+        }
+        Ok(merged)
     }
 
     // ── The bulk door ──────────────────────────────────────────────────────────────
@@ -1015,11 +1254,29 @@ impl DiskStore {
     /// every leaf in the same hold that adds the new row groups, and are deleted when the
     /// last query reading them lets go. A repeated load id is not refused here: the load
     /// is replacing its day, not adding to it.
+    ///
+    /// **Under a write-ahead log, a replace says so to the log** (`manifest::WalMark`). The
+    /// log's applier is held still from before the day is written out until its files are
+    /// retired, and the record carries the last position applied by then: the lines the
+    /// retired files held, which a replay must not store again now that no row group
+    /// covers them.
     pub fn commit_load(&self, commit: LoadCommit) -> Result<Committed, StoreError> {
         let mut files = lock(&self.files);
         if let Some(pending) = files.unmoved.iter().next() {
             return Err(StoreError::MovePending { load_id: *pending });
         }
+        let stream = self.stream.load(Ordering::Relaxed);
+        // After the flush's lock, as nothing takes the two the other way round: the
+        // applier takes no lock of the files'.
+        let _still = (commit.replace_day.is_some() && stream != 0)
+            .then(|| self.applying.write().unwrap_or_else(|e| e.into_inner()));
+        let mark = commit.replace_day.filter(|_| stream != 0).map(|day| {
+            manifest::WalMark::new(
+                stream,
+                day_name(day),
+                self.wal_applied.load(Ordering::Relaxed),
+            )
+        });
         if commit.replace_day.is_none() && files.loads.contains(&commit.load_id) {
             return Err(StoreError::LoadRepeated {
                 load_id: commit.load_id,
@@ -1064,6 +1321,7 @@ impl DiskStore {
                 add: added,
                 remove: retired.clone(),
                 source,
+                wal: mark.clone(),
             },
             None => Record::Add {
                 files: added,
@@ -1087,6 +1345,7 @@ impl DiskStore {
                 });
             }
         }
+        files.replaced.extend(mark);
 
         // Committed. What fails from here is a move the next start finishes.
         for (rel, staged) in named.iter().zip(&commit.files) {
@@ -1197,7 +1456,8 @@ impl DiskStore {
         // file - then numbered, framed and appended one at a time, day by day: a day's
         // file is opened once per flush however many templates wrote to it.
         let jobs = jobs_of(&moved, &self.limits);
-        let mut encoded = encode_all(&moved, &jobs, self.encoders).into_iter();
+        let stream = self.stream.load(Ordering::Relaxed);
+        let mut encoded = encode_all(&moved, &jobs, self.encoders, stream).into_iter();
         let mut per_batch: Vec<Vec<EncodedRowGroup>> = Vec::with_capacity(moved.len());
         let mut first_job = 0;
         for at in 0..moved.len() {
@@ -1275,6 +1535,12 @@ impl DiskStore {
                         .map(|s| u64::from(s.entry.frame_len) + u64::from(s.entry.chunks_len))
                         .sum::<u64>();
                     files.last_live.insert(m.day, today);
+                    if let Some(through) = m.batch.rows.iter().map(|b| b.pos).max() {
+                        if through > 0 {
+                            let seen = files.wal_through.entry(m.day).or_insert(through);
+                            *seen = (*seen).max(through);
+                        }
+                    }
                     m.leaf.publish(m.day, stored);
                 }
                 Err(e) => {
@@ -1582,6 +1848,7 @@ impl Store for DiskStore {
             time_column: time_column.to_string(),
             limits: self.limits,
             held: Arc::clone(&self.buffered),
+            applied: Arc::clone(&self.wal_applied),
             state: Mutex::new(LeafState { days, buffered: 0 }),
         });
         leaves.insert(template_id, Arc::clone(&leaf));
@@ -1595,6 +1862,23 @@ impl Store for DiskStore {
 
     fn as_disk(&self) -> Option<&DiskStore> {
         Some(self)
+    }
+
+    /// One short hold of each leaf's lock. A buffer is in position order and the rows a
+    /// flush moved aside came off its head, so a day's oldest is the first of those, or
+    /// the buffer's first.
+    fn oldest_position(&self) -> Option<u64> {
+        let leaves: Vec<Arc<DiskLeaf>> = self
+            .leaves
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        leaves
+            .iter()
+            .filter_map(|leaf| leaf.oldest_position())
+            .min()
     }
 
     fn kind(&self) -> &'static str {
@@ -1680,6 +1964,8 @@ impl Snapshot for DiskSnapshot {
 
 struct Buffered {
     row: Row,
+    /// Where the row's line is in the write-ahead log; 0 for a row that came by no log.
+    pos: u64,
     time: i64,
     /// Payload: key text, string values, a scalar's width. What the 8MB row group
     /// threshold and `/stats` count.
@@ -1901,6 +2187,8 @@ pub struct DiskLeaf {
     limits: RowGroupLimits,
     /// The store's count of memory held by buffered rows, across every leaf.
     held: Arc<AtomicU64>,
+    /// The store's `wal_applied`, raised by every positioned row a leaf takes.
+    applied: Arc<AtomicU64>,
     state: Mutex<LeafState>,
 }
 
@@ -1988,6 +2276,29 @@ impl DiskLeaf {
             day,
             batch: part.move_aside(groups),
         })
+    }
+
+    /// The lowest log position among this leaf's rows that are not in a row group yet.
+    fn oldest_position(&self) -> Option<u64> {
+        self.state()
+            .days
+            .values()
+            .filter_map(|part| {
+                let moved = part.closing.as_ref().and_then(|batch| batch.rows.first());
+                moved.or(part.buffer.first()).map(|b| b.pos)
+            })
+            .filter(|pos| *pos > 0)
+            .min()
+    }
+
+    /// The days this leaf holds a row of that is still only in memory.
+    fn days_in_memory(&self) -> Vec<i64> {
+        self.state()
+            .days
+            .iter()
+            .filter(|(_, part)| part.in_memory() > 0)
+            .map(|(day, _)| *day)
+            .collect()
     }
 
     /// The memory each day's buffer holds, for the limit to pick the largest from.
@@ -2353,6 +2664,10 @@ impl LeafStore for DiskLeaf {
     /// stored, because it is counted from the index. `Rank` compares ordinals only between
     /// rows of one template with one timestamp, which are on one day.
     fn append(&self, row: Row) -> u64 {
+        self.append_at(row, 0)
+    }
+
+    fn append_at(&self, row: Row, pos: u64) -> u64 {
         // Every row the ingest path hands over has an effective time - its own, or the
         // arrival time it was stamped with. A row with neither has no day; it is placed
         // at the epoch rather than dropped.
@@ -2365,6 +2680,7 @@ impl LeafStore for DiskLeaf {
         let held = row.held_bytes() + std::mem::size_of::<Buffered>() + 24;
         let row = Arc::new(Buffered {
             row,
+            pos,
             time,
             bytes,
             held,
@@ -2378,6 +2694,9 @@ impl LeafStore for DiskLeaf {
             seq
         };
         self.held.fetch_add(held as u64, Ordering::Relaxed);
+        if pos > 0 {
+            self.applied.fetch_max(pos, Ordering::Relaxed);
+        }
         seq
     }
 
@@ -3533,5 +3852,257 @@ mod tests {
             (150, 150, 3, 3)
         );
         assert_eq!(s.open_files().0, 0);
+    }
+
+    // ── The write-ahead log's positions ────────────────────────────────────────────
+
+    /// The source of every row group a leaf holds of one day, in storage order.
+    fn sources(s: &DiskStore, template_id: u64, day: i64) -> Vec<Source> {
+        let stored = {
+            let leaves = s.leaves.read().expect("leaves");
+            let state = leaves[&template_id].state();
+            Arc::clone(&state.days[&day].stored)
+        };
+        stored
+            .iter()
+            .map(|g| {
+                Reader::open(&g.file.path)
+                    .expect("open")
+                    .header(&g.entry, g.schema.len())
+                    .expect("header")
+                    .source
+            })
+            .collect()
+    }
+
+    fn wal(first: u64, last: u64) -> Source {
+        Source::Wal {
+            stream: 0xabc,
+            first,
+            last,
+        }
+    }
+
+    /// A row group records the log positions it holds, by day: a template's rows of two
+    /// days are in two row groups whose ranges interleave, so a position is held against
+    /// its own day's and no other. The oldest position still in memory is what the
+    /// checkpoint may not pass; and the ranges are read back from the files, not kept.
+    #[test]
+    fn a_row_group_records_the_log_positions_it_holds_and_they_are_read_back() {
+        let scratch = Scratch::new("positions");
+        let s = store(&scratch);
+        s.attach_wal(0xabc, 0);
+        let leaf = s.open(7, "ts").expect("leaf");
+        let today = day_of(T0);
+        for (pos, ts) in [(3, T0), (4, T0 + DAY_NS), (6, T0 + 1), (9, T0 + DAY_NS + 1)] {
+            leaf.append_at(row(ts, pos as i64), pos);
+        }
+        assert_eq!(s.oldest_position(), Some(3));
+        s.flush(FlushKind::Tick);
+        assert_eq!(s.oldest_position(), None);
+        leaf.append_at(row(T0 + 2, 11), 11);
+        assert_eq!(s.oldest_position(), Some(11));
+        s.flush(FlushKind::Tick);
+
+        assert_eq!(sources(&s, 7, today), [wal(3, 6), wal(11, 11)]);
+        assert_eq!(sources(&s, 7, today + 1), [wal(4, 9)]);
+        let ranges =
+            |s: &DiskStore, id, day, stream| s.wal_ranges(id, day, stream).expect("ranges");
+        assert_eq!(ranges(&s, 7, today, 0xabc), [(3, 6), (11, 11)]);
+        assert_eq!(ranges(&s, 7, today + 1, 0xabc), [(4, 9)]);
+        // Another log's positions, another template's, another day's: nothing of this
+        // stream's to skip.
+        assert!(ranges(&s, 7, today, 0xdef).is_empty());
+        assert!(ranges(&s, 8, today, 0xabc).is_empty());
+        assert!(ranges(&s, 7, today + 2, 0xabc).is_empty());
+
+        drop(leaf);
+        drop(s);
+        let s = store(&scratch);
+        s.open(7, "ts").expect("leaf");
+        assert_eq!(ranges(&s, 7, today, 0xabc), [(3, 6), (11, 11)]);
+        assert_eq!(ranges(&s, 7, today + 1, 0xabc), [(4, 9)]);
+    }
+
+    /// Ranges that touch or overlap are one run: what replay searches is in order, with
+    /// none inside another.
+    #[test]
+    fn the_ranges_replay_reads_are_merged_where_they_touch() {
+        let scratch = Scratch::new("ranges");
+        let s = store(&scratch);
+        s.attach_wal(0xabc, 0);
+        let leaf = s.open(7, "ts").expect("leaf");
+        for group in [1..4u64, 4..6, 9..10] {
+            for pos in group {
+                leaf.append_at(row(T0 + pos as i64, pos as i64), pos);
+            }
+            s.flush(FlushKind::Tick);
+        }
+        assert_eq!(
+            sources(&s, 7, day_of(T0)),
+            [wal(1, 3), wal(4, 5), wal(9, 9)]
+        );
+        assert_eq!(
+            s.wal_ranges(7, day_of(T0), 0xabc).expect("ranges"),
+            [(1, 5), (9, 9)]
+        );
+    }
+
+    /// A row that came by no log has no position to record, with a log attached or not:
+    /// a range over it would promise lines it never held.
+    #[test]
+    fn rows_that_came_by_no_log_record_no_range() {
+        let scratch = Scratch::new("no-position");
+        let s = store(&scratch);
+        let leaf = s.open(7, "ts").expect("leaf");
+        leaf.append_at(row(T0, 1), 5);
+        s.flush(FlushKind::Tick);
+        s.attach_wal(0xabc, 0);
+        leaf.append(row(T0 + 1, 2));
+        assert_eq!(s.oldest_position(), None);
+        s.flush(FlushKind::Tick);
+        leaf.append_at(row(T0 + 2, 3), 6);
+        leaf.append(row(T0 + 3, 4));
+        s.flush(FlushKind::Tick);
+        assert_eq!(
+            sources(&s, 7, day_of(T0)),
+            [
+                Source::NotRecorded,
+                Source::NotRecorded,
+                Source::NotRecorded
+            ]
+        );
+        assert!(s
+            .wal_ranges(7, day_of(T0), 0xabc)
+            .expect("ranges")
+            .is_empty());
+    }
+
+    /// Rows a flush could not write go back to the head of their buffer, positions and
+    /// all: the oldest position in memory is still theirs, and the row group that takes
+    /// them at last records the same range.
+    #[test]
+    fn rows_put_back_keep_their_positions() {
+        let scratch = Scratch::new("positions-restore");
+        let s = store(&scratch);
+        s.attach_wal(0xabc, 0);
+        let leaf = s.open(7, "ts").expect("leaf");
+        leaf.append_at(row(T0, 1), 21);
+        leaf.append_at(row(T0 + 1, 2), 22);
+        let data = scratch.0.join(DATA_DIR);
+        fs::remove_dir_all(&data).expect("remove");
+        fs::write(&data, b"not a directory").expect("write");
+        let done = s.flush(FlushKind::Tick);
+        assert_eq!(done.failed.len(), 1, "the flush wrote into a file");
+        leaf.append_at(row(T0 + 2, 3), 23);
+        assert_eq!(s.oldest_position(), Some(21));
+
+        fs::remove_file(&data).expect("remove");
+        fs::create_dir_all(&data).expect("mkdir");
+        let done = s.flush(FlushKind::Tick);
+        assert!(done.failed.is_empty(), "{:?}", done.failed);
+        assert_eq!(s.oldest_position(), None);
+        assert_eq!(sources(&s, 7, day_of(T0)), [wal(21, 23)]);
+    }
+
+    /// A replace-a-day under a log says to it what it retired: the last position applied
+    /// when the day was written out. The rows it wrote out on the way - still buffered
+    /// when it began - are behind the mark too, and the next start reads it back.
+    #[test]
+    fn replace_a_day_tells_the_log_what_it_retired() {
+        let scratch = Scratch::new("replace-wal");
+        let s = store(&scratch);
+        s.attach_wal(0xabc, 0);
+        let leaf = s.open(7, "ts").expect("leaf");
+        let today = day_of(T0);
+        leaf.append_at(row(T0, 50), 4);
+        leaf.append_at(row(T0 + DAY_NS, 51), 5);
+        s.flush(FlushKind::Tick);
+        leaf.append_at(row(T0 + 1, 52), 8);
+        assert!(s.replaced_days(0xabc).is_empty());
+
+        let dir = s.stage(9).expect("stage");
+        s.commit_load(LoadCommit {
+            load_id: 9,
+            files: vec![staged(&dir, "a.col", 7, 0..5)],
+            replace_day: Some(today),
+        })
+        .expect("replace");
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2, 3, 4, 51]);
+        assert_eq!(s.replaced_days(0xabc), BTreeMap::from([(today, 8)]));
+        assert!(s.replaced_days(0xdef).is_empty());
+        // Nothing covers positions 4 and 8 any more - the mark is what stops a replay
+        // storing them - and the other day's row group still covers its own.
+        assert!(s.wal_ranges(7, today, 0xabc).expect("ranges").is_empty());
+        assert_eq!(s.wal_ranges(7, today + 1, 0xabc).expect("ranges"), [(5, 5)]);
+
+        drop(leaf);
+        drop(s);
+        let s = store(&scratch);
+        assert_eq!(s.replaced_days(0xabc), BTreeMap::from([(today, 8)]));
+    }
+
+    /// With no log attached a replace says nothing to one, as before.
+    #[test]
+    fn replace_a_day_with_no_log_carries_no_mark() {
+        let scratch = Scratch::new("replace-no-wal");
+        let s = store(&scratch);
+        let leaf = s.open(7, "ts").expect("leaf");
+        leaf.append(row(T0, 50));
+        let dir = s.stage(9).expect("stage");
+        s.commit_load(LoadCommit {
+            load_id: 9,
+            files: vec![staged(&dir, "a.col", 7, 0..5)],
+            replace_day: Some(day_of(T0)),
+        })
+        .expect("replace");
+        assert!(lock(&s.files).replaced.is_empty());
+    }
+
+    /// Rows a start put back from the log have waited already: once the buffers are
+    /// aged, the next tick closes them, where it would have left them their whole wait.
+    #[test]
+    fn aged_buffers_close_at_the_next_tick() {
+        let scratch = Scratch::new("aged");
+        let options = DiskOptions {
+            row_groups: RowGroupLimits {
+                age: Duration::from_secs(30),
+                ..RowGroupLimits::default()
+            },
+            ..DiskOptions::default()
+        };
+        let s = store_with(&scratch, options);
+        s.attach_wal(0xabc, 0);
+        let leaf = s.open(7, "ts").expect("leaf");
+        leaf.append_at(row(T0, 1), 1);
+        leaf.append_at(row(T0 + DAY_NS, 2), 2);
+        assert_eq!(s.flush(FlushKind::Tick).rows, 0, "closed before its wait");
+        assert_eq!(s.oldest_position(), Some(1));
+        s.age_buffers();
+        assert_eq!(s.flush(FlushKind::Tick).rows, 2);
+        assert_eq!(s.oldest_position(), None);
+    }
+
+    /// Row groups no leaf has taken yet cover what they cover: a replay that asks before
+    /// a template's leaf is open is told of them all the same, where "no leaf" read as
+    /// "nothing stored" would have every one of their lines put back a second time.
+    #[test]
+    fn the_ranges_of_a_template_with_no_open_leaf_are_read_from_its_row_groups() {
+        let scratch = Scratch::new("ranges-unopened");
+        let day = day_of(T0);
+        {
+            let s = store(&scratch);
+            s.attach_wal(0xabc, 0);
+            let leaf = s.open(7, "ts").expect("leaf");
+            leaf.append_at(row(T0, 1), 4);
+            leaf.append_at(row(T0, 2), 5);
+            s.flush(FlushKind::Final);
+        }
+        let s = store(&scratch);
+        assert_eq!(s.wal_ranges(7, day, 0xabc).expect("ranges"), [(4, 5)]);
+        assert!(s.wal_ranges(7, day + 1, 0xabc).expect("ranges").is_empty());
+        assert!(s.wal_ranges(8, day, 0xabc).expect("ranges").is_empty());
+        s.open(7, "ts").expect("leaf");
+        assert_eq!(s.wal_ranges(7, day, 0xabc).expect("ranges"), [(4, 5)]);
     }
 }

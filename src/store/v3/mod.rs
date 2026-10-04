@@ -350,8 +350,9 @@ pub const ZSTD: u8 = 1;
 /// skips exactly what a durable row group's range covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Source {
-    /// The live door before the WAL exists: no position to record, and a byte that says
-    /// so is better than a zero that looks like one.
+    /// Rows that came by no log - the live door before it had one, and any row appended
+    /// with no position since: nothing to record, and a byte that says so is better than
+    /// a zero that looks like a position.
     #[default]
     NotRecorded,
     Wal {

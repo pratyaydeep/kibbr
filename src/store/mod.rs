@@ -550,9 +550,10 @@ impl FlushKind {
 /// When a row group closes.
 ///
 /// The size thresholds keep chunks large enough to be worth encoding and to amortise the
-/// row group header. The timeout is for low-traffic leaves that would never reach one -
-/// and until the write-ahead log lands, it is also the longest a row can be queryable
-/// without being on disk.
+/// row group header. The timeout is for low-traffic leaves that would never reach one.
+/// Five minutes, where it was one before the write-ahead log: every row that waits is
+/// already durable in the log, so what the wait costs is replay time after a crash and
+/// not rows, and what it buys is a fifth of the row groups a quiet template makes.
 #[derive(Debug, Clone, Copy)]
 pub struct RowGroupLimits {
     pub rows: usize,
@@ -565,7 +566,7 @@ impl Default for RowGroupLimits {
         Self {
             rows: 8_192,
             bytes: 8 * 1024 * 1024,
-            age: std::time::Duration::from_secs(60),
+            age: std::time::Duration::from_secs(300),
         }
     }
 }
@@ -658,6 +659,16 @@ pub trait LeafStore: Send + Sync {
     /// once per ingested line.
     fn append(&self, row: Row) -> u64;
 
+    /// `append`, for a row that came through the write-ahead log: `position` is where its
+    /// line is in the log, and the row group that takes the row records it. A store whose
+    /// rows never leave memory has nothing to record it against. **Positions arrive in
+    /// order**: the one applier hands them over as the log holds them, and a row group's
+    /// range is only true of a buffer filled that way.
+    fn append_at(&self, row: Row, position: u64) -> u64 {
+        let _ = position;
+        self.append(row)
+    }
+
     /// Hand every surviving row to `v`. The one place filtering happens, so the count,
     /// fetch and group-by paths cannot drift.
     fn visit(
@@ -670,8 +681,8 @@ pub trait LeafStore: Send + Sync {
     /// Rows held, flushed and buffered together - what a query would see.
     fn len(&self) -> u64;
 
-    /// Rows not yet written. `/stats` reports it because it is exactly what a `kill -9`
-    /// would cost while there is no write-ahead log.
+    /// Rows not yet in a row group. With a write-ahead log they are in it, and this is what
+    /// the next start would replay; with none it is what a `kill -9` would cost.
     fn buffered(&self) -> u64;
 
     /// Roughly what this leaf weighs in bytes.
@@ -783,6 +794,12 @@ pub trait Store: Send + Sync {
     fn buffer_bytes(&self) -> (u64, u64) {
         (0, 0)
     }
+    /// The lowest write-ahead log position among the rows still only in memory - in a
+    /// buffer, or moved aside by a flush that has not published them. `None` when no such
+    /// row carries a position: what the log's checkpoint is moved up to.
+    fn oldest_position(&self) -> Option<u64> {
+        None
+    }
     /// The disk store, for the bulk door: only it has files to publish. `None` for a store
     /// whose rows never leave memory, which a load is refused against.
     fn as_disk(&self) -> Option<&DiskStore> {
@@ -818,10 +835,13 @@ pub trait Store: Send + Sync {
 /// flush reports the wrong thing at exactly the moment it matters. So this is an atomic
 /// and a short-lived mutex beside the registry rather than a field inside it.
 ///
-/// Until the write-ahead log lands, a `200` for a line the store cannot write is the
-/// lie: measured on a full disk, every batch got a `200`, the shutdown log said
-/// "90,000 rows written", and after a restart `COUNT LOG {}` was 0. While this says
-/// degraded, `/ingest` answers `503` instead.
+/// **`/ingest` no longer refuses on it.** Before the write-ahead log a `200` for a line
+/// the store could not write was a lie - measured on a full disk, every batch got a `200`,
+/// the shutdown log said "90,000 rows written", and after a restart `COUNT LOG {}` was 0 -
+/// so while this said degraded, `/ingest` answered `503`. A line is now durable in the log
+/// before it is acknowledged, and a store that cannot write delays its row and loses
+/// nothing: the refusal moved to the log. This is what `/health` and the compaction look
+/// read, and what the door reads only to say why the buffers are full when it sheds.
 #[derive(Debug, Default)]
 pub struct WriteHealth {
     degraded: std::sync::atomic::AtomicBool,
@@ -889,8 +909,8 @@ pub struct StoreManager {
     stores: RwLock<BTreeMap<u64, Arc<dyn LeafStore>>>,
     write_failures: AtomicU64,
     /// Rows `append` refused. Apart from `write_failures`, which also counts flushes that
-    /// failed and later succeeded: these rows are gone for good, and the shutdown exits
-    /// non-zero on them.
+    /// failed and later succeeded: these rows are in no buffer. Behind the write-ahead log
+    /// they are still in it, and the next start replays them; with no log they are gone.
     rows_dropped: AtomicU64,
     /// Buffers closed early by the memory limit, over the life of the process.
     forced_closes: AtomicU64,
@@ -922,7 +942,7 @@ impl StoreManager {
         Ok(Self::new(Box::new(DiskStore::open(base, options)?)))
     }
 
-    /// Shared out at startup and read from `/health` and `/ingest` without any lock here.
+    /// Shared out at startup and read from `/health` without any lock here.
     pub fn health(&self) -> Arc<WriteHealth> {
         Arc::clone(&self.health)
     }
@@ -945,22 +965,42 @@ impl StoreManager {
     /// Open the store on first write, then buffer the row.
     ///
     /// **A failure to open is the row's, and it is returned.** The row is not buffered
-    /// anywhere, and with no write-ahead log that makes it nowhere: this used to count the
-    /// failure and return nothing, and `/ingest` answered `200` with the line counted in
-    /// `ingested`. The caller refuses the line by number instead. The body is not failed:
-    /// the other templates' rows in it did land, and in this body the leaf costs its own
-    /// lines and no one else's. The bodies after it are refused whole at the door until
-    /// the leaf opens; see `retry_unopened`.
+    /// anywhere. A caller with no write-ahead log behind it - the CLI, a load - refuses the
+    /// line by number: the row is then nowhere, and counting it as ingested would be a
+    /// lie. The live door's applier does the opposite, and has to (`append_at`).
     ///
-    /// Counted as well as returned - `write_failures` for `/stats`, `rows_dropped` for the
-    /// exit code - and it marks the store degraded.
+    /// Counted as well as returned - `write_failures` for `/stats`, `rows_dropped` for
+    /// whoever asks - and it marks the store degraded.
     pub fn append(&self, template_id: u64, time_column: &str, row: Row) -> Result<(), StoreError> {
+        self.append_at(template_id, time_column, row, 0)
+    }
+
+    /// `append`, for a row that came through the write-ahead log at `position`; 0 is a
+    /// row that came no such way.
+    ///
+    /// **An `Err` here is not the sender's.** The line is durable in the log and was, or
+    /// will be, acknowledged: the caller logs the failure and keeps the log's checkpoint
+    /// behind the position, so the next start's replay stores the row. It must never
+    /// become an error for the line - the type the live door answers with has no variant
+    /// that can hold one (`error::IngestError`).
+    pub fn append_at(
+        &self,
+        template_id: u64,
+        time_column: &str,
+        row: Row,
+        position: u64,
+    ) -> Result<(), StoreError> {
         let leaf = match self.lookup(template_id) {
             Some(leaf) => leaf,
             None => self.open_for_write(template_id, time_column)?,
         };
-        leaf.append(row);
+        leaf.append_at(row, position);
         Ok(())
+    }
+
+    /// See `Store::oldest_position`.
+    pub fn oldest_position(&self) -> Option<u64> {
+        self.backend.oldest_position()
     }
 
     /// The first row of a template this process has not opened a leaf for.
@@ -1028,19 +1068,17 @@ impl StoreManager {
     /// **Reported once, recorded every time.** A disk that has gone away fails on every
     /// line, and a message per line is how a log becomes unreadable at the moment it
     /// matters - so the `error!` is the first one only. The *stored* string is the latest,
-    /// because it is what a caller being refused with a 503 is shown, and what that caller
-    /// wants is why now.
+    /// because it is what `/health` shows, and what its reader wants is why now.
     ///
     /// **It also marks the store degraded**, and not only the flush tick does.
     ///
     /// The rule is written around the tick because that is where a full disk shows up
     /// first, but a leaf that cannot even be *opened* is a store that cannot write by any
-    /// reading. `append` refuses that row to its line; this is what refuses the *next*
-    /// body at the door, before it is read.
+    /// reading.
     ///
     /// The clearing rule is still the tick's: the next pass that writes everything clears
     /// it, and a pass has not written everything while a leaf `append` could not open
-    /// still will not open - `retry_unopened` is in the pass. So the refusal lasts exactly
+    /// still will not open - `retry_unopened` is in the pass. So the verdict lasts exactly
     /// as long as the leaf will not open: until the first tick after a disk fault is
     /// fixed, and for bytes the format rejects, until an operator moves them.
     fn note_failure(&self, e: &StoreError) {
@@ -1108,8 +1146,8 @@ impl StoreManager {
         }
         self.forced_closes
             .fetch_add(done.forced as u64, Ordering::Relaxed);
-        // The verdict `/health` and `/ingest` read. A final flush sets it too: a shutdown
-        // that could not write is degraded for whatever is left of the process.
+        // The verdict `/health` reads. A final flush sets it too: a shutdown that could
+        // not write is degraded for whatever is left of the process.
         self.health.tick(failed.len() + seal_failures + unopened);
         FlushSummary {
             rows: done.rows,
@@ -1127,22 +1165,13 @@ impl StoreManager {
     /// Try again to open every leaf `append` could not, and count the ones that still fail.
     ///
     /// **Why the flush has to ask.** A leaf that will not open holds no buffer, so a pass
-    /// over the open stores never meets it and would end by clearing `degraded` - and the
-    /// next body through the door would store its other lines again and be refused again
-    /// for this leaf's. A shipper retrying that `503` duplicates every good line of its
-    /// batch once per retry, for as long as the leaf stays shut. Kept degraded instead, the
-    /// retry is refused at the door until the leaf opens. The bodies already past the door
-    /// when the fault was found are each partly stored once; none after them is.
-    ///
-    /// **What it costs: every template's ingest, not only this one's.** The door cannot
-    /// tell which bodies need the leaf without parsing them, so while it will not open no
-    /// body is taken, and a leaf whose bytes the format rejects never opens by itself.
-    /// That is the stance a full disk already gets, and the alternative is the unbounded
-    /// duplication above. `/health` says degraded and names the error meanwhile.
+    /// over the open stores never meets it and would end by clearing `degraded` while the
+    /// store still cannot take that template's rows. Kept degraded instead, `/health` says
+    /// so and names the error for as long as the leaf stays shut.
     ///
     /// Counted apart from `summary.failed` for the reason seal failures are: that is leaves
-    /// whose buffered rows could not be written, which the shutdown reports as lost, and
-    /// these hold none. Their rows were refused by line and are in `rows_dropped`.
+    /// whose buffered rows could not be written, and these hold none. Their rows were
+    /// refused by `append` and are in `rows_dropped`.
     fn retry_unopened(&self) -> usize {
         let pending: Vec<(u64, String)> = std::mem::take(&mut *lock(&self.unopened))
             .into_iter()

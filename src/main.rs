@@ -29,6 +29,7 @@ mod trie;
 mod triefile;
 mod trieql;
 mod types;
+mod wal;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -167,11 +168,22 @@ enum Command {
         #[arg(long, value_name = "MS")]
         flush_interval_ms: Option<usize>,
         /// How long a row group may stay open with rows in it, in milliseconds, when
-        /// neither 8,192 rows nor 8MB got there first. Until there is a write-ahead log
-        /// this is also what a kill -9 costs. Floored at the flush interval.
-        /// Overrides `KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS`.
+        /// neither 8,192 rows nor 8MB got there first. The rows that wait are in the
+        /// write-ahead log, so this is replay time after a crash and not rows. Floored at
+        /// the flush interval.
+        /// Overrides `KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS`. [default: 300000]
         #[arg(long, value_name = "MS")]
         row_group_timeout_ms: Option<usize>,
+        /// A segment of the write-ahead log rolls to the next number at this many bytes.
+        /// Overrides `KIBBR__STORAGE__WAL_SEGMENT_BYTES`. [default: 64 MiB]
+        #[arg(long, value_name = "BYTES")]
+        wal_segment_bytes: Option<usize>,
+        /// Where one flush of the write-ahead log stops taking more bodies: once it holds
+        /// this many lines. A body is never split, so a flush can hold more; and a flush
+        /// waits for nothing - it takes whatever queued while the one before it ran.
+        /// Overrides `KIBBR__INGESTOR__BATCH_SIZE`. [default: 500]
+        #[arg(long, value_name = "LINES")]
+        batch_size: Option<usize>,
         /// How many segment files may be open for writing at once, across every leaf.
         /// Past it the least recently written one is sealed, which is always safe - the
         /// next row for that partition opens the next segment number. Set it below
@@ -490,6 +502,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
             trie_file,
             flush_interval_ms,
             row_group_timeout_ms,
+            wal_segment_bytes,
+            batch_size,
             max_open_segments,
             segment_max_bytes,
             max_buffer_bytes,
@@ -510,7 +524,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 segment_max_bytes,
                 max_buffer_bytes,
             )?
-            .with_compact_interval(compact_interval_ms)?,
+            .with_compact_interval(compact_interval_ms)?
+            .with_wal(wal_segment_bytes, batch_size)?,
             config::Schema::load(time_columns),
         ),
         Command::Load {

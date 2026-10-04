@@ -31,6 +31,8 @@ struct Server {
     port: u16,
     stderr: BufReader<ChildStderr>,
     data_dir: Option<PathBuf>,
+    /// Everything the server said before it listened: what a start found, and the banner.
+    banner: String,
 }
 
 /// A data directory of this test's own.
@@ -63,7 +65,11 @@ impl Server {
     /// corpus can actually reach has to be smaller than the 10,000-row default.
     fn start_with(extra: &[&str]) -> Self {
         let memory = extra.windows(2).any(|pair| pair == ["--storage", "memory"]);
-        let data_dir = (!memory).then(scratch_dir);
+        Self::start_on((!memory).then(scratch_dir), extra)
+    }
+
+    /// The same, on a data directory an earlier server of this test left: a restart.
+    fn start_on(data_dir: Option<PathBuf>, extra: &[&str]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
         command.args(["serve", "--port", "0"]);
         if let Some(dir) = &data_dir {
@@ -79,7 +85,9 @@ impl Server {
         let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
         let mut port = None;
         let mut banner = String::new();
-        for _ in 0..40 {
+        // Past the banner's own length: a start after a kill says what it read back from
+        // the write-ahead log before the banner.
+        for _ in 0..80 {
             let mut line = String::new();
             if stderr.read_line(&mut line).unwrap_or(0) == 0 {
                 break;
@@ -117,7 +125,23 @@ impl Server {
             port,
             stderr,
             data_dir,
+            banner,
         }
+    }
+
+    /// `kill -9`, and the data directory as it was left: nothing flushed, nothing sealed,
+    /// no checkpoint moved.
+    fn kill(mut self) -> PathBuf {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.data_dir.take().expect("a server with a directory")
+    }
+
+    /// `wait`, keeping the data directory for a restart.
+    fn wait_keeping(mut self) -> (Option<i32>, String, PathBuf) {
+        let dir = self.data_dir.take().expect("a server with a directory");
+        let (code, log) = self.wait();
+        (code, log, dir)
     }
 
     fn data_dir(&self) -> &Path {
@@ -535,11 +559,11 @@ fn a_signal_lets_the_in_flight_request_finish() {
         log.contains("exit 0"),
         "shutdown log has no exit line:\n{log}"
     );
-    // The steps this build does not have are named rather than omitted, so an
-    // operator can see which durability they do not yet have.
+    // Every step of the shutdown is named, the write-ahead log's two among them, so an
+    // operator can see what was done on the way out.
     assert!(
-        log.contains("WAL"),
-        "shutdown log does not mention the WAL:\n{log}"
+        log.contains("WAL checkpoint") && log.contains("close WAL"),
+        "shutdown log does not name the WAL's steps:\n{log}"
     );
 }
 
@@ -955,22 +979,23 @@ fn lock_data(base: &Path) -> Vec<PathBuf> {
     locked
 }
 
-/// A store that cannot write says so, on three surfaces, and the exit code is one of them.
+/// A store that cannot write refuses nothing and loses nothing.
 ///
-/// **Why this matters more than it looks.** With no write-ahead log a `200` means
-/// *buffered*, and a buffer that cannot drain is not durability. Measured on a full disk:
-/// every batch got a `200`, the server stayed up, the shutdown log said "90,000 rows
-/// written", and after a restart `COUNT LOG {}` was 0. Nothing anywhere told the sender
-/// to keep its lines.
+/// **The rule that is easy to get backwards.** A line is in the write-ahead log, flushed,
+/// before it is acknowledged, so a store that then cannot take its row has failed at
+/// nothing the sender needs to hear about: `/ingest` goes on answering `200`, `/health`
+/// says degraded, the shutdown exits 0, and the next start puts the rows back from the
+/// log. Before the log it was the other way round, and had to be - a `200` meant
+/// *buffered*, and on a full disk every batch got one and `COUNT LOG {}` was 0 after a
+/// restart - so this used to assert a `503` and an exit code of 1.
 ///
-/// The disk here is made unwritable rather than full, which is the same errno's worth of
+/// The disk is made unwritable rather than full, which is the same errno's worth of
 /// difference: `data/` and its day directories are set read-only after the first day's file
 /// is open, and the second line is of the next day - whose file needs a new directory in
-/// `data/`, which will not take one. `scripts/disk_full.sh` does it the other way, on a RAM
-/// disk that is actually filled.
+/// `data/`, which will not take one. The log is beside `data/`, and still writes.
 #[test]
 #[cfg(unix)]
-fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
+fn a_store_that_cannot_write_refuses_nothing_and_loses_nothing() {
     use std::os::unix::fs::PermissionsExt;
 
     // A row group closes on the timeout, so one line per flush: the point is to get a
@@ -993,11 +1018,7 @@ fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
 
     // The next day, which has no file and needs a directory `data/` will not take.
     let second = br#"{"ts": 1705401001, "x": "N/A"}"#;
-    assert_eq!(
-        server.post("/ingest", second).0,
-        200,
-        "the line was accepted before the store had failed on it"
-    );
+    assert_eq!(server.post("/ingest", second).0, 200);
     let stats = wait_for_stats(&server, "the flush tick to fail", |s| {
         s["storage"]["degraded"] == true
     });
@@ -1018,9 +1039,169 @@ fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
         "/health does not say what the write failed with: {health}"
     );
 
-    // 2. `/ingest` refuses, with a Retry-After and the write error in the body.
-    let (status, headers, body) = request_raw(server.port, "POST", "/ingest", first);
-    assert_eq!(status, 503, "a line the store cannot write got {status}");
+    // 2. `/ingest` does not refuse. The line is durable in the log, so `200` is true.
+    let third = br#"{"ts": 1705401002, "x": 3}"#;
+    let (status, body) = server.post("/ingest", third);
+    assert_eq!(
+        status, 200,
+        "a line the log took was refused because the store cannot write: {body}"
+    );
+    assert_eq!(
+        body.trim(),
+        r#"{"ok":true,"ingested":1,"errors":[]}"#,
+        "the store's failure reached the sender"
+    );
+
+    // 3. Queries still answer, and see every line: the rows are in memory.
+    assert_eq!(server.query("COUNT LOG {}")["count"], 3);
+
+    // 4. The exit code is 0: nothing acknowledged was lost. The log says where the rows
+    //    the final flush could not write are.
+    server.signal("-TERM");
+    let (code, log, dir) = server.wait_keeping();
+    for path in &locked {
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
+    }
+    assert_eq!(
+        code,
+        Some(0),
+        "a shutdown that lost nothing exited {code:?}\n{log}"
+    );
+    assert!(
+        log.contains("FAILED") && log.contains("write-ahead log") && log.contains("exit 0"),
+        "the shutdown log does not say where the unwritten rows are:\n{log}"
+    );
+
+    // 5. And the next start puts them back: every line, once.
+    let server = Server::start_on(Some(dir), &["--row-group-timeout-ms", "500"]);
+    assert_eq!(server.query("COUNT LOG {}")["count"], 3);
+    let replay = json(&server.get("/stats").1)["storage"]["wal"]["replay"].clone();
+    assert_eq!(replay["applied"], 2, "the two unwritten rows: {replay}");
+    assert_eq!(replay["covered"], 0, "{replay}");
+    let mut xs: Vec<String> = server.query("MATCH LOG {}")["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["x"].to_string())
+        .collect();
+    xs.sort();
+    assert_eq!(xs, ["\"N/A\"", "1", "3"]);
+}
+
+/// A sender that hangs up does not take its body's place with it. The body's task runs
+/// on, and the permits are the task's: a second body is shed while the first is still
+/// being parsed - where they used to go back at the hang-up, and a sender that timed out
+/// and tried again had a second copy of its body parsed beside the first. And a stop
+/// waits for such a body: the final flush stores it whole, where an exit half way
+/// through would have stored whatever part of it had got that far.
+#[test]
+fn a_body_whose_sender_hung_up_keeps_its_place_and_is_stored_whole() {
+    // Enough lines that the body is in hand for several times as long as the second
+    // one takes to be refused: were it done first, this would test nothing.
+    const ORPHANED: usize = 200_000;
+    let server = Server::start_with(&["--ingest-concurrency", "1"]);
+    let body: Vec<u8> = (0..ORPHANED)
+        .flat_map(|n| format!("{{\"ts\": 1705314600, \"n\": {n}}}\n").into_bytes())
+        .collect();
+    {
+        // Sent whole, and the socket closed with no answer read - a moment later, as a
+        // sender that gives up waiting does. One that closes with the last byte is not
+        // this case: the server drops such a request before it has read the body out.
+        let mut socket = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+        let head = format!(
+            "POST /ingest HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n",
+            server.port,
+            body.len()
+        );
+        socket.write_all(head.as_bytes()).expect("write");
+        socket.write_all(&body).expect("write");
+        socket.flush().expect("flush");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // The one permit is with that body's task, whoever is still listening for it.
+    let (status, answer) = server.post("/ingest", br#"{"ts": 1705314600, "x": 1}"#);
+    assert_eq!(
+        status,
+        503,
+        "a body was let in beside the one in hand: {answer}\n{}",
+        server.get("/stats").1
+    );
+
+    // Stopped now, with the task still at work: the stop waits for it, and its lines are
+    // in row groups before the exit - not left in the log for the next start.
+    server.signal("-TERM");
+    let (code, log, dir) = server.wait_keeping();
+    assert_eq!(code, Some(0), "{log}");
+    let server = Server::start_on(Some(dir), &[]);
+    assert_eq!(server.query("COUNT LOG {}")["count"], ORPHANED);
+    let stats = json(&server.get("/stats").1);
+    assert_eq!(stats["storage"]["wal"]["replay"]["records"], 0, "{stats}");
+}
+
+/// A body whose lines, as log records, are more than one write of the log holds is the
+/// sender's to split: a `413` that says so, decided from the bytes before a line of it is
+/// parsed. Twenty-six million `{}` lines are 78MB on the wire and 1.09GB as records; an
+/// answer after the parse would have cost gigabytes of memory to refuse.
+#[test]
+fn a_body_past_what_the_log_writes_at_once_is_a_413_and_is_not_parsed() {
+    let server = Server::start_with(&["--max-body-bytes", "100000000"]);
+    let big = b"{}\n".repeat(26_000_000);
+    let (status, body) = server.post("/ingest", &big);
+    assert_eq!(status, 413, "{body}");
+    let error = json(&body)["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        error.contains("write-ahead log") && error.contains("smaller bodies"),
+        "the refusal does not say what to do: {error}"
+    );
+    let stats = json(&server.get("/stats").1);
+    assert_eq!(stats["ingest"]["lines_read"], 0, "the body was parsed");
+    assert_eq!(stats["ingest"]["requests_shed"], 0, "a 413 is not a shed");
+
+    // And the log is as it was: the next body is taken.
+    assert_eq!(
+        server.post("/ingest", br#"{"ts": 1705314600, "x": 1}"#).0,
+        200
+    );
+    assert_eq!(json(&server.get("/health").1)["status"], "ok");
+}
+
+/// The refusal that is left: a body the write-ahead log cannot take. Nothing of it is
+/// stored. And the first write that succeeds clears it.
+///
+/// The log is made unable to write the way the store was: its directory read-only, with a
+/// segment size of one byte so the next flush has to make a new segment there. The open
+/// one still takes the first line.
+#[test]
+#[cfg(unix)]
+fn a_log_that_cannot_write_refuses_and_the_first_write_clears_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = Server::start_with(&["--wal-segment-bytes", "1"]);
+    assert_eq!(
+        server.post("/ingest", br#"{"ts": 1705314600, "x": 1}"#).0,
+        200
+    );
+    let wal = server.data_dir().join("wal");
+    fs::set_permissions(&wal, fs::Permissions::from_mode(0o555)).expect("chmod");
+
+    // 1. The body that meets the failure: a 503, a Retry-After, and the log's error.
+    let (status, headers, body) = request_raw(
+        server.port,
+        "POST",
+        "/ingest",
+        br#"{"ts": 1705314601, "x": 2}"#,
+    );
+    let _ = fs::set_permissions(&wal, fs::Permissions::from_mode(0o755));
+    assert_eq!(
+        status, 503,
+        "a line the log could not take got {status}: {body}"
+    );
     assert!(
         headers.to_ascii_lowercase().contains("retry-after:"),
         "the 503 carried no Retry-After:\n{headers}"
@@ -1029,86 +1210,174 @@ fn a_store_that_cannot_write_answers_503_and_exits_non_zero() {
     assert_eq!(refusal["ok"], false);
     let error = refusal["error"].as_str().unwrap_or_default();
     assert!(
-        error.contains("cannot write") && error.contains("leaf"),
-        "the refusal does not carry the last write error: {error}"
+        error.contains("write-ahead log cannot write") && error.contains("seg_"),
+        "the refusal does not carry the log's write error: {error}"
     );
+    // Nothing has the line: not the log, and so not the store.
+    assert_eq!(server.query("COUNT LOG {}")["count"], 1);
 
-    // 3. Queries still answer. The disk is unwritable, not unreadable.
+    // 2. The directory is writable again, and the next flush tick finds out: the door
+    //    opens without a body having to be refused to learn it.
+    let stats = wait_for_stats(&server, "the log to write again", |s| {
+        s["storage"]["wal"]["healthy"] == true
+    });
+    assert!(
+        !stats["storage"]["wal"]["last_error"].is_null(),
+        "the log's last error was forgotten once it could write: {stats}"
+    );
+    assert_eq!(json(&server.get("/health").1)["status"], "ok");
+    assert_eq!(
+        server.post("/ingest", br#"{"ts": 1705314602, "x": 3}"#).0,
+        200,
+        "still refusing after the log could write again"
+    );
     assert_eq!(server.query("COUNT LOG {}")["count"], 2);
 
-    // 4. And the exit code says rows were lost, rather than 0 as it always used to.
     server.signal("-TERM");
     let (code, log) = server.wait();
-    for path in &locked {
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
-    }
-    assert_eq!(
-        code,
-        Some(1),
-        "a shutdown that lost rows exited {code:?}\n{log}"
-    );
+    assert_eq!(code, Some(0), "exited {code:?}\n{log}");
+}
+
+/// While the log cannot write, the door refuses a body before it is read - and says why.
+#[test]
+#[cfg(unix)]
+fn while_the_log_cannot_write_the_door_refuses_and_health_says_why() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // A tick every ten seconds: the log stays as the failed flush left it for the whole
+    // test, where the default tick would ask it to try again.
+    let server = Server::start_with(&["--wal-segment-bytes", "1", "--flush-interval-ms", "10000"]);
+    let line = br#"{"ts": 1705314600, "x": 1}"#;
+    assert_eq!(server.post("/ingest", line).0, 200);
+    let wal = server.data_dir().join("wal");
+    fs::set_permissions(&wal, fs::Permissions::from_mode(0o555)).expect("chmod");
+    assert_eq!(server.post("/ingest", line).0, 503);
+    // That body was read, and its line counted: it was the flush that failed.
+    let read = json(&server.get("/stats").1)["ingest"]["lines_read"].clone();
+    assert_eq!(read, 2);
+
+    let (status, headers, body) = request_raw(server.port, "POST", "/ingest", line);
+    let health = json(&server.get("/health").1);
+    let after = json(&server.get("/stats").1)["ingest"]["lines_read"].clone();
+    let _ = fs::set_permissions(&wal, fs::Permissions::from_mode(0o755));
+    assert_eq!(status, 503);
+    // This one was not: the door refused it before a byte of it was looked at. The same
+    // 503 from the handler would have read the line first.
+    assert_eq!(after, read, "the door let the body in to be refused");
+    assert!(headers.to_ascii_lowercase().contains("retry-after:"));
+    let error = json(&body)["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     assert!(
-        log.contains("NOT written") && log.contains("exit 1"),
-        "the shutdown log does not say how many rows it lost:\n{log}"
+        error.contains("the write-ahead log cannot write") && error.contains("seg_"),
+        "the refusal does not carry the log's write error: {error}"
+    );
+    assert_eq!(health["status"], "degraded");
+    assert_eq!(health["ok"], true);
+    assert!(
+        health["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("write-ahead log"),
+        "{health}"
     );
 }
 
-/// The first tick that writes everything clears the refusal.
-#[test]
-#[cfg(unix)]
-fn the_first_successful_tick_clears_the_refusal() {
-    use std::os::unix::fs::PermissionsExt;
+// ── After a kill ───────────────────────────────────────────────────────────────────
 
-    let server = Server::start_with(&["--row-group-timeout-ms", "500"]);
-    assert_eq!(
-        server.post("/ingest", br#"{"ts": 1705314600, "x": 1}"#).0,
-        200
-    );
-    wait_for_stats(&server, "the first line to reach a segment", |s| {
+/// `kill -9` loses no acknowledged line and stores none twice - whichever side of the
+/// checkpoint the line is on. `scripts/crash_test.sh` is the full version of this, twenty
+/// kills at drawn moments; this is the two cases it rests on, each made on purpose.
+///
+/// **Rows in a row group, and a checkpoint that does not know.** Every line is flushed
+/// into a row group, the server is killed, and the checkpoint file is deleted: the log
+/// still holds every line, and nothing but the row groups' own ranges says they are
+/// stored. A replay that went by the checkpoint would store all of them again.
+///
+/// **Rows in memory only.** Then three lines more, under the default wait so no row group
+/// takes them, and a kill: they come back from the log, and the rest are skipped again.
+/// The log's newest segment is given a torn record first - a frame whose length says more
+/// than is there, as a write the kill cut short leaves - and the start must warn and
+/// carry on.
+#[test]
+fn a_kill_loses_no_acknowledged_line_and_stores_none_twice() {
+    let fast = ["--row-group-timeout-ms", "100", "--flush-interval-ms", "50"];
+    let good = (LINES - BAD.len()) as u64;
+
+    let server = Server::start_with(&fast);
+    assert_eq!(server.post("/ingest", &corpus()).0, 200);
+    wait_for_stats(&server, "every row to reach a row group", |s| {
         s["storage"]["buffered_rows"] == 0
     });
+    let dir = server.kill();
+    let _ = fs::remove_file(dir.join("wal").join("checkpoint"));
 
-    let locked = lock_data(server.data_dir());
+    let server = Server::start_on(Some(dir), &[]);
     assert_eq!(
-        server
-            .post("/ingest", br#"{"ts": 1705401001, "x": "N/A"}"#)
-            .0,
-        200
+        server.query("COUNT LOG {}")["count"],
+        good,
+        "rows already in a row group were stored again by the replay"
     );
-    wait_for_stats(&server, "the flush tick to fail", |s| {
-        s["storage"]["degraded"] == true
-    });
-    assert_eq!(
-        server.post("/ingest", br#"{"ts": 1705314602, "x": 3}"#).0,
-        503
-    );
+    let replay = json(&server.get("/stats").1)["storage"]["wal"]["replay"].clone();
+    assert_eq!(replay["records"], good, "{replay}");
+    assert_eq!(replay["covered"], good, "{replay}");
+    assert_eq!(replay["applied"], 0, "{replay}");
 
-    // The disk comes back.
-    for path in &locked {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod back");
-    }
-    let stats = wait_for_stats(&server, "a tick that writes everything", |s| {
-        s["storage"]["degraded"] == false
-    });
-    // `last_write_error` is deliberately *not* cleared: what failed a minute ago is still
-    // the answer to "what went wrong", and `degraded` is the field that says whether it
-    // is still going wrong.
+    let more = b"{\"ts\": 1705314600, \"late\": 1}\n{\"ts\": 1705314601, \"late\": 2}\n\
+                 {\"ts\": 1705314602, \"late\": 3}\n";
+    assert_eq!(server.post("/ingest", more).0, 200);
+    assert_eq!(json(&server.get("/stats").1)["storage"]["buffered_rows"], 3);
+    let dir = server.kill();
+    let newest = fs::read_dir(dir.join("wal"))
+        .expect("wal")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "wal"))
+        .max()
+        .expect("a segment");
+    let mut torn = fs::OpenOptions::new()
+        .append(true)
+        .open(&newest)
+        .expect("open");
+    torn.write_all(&[0x00, 0x10, 0x00, 0x00, 0xde, 0xad, 0xbe, 0xef, 1, 2, 3])
+        .expect("write");
+    drop(torn);
+
+    let server = Server::start_on(Some(dir), &[]);
     assert!(
-        !stats["storage"]["last_write_error"].is_null(),
-        "the last write error was forgotten once the disk came back: {stats}"
+        server.banner.contains("WARN wal") && server.banner.contains("torn record"),
+        "the start did not warn about the torn record:\n{}",
+        server.banner
     );
+    assert_eq!(server.query("COUNT LOG {}")["count"], good + 3);
+    let mut late: Vec<String> = server.query("MATCH LOG {}")["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter(|row| !row["late"].is_null())
+        .map(|row| row["late"].to_string())
+        .collect();
+    late.sort();
+    assert_eq!(
+        late,
+        ["1", "2", "3"],
+        "the three lines that were only in memory did not come back once each"
+    );
+    let replay = json(&server.get("/stats").1)["storage"]["wal"]["replay"].clone();
+    assert_eq!(replay["applied"], 3, "{replay}");
+    assert_eq!(replay["torn"], 1, "{replay}");
 
-    assert_eq!(
-        server.post("/ingest", br#"{"ts": 1705314603, "x": 4}"#).0,
-        200,
-        "still refusing after a tick that wrote everything"
-    );
+    // A clean stop leaves nothing to read back, and the same rows.
     server.signal("-TERM");
-    let (code, log) = server.wait();
+    let (code, log, dir) = server.wait_keeping();
+    assert_eq!(code, Some(0), "{log}");
+    let server = Server::start_on(Some(dir), &[]);
+    assert_eq!(server.query("COUNT LOG {}")["count"], good + 3);
+    let replay = json(&server.get("/stats").1)["storage"]["wal"]["replay"].clone();
     assert_eq!(
-        code,
-        Some(0),
-        "a shutdown that lost nothing exited {code:?}\n{log}"
+        replay["records"], 0,
+        "a clean stop left lines to replay: {replay}"
     );
 }
 

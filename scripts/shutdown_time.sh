@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # How long a clean stop takes with every row still in memory.
 #
-# Kubernetes sends SIGKILL 30 seconds after SIGTERM, and with no write-ahead log a row still
-# buffered when the SIGKILL lands is gone. Measured when every template had a file of its
-# own in every day: the final flush sealed one partition at a time with four flushes each,
+# Kubernetes sends SIGKILL 30 seconds after SIGTERM. A row still buffered when it lands is
+# not lost - it is in the write-ahead log - but the next start has to put it back, and a
+# stop that cannot finish in thirty seconds is never a clean one. Measured when every
+# template had a file of its own in every day: the final flush sealed one partition at a time with four flushes each,
 # and 200,000 rows across 16,694 partitions took 349 seconds.
 #
 # The row group timeout is set past the length of the run, so no tick writes a row: every

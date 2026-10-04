@@ -91,6 +91,8 @@ const MAX_OPEN_SEGMENTS_ENV: &str = "KIBBR__STORAGE__MAX_OPEN_SEGMENTS";
 const SEGMENT_MAX_BYTES_ENV: &str = "KIBBR__STORAGE__SEGMENT_MAX_BYTES";
 const MAX_BUFFER_BYTES_ENV: &str = "KIBBR__STORAGE__MAX_BUFFER_BYTES";
 const COMPACT_INTERVAL_ENV: &str = "KIBBR__STORAGE__COMPACT_INTERVAL_MS";
+const WAL_SEGMENT_BYTES_ENV: &str = "KIBBR__STORAGE__WAL_SEGMENT_BYTES";
+const BATCH_SIZE_ENV: &str = "KIBBR__INGESTOR__BATCH_SIZE";
 const TIME_COLUMNS_ENV: &str = "KIBBR__SCHEMA__TIME_COLUMNS";
 const EPOCH_WINDOW_ENV: &str = "KIBBR__SCHEMA__EPOCH_WINDOW";
 
@@ -115,13 +117,16 @@ pub const DEFAULT_TIME_COLUMNS: &[&str] = &[
 /// What the tick bounds is how late either can be noticed.
 pub const DEFAULT_FLUSH_INTERVAL_MS: usize = 500;
 
-/// How long a row group may stay open with rows in it.
+/// How long a row group may stay open with rows in it: five minutes.
 ///
-/// **Until the write-ahead log lands this is also what a `kill -9` costs**, which is why
-/// it is a setting and not a constant: an operator who would rather pay in file count than
-/// in rows can turn it down. It cannot go below the flush interval - the tick is what
-/// notices it has expired.
-pub const DEFAULT_ROW_GROUP_TIMEOUT_MS: usize = 60_000;
+/// **It was one minute while it was also what a `kill -9` cost.** Every row that waits is
+/// now durable in the write-ahead log, so the wait costs replay time after a crash - a
+/// 10,000-line backlog is back in under a second - and no rows; and a quiet template that
+/// closes a row group every five minutes makes a fifth of the row groups, each of which
+/// pays a header against a few hundred bytes of data. Still a setting: it is also how
+/// much of the log a quiet template holds the checkpoint behind. It cannot go below the
+/// flush interval - the tick is what notices it has expired.
+pub const DEFAULT_ROW_GROUP_TIMEOUT_MS: usize = 300_000;
 
 /// How often a server looks for a day that has ended and compacts it.
 ///
@@ -173,6 +178,11 @@ pub enum ConfigError {
     /// the buffers would close every buffer on every tick, the thresholds unread.
     #[error("{what} must be at least 1 byte; 0 is not a size anything can be held to")]
     NoBytes { what: &'static str },
+
+    /// The bound on one flush of the write-ahead log is not "off" at 0 either: a flush
+    /// that may take no line takes none, and every body waits for ever.
+    #[error("batch size must be at least 1 line; 0 would let a flush of the write-ahead log take nothing")]
+    NoBatch,
 
     /// Refused rather than defaulted: the window decides what type a value is stored as,
     /// and an operator who set one would believe it was in force.
@@ -300,6 +310,12 @@ pub struct Storage {
     pub max_buffer_bytes: u64,
     /// How often a server looks for a day that is due for compaction. Zero is never.
     pub compact_interval: Duration,
+    /// A segment of the write-ahead log rolls to the next number at this size.
+    pub wal_segment_bytes: u64,
+    /// Where one flush of the write-ahead log stops taking more bodies: once it holds
+    /// this many lines. Not a target and not a wait - a flush takes what has queued - and
+    /// not a bound on a body, which goes in whole.
+    pub wal_batch_lines: usize,
 }
 
 impl Default for Storage {
@@ -313,6 +329,8 @@ impl Default for Storage {
             segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
             max_buffer_bytes: crate::store::DEFAULT_MAX_BUFFER_BYTES,
             compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
+            wal_segment_bytes: crate::wal::DEFAULT_SEGMENT_BYTES,
+            wal_batch_lines: crate::wal::DEFAULT_BATCH_LINES,
         }
     }
 }
@@ -380,6 +398,11 @@ impl Storage {
         // every command that never looks.
         let compact_interval = Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64);
 
+        // The defaults here too, for the reason the compaction interval's is: only `serve`
+        // writes a log, and it resolves its flags over the variables in `with_wal`.
+        let wal_segment_bytes = crate::wal::DEFAULT_SEGMENT_BYTES;
+        let wal_batch_lines = crate::wal::DEFAULT_BATCH_LINES;
+
         if !durable {
             return Ok(Self {
                 base_path: None,
@@ -390,6 +413,8 @@ impl Storage {
                 segment_max_bytes,
                 max_buffer_bytes,
                 compact_interval,
+                wal_segment_bytes,
+                wal_batch_lines,
             });
         }
 
@@ -416,6 +441,8 @@ impl Storage {
             segment_max_bytes,
             max_buffer_bytes,
             compact_interval,
+            wal_segment_bytes,
+            wal_batch_lines,
         })
     }
 
@@ -436,6 +463,42 @@ impl Storage {
         let ms = resolve(flag_ms, COMPACT_INTERVAL_ENV, DEFAULT_COMPACT_INTERVAL_MS)?;
         self.compact_interval = Duration::from_millis(ms as u64);
         Ok(self)
+    }
+
+    /// How `serve` writes its write-ahead log: `--wal-segment-bytes` and `--batch-size`,
+    /// each over its variable, over the default. Apart from `load` for the reason
+    /// `with_compact_interval` is: only `serve` has the flags, and only `serve` writes one.
+    pub fn with_wal(
+        mut self,
+        segment_bytes: Option<usize>,
+        batch_lines: Option<usize>,
+    ) -> Result<Self, ConfigError> {
+        self.wal_segment_bytes = match resolve(
+            segment_bytes,
+            WAL_SEGMENT_BYTES_ENV,
+            crate::wal::DEFAULT_SEGMENT_BYTES as usize,
+        )? {
+            0 => {
+                return Err(ConfigError::NoBytes {
+                    what: "wal segment bytes",
+                })
+            }
+            n => n as u64,
+        };
+        self.wal_batch_lines =
+            match resolve(batch_lines, BATCH_SIZE_ENV, crate::wal::DEFAULT_BATCH_LINES)? {
+                0 => return Err(ConfigError::NoBatch),
+                n => n,
+            };
+        Ok(self)
+    }
+
+    /// What the write-ahead log is written with.
+    pub fn wal_options(&self) -> crate::wal::Options {
+        crate::wal::Options {
+            segment_bytes: self.wal_segment_bytes,
+            batch_lines: self.wal_batch_lines,
+        }
     }
 
     pub fn is_durable(&self) -> bool {

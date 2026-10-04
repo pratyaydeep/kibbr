@@ -138,9 +138,14 @@ impl Db {
     }
 
     fn start(&self) -> Server {
+        self.start_with(&[])
+    }
+
+    fn start_with(&self, flags: &[&str]) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
             .args(["serve", "--port", "0"])
             .args(["--data-dir", &self.base_arg()])
+            .args(flags)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -900,6 +905,80 @@ fn replace_day_on_a_warm_server_retires_the_rows_still_in_memory() {
     let after = db.start();
     assert_eq!(after.count(DAY_COUNT), before, "the count moved on restart");
     db.assert_day_is(DAY, &strings(&report["files"]));
+}
+
+/// A tick an hour away: nothing flushes and the write-ahead log's checkpoint does not
+/// move, so every line a server took is still in its log, past the checkpoint, when the
+/// server is killed.
+const NO_TICK: [&str; 2] = ["--flush-interval-ms", "3600000"];
+
+/// A day replaced and then a `kill -9`: the day is still the load's alone. The lines the
+/// live door took of it are all in the write-ahead log, past its checkpoint, and the row
+/// groups that held them went with the files the replace retired - so nothing covers
+/// them, and a replay that stored every line no row group covers would bring the whole
+/// day back beside the load that replaced it. The replace's record says what it retired,
+/// and the replay goes by that.
+#[test]
+fn a_kill_after_a_replace_does_not_bring_the_replaced_day_back() {
+    let db = Db::new();
+    let bytes = farm(FARM_LINES, 1);
+    let input = db.input("farm.ndjson", &bytes);
+
+    let server = db.start_with(&NO_TICK);
+    assert_eq!(server.ingest(&bytes)["ingested"], FARM_LINES as u64);
+    let report = db
+        .load(&["--replace-day", DAY, "--json"], &[&input])
+        .report();
+    assert!(
+        !strings(&report["replaced"]).is_empty(),
+        "the live rows were not retired: {report}"
+    );
+    assert_eq!(server.count(DAY_COUNT), FARM_LINES as u64);
+    // A line that arrives after the replace is not the replace's to retire.
+    let late = br#"{"time":"2024-01-15T23:59:59Z","msg":"after the replace"}"#;
+    assert_eq!(server.ingest(late)["ingested"], 1);
+    drop(server);
+
+    let after = db.start_with(&NO_TICK);
+    assert_eq!(
+        after.count(DAY_COUNT),
+        FARM_LINES as u64 + 1,
+        "the kill brought the replaced day's lines back from the log, or lost the line \
+         that came after the replace"
+    );
+}
+
+/// The same with no server holding the directory when the day is replaced: the server was
+/// killed first, with every line of the day still only in its log, and `kibbr load` takes
+/// the directory itself. It stores none of those lines - they are the next server's to
+/// put back - but its replace is of everything the log held of the day, and the next
+/// start puts none of that back.
+#[test]
+fn a_replace_run_alone_after_a_kill_replaces_what_the_log_held_of_the_day() {
+    let db = Db::new();
+    let bytes = farm(FARM_LINES, 1);
+    let input = db.input("farm.ndjson", &bytes);
+
+    let server = db.start_with(&NO_TICK);
+    assert_eq!(server.ingest(&bytes)["ingested"], FARM_LINES as u64);
+    // Another day's line, which the replace has no say over.
+    let other = br#"{"time":"2024-01-16T00:00:01Z","msg":"the day after"}"#;
+    assert_eq!(server.ingest(other)["ingested"], 1);
+    drop(server);
+
+    db.load(&["--replace-day", DAY, "--json"], &[&input])
+        .report();
+    let after = db.start_with(&NO_TICK);
+    assert_eq!(
+        after.count(DAY_COUNT),
+        FARM_LINES as u64,
+        "the day is not the load's alone"
+    );
+    assert_eq!(
+        after.count("COUNT LOG {}"),
+        FARM_LINES as u64 + 1,
+        "the other day's line did not come back from the log"
+    );
 }
 
 /// A replace with nothing to publish would empty the day: an empty file, or a pipe from a
