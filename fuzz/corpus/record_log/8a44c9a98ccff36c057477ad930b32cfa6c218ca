@@ -1,0 +1,29 @@
+1
+{}
+{"kind":null}
+{"kind":5,"id":1m
+{"kind":["template"]}
+{"id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template"}
+{"kind":"template","id":-1,"created_at":"2024-01-15T10:30:0[[[[[[[[[[[[[[[[[[[[0Z","tokens":[]}
+{"kind":"template","id":1.0,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":"1","created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":18446744073709554-01-15T10:30:00Z","tokens":[]} trailing
+  {"kind" : "time_source" id":"1","created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":18446744073709554-01-15T10:30:00Z","tokens", "template_id" : 1 , "source" : "arrival" }  
+null
+t}}}}}}}}}}}}}}}}
+{"kind":"add","files":"none"}
+{"kind":"add","files":[{"path":"d/a.col"}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":7}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"0707070707070707070707070@070707","rows":-1}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070w07070707070707","s:aled":"yes"}]}
+{"kind":"remove","fileind":"add","files":"none"}
+{"kind":"add","files":[{"path":"d/a.col"}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":7}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070707070707070707","rows":-1}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070w07070707070707","sealed":"yes"}]}
+{"kind":"remove","fi,es":[{"path":"d/a.col"}]}
+{"kind":"replace","add":[]}
+{"kind":"replace","add":],"remove":[],"wal":{"stream":"1122334455667788"}}
+{"kind":"seal"}

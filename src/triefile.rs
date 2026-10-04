@@ -447,14 +447,18 @@ fn build(file: TrieFile, data_dir: &str) -> Result<Trie, TrieFileError> {
     let max_id = by_id.keys().copied().max().unwrap_or(0);
     // Derived, never trusted: a `next_id` written smaller than the ids in the same file
     // hands out one that is already taken.
-    let next_id = file.next_id.max(max_id + 1);
+    // Saturating, here and below: the ids are whatever the file says, and `u64::MAX + 1`
+    // was a panic at startup over a snapshot nothing depends on.
+    let next_id = file.next_id.max(max_id.saturating_add(1));
     // `max + 1` and not `first + count`: with a gap in the sequence the count form
     // reissues an id, and for a template that means two leaves in one storage directory.
+    // At `u64::MAX` the counter has no id left to give, which is what the trie takes it
+    // to mean (`Trie::next_template_id`).
     let next_template_id = templates
         .iter()
         .copied()
         .max()
-        .map_or(crate::trie::FIRST_TEMPLATE_ID, |max| max + 1);
+        .map_or(crate::trie::FIRST_TEMPLATE_ID, |max| max.saturating_add(1));
 
     let root = built.get(&0).cloned().unwrap_or_else(|| {
         Arc::new(Node::restored(

@@ -1,0 +1,1 @@
+COUNT LOG{"é": *} GROUP BY time, TIzE(1h)

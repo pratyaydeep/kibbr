@@ -1,0 +1,13 @@
+3
+{"kind":"merge","template_id":101,"into":102}
+{"kind":"","x":1}
+{"kind":"Template","id":1}
+{"kind":"template ","id":1}
+{"kind":"\u0000"}
+{"kind":7}
+{"kind":null}
+{"no":"kind"}
+["template",1]
+not json
+{"kind":"checkpoint","files":[{"path":"d/a.col","file_id":"07070707070707070707070707070707"}],"nested":{"kind":"add"}}
+{"kind":"add","kind":"remove","files":[]}

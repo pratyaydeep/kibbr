@@ -1,0 +1,12 @@
+1
+{"kind":"seal","files":[{"pathh":"d/d.col","file_id":"0123456789abcdef0123456789abcdeg"}],"source":"load:000000000000000g"}
+{"kind":"add","files":[],"source":"Load:0000000000000001"}
+{"kind":"add","files":[],"source":""}
+{"kind":"add","files":[],"source":null}
+{"kind":"replace","add":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":["d/c.col","d/a.col"],"source":"load:000000)000000000"}
+{"kind":"replace","add":[{"path":"d/e.col","file_id":"0123456789abc123456789abcdef0123456789abcdef"}],"remove":["d/c.col","d/a.col"],"source":"load:000000)000000000"}
+{"kind":"replace","add":[{"path":"d/e.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":["de./col"],"source":"compact"}
+{"kind":"replace","add":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":[],"wal":{"stream":def0123456789abcdef"}],"remove":["de./col"],"source":"compact"}
+{"kind":"replace","add":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":[],"wal":{"stream":"","day":"","through":18446744073709551||||||||||||||||||||||||||||||||||||||||||||||615,"~ore":1}}
+{"kind":"remove","files":["d/e.col"]}
+{"kind":"add","files":[{"path":"d/e.col","file_id":"0123456789abcdef0123456789abcdef"}]}

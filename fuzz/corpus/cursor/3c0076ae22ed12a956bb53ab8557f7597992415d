@@ -1,0 +1,1 @@
+30000{} SINCE 5d GROUP BY time(2h)

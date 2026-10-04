@@ -1,0 +1,1 @@
+COUNT LOG {} GROUP BY time(0s)

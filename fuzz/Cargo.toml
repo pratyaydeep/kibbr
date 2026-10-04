@@ -1,0 +1,52 @@
+[package]
+name = "kibbr-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.kibbr]
+path = ".."
+
+# Not a member of any workspace: `cargo build` at the root never builds the fuzzers.
+[workspace]
+
+[[bin]]
+name = "trieql"
+path = "fuzz_targets/trieql.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wal_record"
+path = "fuzz_targets/wal_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cursor"
+path = "fuzz_targets/cursor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "v3_segment"
+path = "fuzz_targets/v3_segment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "record_log"
+path = "fuzz_targets/record_log.rs"
+test = false
+doc = false
+bench = false

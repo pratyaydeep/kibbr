@@ -1,0 +1,6 @@
+2
+{"kind":"add","files":[{"path":"2024-01-15/seg_0_000001.col","file_id":"01010101010101010101010101010101","sealed":false,"finished":false}]}
+{"kind":"seal","files":[{"path":"2024-01-15/seg_0_000001.col","file_id":"01010101010101010101010101010101","sealed":true,"rows":81234,"min_ts":1705314600000000,"max_ts":1705318200000000,"finÿÿÿished":false}]}
+{"kind":"add","files":[{"path":"2024-01-15/seg_0_000002.col","file_id":"0202020202020202020202020050505050505050505050505050505","sealed":true,"rows":81234,"min_ts":1705314600000000,"max_ts":1705318200000000,"finished":true}],"remove":["2024-01-15/seg_0_000001.col"],"source":"compact"}
+{"kind":"replace","add":["compact"}
+{"kind":"replace","add":[{"path":"2024-01-16/seg_0_000002.col","file_id":"06060606060606060606060606060606"ay":"2024-01-16","through":81234}}

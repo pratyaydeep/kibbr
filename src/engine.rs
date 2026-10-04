@@ -861,12 +861,33 @@ pub type Rank = (Reverse<Option<i64>>, u64, u64);
 /// leaf after it, and a cursor issued before that landed between rows. A key-set hash is
 /// content-derived, so it is the same number in the next process and off disk.
 ///
-/// Two paths colliding on 64 bits interleave their tied rows - identically on both sides,
-/// and those rows were arbitrarily ordered anyway.
+/// A NUL ends each token, and a NUL *inside* a token is hashed as `0xFF`, a byte no UTF-8
+/// text holds. A key may contain a NUL - `{"a\u0000b": 1}` is a line - and hashed as it
+/// stands that one key spelled the bytes of the two keys `a` and `b`, so two templates got
+/// one key by construction and not by a 64-bit accident. Their rows of one instant then
+/// carried one `Rank`, and a page that stopped on the first skipped the second for good:
+/// the scan drops every row at or before the cursor's rank. The same defect as the one
+/// `Cursor::spelling` describes, in the other hash a cursor carries.
+///
+/// Escaped rather than length-prefixed so that a path with no NUL in it - every path there
+/// has been but those - keeps the key it had, and with it the order of its tied rows. The
+/// key of a path that does hold one moved, in the build that changed the guard's spelling
+/// too: every cursor issued before it is refused by the guard, so none carrying an old key
+/// is resolved against the new order.
+///
+/// Two paths colliding on 64 bits still give their tied rows one `Rank`. That is the
+/// accident this accepts; what it may not do is hash the same bytes for two paths.
 pub fn leaf_key(path: &[String]) -> u64 {
     let mut h = FNV_OFFSET;
     for token in path {
-        h = fnv(h, token.as_bytes());
+        let mut parts = token.split('\0');
+        if let Some(first) = parts.next() {
+            h = fnv(h, first.as_bytes());
+        }
+        for part in parts {
+            h = fnv(h, &[0xFF]);
+            h = fnv(h, part.as_bytes());
+        }
         h = fnv(h, &[0]);
     }
     h
@@ -920,6 +941,11 @@ pub struct Cursor {
 /// `decode`: a cursor from an older layout would resolve against a layout it never
 /// described and answer confidently with the wrong rows. Nothing reads a superseded version
 /// and nothing translates one - this check is the whole compatibility story.
+///
+/// A change to how the guard is computed does not bump it. A cursor whose guard was
+/// computed another way names the same row in the same order and is refused as
+/// `WrongQuery`, which is a refusal and not a wrong page; the version is for the case the
+/// guard cannot catch.
 const CURSOR_VERSION: &str = "v3";
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -953,19 +979,52 @@ impl Cursor {
     /// is how `search_after` and Loki behave; freezing the window into the cursor instead
     /// would make it a snapshot, with the expiry and server-side state that implies.
     pub fn guard(query: &Query) -> u32 {
-        let mut h = FNV_OFFSET;
-        for token in query.tokens() {
-            h = fnv(h, token.as_bytes());
-            h = fnv(h, &[0]);
-        }
-        h = fnv(h, &[1]);
-        // The order is by the effective time, whatever a template calls its
-        // column; the guard names that rather than a column, so a cursor survives a
-        // template being created with another name between two pages.
-        h = fnv(h, b"effective_time");
+        let h = fnv(FNV_OFFSET, &Self::spelling(query));
         // Folded to 32 bits: this is a guard against a mistake, not against an attacker,
         // and the cursor is already long.
         ((h >> 32) ^ h) as u32
+    }
+
+    /// The bytes `guard` hashes: the pattern, then the name of the order.
+    ///
+    /// Written so that no two patterns spell the same bytes, because a hash of bytes two
+    /// patterns share cannot refuse either's cursor at any width. The count of terms comes
+    /// first; a key and an exact value are each eight bytes of length and then the text,
+    /// so a `=` or a NUL inside one ends nothing; and a tag after the key says whether a
+    /// value follows, so the wildcard is not the one-character value `*`, which the grammar
+    /// keeps apart from it.
+    ///
+    /// `Query::tokens` is not this spelling and must not become it: it prints `key=*` for
+    /// both of those and is what `--explain` shows a person. The guard hashed it once, and
+    /// `{"a": "b", "c": "d"}` handed its cursor to `{"a": "b\u0000c=d"}`.
+    ///
+    /// Terms are spelled in the order they were written, as `tokens` has them, so a
+    /// pattern with its terms the other way round is still another query to the guard.
+    ///
+    /// Visible to the crate so that `fuzzing::cursor` can ask, of two patterns sharing a
+    /// guard, whether they were ever different to it.
+    pub(crate) fn spelling(query: &Query) -> Vec<u8> {
+        fn text(out: &mut Vec<u8>, text: &str) {
+            out.extend_from_slice(&(text.len() as u64).to_be_bytes());
+            out.extend_from_slice(text.as_bytes());
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&(query.matches.len() as u64).to_be_bytes());
+        for term in &query.matches {
+            text(&mut out, &term.key);
+            match &term.value {
+                MatchValue::Any => out.push(0),
+                MatchValue::Exact(value) => {
+                    out.push(1);
+                    text(&mut out, value);
+                }
+            }
+        }
+        // The order is by the effective time, whatever a template calls its
+        // column; the guard names that rather than a column, so a cursor survives a
+        // template being created with another name between two pages.
+        out.extend_from_slice(b"effective_time");
+        out
     }
 
     /// The `Rank` a page stopped at. Read by the scan, and by the oracle, which reaches
@@ -1113,7 +1172,10 @@ impl Newest {
     fn offer(&mut self, rank: Rank, row: Row) {
         self.heap.push(Ranked { rank, row });
         if let Some(keep) = self.keep {
-            if self.heap.len() > keep + 1 {
+            // One more than `keep` is held, counted down from a length the push above
+            // made at least one and not up from `keep`: `LIMIT 18446744073709551615` is a
+            // limit a client can write, and there is no one more than it.
+            if self.heap.len() - 1 > keep {
                 // The greatest `Rank` is the last row in result order, so this drops the
                 // oldest candidate and never one that belongs in the answer.
                 self.heap.pop();
@@ -1902,6 +1964,218 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A `MATCH` over `terms`, a value of `None` being the wildcard.
+    fn pattern(terms: &[(&str, Option<&str>)]) -> Query {
+        let mut q = query(QueryMode::Fetch, None, None);
+        q.matches = terms
+            .iter()
+            .map(|(key, value)| Match {
+                key: key.to_string(),
+                value: match value {
+                    None => MatchValue::Any,
+                    Some(text) => MatchValue::Exact(text.to_string()),
+                },
+            })
+            .collect();
+        q
+    }
+
+    /// Three pairs of patterns that `Query::tokens` cannot tell apart - joined by the NUL
+    /// the guard once put between them, each pair is the same bytes - and that are two
+    /// queries all the same. Each has to refuse a cursor of the other.
+    #[test]
+    fn the_guard_tells_apart_patterns_that_print_the_same_tokens() {
+        let pairs = [
+            // The wildcard and the one-character value `*`.
+            (pattern(&[("host", None)]), pattern(&[("host", Some("*"))])),
+            // Two terms, and one term whose value runs on through a NUL into the second.
+            (
+                pattern(&[("a", Some("b")), ("c", Some("d"))]),
+                pattern(&[("a", Some("b\0c=d"))]),
+            ),
+            // A `=` that ends the key, and the same `=` inside the value.
+            (
+                pattern(&[("a=b", Some("c"))]),
+                pattern(&[("a", Some("b=c"))]),
+            ),
+        ];
+        let rank = (Reverse(Some(ns(EPOCH))), 3, 17);
+        for (one, other) in &pairs {
+            assert_eq!(
+                one.tokens().join("\0"),
+                other.tokens().join("\0"),
+                "the pair is one the tokens cannot tell apart"
+            );
+            assert_ne!(Cursor::spelling(one), Cursor::spelling(other));
+            for (issued_by, sent_to) in [(one, other), (other, one)] {
+                let cursor = issued_by.cursor_at(rank);
+                assert_eq!(cursor.check(issued_by), Ok(()));
+                assert_eq!(
+                    cursor.check(sent_to),
+                    Err(CursorError::WrongQuery),
+                    "a cursor of {:?} is taken by {:?}",
+                    issued_by.matches,
+                    sent_to.matches
+                );
+            }
+        }
+    }
+
+    /// The spelling reads back: every term's key, tag and value sit where the lengths
+    /// before them say, and what is left is the order's name. An encoding that reads back
+    /// one way is one that no second pattern shares.
+    #[test]
+    fn the_guard_spelling_reads_back_to_the_pattern() {
+        fn word(bytes: &mut &[u8]) -> usize {
+            let (head, rest) = bytes.split_at(8);
+            *bytes = rest;
+            u64::from_be_bytes(head.try_into().expect("eight bytes")) as usize
+        }
+        fn text(bytes: &mut &[u8]) -> String {
+            let len = word(bytes);
+            let (head, rest) = bytes.split_at(len);
+            *bytes = rest;
+            String::from_utf8(head.to_vec()).expect("a term's text")
+        }
+        for q in [
+            pattern(&[]),
+            pattern(&[("host", None)]),
+            pattern(&[("host", Some("*"))]),
+            pattern(&[("", Some(""))]),
+            pattern(&[
+                ("a=b", Some("c\0d")),
+                ("effective_time", None),
+                ("e", Some("=")),
+            ]),
+        ] {
+            let spelled = Cursor::spelling(&q);
+            let mut bytes = spelled.as_slice();
+            let mut read = Vec::new();
+            for _ in 0..word(&mut bytes) {
+                let key = text(&mut bytes);
+                let (tag, rest) = bytes.split_first().expect("a tag");
+                bytes = rest;
+                let value = match tag {
+                    0 => MatchValue::Any,
+                    _ => MatchValue::Exact(text(&mut bytes)),
+                };
+                read.push(Match { key, value });
+            }
+            assert_eq!(read, q.matches);
+            assert_eq!(bytes, b"effective_time");
+        }
+    }
+
+    /// What the guard leaves out stays out: a cursor is good under another window and
+    /// another limit of its own pattern, as `Cursor::guard` says and why.
+    #[test]
+    fn the_guard_is_the_pattern_and_not_the_window_or_the_limit() {
+        let issued_by = pattern(&[("level", Some("ERROR"))]);
+        let mut sent_to = pattern(&[("level", Some("ERROR"))]);
+        sent_to.time.since = Some(at(EPOCH));
+        sent_to.limit = Some(3);
+        let cursor = issued_by.cursor_at((Reverse(None), 0, 0));
+        assert_eq!(cursor.check(&sent_to), Ok(()));
+    }
+
+    /// The largest limit a client can write is every row: nothing is dropped to make room
+    /// for one more than it, and no next page is promised.
+    #[test]
+    fn the_largest_limit_is_every_row_and_no_next_page() {
+        let db = db();
+        let mut q = query(QueryMode::Fetch, None, None);
+        let all = execute(&db.trie, &db.stores, &q).expect("the unlimited query answers");
+        assert!(all.count > 0 && all.rows.len() as u64 == all.count);
+
+        q.limit = Some(usize::MAX);
+        q.limit_source = LimitSource::Caller;
+        let capped = execute(&db.trie, &db.stores, &q).expect("the limited query answers");
+        assert_eq!(capped.count, all.count);
+        assert_eq!(capped.rows, all.rows);
+        assert!(!capped.meta.truncated);
+        assert_eq!(capped.meta.next_cursor, None);
+    }
+
+    /// `Newest` at every limit around the number of rows offered, and at both ends of
+    /// `usize`: the best `keep` rows, and a next page exactly when a row was left over
+    /// and the page is not empty.
+    #[test]
+    fn the_page_heap_keeps_the_limit_and_one_more_at_any_limit() {
+        const OFFERED: usize = 3;
+        for keep in [0, 1, 2, 3, 4, usize::MAX - 1, usize::MAX] {
+            let mut newest = Newest::new(Some(keep));
+            for seq in 0..OFFERED as u64 {
+                newest.offer((Reverse(None), 0, seq), Row::new());
+                assert!(newest.heap.len() <= OFFERED.min(keep.saturating_add(1)));
+            }
+            let (rows, next) = newest.finish();
+            assert_eq!(rows.len(), keep.min(OFFERED), "LIMIT {keep}");
+            let last = keep.min(OFFERED) as u64;
+            let more = keep > 0 && keep < OFFERED;
+            assert_eq!(
+                next,
+                more.then(|| (Reverse(None), 0, last - 1)),
+                "LIMIT {keep}"
+            );
+        }
+    }
+
+    fn path(tokens: &[&str]) -> Vec<String> {
+        tokens.iter().map(|token| token.to_string()).collect()
+    }
+
+    /// Paths that are the same bytes once a NUL is put after each token, and are different
+    /// key sets all the same: each pair is two leaves and has to be two keys. And a path
+    /// with no NUL in it has the key it always had, so no stored row changed places.
+    #[test]
+    fn a_leaf_key_tells_apart_paths_that_join_to_the_same_bytes() {
+        for (one, other) in [
+            (path(&["a\0b"]), path(&["a", "b"])),
+            (
+                path(&["event=tick", "a\0b", "n", "ts"]),
+                path(&["event=tick", "a", "b", "n", "ts"]),
+            ),
+            (path(&["a\0"]), path(&["a", ""])),
+            (path(&["\0"]), path(&["", ""])),
+            (path(&[]), path(&[""])),
+        ] {
+            assert_ne!(leaf_key(&one), leaf_key(&other), "{one:?} and {other:?}");
+        }
+        assert_eq!(
+            leaf_key(&path(&["event=hit", "n", "ts"])),
+            0xe84c_a476_c2e8_c3e6
+        );
+    }
+
+    /// Two such templates with one row each at one instant: a page of one row stops
+    /// between them, and the next page is the other row and not an empty one.
+    #[test]
+    fn a_page_that_stops_between_two_leaves_of_one_instant_resumes_on_the_other() {
+        let lines = concat!(
+            "{\"ts\":\"2024-01-15T10:00:00Z\",\"a\\u0000b\":1}\n",
+            "{\"ts\":\"2024-01-15T10:00:00Z\",\"a\":1,\"b\":1}\n",
+        );
+        let db = db::load(
+            lines.as_bytes(),
+            true,
+            chrono::Utc::now(),
+            &crate::config::Schema::default(),
+        )
+        .expect("the two lines load");
+        let mut q = query(QueryMode::Fetch, None, None);
+        q.limit = Some(1);
+        q.limit_source = LimitSource::Caller;
+        let first = execute(&db.trie, &db.stores, &q).expect("the first page answers");
+        assert_eq!((first.count, first.rows.len()), (2, 1));
+        let next = first.meta.next_cursor.expect("a row is left");
+
+        q.cursor = Some(Cursor::decode(&next).expect("the engine's own cursor"));
+        let second = execute(&db.trie, &db.stores, &q).expect("the second page answers");
+        assert_eq!((second.count, second.rows.len()), (2, 1));
+        assert_ne!(second.rows, first.rows);
+        assert_eq!(second.meta.next_cursor, None);
     }
 
     /// `nanos_of` is the engine's reading of a window edge; the buckets are floored off

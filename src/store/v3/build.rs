@@ -34,7 +34,7 @@ use super::{
     bitmap, day_of, epoch_of, float_json, index_width, ip_bytes, print_float, print_int, print_ip,
     print_rfc3339, print_uuid, put_varint, type_byte, uuid_bytes, zigzag, Form, JsonKind, Source,
     BITS, CONSTANT, DELTA, DICTIONARY, EPOCH_MILLIS, EPOCH_SECS, KIND_ROW_GROUP, MAX_BODY,
-    NO_COMPRESSION, PER_ROW, PLAIN, RFC3339, VARINT, ZSTD,
+    MAX_ROWS, NO_COMPRESSION, PER_ROW, PLAIN, RFC3339, VARINT, ZSTD,
 };
 use crate::store::Row;
 use crate::types::{ColValue, ColumnType};
@@ -43,7 +43,7 @@ use crate::types::{ColValue, ColumnType};
 pub enum BuildError {
     #[error("a row group needs at least one row")]
     NoRows,
-    #[error("{0} rows is more than a row group's u32 count holds")]
+    #[error("{0} rows is more than the {max} a row group holds", max = MAX_ROWS)]
     TooManyRows(usize),
     #[error("{rows} row(s) and {times} effective time(s)")]
     Times { rows: usize, times: usize },
@@ -152,7 +152,13 @@ pub fn encode(
     if rows.is_empty() {
         return Err(BuildError::NoRows);
     }
-    let row_count = u32::try_from(rows.len()).map_err(|_| BuildError::TooManyRows(rows.len()))?;
+    // What a reader refuses is refused here, before it is written: every caller cuts its
+    // rows at the row group threshold, and one that did not would make a file no start
+    // could read.
+    let row_count = u32::try_from(rows.len())
+        .ok()
+        .filter(|n| *n <= MAX_ROWS)
+        .ok_or(BuildError::TooManyRows(rows.len()))?;
     if times.len() != rows.len() {
         return Err(BuildError::Times {
             rows: rows.len(),

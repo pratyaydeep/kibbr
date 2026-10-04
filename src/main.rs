@@ -1,35 +1,6 @@
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-mod bench;
-mod catalog;
-mod compact;
-mod config;
-mod db;
-mod demo;
-mod engine;
-mod error;
-mod farm;
-mod flatten;
-mod fmt;
-mod frame;
-mod gen;
-mod http;
-mod infer;
-mod key;
-mod lines;
-mod load;
-mod lock;
-mod parse;
-mod query;
-mod reference;
-mod rng;
-mod serve;
-mod store;
-mod trie;
-mod triefile;
-mod trieql;
-mod types;
-mod wal;
+use kibbr::{bench, compact, config, demo, error, farm, gen, infer, load, parse, query, serve};
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};

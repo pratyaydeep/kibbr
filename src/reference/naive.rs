@@ -234,8 +234,11 @@ pub fn run(
         ranked.sort_by_key(|(rank, _)| *rank);
         if let Some(n) = query.limit {
             if ranked.len() > n {
-                result.meta.next_cursor = ranked
-                    .get(n - 1)
+                // `LIMIT 0` has no last row to resume after and so no cursor, as the
+                // engine answers it - and no row zero-minus-one to look for.
+                result.meta.next_cursor = n
+                    .checked_sub(1)
+                    .and_then(|last| ranked.get(last))
                     .map(|(rank, _)| query.cursor_at(*rank).encode());
             }
             ranked.truncate(n);

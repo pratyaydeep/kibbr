@@ -1,0 +1,17 @@
+2
+{"kind":"temptela","id":101,"created_at":"2024-0Ù-15T10:30:00Z","tokens":[{"promoted":"evan:#column","tT10:30:00Z","tokens":[{"promoted":"a","value":"b","key":"c"}]}
+{"kind":"template","id":1,"created_at":"2024-01-15T10:30:00Z","tokens":[{"key":"c","key":"d"}]}
+{"kind":"template","id.col","file_id":"01010101010101010101010101010101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+{"kind":"remove","files":["d/never-there.col","d/never-there.col"]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"0A0B0C0D0E0F0a0b0c0d0e0f00112233"},{"path":"d/a.col","file_id":"fffffffffffffffffffffffffffffff(","sealed":true}]}
+{"kind":"add","files":[{"pathind":"column","template_id":101,"name":"user.id","":"d/b.col","file_id":"00ff"},{"path":"","file_id":""},{"path":"../../etc/passwd","file_id":"ggggggggggggggggggggggggggggggggt"}],"source":"load:9f3a"}
+{"kind":"add","files":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef","rows":18446744073709551615,"min_ts":-9223372036854775808,"max_ts":9223372036854775807,"sealed":true,"finished":true}],"source":"load:FFFFFFFFFFFFFFFF"}
+{"kind":"add","files":[{"path":"d/d.col","file_id":"0123456789abcdef0123456789€abcdeg"}],"sou[rce":"load:000000000000000g"}
+{"ki1
+{}
+{"kind":null}
+{"kind":5,"id":1}
+{"kind":["template"]}
+{"id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"tnd":"add","files":[],"source":"Load:0000000000000001"}
+{"kind":"addemplate","fil"}es":

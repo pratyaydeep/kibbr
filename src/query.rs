@@ -126,7 +126,10 @@ fn note(stats: db::LoadStats) {
 /// `now` is a parameter, not a call: `--since` and `SINCE` are both relative to it, and a
 /// caller that wants a reproducible answer needs to be able to fix it. Both surfaces take
 /// the same one, which is what lets `scripts/parser_equivalence.sh` compare them at all.
-fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
+///
+/// Visible to the crate so that `fuzzing::cursor` can hand `--after` a token at a fixed
+/// `now`, without a file to load: `run` is the only other caller.
+pub(crate) fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
     // TrieQL builds the same `Query` the flags do and then stops: the output flags are not
     // in the grammar and do not change the answer. Both routes end at `Query::new`, which
     // is the one place the limit's default and its per-mode meaning are decided.
@@ -211,7 +214,7 @@ fn cursor(text: Option<&str>) -> Result<Option<Cursor>, CliError> {
 
 /// The last thing `build` does on either surface: does this cursor belong to this query?
 ///
-/// After construction, not during: the guard is over the pattern, the window and the order
+/// After construction, not during: the guard is over the pattern and the order
 /// (`Cursor::guard`), so there is nothing to check against until the whole `Query` exists.
 /// Refusing here is the difference between an error and a silently wrong page - `Rank`'s
 /// leaf ordinal is relative to the leaves *this* pattern matched, so the same cursor read

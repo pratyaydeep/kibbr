@@ -870,8 +870,18 @@ impl DiskStore {
                     offset: 0,
                     what: format!("names `{rel}`, which is not a day's data file"),
                 })?;
+            // The number after this one is the day's next file, and the last number there
+            // is has none. `+ 1` on it was a panic at startup in a debug build, and in a
+            // release one wrapped to 0 and kept no number back. A day would need four
+            // thousand million files to count that far, so no file this build wrote has
+            // it, and it is refused by name like any path that is not a day's data file.
+            let after = number.checked_add(1).ok_or_else(|| FormatError::Corrupt {
+                path: manifest::path_in(&base),
+                offset: 0,
+                what: format!("names `{rel}`, whose number leaves none for the day's next file"),
+            })?;
             let slot = next.entry(day).or_insert(1);
-            *slot = (*slot).max(number + 1);
+            *slot = (*slot).max(after);
             if !path.exists() {
                 return Err(FormatError::Io {
                     path,
@@ -1041,7 +1051,12 @@ impl DiskStore {
             .iter()
             .filter(|m| m.stream == stream)
         {
-            if let Some(day) = day_of_name(&mark.day) {
+            // The day as `day_name` writes it and no other spelling. `day_of_name` reads
+            // a date as a person types one - `+2024-01-15`, `2024-1-15`, a space before a
+            // number - and a mark is not typed: it says which lines a replay drops, so it
+            // is the text a replace wrote or it names no day.
+            let day = day_of_name(&mark.day).filter(|day| day_name(*day) == mark.day);
+            if let Some(day) = day {
                 let through = out.entry(day).or_insert(mark.through);
                 *through = (*through).max(mark.through);
             }
@@ -2902,6 +2917,32 @@ mod tests {
         }
     }
 
+    /// A named file whose number is the last there is leaves none for the day's next
+    /// file. The `+ 1` that looks for it panicked the start in a debug build; the start
+    /// is refused instead, naming the file.
+    #[test]
+    fn a_file_number_with_none_after_it_is_refused_by_name() {
+        let scratch = Scratch::new("last-number");
+        let rel = format!("2024-01-15/{}", file_name(u32::MAX));
+        {
+            let (mut manifest, _) =
+                Manifest::open(&manifest::path_in(&scratch.0), &mut |_| {}).expect("manifest");
+            manifest
+                .append(&[Record::Add {
+                    files: vec![FileRecord::open(rel.clone(), &[7; 16])],
+                    source: None,
+                }])
+                .expect("append");
+        }
+        match DiskStore::open(scratch.0.clone(), DiskOptions::default()) {
+            Err(e) => {
+                let why = e.to_string();
+                assert!(why.contains(&rel) && why.contains("whose number"), "{why}");
+            }
+            Ok(_) => panic!("opened a store whose manifest names `{rel}`"),
+        }
+    }
+
     /// A crash after row groups were flushed and before the seal: the next start recovers
     /// the file, records the seal, and every flushed row is there.
     #[test]
@@ -4039,6 +4080,24 @@ mod tests {
         drop(leaf);
         drop(s);
         let s = store(&scratch);
+        assert_eq!(s.replaced_days(0xabc), BTreeMap::from([(today, 8)]));
+
+        // A mark is read back as it is written: the same day spelled any other way a
+        // date parser takes - a sign, a month of one digit, a space - names no day, and
+        // drops no line of a replay.
+        let name = day_name(today);
+        let (year, rest) = name.split_once('-').expect("a day's name");
+        let spelled = [
+            format!("+{name}"),
+            format!(" {name}"),
+            format!("{year}-{}", rest.trim_start_matches('0')),
+        ];
+        for day in &spelled {
+            assert!(day_of_name(day).is_some(), "`{day}` is not a date at all");
+        }
+        lock(&s.files)
+            .replaced
+            .extend(spelled.map(|day| manifest::WalMark::new(0xabc, day, 99)));
         assert_eq!(s.replaced_days(0xabc), BTreeMap::from([(today, 8)]));
     }
 

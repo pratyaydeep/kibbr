@@ -1,0 +1,4 @@
+2
+{"kind":"template","id":101,"created_at":1
+{"kind":"seal","files":[{"path":"d/never-added.col","file_id":"010101010101010"2024-01-15T10:30:00Z10101010101010101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+","tokens":[{"promoted":"event","value":"login_failed"},{"key":"ts"},{"k{e"

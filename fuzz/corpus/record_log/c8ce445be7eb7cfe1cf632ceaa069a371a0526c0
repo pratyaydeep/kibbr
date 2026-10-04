@@ -1,0 +1,8 @@
+1
+{"kind":"template","id":1,"created_at":"+362142-12-31T1
+{"kind":"template","id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[{"promoted":"event","value":"login_failed"},{"key":"ts"},{"key":"user.id"}]}
+{"kind":"column","template_id":101,"name":"ts","type"																																																																												:"Datetime"}
+{"kind":"column","template_id":101,"name":"userÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ.id","type":"Uuid"}
+{"kind":"column","template23:_id":101,"name":"event","type":"String"}
+{"kind":"time_source","template_id":101,"59:59Z142-12-31T23:59:59source":"column:ts"}
+{"Z","tokekind":"tempns":[late","id"]:

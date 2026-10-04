@@ -1,0 +1,52 @@
+1
+{}
+{"kind":null}
+{"kind":5,"id":1}
+{"kind":["template"]}
+{"id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template"}
+{"kind":"template","id":-1,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":1.0,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":"1","created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":18446744073709554-01-15T10:30:00Z","tokens":[]} trailing
+  {"kind" : "time_source" , "template_id" : 1 , "source" : "arrival" }  
+null
+true
+0
+"template"
+[]
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[W[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[
+{"kind":"merge","a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":okens":[]}
+{"kind":"template","id":1,"created_at":"2024-01-15T10:30:00Z","tokens":[]} trailing
+  {"kind" : "timze_source" , "template_id" : 1 , "source" : "arrival" }  
+null
+true
+0
+"template"
+[]
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[":"template","id":4,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":1,"created_at":"2024-01-15T10:30:00Z","tokekind"2
+{"kind":"temptela","id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[{"promoted":"event","value":"logns":[]} trailing
+  {"kind" : "time_source" , "template_id" : 1 , "source" : "arrival" }  
+null
+true
+0
+"template"
+[]
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[{[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[
+{"kind":"merge","a":{"a":{"a":{"a"`:{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":1e999}}}}}}}}}}}}}}}}}
+{"k,"a":{"a":{"a":{"a"`:{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":1e999}}}}}}}}}}}}}}}}}
+{"kind":"add","files":"none"}
+{"kind":"add","files":[{"path":"d/a.col"}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":7}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070707070707070707","rows":-1}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070w07070707070707","sealed":"yes"}]}
+{"kind":"remove","fileind":"add","files":"none"}
+{"kind":"add","files":[{"path":"d/a.col"}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":7}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070707070707070707","rows":-1}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070w07070707070707","sealed":"yes"}]}
+{"kind":"remove","files":[{"path":"d/a.col"}]}
+{"kind":"replace","add":[]}
+{"kind":"replace","add":[],"remove":[],"wal":{"stream":"1122334455667788"}}
+{"kind":"seal"}

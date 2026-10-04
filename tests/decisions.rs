@@ -64,6 +64,11 @@ fn raw(args: &[&str]) -> std::process::Output {
 
 /// Test with environment variables: flag > environment > default.
 fn raw_env(args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    raw_over(FIXTURE, args, env)
+}
+
+/// The same, over lines of the test's own where `FIXTURE` has no such rows.
+fn raw_over(lines: &'static str, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
     command
         .arg("query")
@@ -84,7 +89,7 @@ fn raw_env(args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
         .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
     let writer = std::thread::spawn(move || {
-        let _ = stdin.write_all(FIXTURE.as_bytes());
+        let _ = stdin.write_all(lines.as_bytes());
     });
     let out = child.wait_with_output().expect("failed to wait on kibbr");
     writer.join().expect("stdin writer thread panicked");
@@ -226,6 +231,25 @@ fn limit_zero_is_zero_rows_and_not_the_default() {
     assert_eq!(none["rows"].as_array().expect("rows is an array").len(), 0);
     assert_eq!(none["count"], 5);
     assert_eq!(none["meta"]["truncated"], true);
+    // No row was handed out, so there is none to resume after - and the oracle, which
+    // finds a page's last row by counting back from the limit, gives the same answer.
+    assert_eq!(none["meta"]["next_cursor"], Value::Null);
+    let oracle = query(&["--reference", r#"MATCH LOG {"event":"hit"} LIMIT 0"#]);
+    assert_eq!(oracle["rows"], none["rows"]);
+    assert_eq!(oracle["count"], 5);
+    assert_eq!(oracle["meta"]["next_cursor"], Value::Null);
+}
+
+/// The largest `LIMIT` there is asks for every row, and gets them: holding one row more
+/// than the limit, to know whether a next page exists, is not a sum that may be done on it.
+#[test]
+fn the_largest_limit_is_every_row() {
+    let all = query(&[r#"MATCH LOG {"event":"hit"} LIMIT 18446744073709551615"#]);
+    assert_eq!(ns(&all), [4, 5, 2, 3, 1]);
+    assert_eq!(all["count"], 5);
+    assert_eq!(all["meta"]["truncated"], false);
+    assert_eq!(all["meta"]["limit_source"], "caller");
+    assert_eq!(all["meta"]["next_cursor"], Value::Null);
 }
 
 /// A `MATCH` that asks for no limit and stays under the backstop gets every matching row
@@ -411,6 +435,38 @@ fn rows_sharing_an_instant_page_without_gaps() {
     assert_eq!(paged, all);
 }
 
+/// Two templates whose key sets read alike with a NUL after each key - the one key
+/// `a\0b`, and the two keys `a` and `b` - are two leaves to the order all the same. Their
+/// rows share an instant, so only the leaf's key separates them; when both leaves had one
+/// key, a page that stopped on the first row answered the next with nothing.
+#[test]
+fn rows_of_two_templates_that_spell_alike_page_without_gaps() {
+    const LINES: &str = concat!(
+        r#"{"a\u0000b":1,"n":1,"ts":"2024-01-15T10:00:00Z"}"#,
+        "\n",
+        r#"{"a":1,"b":1,"n":2,"ts":"2024-01-15T10:00:00Z"}"#,
+        "\n",
+    );
+    let over = |q: &str| {
+        let out = raw_over(LINES, &[q], &[]);
+        assert!(out.status.success(), "`{q}` failed");
+        json_of(&out)
+    };
+    let mut whole = ns(&over("MATCH LOG {}"));
+    let first = over("MATCH LOG {} LIMIT 1");
+    let c = first["meta"]["next_cursor"]
+        .as_str()
+        .expect("a cursor for a truncated page");
+    let second = over(&format!(r#"MATCH LOG {{}} LIMIT 1 AFTER "{c}""#));
+    assert_eq!(second["count"], 2);
+    assert_eq!(second["meta"]["next_cursor"], Value::Null);
+
+    let paged: Vec<i64> = ns(&first).into_iter().chain(ns(&second)).collect();
+    assert_eq!(paged, whole);
+    whole.sort_unstable();
+    assert_eq!(whole, [1, 2]);
+}
+
 /// A cursor names a leaf by its ordinal among the leaves *this* pattern matched, so the
 /// same text against a different pattern names a different leaf. Refused, not answered.
 #[test]
@@ -429,6 +485,34 @@ fn a_cursor_from_another_query_is_refused() {
         r#"MATCH LOG {{"event":"hit"}} LIMIT 2 AFTER "{c}""#
     )]);
     assert_eq!(ok["meta"]["rows_returned"], 2);
+}
+
+/// "Another query" is another pattern, however alike the two print. The wildcard and the
+/// quoted star are both `event=*` to `--explain`, and a value may hold the `=` or the NUL
+/// that would otherwise read as the end of a term; the guard is over the terms themselves,
+/// so each of these refuses the other's cursor.
+#[test]
+fn a_cursor_from_a_pattern_that_prints_the_same_is_refused() {
+    for (issued_by, sent_to) in [
+        (r#"{"event": *}"#, r#"{"event": "*"}"#),
+        (
+            r#"{"event": "hit", "n": *}"#,
+            r#"{"event": "hit\u0000n=*"}"#,
+        ),
+        (r#"{"event": "hit"}"#, r#"{"event=hit": ""}"#),
+    ] {
+        let page = query(&[&format!("MATCH LOG {issued_by} LIMIT 2")]);
+        let c = page["meta"]["next_cursor"]
+            .as_str()
+            .expect("a cursor for a truncated page");
+        let out = raw(&[&format!(r#"MATCH LOG {sent_to} LIMIT 2 AFTER "{c}""#)]);
+        assert!(
+            !out.status.success(),
+            "a cursor of {issued_by} was accepted by {sent_to}"
+        );
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(said.contains("different query"), "{sent_to}: {said}");
+    }
 }
 
 /// A cursor carrying any other version prefix is refused before its rank is read. Nothing

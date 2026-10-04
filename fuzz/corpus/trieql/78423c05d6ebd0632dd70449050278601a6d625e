@@ -1,0 +1,1 @@
+COUNT LOG {"a": "b"} SINCE 1h SINCE 2h

@@ -1,0 +1,12 @@
+1
+{"kind":"seal","files":[{"path":"d/never-added.col","file_id":"01010101010101010101010101010101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+{"kind":"remove","files":["d/never-there.col","d/never-there.col"]}
+{",kind":"add","files":00112233"},{"path":"d/a.col","file_id":"ffffffffffffffffffffffffffffffff","sealed":true}]}
+{"kind":"add","files":[{"path":"d/b.col","file_id":"00ff"},{"path":"","file_id":""},{"path":"../../etc/passwd","file_id":"gggggggggggggggggggggggggggggggg"}],"source":"load:9f3a"}
+{"kind":"add","files":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef","rows":184,{"path":"../../etc/passwd","file_id":"gggggggggggg:"remove","files":["d/never-there.col","d/never-there.col"]}
+{",kind":"add","files":00112233"},{"path":"d/a.col","file_id":"ffffffffffffffffffffffffffffffff","sealed":true}]}
+{"kind":"add","files":[{"path":"d/b.col","file_id":"00ff"},{"path":"","file_id":""},{"path":"../../etc/passwd","file_id":"gggggggggggggggggggggggggggggggg"}],"source":"load:9f3a"}
+{"kind":"add","files":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef","rows":184,{"path":"../../etc/passwd","file_id":"gggggggggggggggggggggggggggggggg"}],"source":"load:9f3a"}
+{"kingggggggggggggggggggg"}],"source":"load:9f3a"}
+{"kind":"add","files":[{"path":"d/c.col","file_id":"0061728394abcdef0123456789abcde3
+{"kind":"template","id":101,"creaf","ted_at":r"

@@ -1,0 +1,13 @@
+1
+{"kind":"seal","files":[{"path":"d/never-added.col","file_id":"01010101010101010101010101010101","sealed":true,"rows":0,"min_ts":0,"max0101010101010101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+{"kind":"remove","files":["d/never-there.col","d/never-there.col"]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"0e0f00112233"},{"path":"d/a.col","file_id":"ffffffffffffffffffffffffffffffff","sealed":tru0101010101010101010101010101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+{"kind":"remove","files":["d/neverdd","fil70707070707070707070707070707","sealed":"yes"}]}
+{"kind":"remove","files":[{"path":"d/a.col"}]}
+{"kind":"replace","add":[]}
+{"kind":,"files":[{"path":"d/e.col","file_id":"0123456789abcdef0123456789abcdef"}]}}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"0e0f00112233"},{"path":"d/a.col","file_id":"ffffffffffffffffffffffffffffffff","sealed":tru0101010101010101010101010101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+{"kind":"remove","files":["d/neverdd","fil70707070707070707070707070707","sealed":"yes"}]}
+{"kind":"remove","files":[{"path":"d/a.col"}]}
+{"kind":"replace","add":[]}
+{"kind":,"files":[{"path":"d/e.col","file_id":"0123456789abcdef0123456789abcdef"}]}

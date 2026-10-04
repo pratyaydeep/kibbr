@@ -38,6 +38,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::catalog;
 use crate::frame::{self, Log, LogError};
 
 pub const MANIFEST_FILE_NAME: &str = "manifest.log";
@@ -108,14 +109,31 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The file id 32 hex digits spell: `hex` read back.
+/// What one of the digits `hex` writes is worth: `0` to `9` and `a` to `f`, and nothing
+/// else.
+///
+/// Not `from_str_radix`, which reads a number and so takes a sign: `+f` was the byte 15
+/// to it, and `load:+000000000000001` the load 1. And not the capitals: no build has
+/// written one, and a start holds a file's id to the manifest's by comparing the text
+/// `hex` writes, so an id spelled `0A…` names no file even when it reads as one.
+fn hex_digit(digit: u8) -> Option<u8> {
+    match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'a'..=b'f' => Some(digit - b'a' + 10),
+        _ => None,
+    }
+}
+
+/// The file id 32 hex digits spell: `hex` read back, and `None` for anything `hex` does
+/// not write.
 pub fn file_id_of(hex: &str) -> Option<[u8; 16]> {
-    if hex.len() != 32 || !hex.is_ascii() {
+    let digits = hex.as_bytes();
+    if digits.len() != 32 {
         return None;
     }
     let mut id = [0u8; 16];
-    for (at, byte) in id.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&hex[at * 2..at * 2 + 2], 16).ok()?;
+    for (byte, pair) in id.iter_mut().zip(digits.chunks_exact(2)) {
+        *byte = (hex_digit(pair[0])? << 4) | hex_digit(pair[1])?;
     }
     Some(id)
 }
@@ -129,13 +147,16 @@ pub fn load_source(load_id: u64) -> String {
     format!("load:{load_id:016x}")
 }
 
-/// The load id a `source` names, if it names one.
+/// The load id a `source` names, if it names one: `load_source` read back, and `None` for
+/// anything it does not write.
 pub fn load_of(source: &str) -> Option<u64> {
-    let digits = source.strip_prefix("load:")?;
+    let digits = source.strip_prefix("load:")?.as_bytes();
     if digits.len() != 16 {
         return None;
     }
-    u64::from_str_radix(digits, 16).ok()
+    digits.iter().try_fold(0u64, |id, digit| {
+        Some((id << 4) | u64::from(hex_digit(*digit)?))
+    })
 }
 
 /// Every load a record names as its source, committed or since retired: running one of them
@@ -237,9 +258,47 @@ pub enum Record {
 
 const KNOWN_KINDS: &[&str] = &["add", "seal", "remove", "replace"];
 
-#[derive(Deserialize)]
-struct KindOnly {
-    kind: Option<String>,
+/// What one intact payload is.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Decoded {
+    Record(Record),
+    /// A kind this build does not know, by its name. Skipped, so a later version can add
+    /// kinds.
+    Unknown(String),
+    /// The CRC held and the payload is not one of the shapes above, with the reason.
+    /// Skipped too: the framing says these are the bytes that were written.
+    Malformed(String),
+}
+
+/// One intact payload, read. Never an error: a payload that is not a record is one of the
+/// two skips.
+///
+/// Through the catalog's `read_record`, so a record is one JSON object and each file and
+/// each `wal` mark in it is one: an array in the place of any of them is malformed, where
+/// serde alone read `["remove",[…]]` as a record retiring a live file.
+pub fn decode(payload: &[u8]) -> Decoded {
+    match catalog::read_record::<Record>(payload) {
+        Ok(record) => Decoded::Record(record),
+        Err(e) => match catalog::kind_of(payload) {
+            Some(kind) if !KNOWN_KINDS.contains(&kind.as_str()) => Decoded::Unknown(kind),
+            _ => Decoded::Malformed(e),
+        },
+    }
+}
+
+/// Every intact frame from the start of `bytes` as `(offset, what it is)`, and the offset
+/// of the first byte that is not one - `None` when the bytes end on a record boundary.
+///
+/// What `Manifest::open` does with a file's bytes, without the file: the same frame
+/// reader under the same length cap, and the same `decode`. The `record_log` fuzz target
+/// reads through this.
+pub fn parse(bytes: &[u8]) -> (Vec<(u64, Decoded)>, Option<u64>) {
+    let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
+    let decoded = frames
+        .into_iter()
+        .map(|(at, payload)| (at, decode(payload)))
+        .collect();
+    (decoded, torn_at)
 }
 
 /// The live files, by path, after every record is applied in order: the last word on a
@@ -295,23 +354,16 @@ impl Manifest {
         let (log, opened) = Log::open_with(path, MAX_PAYLOAD, &mut frame::sync_dir)?;
         let mut records = Vec::new();
         for (at, payload) in opened.payloads() {
-            match serde_json::from_slice::<Record>(payload) {
-                Ok(record) => records.push(record),
-                Err(e) => {
-                    let kind = serde_json::from_slice::<KindOnly>(payload)
-                        .ok()
-                        .and_then(|k| k.kind);
-                    match kind {
-                        Some(kind) if !KNOWN_KINDS.contains(&kind.as_str()) => warn(format!(
-                            "{display}: record at offset {at} has kind `{kind}`, which this \
-                             build does not know; skipped"
-                        )),
-                        _ => warn(format!(
-                            "{display}: record at offset {at} is intact but not readable \
-                             ({e}); skipped"
-                        )),
-                    }
-                }
+            match decode(payload) {
+                Decoded::Record(record) => records.push(record),
+                Decoded::Unknown(kind) => warn(format!(
+                    "{display}: record at offset {at} has kind `{kind}`, which this build \
+                     does not know; skipped"
+                )),
+                Decoded::Malformed(e) => warn(format!(
+                    "{display}: record at offset {at} is intact but not readable ({e}); \
+                     skipped"
+                )),
             }
         }
         if let Some(offset) = opened.torn_at {
@@ -419,6 +471,92 @@ mod tests {
             load_of(COMPACT_SOURCE),
             None,
             "a compaction reads as a load"
+        );
+    }
+
+    /// The digits are the sixteen `hex` writes. A sign is not one - `from_str_radix` took
+    /// `+f` for a byte and `+000000000000001` for a load - and neither is a capital,
+    /// which nothing has written and a start would not match to a file.
+    #[test]
+    fn a_sign_or_a_capital_is_not_a_hex_digit() {
+        assert_eq!(file_id_of(&"+f".repeat(16)), None);
+        assert_eq!(file_id_of(&"-0".repeat(16)), None);
+        assert_eq!(file_id_of(&"0A".repeat(16)), None);
+        assert_eq!(file_id_of(&"é".repeat(16)), None);
+        assert_eq!(file_id_of(&"0a".repeat(16)), Some([0x0a; 16]));
+        assert_eq!(file_id_of(&hex(&[0xff; 16])), Some([0xff; 16]));
+
+        assert_eq!(load_of("load:+000000000000001"), None);
+        assert_eq!(load_of("load:-000000000000001"), None);
+        assert_eq!(load_of("load:9F3A000000000001"), None);
+        assert_eq!(load_of("load:0000000000000001"), Some(1));
+        assert_eq!(load_of(&load_source(u64::MAX)), Some(u64::MAX));
+        let signed = Record::Add {
+            files: vec![],
+            source: Some("load:+000000000000001".into()),
+        };
+        assert!(load_ids(&[signed]).is_empty());
+    }
+
+    /// A record is one JSON object, and so is each file and each `wal` mark in it.
+    /// serde's derived readers take an array for any of the three, and each of these read
+    /// as a record nobody wrote: one retiring a live file, one naming a file, one telling
+    /// a replay which lines to drop. All are malformed, and the reason names the place.
+    #[test]
+    fn a_json_array_where_the_format_has_an_object_is_malformed() {
+        let id = hex(&[7; 16]);
+        let arrays = [
+            (
+                r#"["remove",["2024-01-15/seg_0_000001.col"]]"#.to_string(),
+                "the payload is a JSON array",
+            ),
+            (
+                format!(r#"{{"kind":"add","files":[["d/a.col","{id}"]]}}"#),
+                "`files[0]` is a JSON array",
+            ),
+            (
+                format!(r#"{{"kind":"seal","files":[{{"path":"d/a.col","file_id":"{id}"}},["d/b.col","{id}",true]]}}"#),
+                "`files[1]` is a JSON array",
+            ),
+            (
+                r#"{"kind":"replace","add":[],"remove":[],"wal":["1122334455667788","2024-01-15",5]}"#
+                    .to_string(),
+                "`wal` is a JSON array",
+            ),
+        ];
+        for (payload, want) in &arrays {
+            match decode(payload.as_bytes()) {
+                Decoded::Malformed(why) => {
+                    assert!(
+                        why.contains(want),
+                        "{payload}: `{why}` does not say `{want}`"
+                    );
+                }
+                other => panic!("{payload} read as {other:?}"),
+            }
+        }
+        // An array has no kind, so it is not an unknown one either.
+        assert!(matches!(
+            decode(br#"["compact",[]]"#),
+            Decoded::Malformed(_)
+        ));
+
+        // The same as objects are records, and an unknown kind is still one.
+        let objects = [
+            r#"{"kind":"remove","files":["2024-01-15/seg_0_000001.col"]}"#.to_string(),
+            format!(r#"{{"kind":"add","files":[{{"path":"d/a.col","file_id":"{id}"}}]}}"#),
+            r#"{"kind":"replace","add":[],"remove":[],"wal":{"stream":"1122334455667788","day":"2024-01-15","through":5}}"#
+                .to_string(),
+        ];
+        for payload in &objects {
+            assert!(
+                matches!(decode(payload.as_bytes()), Decoded::Record(_)),
+                "{payload}"
+            );
+        }
+        assert_eq!(
+            decode(br#"{"kind":"compact","files":[]}"#),
+            Decoded::Unknown("compact".into())
         );
     }
 

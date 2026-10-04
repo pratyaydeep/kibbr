@@ -1,0 +1,1 @@
+30005{} SINCE 1d GROUP BY time(3h), n

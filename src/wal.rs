@@ -117,8 +117,8 @@ const CHECKPOINT_FILE: &str = "checkpoint";
 
 const MAGIC: [u8; 4] = *b"KWAL";
 const VERSION: u8 = 1;
-const HEADER_LEN: usize = 28;
-const KIND_BATCH: u8 = 1;
+pub const HEADER_LEN: usize = 28;
+pub const KIND_BATCH: u8 = 1;
 /// `crc`, `seq`, `template_id`, `received_at`, `len`.
 const RECORD_HEADER: usize = 32;
 
@@ -145,7 +145,7 @@ const MAX_BODY_RAW: usize = 1024 * 1024 * 1024;
 /// The most a batch may claim to decompress to: one body, and the bodies a flush took
 /// before it - under `BATCH_BYTES` of records, and their times. What is written is held to
 /// this as what is read is, so a frame this build wrote is one it reads.
-const MAX_RAW: usize = MAX_BODY_RAW + 2 * BATCH_BYTES;
+pub const MAX_RAW: usize = MAX_BODY_RAW + 2 * BATCH_BYTES;
 
 // A frame says how long its batch is in four bytes.
 const _: () = assert!(MAX_RAW <= u32::MAX as usize);
@@ -252,7 +252,7 @@ fn number_of(name: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-fn header_bytes(stream: u64, base: u64) -> [u8; HEADER_LEN] {
+pub fn header_bytes(stream: u64, base: u64) -> [u8; HEADER_LEN] {
     let mut out = [0u8; HEADER_LEN];
     out[..4].copy_from_slice(&MAGIC);
     out[4] = VERSION;
@@ -276,7 +276,7 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
 }
 
 /// A segment's `(stream, base)`, or what is wrong with its header.
-fn read_header(bytes: &[u8]) -> Result<(u64, u64), String> {
+pub fn read_header(bytes: &[u8]) -> Result<(u64, u64), String> {
     let Some(header) = bytes.get(..HEADER_LEN) else {
         return Err(format!(
             "{} byte(s), short of the {HEADER_LEN}-byte header",
@@ -302,7 +302,7 @@ fn read_header(bytes: &[u8]) -> Result<(u64, u64), String> {
     Ok((stream, base))
 }
 
-fn put_record(out: &mut Vec<u8>, seq: u64, template_id: u64, received_at: i64, line: &[u8]) {
+pub fn put_record(out: &mut Vec<u8>, seq: u64, template_id: u64, received_at: i64, line: &[u8]) {
     let start = out.len();
     out.extend_from_slice(&[0u8; 4]);
     out.extend_from_slice(&seq.to_le_bytes());
@@ -800,72 +800,9 @@ impl Wal {
                 .and_then(|f| f.sync_all())
                 .map_err(io(&seg.path))?;
             let bytes = fs::read(&seg.path).map_err(io(&seg.path))?;
-            let mut at = HEADER_LEN;
-            loop {
-                // Checked, as every frame in the data directory is, against the bytes that
-                // remain before anything is sliced: a length of 0xFFFFFFFF is a tear,
-                // never a 4GB read.
-                let payload = match frame::read(&bytes, at, u32::MAX) {
-                    frame::Next::End => break,
-                    frame::Next::Frame { payload, end } => Some((payload, end)),
-                    frame::Next::Tear => None,
-                };
-                let Some((payload, end)) = payload else {
-                    // Not a frame. A whole one further on makes this damage in the
-                    // middle of the segment; none makes it the segment's torn end.
-                    match resync(&bytes, at + 1, found.last_seq) {
-                        Some(next) => {
-                            lost += (next - at) as u64;
-                            found.corrupt += 1;
-                            warn(format!(
-                                "{}: corrupt WAL entry at offset {at}: {} byte(s) that will \
-                                 not read, with whole entries after them; skipping, and the \
-                                 lines in them are lost",
-                                seg.path.display(),
-                                next - at
-                            ));
-                            at = next;
-                            continue;
-                        }
-                        None => {
-                            lost += (bytes.len() - at) as u64;
-                            found.torn += 1;
-                            warn(format!(
-                                "{}: torn record at offset {at} of {}: a write a stop cut \
-                                 short, whose lines were never acknowledged; skipped",
-                                seg.path.display(),
-                                bytes.len(),
-                            ));
-                            break;
-                        }
-                    }
-                };
-                let corrupt = |what: String| WalError::Corrupt {
-                    path: seg.path.clone(),
-                    offset: at as u64,
-                    what,
-                };
-                let raw = unpack(payload).map_err(corrupt)?;
-                for record in records(&raw).map_err(corrupt)? {
-                    // Positions only grow. One that does not is a record a second time,
-                    // and applying it would be the line a second time.
-                    if record.seq <= found.last_seq {
-                        return Err(corrupt(format!(
-                            "position {} follows position {}",
-                            record.seq, found.last_seq
-                        )));
-                    }
-                    found.last_seq = record.seq;
-                    if record.seq <= checkpoint {
-                        found.behind += 1;
-                        continue;
-                    }
-                    found.records += 1;
-                    let seq = record.seq;
-                    each(record).map_err(|detail| WalError::Replay { seq, detail })?;
-                }
-                at = end;
-            }
+            read_segment(
+                &seg.path, &bytes, checkpoint, &mut found, &mut lost, &mut *warn, &mut *each,
+            )?;
         }
         // Above everything read - and above whatever the bytes that would not read could
         // have held. After a kill those are a frame that was never flushed, and so never
@@ -1156,15 +1093,109 @@ impl Shared {
 
 /// Missing or unparseable is 0: the checkpoint is a hint, and without it a replay reads
 /// more and skips by the row groups' ranges.
+///
+/// Digits only, which is all `advance` writes: `parse` alone takes a sign, and `+5` is
+/// not a checkpoint this log wrote.
 fn read_checkpoint(dir: &Path) -> u64 {
     fs::read_to_string(dir.join(CHECKPOINT_FILE))
         .ok()
-        .and_then(|text| text.trim().parse().ok())
+        .map(|text| text.trim().to_string())
+        .filter(|digits| digits.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|digits| digits.parse().ok())
         .unwrap_or(0)
 }
 
+/// One segment's frames, read as `Wal::replay` reads them: `bytes` is the whole file,
+/// `path` is only what the warnings and errors name, and `found` and `lost` are the
+/// replay's own, carried from segment to segment. Returns the offset the reading stopped
+/// at: the segment's length, or where its torn end begins.
+///
+/// Apart from `replay`, which reads the file and hands its bytes here, only the fuzz
+/// target calls this (`fuzzing::wal_record`): it takes bytes, and no file, so that the
+/// reader can be held to its invariants without a disk under it.
+///
+/// **`bytes` is a segment `Wal::open` took**, so it is no shorter than a header: `open`
+/// leaves out every file whose header will not read, and nothing is read here before
+/// `HEADER_LEN`.
+pub fn read_segment(
+    path: &Path,
+    bytes: &[u8],
+    checkpoint: u64,
+    found: &mut Scanned,
+    lost: &mut u64,
+    warn: &mut dyn FnMut(String),
+    each: &mut dyn FnMut(Record<'_>) -> Result<(), String>,
+) -> Result<usize, WalError> {
+    let mut at = HEADER_LEN;
+    loop {
+        // Checked, as every frame in the data directory is, against the bytes that
+        // remain before anything is sliced: a length of 0xFFFFFFFF is a tear,
+        // never a 4GB read.
+        let payload = match frame::read(bytes, at, u32::MAX) {
+            frame::Next::End => return Ok(at),
+            frame::Next::Frame { payload, end } => Some((payload, end)),
+            frame::Next::Tear => None,
+        };
+        let Some((payload, end)) = payload else {
+            // Not a frame. A whole one further on makes this damage in the
+            // middle of the segment; none makes it the segment's torn end.
+            match resync(bytes, at + 1, found.last_seq) {
+                Some(next) => {
+                    *lost += (next - at) as u64;
+                    found.corrupt += 1;
+                    warn(format!(
+                        "{}: corrupt WAL entry at offset {at}: {} byte(s) that will \
+                         not read, with whole entries after them; skipping, and the \
+                         lines in them are lost",
+                        path.display(),
+                        next - at
+                    ));
+                    at = next;
+                    continue;
+                }
+                None => {
+                    *lost += (bytes.len() - at) as u64;
+                    found.torn += 1;
+                    warn(format!(
+                        "{}: torn record at offset {at} of {}: a write a stop cut \
+                         short, whose lines were never acknowledged; skipped",
+                        path.display(),
+                        bytes.len(),
+                    ));
+                    return Ok(at);
+                }
+            }
+        };
+        let corrupt = |what: String| WalError::Corrupt {
+            path: path.to_path_buf(),
+            offset: at as u64,
+            what,
+        };
+        let raw = unpack(payload).map_err(corrupt)?;
+        for record in records(&raw).map_err(corrupt)? {
+            // Positions only grow. One that does not is a record a second time,
+            // and applying it would be the line a second time.
+            if record.seq <= found.last_seq {
+                return Err(corrupt(format!(
+                    "position {} follows position {}",
+                    record.seq, found.last_seq
+                )));
+            }
+            found.last_seq = record.seq;
+            if record.seq <= checkpoint {
+                found.behind += 1;
+                continue;
+            }
+            found.records += 1;
+            let seq = record.seq;
+            each(record).map_err(|detail| WalError::Replay { seq, detail })?;
+        }
+        at = end;
+    }
+}
+
 /// A frame's payload as the batch it holds.
-fn unpack(payload: &[u8]) -> Result<Vec<u8>, String> {
+pub fn unpack(payload: &[u8]) -> Result<Vec<u8>, String> {
     let (Some(kind), Some(len)) = (payload.first(), payload.get(1..5)) else {
         return Err("a frame too short to hold a batch".to_string());
     };
@@ -1198,7 +1229,7 @@ fn unpack(payload: &[u8]) -> Result<Vec<u8>, String> {
 /// the bytes the writer wrote: a record inside them that will not check is a writer's
 /// fault, not a tear, and stepping over it by a length the failed check did not vouch
 /// for would be guessing at an acknowledged line.
-fn records(raw: &[u8]) -> Result<Vec<Record<'_>>, String> {
+pub fn records(raw: &[u8]) -> Result<Vec<Record<'_>>, String> {
     let Some(count) = raw.get(..4) else {
         return Err("a batch too short to hold its count".to_string());
     };
@@ -1905,6 +1936,26 @@ mod tests {
         let (records, scanned, _) = read_back(&scratch).expect("read");
         assert_eq!(records.iter().map(|r| r.0).collect::<Vec<_>>(), [5, 6]);
         assert_eq!((scanned.records, scanned.behind), (2, 4));
+    }
+
+    /// A checkpoint is the digits `advance` writes. A sign is not one of them, so `+5`
+    /// is no checkpoint and reads as the 0 a missing file does.
+    #[test]
+    fn a_checkpoint_with_a_sign_is_not_a_checkpoint() {
+        let scratch = Scratch::new("signed-checkpoint");
+        let file = scratch.0.join(CHECKPOINT_FILE);
+        assert_eq!(read_checkpoint(&scratch.0), 0);
+        for (text, want) in [
+            ("5", 5),
+            ("5\n", 5),
+            ("+5", 0),
+            ("-0", 0),
+            ("5 5", 0),
+            ("", 0),
+        ] {
+            fs::write(&file, text).expect("write");
+            assert_eq!(read_checkpoint(&scratch.0), want, "`{text}`");
+        }
     }
 
     /// A segment a stop cut short as it was created holds no line: it is removed, and

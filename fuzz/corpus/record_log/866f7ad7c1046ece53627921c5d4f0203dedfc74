@@ -1,0 +1,37 @@
+3
+{"kind":"template","id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[{"promote0:30:00Z","tokens":[{"promoted":"event","value":"login_failed"},{"key":"ts"},{"key":"user.id"}]}
+{"kind":"column","template_id":101,"name":"ts","type":"Datetime"}
+{"kind":"column","template_id":101,"name":"user.id","type":"Uuid"}
+{"kind":"column","template_id":101,"name":"event","type":"String"}
+{"kind":"time_source","templa"},{"key":"user.id"}]}
+*{"kind":"column","template_idÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿnt","type":"String"}
+{"kind":"time_source","templa"},{"key":"user.id"}]}
+*{"kind":"column","template_idÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ":050,"name":"ts","type":"Datetim02,"name":"n","type":"Int64"}
+{"kind":"column","template_id":051,"name":"f","type":"Float64"}
+{"kind":"column","template_id":102,"name":"b","type":"Bool"}
+{"kind":"column","template_id":102,|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||"name":"note","type":null}
+{"kind":"column","template_id":101,"named":"event","value":"login_failed"},{"key":"ts"},{"key":"user.id"}]}
+{"kind":"column","template_id":101,"name":"ts","type":"Datetime"}
+{"kind":"column","template_id":101,"name":"user.id","type":"Uuid"}
+{"kind":"column","files":[]}
+{"kind":"Replace","add":[],"remove":[]}
+{"kind":"compact","add":[],"remove":[]}
+{"kind":"TEMPLATÿÿ,"tempAla~E","id":1,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"Column","template_id":1,"name":"ts","type":"Datetime"}
+{"kind":"column ","template_id":1,"name":"ts","type":null}
+{"kind":"TimeSource","template_id":1,"source":"arrival"}
+{"kind":"time_sourc","template_id":1,"source":"arrival"}
+{"kind":"Time_Source","template_id":1,"source":"arri:"Int64"}
+{"kind":"column","template_id":051,"name":"f","type":"Float64"}
+{"kind":"column","template_id":102,"name":"b","type":"Bool"}
+{"kind":"column","template_id":102,|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||"name":"note","type":null}
+{"kind":"column","template_id":101,"named":"event","value":"login_failed"},{"key":"ts"},{"key":"user.id"}]}
+{"kind":"column","template_id":101,"name":"ts","type":"Datetime"}
+{"kind":"column","template_id":101,"name":"user.id","type":"Uuid"}
+{"kind":"column","files":[]}
+{"kind":"Replace","add":[],"remove":[]}
+{"kind":"compact","add":[],"remove":[]}
+{"kind":"TEMPLATÿÿ,"tempAla~E","id":1,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"Column","template_id":1,"name":"ts","type":"Datetime"}
+{"kind":"column ","templa31:40.250Z"}
+{"kind":"time_source","template_id":102,"source":"arrival"}

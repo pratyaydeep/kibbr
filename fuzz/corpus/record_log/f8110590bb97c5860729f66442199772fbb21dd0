@@ -1,0 +1,5 @@
+1
+{"kind":"add","files":[{"path":"2024-01-15/seg_0_000001.col","file_id":"01010101010101010101010101010101","sealed":false,"finished":false}]}
+{"kind":"seal","files":[{"path":"2024-01-15/seg_0_000001.col","file_bd":"01010101010101010101010101010101","seale1
+{"kind":"template","id":1,"created_at":"+36214d":true,"rows":81234,"min_ts":1705314600000000,"max_ts":1705318200000000,"finished":false}]}
+{"kind":"add","files":[{"path":"2024-01-15/seg_0_000002.col","file_id":"0202020202020202022020-12-31T23:520202020202","sealed":fal

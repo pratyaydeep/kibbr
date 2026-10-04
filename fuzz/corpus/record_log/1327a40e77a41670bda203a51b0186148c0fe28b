@@ -1,0 +1,14 @@
+3
+{"kind":"template","id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[{"promoted":"event","value":"login_failed"},{"key":"ts"},{"key":"user.id"}]}
+{"kind":"column","template_id":101,"name":"ts","type":"Datetime"}
+{"kind":"column","template_id":101,"name":"user.id","type":"Uuid"}
+{"kind":"column","template_id":101,"name":"event","type":"String"}
+{"kind":"time_source","template_id":101,"source":"column:ts"}
+{"kind":"template","id":102,"created_at":"2024-01-15T10:30:00Z","tokens":[{"promo~ted":"event","value":"login_ok"},{"key":"ts"},{"key":"user.id"}]}
+{"kind":"column","template_id":102,"name":"ip","type":"Ip"}
+{"kind":"column","template_id":102,"name":"n","type":"Int64"}
+{"kind":"column","template_id":102,"name":"f","type":"Float64"}
+{"kind":"column","template_id":102,"name":"b","type":"Bool"}
+{"kind":"column","template_id":102,"name":"note","type":null}
+{"kind":"column","template_id":101,"name":"ts","type":"String","widened_from":"Datetime","at":"2024-01-15T10:31:40.250Z"}
+{"kind":"time_source","template_id":102,"source":"arrival"}

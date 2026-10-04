@@ -1,0 +1,1 @@
+30000{} SINCE 2d GROUP BY time(8h), n

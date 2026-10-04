@@ -69,6 +69,14 @@ pub const OPTIONAL: u8 = 0x80;
 /// closes at about 8MB, and a line is at most 64MiB.
 pub const MAX_BODY: u32 = 256 * 1024 * 1024;
 
+/// The most rows a row group holds. Every writer closes one at 8,192 rows - the live door,
+/// the bulk loader and compaction, all through the one builder, which refuses more - so a
+/// reader refuses a `row_count` past it before anything is allocated by it. A chunk
+/// decodes into one cell a row, and an all-null chunk or a one-byte constant stores no
+/// bytes that vouch for the count: without this, a header of a hundred bytes asks for a
+/// cell for each of four thousand million rows.
+pub const MAX_ROWS: u32 = 8_192;
+
 pub const DAY_NS: i64 = 86_400 * 1_000_000_000;
 const NANOS: i64 = 1_000_000_000;
 

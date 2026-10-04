@@ -1,0 +1,16 @@
+1
+{"kind":"column","template_id":7,"name":"before-its-template","type":"String"}
+{"kind":"time_source","template_id":7,"source":"arrival"}
+{"kind":"template","id":7,"created_at":"2024-01-15T10:30:00Z","tokens":[{"key":"ts"}]}
+{"kind":"template","id":7,"created_at":"2024-01-16T10:30:00Z","tokens":[{"key":"other"}]}
+{"kind":"template","id":8,"created_at":"2024-01-15T10:30:00Z","tokens":[{"key":"ts"}]}
+{"kind":"template","id":9,"created_at":"2024-01-15T10:30:00Z","tokens":[{"promoted":"ts","value":""},{"key":"ts="}]}
+{"kind":"template","id":10,"created_at":"2024-01-15T10:30:00Z","tokens":[{"key":"ts="},{"key":"ts="}]}
+{"kind":"template","id":0,"created_at":"2024-01-15T10:30:00Z","tokens":[{"key":"ts"},{"key":"ts"},{"key":"[*]"}]}
+{"kind":"column","template_id":7,"name":"ts","type":"Datetime"}
+{"kind":"column","template_id":9,"name":"timestamp","type":"Datetime"}
+{"kind":"time_source","template_id":7,"source":"clock"}
+{"kind":"time_source","template_id":7,"source":"column:"}
+{"kind":"time_source","template_id":7,"source":"column:ts"}
+{"kind":"time_source","template_id":7,"source":"arrival"}
+{"kind":"time_source","template_id":8,"source":"Arrival"}

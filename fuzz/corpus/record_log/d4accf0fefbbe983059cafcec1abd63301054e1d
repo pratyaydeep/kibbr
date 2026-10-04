@@ -1,0 +1,9 @@
+1
+{"kind":"seac0d0e0f00112233"},{"path":"d/a.col","file_id":"ffffffffffffffffffffffffffffffff","sealed":true}]}
+{"kind":"add","files":[{"path":"d/b.col","file_id":"01ff"},{"path":"","file_id":""},{"path":"../../etc/passwd"џ,"file_id":"gggggggggggggggggggggggggggggggg"}],"source":"load:9f3a"}
+{"kind":"add","files"+:[{"path":"d/c.col","file_id"ссссссс:"0123456789abcdef0123456789abcdef","rows":18446744073719551615,"min_ts":-9223372036854775808,"max_ts":9223372036854775807,"sealed":tbue,"finished":true}],"source":"load:FFFFFFFFFFFFFFFF"}
+{"kind":"add","fleis":[{"path":"d/d.col","file_id":"01234567d/c.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":["d/c.col","d/a.col"],"source":"load:0000000000000000"}
+{"kind":"replace","add":[{"path":"d/e.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":["d/e.col"],"source":"compact"}
+{"kind":"replace","add":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":[],"wal":{"stream":"","day":"","through":18446744073709551615,"more":1}}
+{"kind":"remove","fi"e[":sld/e.col"]}
+{"kind":"add","files":[{"path":"d/e.col","file_id":"0123456789,bcdef0123456789abcdef"}]}

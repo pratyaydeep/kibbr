@@ -1,0 +1,1 @@
+COUNT LOG {"a\"b": "c\\d", "tab": "x\ty", "astral": "\ud83d\ude42"}

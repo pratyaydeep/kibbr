@@ -1,0 +1,1 @@
+MATCH LOG {} GROUP BY level, service

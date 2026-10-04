@@ -37,6 +37,16 @@ pub const PLACEHOLDER_LABEL: &str = "[*]";
 /// an explained query prints both.
 pub const FIRST_TEMPLATE_ID: u64 = 101;
 
+/// The largest id a template can have: one short of `u64::MAX`.
+///
+/// The counter holds the id the next template takes, and a start derives it as `max + 1`
+///. `u64::MAX` has no `max + 1`: computed, it was a panic at startup in a debug
+/// build, and in a release one it wrapped to 0 and reserved nothing. And a counter that
+/// counted past `u64::MAX` went on from 0, through every id already in use. So the
+/// counter stops at `u64::MAX`, which is its word for "nothing left" and is never an id,
+/// and the last id it gives is this one.
+pub const LAST_TEMPLATE_ID: u64 = u64::MAX - 1;
+
 /// Where a leaf's columns live when nothing said otherwise - the CLI, which has no data
 /// directory because it rebuilds the database per invocation.
 ///
@@ -60,6 +70,15 @@ pub enum TrieError {
     /// the next line that needs no record still lands.
     #[error("catalog: {0}")]
     Catalog(#[source] CatalogError),
+    /// A line needed a new template and every id is spent. Counting does not get here -
+    /// a template a microsecond takes half a million years - so some file names an id at
+    /// the far end of the range, and the ids up to it are kept from reuse like any
+    /// other's. A line of a template that already exists still lands.
+    #[error(
+        "no template id is left for a new template: every id up to {LAST_TEMPLATE_ID} is \
+         in use or reserved by an id a file names"
+    )]
+    TemplateIdsSpent,
 }
 
 /// `Static` is an exact token; `Placeholder` matches any token in this position.
@@ -318,6 +337,18 @@ impl Trie {
                     created_at,
                     tokens,
                 } => {
+                    // Intact, and no build wrote it: an id comes from a counter that
+                    // stops at `LAST_TEMPLATE_ID`. Skipped with a WARN like any intact
+                    // record the format does not describe, and never a failed
+                    // start. Its column and time_source records name a template with no
+                    // record before them, and are skipped as those are.
+                    if *id > LAST_TEMPLATE_ID {
+                        warn(format!(
+                            "a template record has id {id}, past the largest id a template \
+                             can have ({LAST_TEMPLATE_ID}); skipped"
+                        ));
+                        continue;
+                    }
                     if templates.contains_key(id) {
                         warn(format!(
                             "template {id} is recorded twice; keeping the first record"
@@ -392,6 +423,15 @@ impl Trie {
         let trie = Self::new_in(data_dir).with_time_columns(time_columns);
         let mut backfill = Vec::new();
         for (id, pending) in templates {
+            // `max + 1`, so a gap in the sequence is never refilled: a leaf directory is
+            // named by id whether or not the id's template record survived.
+            //
+            // Before the path is looked at, so the id of a record skipped just below is
+            // kept from reuse too. The record stays in the file, and a new template given
+            // its id would be the second record under it: the next start keeps the first
+            // of the two, skips it again for its path, and the template that took the id
+            // is gone with its rows still stored under it.
+            trie.reserve_template_ids_through(id);
             let labels: Vec<String> = pending.tokens.iter().map(Token::label).collect();
             let borrowed: Vec<&str> = labels.iter().map(String::as_str).collect();
             let leaf = trie.path_to(&borrowed)?;
@@ -427,9 +467,6 @@ impl Trie {
             leaf.is_leaf.store(true, Ordering::Release);
             trie.tokens
                 .fetch_add(labels.len() as u64, Ordering::Relaxed);
-            // `max + 1`, so a gap in the sequence is never refilled: a leaf directory is
-            // named by id whether or not the id's template record survived.
-            trie.reserve_template_ids_through(id);
         }
         Ok((trie, backfill))
     }
@@ -518,8 +555,25 @@ impl Trie {
     /// Sequential, from an `AtomicU64` fetch-and-increment. Ids are therefore handed out
     /// in the order templates are first seen, which is the order lines arrived in - the
     /// one part of a rendered tree that a reordered file moves.
-    pub fn next_template_id(&self) -> u64 {
-        self.next_template_id.fetch_add(1, Ordering::Relaxed)
+    ///
+    /// Checked, where a bare `fetch_add` wraps: past `LAST_TEMPLATE_ID` the counter has
+    /// nothing to give and says so, every time it is asked, and does not start again from
+    /// 0 through the ids already in use. A catalog naming `LAST_TEMPLATE_ID` was enough
+    /// for that: the next template took `u64::MAX` and the one after it 0.
+    pub fn next_template_id(&self) -> Result<u64, TrieError> {
+        let mut next = self.next_template_id.load(Ordering::Relaxed);
+        loop {
+            let after = next.checked_add(1).ok_or(TrieError::TemplateIdsSpent)?;
+            match self.next_template_id.compare_exchange_weak(
+                next,
+                after,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(next),
+                Err(now) => next = now,
+            }
+        }
     }
 
     /// Every node in the trie, `__root__` included - ids are handed out from 1 and the
@@ -552,9 +606,15 @@ impl Trie {
     /// unfiltered `MATCH` still returns everything and looks right, while a filtered one
     /// prunes to the template the trie names and silently misses the rows in the directory
     /// it actually opened. A wrong answer, not an error.
+    ///
+    /// `highest_used` is read from a file - a catalog record, a row group, a record in
+    /// the write-ahead log - and may be any `u64`. Saturating, so the largest of them
+    /// leaves the counter at `u64::MAX` with no id left to give (`next_template_id`),
+    /// where `+ 1` panicked a start in a debug build and, in a release one, wrapped to 0
+    /// and reserved nothing.
     pub fn reserve_template_ids_through(&self, highest_used: u64) {
         self.next_template_id
-            .fetch_max(highest_used + 1, Ordering::Relaxed);
+            .fetch_max(highest_used.saturating_add(1), Ordering::Relaxed);
     }
 
     /// What the same templates would cost with no prefix sharing at all: every template's
@@ -730,7 +790,7 @@ impl Trie {
         let mut slot = write(&leaf.leaf_meta)?;
         let is_new = match slot.as_mut() {
             None => {
-                let template_id = self.next_template_id();
+                let template_id = self.next_template_id()?;
                 // `keys` is sorted, so the columns are born in name order - the order
                 // `binary_search_by` below depends on.
                 let columns: Vec<ColumnDef> = parsed
@@ -1119,7 +1179,143 @@ mod tests {
             "{before:?}"
         );
         assert!(before.iter().any(|d| d.contains("n:Int64")), "{before:?}");
-        assert_eq!(rebuilt.next_template_id(), trie.next_template_id());
+        assert_eq!(
+            rebuilt.next_template_id().expect("an id"),
+            trie.next_template_id().expect("an id")
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn template_record(id: u64, key: &str) -> Record {
+        Record::Template {
+            id,
+            created_at: DateTime::from_timestamp(1_705_314_600, 0).expect("a valid timestamp"),
+            tokens: vec![Token::Key { key: key.into() }],
+        }
+    }
+
+    /// A template record whose id has no `max + 1` is skipped with a WARN that names it,
+    /// with the column and time_source records that name it, and the start goes on: the
+    /// template beside it is rebuilt and the next id follows it. The `max + 1` of that id
+    /// panicked the start in a debug build.
+    #[test]
+    fn a_template_id_with_no_next_id_is_skipped_and_never_fails_a_start() {
+        let records = vec![
+            template_record(u64::MAX, "ts"),
+            Record::Column {
+                template_id: u64::MAX,
+                name: "ts".into(),
+                col_type: Some(ColumnType::Datetime),
+                widened_from: None,
+                at: None,
+            },
+            Record::TimeSource {
+                template_id: u64::MAX,
+                source: "column:ts".into(),
+            },
+            template_record(FIRST_TEMPLATE_ID, "user"),
+        ];
+        let mut warnings = Vec::new();
+        let rebuilt =
+            Trie::from_catalog("data", &records, &mut |w| warnings.push(w)).expect("rebuild");
+        assert_eq!(rebuilt.template_count(), 1);
+        assert!(rebuilt.walk(&["ts"]).is_none());
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(
+            warnings[0].contains(&format!("id {}", u64::MAX)) && warnings[0].contains("skipped"),
+            "{warnings:?}"
+        );
+        assert_eq!(
+            rebuilt.next_template_id().expect("an id"),
+            FIRST_TEMPLATE_ID + 1
+        );
+    }
+
+    /// A template record skipped for a path another template holds still names its id,
+    /// and the id is not given again. It was: the next template took 102 here, its record
+    /// was the second under that id, and the start after that kept the first of the two
+    /// and skipped it for its path - one template where two had been ingested into.
+    #[test]
+    fn the_id_of_a_template_record_skipped_for_its_path_is_not_given_again() {
+        let mut records = vec![
+            template_record(FIRST_TEMPLATE_ID, "user"),
+            template_record(FIRST_TEMPLATE_ID + 1, "user"),
+        ];
+        let mut warnings = Vec::new();
+        let rebuilt =
+            Trie::from_catalog("data", &records, &mut |w| warnings.push(w)).expect("rebuild");
+        assert_eq!(rebuilt.template_count(), 1);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("the same path"), "{warnings:?}");
+
+        let (leaf, is_new) = rebuilt
+            .ingest(&parsed(r#"{"other":7}"#), Utc::now())
+            .expect("a new template");
+        assert!(is_new);
+        let id = leaf
+            .leaf_meta
+            .read()
+            .expect("meta")
+            .as_ref()
+            .map(|meta| meta.template_id)
+            .expect("a template");
+        assert_eq!(id, FIRST_TEMPLATE_ID + 2);
+
+        // What the catalog holds once that template is recorded, read by the next start.
+        records.push(template_record(id, "other"));
+        let mut warnings = Vec::new();
+        let again =
+            Trie::from_catalog("data", &records, &mut |w| warnings.push(w)).expect("rebuild");
+        assert_eq!(again.template_count(), 2);
+        assert!(again.walk(&["other"]).is_some());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    /// The last id is handed out once and nothing after it: not 0, not an id again. A
+    /// line that needs a new template is refused, the template that holds the last id
+    /// still takes its lines, and reserving through `u64::MAX` - an id a WAL record or a
+    /// row group could name - is not a panic and frees nothing.
+    #[test]
+    fn the_last_template_id_is_given_once_and_no_id_is_given_twice() {
+        let trie = Trie::new();
+        trie.reserve_template_ids_through(LAST_TEMPLATE_ID - 1);
+        assert_eq!(
+            trie.next_template_id().expect("the last id"),
+            LAST_TEMPLATE_ID
+        );
+        for _ in 0..3 {
+            assert!(matches!(
+                trie.next_template_id(),
+                Err(TrieError::TemplateIdsSpent)
+            ));
+        }
+
+        let mut warnings = Vec::new();
+        let rebuilt = Trie::from_catalog(
+            "data",
+            &[template_record(LAST_TEMPLATE_ID, "user")],
+            &mut |w| warnings.push(w),
+        )
+        .expect("rebuild");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(rebuilt.template_count(), 1);
+        rebuilt.reserve_template_ids_through(u64::MAX);
+        let now = Utc::now();
+        let (leaf, is_new) = rebuilt
+            .ingest(&parsed(r#"{"user":7}"#), now)
+            .expect("a line of the template that exists");
+        assert!(!is_new);
+        let id = leaf
+            .leaf_meta
+            .read()
+            .expect("meta")
+            .as_ref()
+            .map(|meta| meta.template_id);
+        assert_eq!(id, Some(LAST_TEMPLATE_ID));
+        assert!(matches!(
+            rebuilt.ingest(&parsed(r#"{"other":7}"#), now),
+            Err(TrieError::TemplateIdsSpent)
+        ));
+        assert_eq!(rebuilt.template_count(), 1);
     }
 }

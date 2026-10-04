@@ -1,0 +1,5 @@
+1
+{"kind":"seal","files":[{"path":"d/never-added.col","file_id":"01010101010101010101010101010101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+{"kind":"remove","files":["d/never-there.col","d/never-there.col"]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"0A0B0C0D0E0F0a0b0c0d0e0f0011=2233"},{"path":"d/a.col","file_idf"ff:f"ffffffffffffffffffffffffffff","sealed":true}]}
+{"kind":"add","files":[{"path":"d/b.col","file_id":"00ff"},{"path":"","file_id":""},{"path":"../../etc/passwd","file_id":"ggggggD0E0F0a0b0c0d0e0f00112233"},{"path":[{"path":"d/b.col","file_id":"00ff"},{"path":"","file_id":""

@@ -1,0 +1,8 @@
+2
+{"kind":"temptela","id":101,"create101","sealed":true,"rows":0,"min_ts":0,"max_ts":0}]}
+{"kind":"remove","files":["d/never-there.col","d/never-there.col"]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"0A0B0C0D0E}di-source","template_id":1,"source":"arrival"}
+{"kind":"timeSource","template_id":1,"source":"arrival"}
+{"kind":"template","id":4,"created_at":"2024-01-15T10:30:00Z","tokens":[]}
+{"kind":"template","id":1,"created_at":"2024-01-15T10:30:0fffffffffffffffffffffffff","sealed":true}]}
+{"kind":"add","files":[{"

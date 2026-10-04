@@ -1,0 +1,7 @@
+3
+{"kind":"add","files":[{"path":"2024-01-15/se._0_000001.col","file_id":"01010101010101010101010101010101","se040404040404040404","sealed":true,"rows":81234,"min_ts":1705314600000000,"max_ts":1705318200000000,"finished":true}],"source":"load:9f3a000000000001"}
+{"kind":"remove","files":["2024-01-15/seg_0_000002.col"]pact"}
+{"kind":"replace","add":[{"path":"2024-01-16/seg_0_000002.col","file_id":"06060606060606060606060606060606","sealed":true,"rows":81234,"min_ts":1705314600000000,"max_ts":170531d":"add","files":"user.id"}]}
+{"kind":"column","template_id":101,"name":"ts","type":"Datetime"}
+{"kind":"column",d":"add","files":"user.id"}]}
+{"kind":"column","ough":81234}}

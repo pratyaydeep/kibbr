@@ -1,0 +1,9 @@
+2
+{"kind":"temptela","id":101,"createfile_id":"0123456789abcdef0123456789abcdeg"}],"source":"load:000000000000000g"}
+{"kind":"add","files":[],"source":"Load:0000000000000001"}
+{"kind":"e":null}
+{"kind":"replace","add":[{"path":"d/c.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":["d/c.col","d/a.col"],"source":"load:0000000000000000"}
+{"kind":"replace","add":[{"path":"d/e.col","file_id":"0123456789abcdef0123456789abcdef"}],"remove":["d/e.col"],"source":"compact"}
+{"kind"070707","rows":-1}]}
+{"kind":"add","files":[{"path":"d/a.col","file_id":"07070707070707070707070707070707","sealed":"yes"}]}
+{

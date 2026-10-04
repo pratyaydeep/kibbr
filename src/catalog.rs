@@ -22,14 +22,18 @@
 //!
 //! **Reading.** From the start. A bad length or CRC at the tail is a torn write: the file
 //! is truncated there and a WARN names the offset. A record whose `kind` this build does
-//! not know is skipped with a WARN, so a later version can add kinds. Neither is ever a
-//! failed start: the same reasoning `triefile` gives - an operator cannot repair this by
-//! hand, and a crash loop is worse than a warning.
+//! not know is skipped with a WARN, so a later version can add kinds, and so is an intact
+//! payload that is not one JSON object of a shape this file has (`read_record`). None of
+//! these is ever a failed start: the same reasoning `triefile` gives - an operator cannot
+//! repair this by hand, and a crash loop is worse than a warning.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::frame::{self, Log, LogError};
@@ -170,8 +174,8 @@ pub fn frame(record: &Record) -> Result<Vec<u8>, serde_json::Error> {
 /// Every intact record from the start of `bytes`, stopping at the first tear.
 ///
 /// Never panics and never fails: the worst input is a file that reads as empty. The
-/// restart test truncates a catalog at every byte offset and asks for the intact prefix.
-#[cfg(test)]
+/// restart test truncates a catalog at every byte offset and asks for the intact prefix,
+/// and the `record_log` fuzz target holds every input to the same.
 pub fn parse(bytes: &[u8]) -> Parsed {
     let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
     let mut parsed = Parsed {
@@ -186,20 +190,17 @@ pub fn parse(bytes: &[u8]) -> Parsed {
 
 /// One intact payload into `parsed`: a record, an unknown kind, or a malformed one.
 fn decode(parsed: &mut Parsed, at: u64, payload: &[u8]) {
-    match serde_json::from_slice::<Record>(payload) {
+    match read_record::<Record>(payload) {
         Ok(record) => parsed.records.push(record),
         Err(e) => {
             // The CRC held, so these are the bytes that were written. Look for the kind
             // before calling it malformed: a kind this build does not know is the one
             // case the format promises to step over quietly.
-            let kind = serde_json::from_slice::<KindOnly>(payload)
-                .ok()
-                .and_then(|k| k.kind);
-            match kind {
+            match kind_of(payload) {
                 Some(kind) if !KNOWN_KINDS.contains(&kind.as_str()) => {
                     parsed.unknown.push((at, kind));
                 }
-                _ => parsed.malformed.push((at, e.to_string())),
+                _ => parsed.malformed.push((at, e)),
             }
         }
     }
@@ -207,10 +208,112 @@ fn decode(parsed: &mut Parsed, at: u64, payload: &[u8]) {
 
 const KNOWN_KINDS: &[&str] = &["template", "column", "time_source"];
 
-#[derive(Deserialize)]
-struct KindOnly {
-    kind: Option<String>,
+// ── One JSON object ────────────────────────────────────────────────────────────────
+
+/// One intact payload as a `T`, or the reason it is not one. `manifest.log` reads its
+/// records through this too, and a third file framed this way should.
+///
+/// **A record is one JSON object, and each thing in it is the JSON the writer writes
+/// there.** The readers serde derives take more: a JSON array for any struct - the
+/// fields in order, an internally tagged enum's tag first - and an object for a name,
+/// `{"Ip":null}` for `"Ip"`. So `["time_source",101,"arrival"]` read as a record here,
+/// `["remove",["2024-01-15/seg_0_000001.col"]]` as a manifest record retiring a live
+/// file, and `"wal":["…","2024-01-15",5]` as the mark that tells a replay which lines to
+/// drop. Nothing writes those, and a payload that is not one of the shapes the format
+/// lists is skipped, not guessed at.
+///
+/// So what was read is written back, as the writer spells it, and held against the
+/// payload: an object where the payload has an object, an array for an array, a string
+/// for a string. That is one rule for every struct and every name a record holds today
+/// or is given later, with no attribute to remember on the new field, and it is the
+/// writer's own spelling that says what belongs where.
+///
+/// The payload is read a second time for this, as plain JSON. A payload the first read
+/// took and the second cannot - a number no float holds or text that is not UTF-8, in a
+/// field the record does not have and so never looked at - is not a JSON object either.
+pub(crate) fn read_record<T>(payload: &[u8]) -> Result<T, String>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let record: T = serde_json::from_slice(payload).map_err(|e| e.to_string())?;
+    let said: Value = serde_json::from_slice(payload).map_err(|e| e.to_string())?;
+    let written = serde_json::to_value(&record).map_err(|e| e.to_string())?;
+    let mut path = String::new();
+    match spelled_otherwise(&written, &said, &mut path) {
+        Some((found, wanted)) if path.is_empty() => {
+            Err(format!("the payload is {found} where a record is {wanted}"))
+        }
+        Some((found, wanted)) => Err(format!("`{path}` is {found} where a record has {wanted}")),
+        None => Ok(record),
+    }
 }
+
+/// What kind of JSON a value is, as a WARN says it.
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "a JSON null",
+        Value::Bool(_) => "a JSON boolean",
+        Value::Number(_) => "a JSON number",
+        Value::String(_) => "a JSON string",
+        Value::Array(_) => "a JSON array",
+        Value::Object(_) => "a JSON object",
+    }
+}
+
+/// The first place `written` and `said` hold different kinds of JSON: what `said` has
+/// there and what `written` has, with `path` left naming the place - `files[0]`, `wal`,
+/// or nothing for the payload itself. `None`, and `path` as it was, when they agree
+/// everywhere.
+///
+/// Kinds and not values: a time is written one way and read from several. A key the
+/// payload leaves out is one the reader filled in, and holds nothing to check.
+fn spelled_otherwise(
+    written: &Value,
+    said: &Value,
+    path: &mut String,
+) -> Option<(&'static str, &'static str)> {
+    let len = path.len();
+    let found = match (written, said) {
+        (Value::Object(written), Value::Object(said)) => written.iter().find_map(|(key, value)| {
+            let theirs = said.get(key)?;
+            path.truncate(len);
+            if len > 0 {
+                path.push('.');
+            }
+            path.push_str(key);
+            spelled_otherwise(value, theirs, path)
+        }),
+        (Value::Array(written), Value::Array(said)) => {
+            written
+                .iter()
+                .zip(said)
+                .enumerate()
+                .find_map(|(index, (value, theirs))| {
+                    path.truncate(len);
+                    // Writing to a `String` cannot fail.
+                    let _ = write!(path, "[{index}]");
+                    spelled_otherwise(value, theirs, path)
+                })
+        }
+        (written, said) if std::mem::discriminant(written) == std::mem::discriminant(said) => None,
+        (written, said) => return Some((json_type(said), json_type(written))),
+    };
+    if found.is_none() {
+        path.truncate(len);
+    }
+    found
+}
+
+/// The `kind` an intact payload names, when the payload is a JSON object naming one as a
+/// string: what tells a kind this build does not know from a malformed record. An array
+/// has no kind, whatever its first element says.
+pub(crate) fn kind_of(payload: &[u8]) -> Option<String> {
+    match serde_json::from_slice::<Value>(payload) {
+        Ok(Value::Object(said)) => said.get("kind")?.as_str().map(str::to_string),
+        _ => None,
+    }
+}
+
 // ── The file ───────────────────────────────────────────────────────────────────────
 
 /// An open catalog, positioned at its end. The file mechanics - truncating a torn tail,
@@ -477,6 +580,83 @@ mod tests {
         assert_eq!(parsed.records, vec![template(101), template(102)]);
         assert_eq!(parsed.unknown, vec![(skip_at as u64, "merge".to_string())]);
         assert_eq!(parsed.torn_at, None);
+    }
+
+    /// A record is one JSON object, and so is each token in it. serde's derived reader
+    /// takes an array for a record - the tag first, then the fields in order - and the
+    /// first two of these read as records nobody wrote. All are intact, so all are
+    /// skipped as malformed, and the record after them is still read.
+    #[test]
+    fn a_json_array_where_the_format_has_an_object_is_malformed() {
+        let arrays: [(&[u8], &str); 4] = [
+            (br#"["time_source",101,"arrival"]"#, "the payload is a JSON array"),
+            (
+                br#"["template",101,"2024-01-15T10:30:00Z",[{"key":"ts"}]]"#,
+                "the payload is a JSON array",
+            ),
+            // serde refuses this one by itself, with a reason of its own: a token is
+            // read by its fields' names, and an array has none.
+            (
+                br#"{"kind":"template","id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[{"key":"ts"},["event","login"]]}"#,
+                "did not match any variant",
+            ),
+            // An array has no kind: this is not the unknown kind `merge`.
+            (br#"["merge",101,102]"#, ""),
+        ];
+        let mut bytes = Vec::new();
+        let mut offsets = Vec::new();
+        for (payload, _) in &arrays {
+            offsets.push(bytes.len() as u64);
+            bytes.extend(frame::frame(payload));
+        }
+        bytes.extend(bytes_of(&[template(102)]));
+
+        let parsed = parse(&bytes);
+        assert_eq!(parsed.records, vec![template(102)]);
+        assert_eq!(parsed.torn_at, None);
+        assert!(parsed.unknown.is_empty(), "{:?}", parsed.unknown);
+        assert_eq!(
+            parsed
+                .malformed
+                .iter()
+                .map(|(at, _)| *at)
+                .collect::<Vec<_>>(),
+            offsets
+        );
+        for ((_, why), (_, want)) in parsed.malformed.iter().zip(&arrays) {
+            assert!(why.contains(want), "`{why}` does not say `{want}`");
+        }
+
+        // A name is a string: serde also takes a one-key object for it.
+        let named = br#"{"kind":"column","template_id":101,"name":"ip","type":{"Ip":null}}"#;
+        let parsed = parse(&frame::frame(named));
+        assert!(parsed.records.is_empty(), "{:?}", parsed.records);
+        assert!(
+            parsed.malformed[0].1.contains("`type` is a JSON object"),
+            "{:?}",
+            parsed.malformed
+        );
+
+        // The same records as objects, tokens and all, are records.
+        let objects = [
+            &br#"{"kind":"time_source","template_id":101,"source":"arrival"}"#[..],
+            br#"{"kind":"template","id":101,"created_at":"2024-01-15T10:30:00Z","tokens":[{"key":"ts"},{"promoted":"event","value":"login"}]}"#,
+        ];
+        let bytes: Vec<u8> = objects.iter().flat_map(|p| frame::frame(p)).collect();
+        let parsed = parse(&bytes);
+        assert_eq!(parsed.records.len(), 2);
+        assert!(parsed.malformed.is_empty(), "{:?}", parsed.malformed);
+    }
+
+    /// A payload the typed read takes and that is not JSON - here a number no float
+    /// holds, in a field the record does not have - is not one JSON object either.
+    #[test]
+    fn a_payload_that_is_not_json_is_malformed_whatever_the_record_ignores() {
+        let payload =
+            br#"{"kind":"time_source","template_id":101,"source":"arrival","later":1e999}"#;
+        let parsed = parse(&frame::frame(payload));
+        assert!(parsed.records.is_empty(), "{:?}", parsed.records);
+        assert_eq!(parsed.malformed.len(), 1);
     }
 
     #[test]

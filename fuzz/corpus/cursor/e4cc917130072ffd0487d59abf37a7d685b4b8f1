@@ -1,0 +1,1 @@
+38000{} GROUP BY time(-h(, 

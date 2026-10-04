@@ -10,7 +10,7 @@ use super::{
     autosi_digits, bit, count_set, encodes, epoch_of, index_width, print_float, print_int,
     print_ip, print_rfc3339, print_uuid, read_bitmap, type_of_byte, unzigzag, Bad, Bytes, Form,
     JsonKind, Source, BITS, CONSTANT, DAY_NS, DELTA, DICTIONARY, KIND_ROW_GROUP, MAX_BODY,
-    NO_COMPRESSION, OPTIONAL, PER_ROW, RFC3339, VARINT, ZSTD,
+    MAX_ROWS, NO_COMPRESSION, OPTIONAL, PER_ROW, RFC3339, VARINT, ZSTD,
 };
 use crate::infer::infer;
 use crate::types::ColValue;
@@ -106,6 +106,10 @@ pub fn header(
     if row_count == 0 {
         return Err(Bad::at(at, "row group of 0 rows"));
     }
+    // Nothing else in a header bounds it, and every chunk is decoded into a cell a row.
+    if row_count > MAX_ROWS {
+        return Err(too_many_rows(at, row_count as usize));
+    }
     let at = r.offset();
     let min_time = r.i64("min_time")?;
     let max_time = r.i64("max_time")?;
@@ -199,6 +203,14 @@ pub fn header(
     })
 }
 
+/// A row count past what a row group holds, named where it is written.
+fn too_many_rows(at: u64, rows: usize) -> Bad {
+    Bad::at(
+        at,
+        format!("row group of {rows} rows, past the {MAX_ROWS} a row group holds"),
+    )
+}
+
 fn chunk_dir(r: &mut Bytes<'_>) -> Result<ChunkDir, Bad> {
     let at = r.offset();
     let layout = r.u8("chunk layout")?;
@@ -285,7 +297,15 @@ pub type Cell = (ColValue, Option<Value>);
 
 /// A chunk's stored bytes, already CRC-checked, into one cell per row. `base` is the
 /// chunk's file offset.
+///
+/// **`rows` is held to what a row group holds before a cell is made.** It is the header's
+/// `row_count`, which `header` has already refused past `MAX_ROWS`; it is asked again
+/// here because this is where the cells are allocated, and an all-null chunk has no bytes
+/// to run out of: its cells are made from the count alone.
 pub fn chunk(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Vec<Cell>, Bad> {
+    if rows > MAX_ROWS as usize {
+        return Err(too_many_rows(base, rows));
+    }
     match dir.compression {
         ZSTD => {
             let body = unzstd(stored, dir.body_len).map_err(|what| Bad::at(base, what))?;
@@ -430,8 +450,10 @@ fn piece(bytes: &[u8], base: u64, dir: &PieceDir, n: usize) -> Result<Vec<Cell>,
         Ok((lit(i), row_digits))
     };
     // What a piece decodes to is never more than its rows written plain, and a plain body
-    // holds at most 256MiB: a constant, a word list or a zstd frame stands for rows it does
-    // not store one by one, and a few stored bytes must not decode to gigabytes.
+    // holds at most 256MiB: a constant or a word list stands for rows it does not store one
+    // by one, and a few stored bytes must not decode to gigabytes. Only text can pass it -
+    // a value of any other type is sixteen bytes at most, on the 8,192 rows a row group
+    // holds - so it is asked where a word or a constant is read, and not of a width.
     let too_much = |plain: usize, at: u64| {
         Bad::at(
             at,
@@ -441,12 +463,6 @@ fn piece(bytes: &[u8], base: u64, dir: &PieceDir, n: usize) -> Result<Vec<Cell>,
             ),
         )
     };
-    if let Some(width) = plain_width(form) {
-        let plain = n.saturating_mul(width);
-        if plain > MAX_BODY as usize {
-            return Err(too_much(plain, r.offset()));
-        }
-    }
     let mut out = Vec::with_capacity(n.min(r.remaining()));
     match dir.encoding {
         DICTIONARY => {
@@ -588,17 +604,6 @@ fn print_once(
     first.get_or_insert((spelling, out.len()));
     out.push(printed);
     Ok(())
-}
-
-/// The bytes one value of a fixed-width type takes in plain layout; `None` for text.
-fn plain_width(form: &Form) -> Option<usize> {
-    match *form {
-        Form::String { .. } => None,
-        Form::Int64 { .. } | Form::Float64 { .. } | Form::Datetime { .. } => Some(8),
-        Form::Bool { .. } => Some(1),
-        Form::Uuid { .. } => Some(16),
-        Form::Ip { spelling } => Some(if spelling == 4 { 4 } else { 16 }),
-    }
 }
 
 /// One value as an encoding lays it out, before its form prints it.

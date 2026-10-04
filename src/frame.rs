@@ -97,6 +97,22 @@ pub fn read_all(bytes: &[u8], max: u32) -> (Vec<(u64, &[u8])>, Option<u64>) {
     }
 }
 
+/// `read_all`, with each payload as its range of `bytes` and not a borrow of them: what
+/// `Log::open_with` keeps of a file it has read, so the bytes can move into `Opened`
+/// beside the ranges. A function of its own so the `record_log` fuzz target holds the
+/// ranges a start slices by to the payloads `read_all` found, without a file.
+pub fn spans(bytes: &[u8], max: u32) -> (Vec<(u64, std::ops::Range<usize>)>, Option<u64>) {
+    let (found, torn_at) = read_all(bytes, max);
+    let frames = found
+        .iter()
+        .map(|(offset, payload)| {
+            let start = *offset as usize + HEADER;
+            (*offset, start..start + payload.len())
+        })
+        .collect();
+    (frames, torn_at)
+}
+
 // ── The append-only file ───────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
@@ -187,14 +203,7 @@ impl Log {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), true),
             Err(e) => return Err(io(e)),
         };
-        let (found, torn_at) = read_all(&bytes, max);
-        let frames = found
-            .iter()
-            .map(|(offset, payload)| {
-                let start = *offset as usize + HEADER;
-                (*offset, start..start + payload.len())
-            })
-            .collect();
+        let (frames, torn_at) = spans(&bytes, max);
         let end = torn_at.unwrap_or(bytes.len() as u64);
 
         // Not `append(true)`: an append-mode handle ignores `set_len` + seek for the

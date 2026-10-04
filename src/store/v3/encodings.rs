@@ -4,11 +4,11 @@
 
 use serde_json::Value;
 
-use super::build::{build, schema_of, Level, RowGroup};
+use super::build::{build, schema_of, BuildError, Level, RowGroup};
 use super::read::{self, ChunkDir, Header, PieceDir};
 use super::{
-    put_varint, unzigzag, zigzag, Bytes, Form, JsonKind, Source, BITS, CONSTANT, DELTA, DICTIONARY,
-    MAX_BODY, NO_COMPRESSION, PLAIN, VARINT, ZSTD,
+    index_width, put_varint, unzigzag, zigzag, Bytes, Form, JsonKind, Source, BITS, CONSTANT,
+    DELTA, DICTIONARY, MAX_BODY, MAX_ROWS, NO_COMPRESSION, PLAIN, VARINT, ZSTD,
 };
 use crate::db::row_of;
 use crate::flatten::parse_line;
@@ -21,6 +21,11 @@ fn group_of(lines: &[String]) -> (Vec<String>, RowGroup) {
 }
 
 fn group_at(lines: &[String], level: Level) -> (Vec<String>, RowGroup) {
+    try_group(lines, level).expect("build")
+}
+
+/// The same, when the builder may refuse the rows.
+fn try_group(lines: &[String], level: Level) -> Result<(Vec<String>, RowGroup), BuildError> {
     let rows: Vec<Row> = lines
         .iter()
         .map(|l| row_of(&parse_line(l.as_bytes(), 1).expect("a line that parses")))
@@ -31,8 +36,8 @@ fn group_at(lines: &[String], level: Level) -> (Vec<String>, RowGroup) {
         .map(|r| effective_ts(r, "ts").expect("a time"))
         .collect();
     let columns = schema_of(refs.iter().copied());
-    let rg = build(7, 0, &columns, &refs, &times, Source::NotRecorded, level).expect("build");
-    (columns, rg)
+    let rg = build(7, 0, &columns, &refs, &times, Source::NotRecorded, level)?;
+    Ok((columns, rg))
 }
 
 fn header_of(rg: &RowGroup, columns: usize) -> Header {
@@ -188,16 +193,21 @@ fn text_is_stored_as_a_word_list_and_compressed() {
     round_trips(&lines);
 }
 
-/// An index is one byte up to 256 words, two up to 65,536, and four past that.
+/// An index is one byte up to 256 words, two up to 65,536, and four past that. A row
+/// group holds 8,192 rows and a list no more words than rows, so a file reaches two bytes
+/// and never four: past the row cap the widths are held as the rule alone.
 #[test]
 fn a_word_list_s_indexes_are_as_wide_as_its_words_need() {
-    for (words, width) in [(256usize, 1u32), (257, 2), (65_536, 2), (65_537, 4)] {
+    for (words, width) in [(256usize, 1u32), (257, 2), (MAX_ROWS as usize, 2)] {
         let values: Vec<String> = (0..words).map(|n| format!(r#""w{n:08}""#)).collect();
         let lines = lines_of(&values.iter().map(String::as_str).collect::<Vec<_>>());
         let dir = dir_of(&lines);
         let n = words as u32;
         assert_eq!(dir.body_len, 4 + n * (4 + 9) + n * width, "{words} words");
         round_trips(&lines);
+    }
+    for (words, width) in [(1, 1), (256, 1), (257, 2), (65_536, 2), (65_537, 4)] {
+        assert_eq!(index_width(words), width, "{words} words");
     }
 }
 
@@ -558,13 +568,73 @@ fn a_piece_that_stands_for_more_than_a_body_is_refused() {
     list.extend(std::iter::repeat_n(0u8, 300));
     let err = read_piece(&list, 300, text, DICTIONARY).expect_err("refused");
     assert!(err.contains("past the 268435456"), "{err}");
-    // One byte that claims three hundred million rows.
+}
+
+// ── The row cap ────────────────────────────────────────────────────────────────────
+
+/// A row group holds 8,192 rows and no more. The builder refuses to write one of more,
+/// and a reader refuses a header that claims one where its `row_count` is written, before
+/// a cell is made: what is stored cannot vouch for the count, since an all-null chunk has
+/// no bytes at all and a constant has one value.
+#[test]
+fn a_row_group_past_the_row_cap_is_neither_written_nor_read() {
+    let full = lines_of(&vec!["null"; MAX_ROWS as usize]);
+    let (columns, rg) = group_of(&full);
+    assert_eq!(header_of(&rg, columns.len()).row_count, MAX_ROWS);
+    assert_eq!(rows_of(&columns, &rg).len(), MAX_ROWS as usize);
+
+    let mut over = full.clone();
+    over.push(full[0].clone());
+    assert_eq!(
+        try_group(&over, Level::Live).map(|_| ()),
+        Err(BuildError::TooManyRows(MAX_ROWS as usize + 1))
+    );
+
+    // The full row group's own header, claiming more rows than it has.
+    let Next::Frame { payload, .. } = crate::frame::read(&rg.frame, 0, u32::MAX) else {
+        panic!("not a frame");
+    };
+    for rows in [MAX_ROWS + 1, 6_000_000, u32::MAX] {
+        let mut edited = payload.to_vec();
+        edited[13..17].copy_from_slice(&rows.to_le_bytes());
+        let bad = read::header(&edited, 0, |_| Some(columns.len())).expect_err("refused");
+        assert_eq!(bad.offset, 13, "{}", bad.what);
+        assert!(bad.what.contains("past the 8192"), "{}", bad.what);
+    }
+
+    // A chunk is not decoded for more rows either, whoever asks: no bytes, and one byte.
+    let null = ChunkDir {
+        layout: read::ALL_NULL,
+        compression: NO_COMPRESSION,
+        stored_len: 0,
+        stored_crc: 0,
+        body_len: 0,
+        a: None,
+        b: None,
+    };
+    let cells = read::chunk(&[], 0, &null, MAX_ROWS as usize).expect("chunk");
+    assert_eq!(cells.len(), MAX_ROWS as usize);
+    for rows in [MAX_ROWS as usize + 1, 1_000_000_000] {
+        let bad = read::chunk(&[], 0, &null, rows).expect_err("refused");
+        assert!(bad.what.contains("past the 8192"), "{}", bad.what);
+    }
     let flag = Form::Bool {
         kind: JsonKind::Lit,
         case: 0,
     };
     let err = read_piece(&[1], 300_000_000, flag, CONSTANT).expect_err("refused");
-    assert!(err.contains("past the 268435456"), "{err}");
+    assert!(err.contains("past the 8192"), "{err}");
+}
+
+/// The cap is the row count every writer closes a row group at, so a reader refuses no
+/// row group a writer makes; and it keeps one column's cells under a mebibyte.
+#[test]
+fn the_row_cap_is_the_threshold_the_writers_close_a_row_group_at() {
+    assert_eq!(
+        crate::store::RowGroupLimits::default().rows,
+        MAX_ROWS as usize
+    );
+    assert!(MAX_ROWS as usize * std::mem::size_of::<read::Cell>() <= 1 << 20);
 }
 
 /// A word list's body for `rows` rows, read as one String piece: `zstd` compresses it
