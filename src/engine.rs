@@ -991,8 +991,8 @@ impl Cursor {
     /// patterns share cannot refuse either's cursor at any width. The count of terms comes
     /// first; a key and an exact value are each eight bytes of length and then the text,
     /// so a `=` or a NUL inside one ends nothing; and a tag after the key says whether a
-    /// value follows, so the wildcard is not the one-character value `*`, which the grammar
-    /// keeps apart from it.
+    /// value follows, so the wildcard is not the one-character value `*`, which the
+    /// grammar keeps apart from it.
     ///
     /// `Query::tokens` is not this spelling and must not become it: it prints `key=*` for
     /// both of those and is what `--explain` shows a person. The guard hashed it once, and
@@ -1988,7 +1988,7 @@ mod tests {
     #[test]
     fn the_guard_tells_apart_patterns_that_print_the_same_tokens() {
         let pairs = [
-            // The wildcard and the one-character value `*`.
+            // The wildcard and the one-character value `*`, two things in the grammar.
             (pattern(&[("host", None)]), pattern(&[("host", Some("*"))])),
             // Two terms, and one term whose value runs on through a NUL into the second.
             (

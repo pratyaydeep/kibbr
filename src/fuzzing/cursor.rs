@@ -1,4 +1,4 @@
-//! The `AFTER` cursor (`engine::Cursor`), held to the grammar and the row order: a token a client hands
+//! The `AFTER` cursor (`engine::Cursor`), held to what a cursor is: a token a client hands
 //! back is untrusted input on the query path, so decoding one never panics, and a token
 //! that is not a cursor of the query it arrives with is refused with an error and never
 //! resolved to a position.
@@ -360,7 +360,7 @@ impl Fixture {
     /// The store, and the order worked out from the lines alone.
     ///
     /// A row's rank is its effective time, its leaf's key, and how many lines of that
-    /// leaf came before it - the row order as the in-memory store counts it. The leaf key is
+    /// leaf came before it - the row order, as the in-memory store counts it. The leaf key is
     /// `engine::leaf_key` over the line's own walk tokens, called rather than written
     /// again for the reason the oracle calls it: which number a key set hashes to is a
     /// contract. Everything else is read off `LINES`.

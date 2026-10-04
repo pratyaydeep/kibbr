@@ -40,11 +40,11 @@ pub const FIRST_TEMPLATE_ID: u64 = 101;
 /// The largest id a template can have: one short of `u64::MAX`.
 ///
 /// The counter holds the id the next template takes, and a start derives it as `max + 1`
-///. `u64::MAX` has no `max + 1`: computed, it was a panic at startup in a debug
-/// build, and in a release one it wrapped to 0 and reserved nothing. And a counter that
-/// counted past `u64::MAX` went on from 0, through every id already in use. So the
-/// counter stops at `u64::MAX`, which is its word for "nothing left" and is never an id,
-/// and the last id it gives is this one.
+/// of the ids in the catalog. `u64::MAX` has no `max + 1`: computed, it was a panic at
+/// startup in a debug build, and in a release one it wrapped to 0 and reserved nothing.
+/// And a counter that counted past `u64::MAX` went on from 0, through every id already in
+/// use. So the counter stops at `u64::MAX`, which is its word for "nothing left" and is
+/// never an id, and the last id it gives is this one.
 pub const LAST_TEMPLATE_ID: u64 = u64::MAX - 1;
 
 /// Where a leaf's columns live when nothing said otherwise - the CLI, which has no data

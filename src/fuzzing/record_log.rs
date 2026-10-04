@@ -1,5 +1,6 @@
 //! The `record_log` target: the one record reader under `catalog.log` and `manifest.log`
-//!, held to what the format promises about bytes nobody vouched for.
+//! (the catalog and the manifest), held to what the format promises about bytes nobody
+//! vouched for.
 //!
 //! The input is the whole of a log file, and it is read as both files, because the framing
 //! is one and a catalog's records are a manifest's unknown kinds. What is asserted:
@@ -224,8 +225,8 @@ enum At {
     Tear,
 }
 
-/// The framing as the format states it, written a second time: what is at `at`, which is at
-/// most the input's length.
+/// The framing - a u32 length, a u32 CRC-32C, the payload - written a second time: what
+/// is at `at`, which is at most the input's length.
 fn frame_at(bytes: &[u8], at: usize, max: u32) -> At {
     let left = bytes.len() - at;
     if left == 0 {
@@ -530,7 +531,7 @@ fn says(written: &Value, said: &Value, loose: &[&str]) -> bool {
 
 /// A record against the payload it was read from.
 ///
-/// The payload is one JSON object, which a reader derived from
+/// The payload is one JSON object, at every level, which a reader derived from
 /// the record's type does not hold to by itself. The record can be written, what is
 /// written reads back as the same record, and each field written is the field the payload
 /// spelled: a reader that took one shape for another, or a value for a different one, has
@@ -573,7 +574,7 @@ where
 }
 
 /// The fields a record of `kind` may leave out and the writer leaves out when they are
-/// not there, from the catalog's and the manifest's formats.
+/// not there, in the catalog and in the manifest.
 fn optional(kind: &str) -> &'static [&'static str] {
     match kind {
         "column" => &["widened_from", "at"],
@@ -1082,7 +1083,7 @@ impl Choices<'_> {
         DateTime::from_timestamp(secs, nanos).unwrap_or_default()
     }
 
-    /// The seven types that are recorded, and the null of a column that has only
+    /// The seven types a column record names, and the null of a column that has only
     /// held nulls.
     fn column_type(&mut self) -> Option<ColumnType> {
         match self.byte() % 8 {

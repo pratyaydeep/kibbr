@@ -28,9 +28,9 @@
 //! the reader accepts is written out again from what the reader says it holds, and must
 //! be the bytes that were read: a byte the reader took without looking at it, or took for
 //! another value, does not come back. Beside that, each accepted field is held to
-//! The format's tables as they are said again here, not borrowed from the reader. A
+//! the format's tables as they are said again here, not borrowed from the reader. A
 //! chunk's body has no second spelling to compare - its cells are values, not bytes - so
-//! a body the reader decoded is read here a second time from the format's description
+//! a body the reader decoded is read here a second time from the layout
 //! (`hold_body`): every bitmap, length, word list and value in its place, nothing left
 //! over, and no byte that is not one of the values its field may hold.
 //!
@@ -178,7 +178,7 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
 // ── The header and the frames ──────────────────────────────────────────────────────
 
 /// The file's id, when its first 24 bytes are a v3 header - and the reader's answer held
-/// to the file header read here a second time.
+/// to the header's layout read here a second time.
 fn header(file: &[u8]) -> Option<[u8; 16]> {
     let good = file.len() >= HEADER_LEN
         && file[..4] == MAGIC
@@ -205,7 +205,7 @@ fn header(file: &[u8]) -> Option<[u8; 16]> {
     }
 }
 
-/// The frame at `at`, read here from the format, and `frame::read` held to the same answer:
+/// The frame at `at`, read here from its layout, and `frame::read` held to the same answer:
 /// its payload and where it ends, or `None` at a tear or the end.
 fn frame_at(file: &[u8], at: usize) -> Option<(&[u8], usize)> {
     let mine = (|| {
@@ -265,9 +265,9 @@ fn cut_in_header(file: &[u8]) {
 
 // ── The unsealed walk ──────────────────────────────────────────────────────────────
 
-/// The file walked from byte 24 as the format says, here, every chunk decoded and held to what
-/// a chunk must be - and then `file::walk` held to the same answer. What the walk kept and
-/// where it stopped, or `None` when it refused the file or the reading was declined.
+/// The file walked from byte 24 as recovery walks it, here, every chunk decoded and held to
+/// what a chunk must be - and then `file::walk` held to the same answer. What the walk kept
+/// and where it stopped, or `None` when it refused the file or the reading was declined.
 fn unsealed(file: &[u8]) -> Option<(Index, usize)> {
     let path = Path::new(NAME);
     let mine = match header(file) {
@@ -372,7 +372,7 @@ fn walk(file: &[u8], id: [u8; 16]) -> Result<Option<(Index, usize)>, Declined> {
     Ok(Some((index, at)))
 }
 
-/// A schema record's columns, when it is the record the format says comes next: its id the
+/// A schema record's columns, when it is the record that comes next: its id the
 /// number of records before it, its names sorted and distinct, its payload used up.
 fn schema(payload: &[u8], base: u64, next: usize, len: usize) -> Option<Vec<String>> {
     let mut r = Bytes::new(payload, base);
@@ -538,7 +538,7 @@ fn hold_dir(dir: &ChunkDir) {
     }
 }
 
-/// The format's table of which encoding lays out which type, and its range for every
+/// The table of which encoding lays out which type, and the range for every
 /// field of a form, with the combinations it forbids.
 fn hold_piece(piece: &PieceDir) {
     let lit = piece.form.kind() == JsonKind::Lit;
@@ -739,7 +739,7 @@ fn bitmap<'a>(rest: &mut &'a [u8], n: usize, what: &str) -> (&'a [u8], usize) {
     (map, map.iter().map(|b| b.count_ones() as usize).sum())
 }
 
-/// The body of a chunk the reader decoded, read a second time from the format: the presence
+/// The body of a chunk the reader decoded, read a second time from its layout: the presence
 /// bitmap, the selector and piece A's length where the layout has them, and each piece
 /// its own bytes, used up exactly.
 fn hold_body(dir: &ChunkDir, rows: usize, body: &[u8]) {
@@ -771,7 +771,7 @@ fn hold_body(dir: &ChunkDir, rows: usize, body: &[u8]) {
     }
 }
 
-/// One piece of `n` rows the reader decoded, read from the format: the kind bitmap
+/// One piece of `n` rows the reader decoded, read from its layout: the kind bitmap
 /// and the digits bytes when its form has them, then the values as its encoding lays
 /// them out - each a value its type may hold - and no byte after the last.
 fn hold_values(piece: &PieceDir, bytes: &[u8], n: usize) {
@@ -969,7 +969,7 @@ fn sealed(file: &[u8], kept: bool) -> Option<Index> {
         };
         let from = e.offset as usize;
         let area = from + e.frame_len as usize;
-        // The header a query plans from is a whole frame whose CRC holds.
+        // A sealed read: the header a query plans from is a whole frame whose CRC holds.
         let (payload, _) = frame_at(file, from)
             .filter(|(_, end)| *end == area)
             .expect("a header that is not a whole frame with its CRC was read");
@@ -999,7 +999,7 @@ fn sealed(file: &[u8], kept: bool) -> Option<Index> {
                     assert_eq!(cells.len(), 1, "one column was asked for");
                     assert_eq!(read, u64::from(dir.stored_len), "the bytes read");
                     let stored = &file[area + from..area + to];
-                    // Each `stored_crc` is checked before decoding.
+                    // A sealed read: each `stored_crc` is checked before decoding.
                     assert_eq!(
                         frame::crc32c(stored),
                         crc,
@@ -1043,10 +1043,10 @@ fn hold_copy(file: &[u8], area: usize, header: &Header, payload: &[u8], copied: 
     );
 }
 
-/// An index the sealed open gave, held to the format: the trailer points at a whole footer
-/// frame that ends where the trailer begins; the footer is the one spelling of the index,
-/// up to parts a reader steps over; and every entry is a frame's worth of bytes between
-/// the header and the footer, in file order, none over the next.
+/// An index the sealed open gave, held to the footer's rules: the trailer points at a whole
+/// footer frame that ends where the trailer begins; the footer is the one spelling of the
+/// index, up to parts a reader steps over; and every entry is a frame's worth of bytes
+/// between the header and the footer, in file order, none over the next.
 fn hold_index(file: &[u8], index: &Index) {
     assert!(
         file.len() >= HEADER_LEN + TRAILER_LEN,
@@ -1599,7 +1599,7 @@ mod tests {
         )
     }
 
-    /// One row group whose column `v` holds every spelling the format names, and so both
+    /// One row group whose column `v` holds every spelling a form names, and so both
     /// pieces, a kind bitmap and text; one of forty rows of words, numbers and times, so a
     /// word list, variable-length integers and differences are each long enough for zstd
     /// to have something to do; and one of three hundred distinct words.

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs every fuzz target at once, each for SECONDS (default 1800, the thirty minutes
-# the test agent asks for), and prints each one's last status line.
+# Runs every fuzz target at once, each for SECONDS (default 1800, thirty minutes), and
+# prints each one's last status line.
 #
 #   fuzz/run.sh [seconds] [target...]
 #
