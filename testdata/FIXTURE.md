@@ -5,6 +5,11 @@ required to give it under `expect`. `tests/fixture.rs` runs the real binary over
 file and compares the printed type against the label - the outer surface, no
 mocks.
 
+Two lines carry a third label, `template`: the fingerprint the line is required to get.
+They are `{"event=login":1,...}` and `{"event":"login",...}` - a literal key and the
+promoted token it spells - and they read `event\=login | ...` and `event=login | ...`:
+a `=` inside a key is escaped in its token, so a key cannot spell `key=value`.
+
 The cases that matter, and why:
 
 | Value | Label | Why it is here |

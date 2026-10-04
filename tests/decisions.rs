@@ -467,6 +467,173 @@ fn rows_of_two_templates_that_spell_alike_page_without_gaps() {
     assert_eq!(whole, [1, 2]);
 }
 
+/// A key that spells a promoted token, beside the promoted token it spells. The two lines
+/// are two shapes - one key `event=login` holding a number, one key `event` promoted with
+/// the value `login` - and both read `event=login`.
+const SPELLED_ALIKE: &str = concat!(r#"{"event=login":1}"#, "\n", r#"{"event":"login"}"#, "\n",);
+
+fn over_spelled_alike(args: &[&str]) -> Value {
+    let out = raw_over(SPELLED_ALIKE, args, &[]);
+    assert!(
+        out.status.success(),
+        "{args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    json_of(&out)
+}
+
+/// They are two templates to the engine, as they are to the oracle. They were one: the
+/// two tokens were one trie edge, so the lines shared a leaf holding both columns.
+#[test]
+fn a_key_spelling_a_promoted_token_is_its_own_template() {
+    let engine = over_spelled_alike(&["MATCH LOG {}"]);
+    let oracle = over_spelled_alike(&["MATCH LOG {}", "--reference"]);
+    assert_eq!(oracle["meta"]["templates_matched"], 2);
+    assert_eq!(engine["meta"]["templates_matched"], 2);
+    assert_eq!(engine["count"], 2);
+}
+
+/// A pattern naming the promoted value counts the line that has it and not the other,
+/// and finds it in one template.
+#[test]
+fn a_promoted_value_does_not_count_the_key_that_spells_it() {
+    for extra in [&[][..], &["--reference"]] {
+        let mut args = vec![r#"COUNT LOG {"event":"login"}"#];
+        args.extend_from_slice(extra);
+        let result = over_spelled_alike(&args);
+        assert_eq!(result["count"], 1, "{args:?}");
+        assert_eq!(result["meta"]["templates_matched"], 1, "{args:?}");
+    }
+    let rows = over_spelled_alike(&[r#"MATCH LOG {"event":"login"}"#]);
+    assert_eq!(rows_as_text(&rows), [r#"{"event":"login"}"#]);
+
+    // The count was right while the two shared a leaf - the scan filtered the rows. What
+    // was wrong was the shape: one leaf held both columns, so a pattern naming both found
+    // a template no line has.
+    for extra in [&[][..], &["--reference"]] {
+        let mut args = vec![r#"COUNT LOG {"event":"login","event=login":*}"#];
+        args.extend_from_slice(extra);
+        let result = over_spelled_alike(&args);
+        assert_eq!(result["count"], 0, "{args:?}");
+        assert_eq!(result["exists"], false, "{args:?}");
+        assert_eq!(result["meta"]["templates_matched"], 0, "{args:?}");
+    }
+}
+
+/// The oracle pages both rows. Its tiebreak is the leaf's key, hashed from the same
+/// tokens, so the two rows - one instant, two templates - carried one rank, and the page
+/// after the first was empty. The engine is asked the same and has to agree.
+///
+/// The lines carry a `ts` here and nowhere else in this group: a row with none takes its
+/// arrival time, the CLI stamps that afresh on every invocation, and a cursor from one
+/// invocation then names an instant every row of the next is newer than.
+#[test]
+fn rows_of_a_key_and_the_promoted_token_it_spells_page_without_gaps() {
+    const LINES: &str = concat!(
+        r#"{"event=login":1,"ts":"2024-01-15T10:00:00Z"}"#,
+        "\n",
+        r#"{"event":"login","ts":"2024-01-15T10:00:00Z"}"#,
+        "\n",
+    );
+    for extra in [&["--reference"][..], &[]] {
+        let ask = |q: &str| {
+            let mut args = vec![q];
+            args.extend_from_slice(extra);
+            let out = raw_over(LINES, &args, &[]);
+            assert!(out.status.success(), "{args:?} failed");
+            json_of(&out)
+        };
+        let whole = rows_as_text(&ask("MATCH LOG {}"));
+        let first = ask("MATCH LOG {} LIMIT 1");
+        let c = first["meta"]["next_cursor"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{extra:?}: no cursor for a truncated page"));
+        let second = ask(&format!(r#"MATCH LOG {{}} LIMIT 1 AFTER "{c}""#));
+        assert_eq!(second["count"], 2, "{extra:?}");
+        assert_eq!(second["meta"]["next_cursor"], Value::Null, "{extra:?}");
+
+        let mut paged = rows_as_text(&first);
+        paged.extend(rows_as_text(&second));
+        assert_eq!(paged, whole, "{extra:?}");
+        assert_eq!(whole.len(), 2, "{extra:?}");
+        assert_ne!(whole[0], whole[1], "{extra:?}");
+    }
+}
+
+/// What goes in comes back out: the escape is in the trie's label, and the row a `MATCH`
+/// returns names the key as the line did, to the engine and to the oracle.
+#[test]
+fn a_key_holding_an_equals_sign_comes_back_as_it_went_in() {
+    for extra in [&[][..], &["--reference"]] {
+        for pattern in [
+            r#"MATCH LOG {"event=login":"1"}"#,
+            r#"MATCH LOG {"event=login":*}"#,
+        ] {
+            let mut args = vec![pattern];
+            args.extend_from_slice(extra);
+            let result = over_spelled_alike(&args);
+            assert_eq!(result["count"], 1, "{args:?}");
+            assert_eq!(result["meta"]["templates_matched"], 1, "{args:?}");
+            assert_eq!(rows_as_text(&result), [r#"{"event=login":1}"#], "{args:?}");
+        }
+    }
+}
+
+/// A promoted key under a parent whose name holds `=` is still settled by the path. Its
+/// token is `a\=b.event=login`, and the walk has to split it at the bare `=` and read the
+/// key back as `a=b.event` - split at the first `=` it is no column at all, the term is
+/// left to the scan, and a value no template holds is reported as a template with no
+/// rows where the oracle reports no template.
+#[test]
+fn a_promoted_key_under_a_parent_holding_an_equals_sign_is_settled_by_the_path() {
+    const LINES: &str = concat!(
+        r#"{"a=b":{"event":"login"},"n":1}"#,
+        "\n",
+        r#"{"a=b":{"event":"logout"},"n":2}"#,
+        "\n",
+        r#"{"a":"x","a=b":{"event":"login"},"n":3}"#,
+        "\n",
+    );
+    for (pattern, count, templates) in [
+        (r#"{"a=b.event":"login"}"#, 2, 2),
+        (r#"{"a=b.event":"logout"}"#, 1, 1),
+        (r#"{"a=b.event":"nope"}"#, 0, 0),
+        (r#"{"a":"x"}"#, 1, 1),
+        (r#"{"a":"b.event=login"}"#, 0, 1),
+    ] {
+        for extra in [&[][..], &["--reference"]] {
+            let q = format!("COUNT LOG {pattern}");
+            let mut args = vec![q.as_str()];
+            args.extend_from_slice(extra);
+            let out = raw_over(LINES, &args, &[]);
+            assert!(out.status.success(), "{args:?} failed");
+            let result = json_of(&out);
+            assert_eq!(result["count"], count, "{args:?}");
+            assert_eq!(result["exists"], templates > 0, "{args:?}");
+            assert_eq!(result["meta"]["templates_matched"], templates, "{args:?}");
+        }
+    }
+}
+
+/// A promoted value that begins the way a pattern's key goes on does not hide the leaf.
+/// The pattern names the literal key `event=login`; the line's promoted token is
+/// `event=login=z`, which starts with the pattern's key and a `=`, and the walk took it
+/// for another value of that key and dropped the subtree.
+#[test]
+fn a_promoted_value_that_spells_the_rest_of_a_key_does_not_hide_its_leaf() {
+    const LINES: &str = concat!(r#"{"event":"login=z","event=login":"q"}"#, "\n");
+    for extra in [&[][..], &["--reference"]] {
+        let mut args = vec![r#"MATCH LOG {"event=login":"q"}"#];
+        args.extend_from_slice(extra);
+        let out = raw_over(LINES, &args, &[]);
+        assert!(out.status.success(), "{args:?} failed");
+        let result = json_of(&out);
+        assert_eq!(result["count"], 1, "{args:?}");
+        assert_eq!(result["rows"][0]["event=login"], "q", "{args:?}");
+        assert_eq!(result["rows"][0]["event"], "login=z", "{args:?}");
+    }
+}
+
 /// A cursor names a leaf by its ordinal among the leaves *this* pattern matched, so the
 /// same text against a different pattern names a different leaf. Refused, not answered.
 #[test]

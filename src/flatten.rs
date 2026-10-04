@@ -1,5 +1,6 @@
 //! Flattening, fingerprinting, and the parsed row.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -39,9 +40,9 @@ const MAX_PROMOTED_LEN: usize = 40;
 
 /// One element of the fingerprint.
 ///
-/// The two kinds render alike on purpose - `event=login` reads the same whether the
-/// sender nested it or named a field that - but they are different shapes, and the
-/// identity has to tell them apart where the text cannot.
+/// The two kinds are different shapes, and both the identity and the text tell them
+/// apart: `template_id` by a kind tag, the rendering by `key_token`, which keeps a key
+/// from spelling `key=value`.
 enum Token {
     /// A key that stayed a value. Its value varies line to line and is not in here.
     Key(String),
@@ -52,10 +53,67 @@ enum Token {
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Token::Key(key) => f.write_str(key),
-            Token::Promoted { key, value } => write!(f, "{key}={value}"),
+            Token::Key(key) => f.write_str(&key_token(key)),
+            Token::Promoted { key, value } => f.write_str(&promoted_token(key, value)),
         }
     }
+}
+
+/// A key as a token: the rendered key, with `=` written `\=`.
+///
+/// `=` is what promotion puts between a key and its value, and a key is not obliged to
+/// stay out of it: `{"event=login":1}` is a line, and its one key read as the token
+/// `{"event":"login"}` promotes to. `template_id` told the two apart and the trie edge
+/// did not, and it is this text - the two shared a leaf holding both columns. Escaped
+/// the way `KeyPath` escapes `.`, and by the same backslash: the rendered key has already
+/// doubled every `\` of its own, so a `\=` here is only ever this escape. A key's token
+/// then holds no bare `=`, and the first bare `=` of a promoted token is the one
+/// promotion wrote.
+///
+/// In the token and nowhere else. The key stays the name the line gave it - in `keys`, as
+/// the column, in the row a query returns - and a key with no `=` is the token it always
+/// was, so no template without one moves.
+pub(crate) fn key_token(key: &str) -> Cow<'_, str> {
+    if key.contains('=') {
+        Cow::Owned(key.replace('=', "\\="))
+    } else {
+        Cow::Borrowed(key)
+    }
+}
+
+/// A promoted key and its value as a token. The key is escaped as any key is; the `=`
+/// between the two is the bare one, and the first bare one, whatever the value holds.
+pub(crate) fn promoted_token(key: &str, value: &str) -> String {
+    format!("{}={value}", key_token(key))
+}
+
+/// A promoted token back into its key and its value; `None` for a key's token.
+///
+/// The inverse of the two above, and beside them for the reason `key::parse` is beside
+/// `KeyPath`'s rendering. Splitting at the first `=` is not it: `a\=b.event=login` is the
+/// key `a=b.event`, and split there it is a key `a\` that no line has. A backslash takes
+/// the character after it, whichever escape it belongs to, so the first `=` not taken
+/// that way is the one promotion wrote. Everything after it is the value, as written.
+pub(crate) fn split_token(token: &str) -> Option<(Cow<'_, str>, &str)> {
+    let mut chars = token.char_indices();
+    while let Some((at, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                chars.next();
+            }
+            '=' => {
+                let key = &token[..at];
+                let key = if key.contains("\\=") {
+                    Cow::Owned(key.replace("\\=", "="))
+                } else {
+                    Cow::Borrowed(key)
+                };
+                return Some((key, &token[at + 1..]));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// One line, flattened, fingerprinted and typed.
@@ -107,10 +165,10 @@ impl ParsedLog {
         // `flatten` sorted those.
         for key in &self.promoted {
             let value = self.values.get(key).map_or("", String::as_str);
-            tokens.push(format!("{key}={value}"));
+            tokens.push(promoted_token(key, value));
         }
         for key in self.value_keys() {
-            tokens.push(key.clone());
+            tokens.push(key_token(key).into_owned());
         }
         tokens
     }
@@ -575,6 +633,9 @@ fn is_promotable(leaf: &str, typed: &Typed, raw: &str) -> bool {
 /// {}                  vs  {"":""}             no key, or one key with no name
 /// ```
 ///
+/// (The middle pair no longer concatenates alike: `key_token` escapes the literal key.
+/// The id does not lean on that.)
+///
 /// Each pair is two different shapes - different key sets, and in the second pair
 /// different types - sharing one template, which merges unrelated rows into one leaf and
 /// asks the column store to hold two incompatible schemas in one place.
@@ -712,5 +773,98 @@ mod tests {
             kind.to_string().contains("`b`"),
             "the rejection does not name the key: {kind}"
         );
+    }
+
+    /// A literal key cannot spell a promoted token.
+    ///
+    /// `{"event=login":1}` and `{"event":"login"}` are two key sets and two types, and
+    /// both read `event=login` - as a fingerprint and, which is the defect, as a trie
+    /// edge: the two shared one leaf. The `=` inside a key is escaped the way `.` is, so
+    /// an unescaped `=` in a token is only ever the one promotion wrote.
+    #[test]
+    fn a_key_holding_an_equals_sign_does_not_spell_a_promoted_token() {
+        let literal = parse_line(br#"{"event=login":1}"#, 1).expect("this is JSON");
+        let promoted = parse_line(br#"{"event":"login"}"#, 2).expect("this is JSON");
+
+        assert_eq!(literal.walk_tokens(), vec!["event\\=login".to_string()]);
+        assert_eq!(promoted.walk_tokens(), vec!["event=login".to_string()]);
+        assert_eq!(literal.fingerprint, "event\\=login");
+        assert_eq!(promoted.fingerprint, "event=login");
+        assert_ne!(literal.template_id, promoted.template_id);
+    }
+
+    /// The escape is in the token and nowhere else: the key is still the name the line
+    /// gave it, which is the column a query names and the member a row prints back.
+    #[test]
+    fn the_escape_is_in_the_token_and_not_in_the_key() {
+        let parsed = parse_line(br#"{"a=b":1}"#, 1).expect("this is JSON");
+        assert_eq!(parsed.keys, vec!["a=b".to_string()]);
+        assert!(parsed.values.contains_key("a=b"));
+        assert!(parsed.typed_values.contains_key("a=b"));
+        assert_eq!(parsed.walk_tokens(), vec!["a\\=b".to_string()]);
+    }
+
+    /// A promoted key under a parent whose name holds `=`: the path is escaped and the
+    /// `=` promotion writes is not, so the first bare `=` is the one between key and
+    /// value - the value may hold more. A literal key spelling the whole of it still reads
+    /// differently, and so does a promoted value spelling the rest of the path.
+    #[test]
+    fn the_first_bare_equals_sign_ends_a_promoted_key() {
+        let nested = parse_line(br#"{"a=b":{"event":"login"}}"#, 1).expect("this is JSON");
+        assert_eq!(nested.promoted, vec!["a=b.event".to_string()]);
+        assert_eq!(nested.walk_tokens(), vec!["a\\=b.event=login".to_string()]);
+        assert_eq!(nested.fingerprint, "a\\=b.event=login");
+
+        let literal = parse_line(br#"{"a=b.event=login":1}"#, 2).expect("this is JSON");
+        assert_eq!(
+            literal.walk_tokens(),
+            vec!["a\\=b\\.event\\=login".to_string()]
+        );
+
+        let in_value = parse_line(br#"{"event":"x.event=login"}"#, 4).expect("this is JSON");
+        let in_key = parse_line(br#"{"event=x":{"event":"login"}}"#, 5).expect("this is JSON");
+        assert_eq!(in_value.walk_tokens(), vec!["event=x.event=login"]);
+        assert_eq!(in_key.walk_tokens(), vec!["event\\=x.event=login"]);
+
+        // A backslash before the `=` is the key's own, already doubled by the key's
+        // rendering, so it cannot pass for the escape.
+        let slashed = parse_line(br#"{"event\\=login":1}"#, 3).expect("this is JSON");
+        assert_eq!(slashed.walk_tokens(), vec!["event\\\\\\=login".to_string()]);
+    }
+
+    /// A token reads back: the kind, the key and the value it was written from. What the
+    /// engine and the catalog lean on, each from its own side of the label.
+    #[test]
+    fn a_token_reads_back_as_what_it_was_written_from() {
+        for key in [
+            "a",
+            "a=b",
+            "=",
+            "a\\\\",
+            "a\\\\=b",
+            "a\\.b=c",
+            "a=b.event",
+            "",
+        ] {
+            let token = key_token(key);
+            assert_eq!(split_token(&token), None, "`{key}` read as promoted");
+            for value in ["login", "a=b", "=", "\\", "x\\=y"] {
+                let token = promoted_token(key, value);
+                let (k, v) = split_token(&token).expect("a promoted token");
+                assert_eq!((k.as_ref(), v), (key, value), "{token}");
+            }
+        }
+    }
+
+    /// A key with no `=` in it is the token it always was.
+    #[test]
+    fn a_key_with_no_equals_sign_is_its_own_token() {
+        let parsed = parse_line(br#"{"a.b":1,"c":{"d":"x"},"event":"hit","e\\f":2}"#, 1)
+            .expect("this is JSON");
+        assert_eq!(
+            parsed.walk_tokens(),
+            vec!["event=hit", "a\\.b", "c.d", "e\\\\f"]
+        );
+        assert_eq!(parsed.fingerprint, "a\\.b | c.d | e\\\\f | event=hit");
     }
 }

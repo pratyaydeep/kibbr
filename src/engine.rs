@@ -4,6 +4,7 @@
 //! chose. The split is enforced by the types: `plan` cannot see a store, so `--explain`
 //! cannot accidentally read a row.
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::sync::atomic::Ordering;
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime};
 use thiserror::Error;
 
 use crate::config::Limits;
+use crate::flatten::{promoted_token, split_token};
 use crate::fmt::{col_text, commas, duration_text};
 use crate::infer::infer;
 use crate::store::{
@@ -743,17 +745,19 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
 ///
 /// Promoted tokens are hoisted to the front of the path (`ParsedLog::walk_tokens`), so a
 /// root label `event=login_ok` is the only thing an exact `--match event=…` can reach.
-/// A label that starts with `KEY=` and is not the wanted token belongs either to a
-/// different promoted value or to a literal key *named* `KEY=…` - and that leaf's key set
-/// then holds `KEY=…` rather than `KEY`, so `select` would reject it anyway.
+/// A label that starts with `KEY=` and is not the wanted token is another promoted value
+/// of that key, and nothing else: the key is spelled as its token spells it, `=` escaped
+/// (`flatten::promoted_token`), so the `=` after it is the bare one promotion wrote. It is
+/// not a literal key named `KEY=…`, whose token has no bare `=`, and not a promoted value
+/// that happens to begin with the rest of a longer key.
 ///
 /// A pattern over non-promoted keys prunes nothing and costs one `starts_with` per root
 /// child. Correctness never rests on this: `select` re-checks every leaf that survives.
 fn keeps(label: &str, query: &Query) -> bool {
     query.matches.iter().all(|m| match &m.value {
         MatchValue::Exact(v) => {
-            let token = format!("{}={v}", m.key);
-            label == token || !label.starts_with(&format!("{}=", m.key))
+            let token = promoted_token(&m.key, v);
+            label == token || !label.starts_with(&token[..token.len() - v.len()])
         }
         MatchValue::Any => true,
     })
@@ -800,16 +804,24 @@ fn select(path: &[String], columns: &BTreeSet<&str>, query: &Query) -> Option<Ve
 
 /// The `key=value` tokens on this path, split back into pairs.
 ///
-/// A plain-key token is exactly a column name and a promoted token is not, so membership
-/// in the key set tells the two apart without consulting the promotion rules.
-fn promoted_of<'a>(path: &'a [String], columns: &BTreeSet<&str>) -> BTreeMap<&'a str, &'a str> {
+/// A promoted token has a bare `=` and a plain key's token has none
+/// (`flatten::split_token`), so the label tells the two apart without consulting the
+/// promotion rules, and the key it reads back is the column's name, unescaped.
+fn promoted_of<'a>(
+    path: &'a [String],
+    columns: &BTreeSet<&str>,
+) -> BTreeMap<Cow<'a, str>, &'a str> {
     let mut out = BTreeMap::new();
     for label in path {
+        // A leaf made before `=` was escaped can hold a column named as one of its own
+        // labels reads: the literal key `event=login` and the promoted `event=login` were
+        // one edge then, and one leaf took the rows of both. The label does not speak
+        // for every row of such a leaf, so the term is left to the scan.
         if columns.contains(label.as_str()) {
             continue;
         }
-        if let Some((key, value)) = label.split_once('=') {
-            if columns.contains(key) {
+        if let Some((key, value)) = split_token(label) {
+            if columns.contains(key.as_ref()) {
                 out.insert(key, value);
             }
         }
@@ -1517,6 +1529,31 @@ pub fn group_values(row: &Row, keys: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A promoted edge reads back as the column it was promoted from, escapes resolved,
+    /// and a key's own token reads back as nothing.
+    #[test]
+    fn a_promoted_edge_reads_back_as_its_column() {
+        let path = [
+            "a\\=b.event=login".to_string(),
+            "k\\=v".to_string(),
+            "n".to_string(),
+        ];
+        let columns = BTreeSet::from(["a=b.event", "k=v", "n"]);
+        let promoted = promoted_of(&path, &columns);
+        assert_eq!(promoted.len(), 1);
+        assert_eq!(promoted.get("a=b.event"), Some(&"login"));
+    }
+
+    /// A leaf a build before the escape merged: the label `event=login` is also one of
+    /// its columns, so some of its rows have no `event` at all. The path settles nothing
+    /// there and the scan reads the column.
+    #[test]
+    fn a_label_that_is_also_a_column_settles_nothing() {
+        let path = ["event=login".to_string()];
+        let columns = BTreeSet::from(["event", "event=login"]);
+        assert!(promoted_of(&path, &columns).is_empty());
+    }
     use crate::config::Limits;
     use crate::db;
     use crate::rng::Rng;

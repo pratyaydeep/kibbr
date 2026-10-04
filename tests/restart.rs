@@ -622,6 +622,60 @@ fn a_cursor_read_against_another_query_is_refused_after_a_restart() {
     );
 }
 
+/// A key holding `=` is the same template after a restart as before it.
+///
+/// The trie's edge for such a key is escaped (`k\=v`), and the catalog holds the key, not
+/// the label. Replayed without the escape the template came back under the bare label:
+/// the next line of that shape missed it and became a second template, the start after
+/// that found two records with one path and dropped the second with its rows, and the
+/// literal key `event=login` came back sharing a leaf with the promoted `event=login`.
+#[test]
+fn a_key_holding_an_equals_sign_is_the_same_template_after_a_restart() {
+    const LINES: &[u8] = concat!(
+        r#"{"event=login":1,"ts":"2024-01-15T10:00:01Z"}"#,
+        "\n",
+        r#"{"event":"login","ts":"2024-01-15T10:00:02Z"}"#,
+        "\n",
+        r#"{"k=v":1,"ts":"2024-01-15T10:00:03Z"}"#,
+        "\n",
+        r#"{"a=b":{"event":"login"},"ts":"2024-01-15T10:00:04Z"}"#,
+        "\n",
+    )
+    .as_bytes();
+    const QUERIES: [&str; 5] = [
+        "MATCH LOG {}",
+        r#"COUNT LOG {"event":"login"}"#,
+        r#"COUNT LOG {"event=login":*}"#,
+        r#"COUNT LOG {"k=v":"1"}"#,
+        r#"COUNT LOG {"a=b.event":"login"}"#,
+    ];
+    let db = Db::new();
+
+    let first = db.start();
+    first.ingest(LINES);
+    let ids = template_ids(&first);
+    assert_eq!(ids.len(), 4, "four shapes, four templates");
+    let before: Vec<String> = QUERIES.iter().map(|q| answer(&first, q)).collect();
+    first.shutdown();
+
+    // The same lines again after each of two restarts: they find the templates they
+    // made, and every row ingested so far is still counted.
+    for round in 2..=3u64 {
+        let server = db.start();
+        assert_eq!(template_ids(&server), ids, "start {round}");
+        if round == 2 {
+            let after: Vec<String> = QUERIES.iter().map(|q| answer(&server, q)).collect();
+            assert_eq!(after, before, "the restart changed an answer");
+        }
+        server.ingest(LINES);
+        assert_eq!(template_ids(&server), ids, "start {round}, after ingest");
+        for q in &QUERIES[1..] {
+            assert_eq!(server.query(q)["count"], round, "start {round}: {q}");
+        }
+        server.shutdown();
+    }
+}
+
 // ── Ids a lost snapshot leaves spent ───────────────────────────────────────────────
 
 /// A relearned template must never be handed a template id that a leaf directory already

@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::flatten::{key_token, promoted_token};
 use crate::frame::{self, Log, LogError};
 use crate::types::ColumnType;
 
@@ -104,11 +105,14 @@ pub enum Token {
 }
 
 impl Token {
-    /// The edge label this token is in the trie.
+    /// The edge label this token is in the trie: the one `ParsedLog::walk_tokens` gave
+    /// the line that made the template, `=` in the key escaped. The record holds the key;
+    /// spelled here any other way, a template comes back from a restart under a label no
+    /// line of its shape walks to.
     pub fn label(&self) -> String {
         match self {
-            Token::Promoted { promoted, value } => format!("{promoted}={value}"),
-            Token::Key { key } => key.clone(),
+            Token::Promoted { promoted, value } => promoted_token(promoted, value),
+            Token::Key { key } => key_token(key).into_owned(),
         }
     }
 }

@@ -142,6 +142,62 @@ fn every_fixture_value_gets_its_labelled_type() {
     );
 }
 
+/// A fixture line that carries a `template` label gets that fingerprint, and no two
+/// labelled lines share a fingerprint or an id.
+///
+/// The pair this is for: `{"event=login":1}` and `{"event":"login"}`, a literal key and
+/// the promoted token it spells. Both read `event=login` until the `=` inside a key was
+/// escaped. `parse` builds no trie, so what this holds is the text; that the two are two
+/// leaves is `tests/decisions.rs`'s to show.
+#[test]
+fn every_labelled_fixture_line_gets_its_template() {
+    let stdout = run(&["parse", "testdata/fixture.ndjson", "--json"]);
+    let mut seen = std::collections::HashMap::new();
+    for line in stdout.lines() {
+        let record = json_record(line);
+        let Some(label) = record["values"]["template"].as_str() else {
+            continue;
+        };
+        assert_eq!(record["fingerprint"], label, "{line}");
+        let id = record["template_id"].as_u64().expect("an id");
+        if let Some(other) = seen.insert(id, label.to_string()) {
+            panic!("`{other}` and `{label}` share template {id}");
+        }
+    }
+    assert_eq!(seen.len(), 2, "the two labelled lines are in the fixture");
+    let texts: std::collections::HashSet<&String> = seen.values().collect();
+    assert_eq!(
+        texts.len(),
+        2,
+        "the two labelled lines read alike: {seen:?}"
+    );
+}
+
+/// Escaping `=` moves no template that has none: the id and the fingerprint of each of
+/// 20,000 `--seed 42` lines, in order, are the ones the build before the escape gave
+/// them. No key in that data holds `=`. The id is hashed from the keys and would not
+/// move with the token text; the fingerprint is that text, and is what would. The digest
+/// is FNV-1a over each line's id in decimal, a space, its fingerprint and a newline.
+#[test]
+fn seed_42_template_ids_are_the_ones_before_the_equals_escape() {
+    let lines = run(&["gen-logs", "--lines", "20000", "--seed", "42"]);
+    let stdout = run_stdin(&["parse", "-", "--json"], &lines);
+    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut count = 0;
+    for line in stdout.lines() {
+        let record = json_record(line);
+        let id = record["template_id"].as_u64().expect("an id");
+        let fingerprint = record["fingerprint"].as_str().expect("a fingerprint");
+        for byte in format!("{id} {fingerprint}\n").bytes() {
+            digest ^= u64::from(byte);
+            digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        count += 1;
+    }
+    assert_eq!(count, 20_000);
+    assert_eq!(digest, 0x438b_4bfd_4b1f_10b7);
+}
+
 /// `parse --json` over stdin with the epoch window set, returning the exit status, the
 /// type of `v` on each line, and stderr.
 fn parse_under_window(window: &str, input: &str) -> (bool, Vec<String>, String) {
@@ -158,7 +214,12 @@ fn parse_under_window(window: &str, input: &str) -> (bool, Vec<String>, String) 
     writer.join().expect("stdin writer thread panicked");
     let types = String::from_utf8_lossy(&out.stdout)
         .lines()
-        .map(|l| json_record(l)["types"]["v"].as_str().unwrap_or("Null").to_string())
+        .map(|l| {
+            json_record(l)["types"]["v"]
+                .as_str()
+                .unwrap_or("Null")
+                .to_string()
+        })
         .collect();
     (
         out.status.success(),
@@ -249,8 +310,14 @@ fn an_unreadable_epoch_window_is_refused() {
         ),
         ("", "1 comma-separated values"),
         ("2000-01-01,2100-01-01", "not an RFC 3339 instant"),
-        ("2100-01-01T00:00:00Z,2000-01-01T00:00:00Z", "window is empty"),
-        ("2000-01-01T00:00:00Z,2000-01-01T00:00:00Z", "window is empty"),
+        (
+            "2100-01-01T00:00:00Z,2000-01-01T00:00:00Z",
+            "window is empty",
+        ),
+        (
+            "2000-01-01T00:00:00Z,2000-01-01T00:00:00Z",
+            "window is empty",
+        ),
     ] {
         let (ok, types, stderr) = parse_under_window(window, "{\"v\":1700000000}\n");
         assert!(!ok, "`{window}` was accepted");

@@ -76,3 +76,5 @@
 {"expect":"Null","v":null}
 {"expect":"String","v":["auth","login"]}
 {"expect":"String","v":[1700000000]}
+{"event=login":1,"expect":"Int64","template":"event\\=login | expect | template | v","v":1}
+{"event":"login","expect":"String","template":"event=login | expect | template | v","v":"login"}
