@@ -45,7 +45,7 @@
 #      cursor half way kept; after compaction the paging resumes from that cursor. The
 #      pages before it and the pages read after compaction are the full paging, row for
 #      row, and each page ends on the cursor it ended on before.
-#   5. Compaction did what it should, read off manifest.log and the directory, for each of
+#   5. Compaction did what it is for, read off manifest.log and the directory, for each of
 #      (a) (b) (c): exactly one record was appended, a `replace`; it removes exactly the
 #      files that were live and unfinished, and adds files that are sealed and finished,
 #      under paths never used before, holding as many rows as the ones removed; every live
