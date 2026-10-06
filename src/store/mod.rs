@@ -280,6 +280,26 @@ pub enum StoreError {
     },
     #[error(transparent)]
     Format(#[from] v3::FormatError),
+    /// A file the manifest names that a start could not look for: `dir`, a directory above
+    /// it, would not be searched. **Not `NamedAbsent`** - the file may be there and whole,
+    /// and nothing here knows.
+    ///
+    /// `why` is the system's error, written into the sentence and not kept as a source: a
+    /// start prints an error and then every cause below it, and a cause that is both would
+    /// be said twice.
+    #[error(
+        "{dir}: {why}: manifest.log names {file}, and that file was not read - whether it \
+         is on disk is not known"
+    )]
+    NamedUnread {
+        dir: std::path::PathBuf,
+        file: std::path::PathBuf,
+        why: std::io::Error,
+    },
+    /// A file the manifest names that is not on disk: the system looked for it and said
+    /// there is no such file. No source - that error would add nothing to the sentence.
+    #[error("{file}: named by manifest.log and not on disk; its rows are gone")]
+    NamedAbsent { file: std::path::PathBuf },
     #[error(transparent)]
     Build(#[from] v3::build::BuildError),
     #[error(transparent)]

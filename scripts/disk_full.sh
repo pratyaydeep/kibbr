@@ -7,7 +7,9 @@
 #
 #   1. Every body is answered `200` for as long as the log can take it - also once the
 #      store's own writes have begun to fail, which refuse nothing: the rows they could
-#      not write are in the log.
+#      not write are in the log. The one body that is not never reaches the log - every
+#      line of it needs a template the catalog cannot write - and no batch here is one:
+#      scripts/catalog_full_503.sh holds that 503.
 #   2. When the log cannot write, `POST /ingest` answers 503 with a `Retry-After` and the
 #      log's write error in the body, and `/health` reports `degraded`.
 #   3. The server stays up. A disk that has gone away is not a reason to stop answering
@@ -241,6 +243,10 @@ echo
 FAIL=0
 [ "$SHED_CODE" = "503" ] || { echo "FAIL /ingest answered ${SHED_CODE:-200 every time} once the disk filled, want 503: the disk never filled the log, or a full log was not refused"; FAIL=1; }
 case "$SHED_BODY" in *"write-ahead log"*) ;; *) echo "FAIL the 503 does not name the write-ahead log: $SHED_BODY"; FAIL=1 ;; esac
+# And the error the write met, which rule 2 promises: the segment it was writing and what
+# the OS said of it, as `<data-dir>/wal/seg_NNNNNN.wal: ... (os error N)`. The first 503 is
+# the one held to it - a refusal that says only that the log cannot write names no cause.
+case "$SHED_BODY" in *"/wal/seg_"*"(os error "*) ;; *) echo "FAIL the 503 does not carry the log's write error - a segment's path and the OS's error: $SHED_BODY"; FAIL=1 ;; esac
 case "$SHED_RETRY" in *[Rr]etry-[Aa]fter:*) ;; *) echo "FAIL the 503 carried no Retry-After"; FAIL=1 ;; esac
 case "$HEALTH_BODY" in *degraded*) ;; *) echo "FAIL /health did not report degraded: $HEALTH_BODY"; FAIL=1 ;; esac
 [ "$ALIVE" = "200" ] || { echo "FAIL the server stopped answering queries ($ALIVE)"; FAIL=1; }

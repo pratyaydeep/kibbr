@@ -327,7 +327,11 @@ past either the log's disk is behind what is arriving, and the next body is shed
 the same way. And while the log cannot write at all - a full volume - every body is
 refused `503` with the write error, before it is read, until a write succeeds.
 A store that cannot write refuses nothing: the line is in the log, and the answer
-is `200`. A body is written to the log whole, so one whose lines come to more than
+is `200`. A body of which no line was taken, because the catalog could not write
+the record each one needed - a template never seen before, on that full volume -
+is a `503` with a `Retry-After` as well, answered after it was read and with its
+errors by line still in it.
+A body is written to the log whole, so one whose lines come to more than
 1 GiB as log records - tens of millions of very short lines - is a `413`, decided
 before it is parsed: send it as smaller bodies.
 
@@ -338,6 +342,11 @@ at once. An immediate refusal is the kinder answer precisely because a shipper
 knows what to do with one: Vector's adaptive concurrency reads a 503 as "send
 fewer" and a timeout as "try harder". That is also why there is no server-side
 request timeout here - it would manufacture the failure it is meant to prevent.
+
+A refusal that comes before the body is read leaves the connection unable to
+carry another request, so the answer says `Connection: close` and the server
+closes it: a shipper that keeps its connection sends the retry on a new one. An
+answer without the header leaves the connection open.
 
 **`/ingest` is single tenant, deliberately.** It takes no stream or tenant
 identifier, in the path or in a header, and everything ingested lands in the one
@@ -408,9 +417,12 @@ five hundred and the other 497 still land:
 ```
 
 The status is 200, not a 4xx: the body was accepted and most of it was stored, and
-telling a log shipper to retry the batch would duplicate the 497 that landed. Line
-numbers count every physical line, blanks included, so the number indexes into the
-body you sent.
+telling a log shipper to retry the batch would duplicate the 497 that landed. The
+one report that is not a 200 has `ingested: 0` and an `errors` of nothing but writes
+the server could not make (`not ingested: catalog: ...`), at least one: that body is
+a `503` with a `Retry-After`, because none of it landed and sending it again
+duplicates nothing. Line numbers count every physical line, blanks included, so the number
+indexes into the body you sent.
 
 **Ctrl-C finishes what it started.** SIGINT and SIGTERM both cancel one
 `CancellationToken`; the listener stops accepting, requests already running finish,

@@ -178,6 +178,37 @@ pub fn refuse_other_versions(base: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Whether a file `manifest.log` names is on disk. **`false` only when the system says
+/// there is no such file.** `Path::exists` is false for any error at all, and a directory
+/// that will not be searched is not a file that is gone: that is refused as what it is,
+/// with the directory and the system's error, and the file is not called missing.
+fn named_is_there(path: &Path) -> Result<bool, StoreError> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(why) => Err(StoreError::NamedUnread {
+            dir: refused_at(path),
+            file: path.to_path_buf(),
+            why,
+        }),
+    }
+}
+
+/// The directory that would not be searched for `path`: the nearest one above it that can
+/// itself be looked at. What it holds is what could not be reached - a day directory at
+/// mode 000 is there to see, and nothing in it is. A file standing where a directory
+/// should be is named the same way.
+fn refused_at(path: &Path) -> PathBuf {
+    let mut at = path;
+    while let Some(above) = at.parent() {
+        if fs::metadata(above).is_ok() {
+            return above.to_path_buf();
+        }
+        at = above;
+    }
+    path.parent().unwrap_or(path).to_path_buf()
+}
+
 fn dirs(dir: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = fs::read_dir(dir)
         .into_iter()
@@ -882,15 +913,8 @@ impl DiskStore {
             })?;
             let slot = next.entry(day).or_insert(1);
             *slot = (*slot).max(after);
-            if !path.exists() {
-                return Err(FormatError::Io {
-                    path,
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "named by manifest.log and not on disk; its rows are gone",
-                    ),
-                }
-                .into());
+            if !named_is_there(&path)? {
+                return Err(StoreError::NamedAbsent { file: path });
             }
             let index = if record.sealed {
                 file::open_sealed(&path)?.ok_or_else(|| FormatError::Corrupt {
@@ -1733,7 +1757,8 @@ fn finish_moves(
         let mut wanted = Vec::new();
         for (rel, record) in named {
             let at = data.join(rel);
-            if !(at.exists() && manifest::hex(&file::file_id_of(&at)?) == record.file_id) {
+            let there = named_is_there(&at)?;
+            if !(there && manifest::hex(&file::file_id_of(&at)?) == record.file_id) {
                 wanted.push((rel, record, at));
             }
         }
@@ -4163,5 +4188,175 @@ mod tests {
         assert!(s.wal_ranges(8, day, 0xabc).expect("ranges").is_empty());
         s.open(7, "ts").expect("leaf");
         assert_eq!(s.wal_ranges(7, day, 0xabc).expect("ranges"), [(4, 5)]);
+    }
+
+    /// Five rows of one day, flushed and sealed, and the store dropped: the file they are
+    /// in, and its day directory.
+    fn one_sealed_day(scratch: &Scratch) -> (PathBuf, PathBuf) {
+        {
+            let s = store_with(scratch, DiskOptions::default());
+            let leaf = s.open(7, "ts").expect("leaf");
+            for n in 0..5 {
+                leaf.append(row(T0 + n * 1_000_000_000, n));
+            }
+            let done = s.flush(FlushKind::Final);
+            assert!(done.failed.is_empty(), "{:?}", done.failed);
+        }
+        let file = data_files(&scratch.0).into_iter().next().expect("a file");
+        let day = file.parent().expect("a day directory").to_path_buf();
+        (file, day)
+    }
+
+    /// What a start prints for a store that will not open: the error and every cause
+    /// below it, on one line. A cause written into the sentence above it and walked again
+    /// from there is in this twice, so a test that reads this reads what an operator does.
+    fn printed(e: &StoreError) -> String {
+        crate::error::chain(e)
+    }
+
+    /// A named file in a directory that will not be searched is not "not on disk": the
+    /// start is refused with the directory and the system's error, said once, and every
+    /// row is there when the directory can be read again.
+    #[test]
+    #[cfg(unix)]
+    fn a_named_file_in_a_directory_that_cannot_be_searched_is_unread_not_gone() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("unsearchable");
+        let (file, day) = one_sealed_day(&scratch);
+
+        fs::set_permissions(&day, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+        let readable = fs::read_dir(&day).is_ok();
+        let refused = DiskStore::open(scratch.0.clone(), eager()).err();
+        fs::set_permissions(&day, fs::Permissions::from_mode(0o755)).expect("chmod 755");
+        if readable {
+            // Root reads through mode 000: there is nothing to refuse, and nothing tested.
+            return;
+        }
+
+        let e = refused.expect("a start on a day directory at mode 000 was not refused");
+        let said = printed(&e);
+        assert_eq!(
+            said,
+            format!(
+                "{}: Permission denied (os error 13): manifest.log names {}, and that file \
+                 was not read - whether it is on disk is not known",
+                day.display(),
+                file.display()
+            )
+        );
+        assert_eq!(said.matches("Permission denied").count(), 1, "{said}");
+        assert!(
+            !said.contains("not on disk") && !said.contains("rows are gone"),
+            "{said}"
+        );
+
+        let s = store(&scratch);
+        let leaf = s.open(7, "ts").expect("leaf");
+        assert_eq!(ns(leaf.as_ref()), vec![0, 1, 2, 3, 4]);
+    }
+
+    /// The same, one directory further up: it is `data/` that is named, not the day.
+    #[test]
+    #[cfg(unix)]
+    fn the_directory_named_is_the_one_that_refused_the_search() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("unsearchable-data");
+        let (file, day) = one_sealed_day(&scratch);
+        let data = scratch.0.join(DATA_DIR);
+
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+        let readable = fs::read_dir(&data).is_ok();
+        let refused = DiskStore::open(scratch.0.clone(), eager()).err();
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o755)).expect("chmod 755");
+        if readable {
+            return;
+        }
+
+        let said = printed(&refused.expect("a start on data/ at mode 000 was not refused"));
+        assert!(
+            said.starts_with(&format!("{}: Permission denied (os error 13): ", data.display())),
+            "{said}"
+        );
+        assert!(!said.starts_with(&day.display().to_string()), "{said}");
+        assert_eq!(said.matches(&file.display().to_string()).count(), 1, "{said}");
+        assert_eq!(said.matches("Permission denied").count(), 1, "{said}");
+        assert!(said.contains("was not read"), "{said}");
+        assert!(
+            !said.contains("not on disk") && !said.contains("rows are gone"),
+            "{said}"
+        );
+    }
+
+    /// A named file that is absent from a directory that was read is what "not on disk"
+    /// is for - said once.
+    #[test]
+    fn a_named_file_that_is_absent_is_called_not_on_disk_once() {
+        let scratch = Scratch::new("absent");
+        let (file, _) = one_sealed_day(&scratch);
+        fs::remove_file(&file).expect("remove");
+
+        let e = DiskStore::open(scratch.0.clone(), eager())
+            .err()
+            .expect("a start with a named file gone was not refused");
+        assert_eq!(
+            printed(&e),
+            format!(
+                "{}: named by manifest.log and not on disk; its rows are gone",
+                file.display()
+            )
+        );
+    }
+
+    /// The same question asked earlier in a start, of a committed load's file while the
+    /// load's staging directory is still there: unread, and not "neither here ... nor in
+    /// staging".
+    #[test]
+    #[cfg(unix)]
+    fn a_loads_file_in_a_directory_that_cannot_be_searched_is_unread_not_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("unsearchable-load");
+        let rel = format!("{}/seg_0_000001.col", day_name(day_of(T0)));
+        {
+            let s = store(&scratch);
+            let dir = s.stage(9).expect("stage");
+            let file = staged(&dir, "a.col", 7, 0..4);
+            let mut files = lock(&s.files);
+            files
+                .record(vec![Record::Add {
+                    files: vec![FileRecord::sealed(rel.clone(), &file.index)],
+                    source: Some(manifest::load_source(9)),
+                }])
+                .expect("record");
+        }
+        // A start moves the file into place and removes staging.
+        drop(store(&scratch));
+        let at = scratch.0.join(DATA_DIR).join(&rel);
+        assert!(at.exists(), "not moved");
+        // The load's staging directory is there again, as a stop part way leaves it.
+        let staging = scratch.0.join(STAGING_DIR).join(format!("{:016x}", 9));
+        fs::create_dir_all(&staging).expect("mkdir");
+        let day = at.parent().expect("a day directory").to_path_buf();
+
+        fs::set_permissions(&day, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+        let readable = fs::read_dir(&day).is_ok();
+        let refused = DiskStore::open(scratch.0.clone(), eager()).err();
+        fs::set_permissions(&day, fs::Permissions::from_mode(0o755)).expect("chmod 755");
+        if readable {
+            return;
+        }
+
+        let e = refused.expect("a start on a day directory at mode 000 was not refused");
+        let said = printed(&e);
+        assert_eq!(
+            said,
+            format!(
+                "{}: Permission denied (os error 13): manifest.log names {}, and that file \
+                 was not read - whether it is on disk is not known",
+                day.display(),
+                at.display()
+            )
+        );
+        assert!(!said.contains("neither here"), "{said}");
+        assert!(staging.exists(), "staging was removed by a start that was refused");
     }
 }

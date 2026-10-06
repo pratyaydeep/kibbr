@@ -490,6 +490,7 @@ dependencies = [
  "clap",
  "crc32c",
  "flate2",
+ "http-body",
  "libc",
  "mimalloc",
  "serde",

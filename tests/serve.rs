@@ -1284,6 +1284,189 @@ fn while_the_log_cannot_write_the_door_refuses_and_health_says_why() {
     );
 }
 
+/// A server whose stderr the test holds both ends of, where `Server` holds the end it
+/// reads. Killed, and its log's directory made writable again so that it can be removed,
+/// however the test ends.
+#[cfg(unix)]
+struct Unheard {
+    child: Child,
+    dir: PathBuf,
+}
+
+#[cfg(unix)]
+impl Drop for Unheard {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::set_permissions(self.dir.join("wal"), fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// One request on a thread of its own, and where its answer will arrive: for a caller
+/// that waits only so long, so that a server which does not answer is a finding and not a
+/// test that never ends.
+#[cfg(unix)]
+fn request_apart(
+    port: u16,
+    method: &'static str,
+    path: &'static str,
+    body: &'static [u8],
+) -> std::sync::mpsc::Receiver<(u16, String)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(request(port, method, path, body));
+    });
+    rx
+}
+
+/// The log's first failure is named from the first refusal on: by the door's `503`, by
+/// `/stats`, by `/health`, and to the body that met it. None of them is told the log
+/// cannot write before there is a reason to give, and none waits for the line about it
+/// to reach stderr.
+///
+/// So stderr is made unable to take a byte before the log fails. Whatever the server
+/// does only once it has written that line has then not happened, for as long as this
+/// looks: a reason stored after it is not there to be read, and a body refused after it
+/// is not answered.
+#[test]
+#[cfg(unix)]
+fn the_first_503_names_the_logs_write_error_and_so_do_stats_and_health() {
+    use std::io::ErrorKind;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    /// How long an answer is waited for. With stderr stopped, an answer that does not
+    /// come is what this test is looking for.
+    const ANSWER: Duration = Duration::from_secs(5);
+
+    // A socket pair where `Server` has a pipe: a socket can be told not to wait, so the
+    // test learns that it is full from the write that would have had to, and not from
+    // how long a write has been taking.
+    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    let dir = scratch_dir();
+    let child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+        .args(["serve", "--port", "0", "--data-dir"])
+        .arg(&dir)
+        // One byte, so the second flush has to make a new segment; and a tick every ten
+        // seconds, so nothing asks the log to try again while this looks at it.
+        .args(["--wal-segment-bytes", "1", "--flush-interval-ms", "10000"])
+        .stdout(Stdio::null())
+        .stderr(OwnedFd::from(theirs.try_clone().expect("clone")))
+        .spawn()
+        .expect("failed to spawn kibbr serve");
+    let server = Unheard {
+        child,
+        dir: dir.clone(),
+    };
+    // This test holds the server's end too, so a server that died would not end the
+    // banner: the wait for it has to.
+    ours.set_read_timeout(Some(Duration::from_secs(60)))
+        .expect("timeout");
+    let mut stderr = BufReader::new(ours);
+    let mut port = None;
+    let mut banner = String::new();
+    for _ in 0..80 {
+        let mut line = String::new();
+        if stderr.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        banner.push_str(&line);
+        if let Some(at) = line.find("http://127.0.0.1:") {
+            port = line[at + "http://127.0.0.1:".len()..].trim().parse().ok();
+        }
+        if line.contains("shutdown ") {
+            break;
+        }
+    }
+    let port: u16 = port.unwrap_or_else(|| panic!("no listening line in banner:\n{banner}"));
+
+    let line = br#"{"ts": 1705314600, "x": 1}"#;
+    assert_eq!(request(port, "POST", "/ingest", line).0, 200);
+    let wal = dir.join("wal");
+    fs::set_permissions(&wal, fs::Permissions::from_mode(0o555)).expect("chmod");
+
+    // Stderr, filled to the last byte: in blocks, and then a byte at a time, until a
+    // write says it would have to wait. The server's end is this same socket, and waits
+    // again once this has stopped asking it not to.
+    theirs.set_nonblocking(true).expect("nonblocking");
+    for block in [&[b'\n'; 1024][..], b"\n"] {
+        loop {
+            match (&theirs).write(block) {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(e) => panic!("filling the server's stderr: {e}"),
+            }
+        }
+    }
+    theirs.set_nonblocking(false).expect("blocking");
+
+    // The body that meets the failure.
+    let met = request_apart(port, "POST", "/ingest", line);
+    let ask = |method, path, body| {
+        request_apart(port, method, path, body)
+            .recv_timeout(ANSWER)
+            .unwrap_or_else(|_| panic!("{method} {path} was not answered in {ANSWER:?}"))
+    };
+    let named = |text: &str| text.contains("seg_") && text.contains("os error 13");
+    let mut wrong = Vec::new();
+
+    // 1. The moment `/stats` says the log cannot write, it says why.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let stats = loop {
+        let stats = json(&ask("GET", "/stats", b"").1);
+        if stats["storage"]["wal"]["healthy"] == false {
+            break stats;
+        }
+        assert!(Instant::now() < deadline, "the log never failed: {stats}");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let reason = &stats["storage"]["wal"]["last_error"];
+    if !reason.as_str().is_some_and(named) {
+        wrong.push(format!(
+            "/stats: wal.healthy is false and wal.last_error is {reason}"
+        ));
+    }
+    // 2. The door, which refuses a body before it is read.
+    let (status, body) = ask("POST", "/ingest", line);
+    if status != 503 || !named(&body) {
+        wrong.push(format!("the door: {status} {body}"));
+    }
+    // 3. `/health`.
+    let health = ask("GET", "/health", b"").1;
+    if !(health.contains("degraded") && named(&health)) {
+        wrong.push(format!("/health: {health}"));
+    }
+    // 4. And the body that met the failure has its answer, with stderr still not moving.
+    let answered = met.recv_timeout(ANSWER);
+    match &answered {
+        Ok((503, body)) if named(body) => {}
+        Ok((status, body)) => wrong.push(format!("the body that met the failure: {status} {body}")),
+        Err(_) => wrong.push(format!(
+            "the body that met the failure was not answered in {ANSWER:?}: its 503 waits on \
+             stderr"
+        )),
+    }
+
+    // Stderr is let go, whatever was found, so a server still holding that body can
+    // answer it before it is killed.
+    drop(theirs);
+    let drain = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+    });
+    if answered.is_err() {
+        let _ = met.recv_timeout(ANSWER);
+    }
+    drop(server);
+    let _ = drain.join();
+    assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
+}
+
 // ── After a kill ───────────────────────────────────────────────────────────────────
 
 /// `kill -9` loses no acknowledged line and stores none twice - whichever side of the
@@ -1431,5 +1614,358 @@ fn files_opened_counts_segment_files_and_leaves_opened_takes_the_old_meaning() {
             .as_u64()
             .expect("templates_matched"),
         "every matched template has rows here, so the two should agree"
+    );
+}
+
+// ── A connection the server is about to close ──────────────────────────────────────
+
+/// One connection kept across requests, as a shipper keeps one: each answer is read by its
+/// `Content-Length`, and the next request goes down the same socket.
+///
+/// `honour` is whether it does what `Connection: close` in an answer asks - opens a new
+/// connection for the next request. Either way it opens one after a request that got no
+/// answer, which is all a client can do then.
+struct Kept {
+    port: u16,
+    honour: bool,
+    /// HTTP/1.0, which keeps a connection only where both ends say `keep-alive`.
+    old: bool,
+    socket: Option<TcpStream>,
+    /// Connections opened so far.
+    opened: usize,
+}
+
+impl Kept {
+    fn new(port: u16, honour: bool) -> Self {
+        Self {
+            port,
+            honour,
+            old: false,
+            socket: None,
+            opened: 0,
+        }
+    }
+
+    /// A client of HTTP/1.0 that asks for its connection to be kept, and keeps it where
+    /// the answer says it may.
+    fn old(port: u16) -> Self {
+        Self {
+            old: true,
+            ..Self::new(port, true)
+        }
+    }
+
+    /// One request down the kept connection: the status, the headers lowercased, and the
+    /// body. `Err` is no answer, and says what happened in its place.
+    fn send(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: &[u8],
+    ) -> Result<(u16, String, String), String> {
+        let mut socket = match self.socket.take() {
+            Some(socket) => socket,
+            None => {
+                self.opened += 1;
+                let socket =
+                    TcpStream::connect(("127.0.0.1", self.port)).expect("failed to connect");
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+                    .expect("failed to set a read timeout");
+                socket
+            }
+        };
+        let protocol = if self.old {
+            "HTTP/1.0\r\nConnection: keep-alive"
+        } else {
+            "HTTP/1.1"
+        };
+        let head = format!(
+            "{method} {path} {protocol}\r\nHost: 127.0.0.1:{}\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            self.port,
+            body.len()
+        );
+        // A write that fails is not yet no answer: a body refused before it is read breaks
+        // the write end, and the refusal is in the receive buffer all the same.
+        let wrote = socket
+            .write_all(head.as_bytes())
+            .and_then(|()| socket.write_all(body))
+            .and_then(|()| socket.flush());
+
+        let mut raw = Vec::new();
+        let mut byte = [0u8; 1];
+        while !raw.ends_with(b"\r\n\r\n") {
+            match socket.read(&mut byte) {
+                Ok(1) => raw.push(byte[0]),
+                Ok(_) => {
+                    return Err(format!(
+                        "the connection ended {} bytes into the answer (write: {wrote:?})",
+                        raw.len()
+                    ))
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "{e} {} bytes into the answer (write: {wrote:?})",
+                        raw.len()
+                    ))
+                }
+            }
+        }
+        let headers = String::from_utf8_lossy(&raw).to_lowercase();
+        let length: usize = headers
+            .split("content-length:")
+            .nth(1)
+            .and_then(|tail| tail.split("\r\n").next())
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        let mut rest = vec![0u8; length];
+        socket
+            .read_exact(&mut rest)
+            .map_err(|e| format!("{e} in the answer's body"))?;
+        let status = headers
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .ok_or_else(|| format!("no status line in the answer:\n{headers}"))?;
+        let closed = if self.old {
+            !says(&headers, "keep-alive")
+        } else {
+            self.honour && says_close(&headers)
+        };
+        if !closed {
+            self.socket = Some(socket);
+        }
+        Ok((status, headers, String::from_utf8_lossy(&rest).into_owned()))
+    }
+}
+
+/// Whether an answer's headers, lowercased, carry `Connection: close`.
+fn says_close(headers: &str) -> bool {
+    says(headers, "close")
+}
+
+/// Whether an answer's headers, lowercased, carry `option` in a `Connection` header.
+fn says(headers: &str, option: &str) -> bool {
+    headers.lines().any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.trim() == "connection" && value.split(',').any(|v| v.trim() == option)
+        })
+    })
+}
+
+/// A body of `bytes` bytes or a little over: whole NDJSON lines.
+fn lines_of(bytes: usize) -> Vec<u8> {
+    let mut body = Vec::with_capacity(bytes + 128);
+    let mut n = 0u64;
+    while body.len() < bytes {
+        n += 1;
+        body.extend_from_slice(
+            format!(
+                "{{\"ts\": 1705314600, \"x\": {n}, \"msg\": \"{:0>96}\"}}\n",
+                n * 7919
+            )
+            .as_bytes(),
+        );
+    }
+    body
+}
+
+/// A directory a test made read-only, made writable again when this goes: however the
+/// test ends, the scratch directory around it can then be removed.
+#[cfg(unix)]
+struct Writable(PathBuf);
+
+#[cfg(unix)]
+impl Drop for Writable {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// A refusal after which the server closes the connection says `Connection: close`.
+///
+/// The door refuses a body before it is read, and a connection with a request half read
+/// cannot carry another: the server closes it. A shipper that is not told sends its next
+/// batch into the closed socket and gets no answer at all - every other body, with the log
+/// failing, where each should have been a 503 it knows what to do with.
+#[test]
+#[cfg(unix)]
+fn a_refusal_that_closes_the_connection_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = Server::start_with(&["--wal-segment-bytes", "1", "--flush-interval-ms", "10000"]);
+    let line = br#"{"ts": 1705314600, "x": 0}"#;
+    assert_eq!(server.post("/ingest", line).0, 200);
+    let wal = server.data_dir().join("wal");
+    // Declared after the server, so it goes first: the directory is writable again by the
+    // time the server's own drop removes what is around it.
+    let _writable = Writable(wal.clone());
+    fs::set_permissions(&wal, fs::Permissions::from_mode(0o555)).expect("chmod");
+    assert_eq!(server.post("/ingest", line).0, 503);
+    let read = json(&server.get("/stats").1)["ingest"]["lines_read"].clone();
+
+    let body = lines_of(100 * 1024);
+    // 1. A client that does as `Connection: close` asks.
+    let mut kept = Kept::new(server.port, true);
+    let answers: Vec<_> = (0..12)
+        .map(|_| kept.send("POST", "/ingest", &body))
+        .collect();
+    // 2. And one that does not. What it loses is reported and not asserted: the server
+    //    said what it would do, and a client that sends into a closed socket anyway is not
+    //    this server's to fix.
+    let mut deaf = Kept::new(server.port, false);
+    let unanswered = (0..12)
+        .filter(|_| deaf.send("POST", "/ingest", &body).is_err())
+        .count();
+    let after = json(&server.get("/stats").1)["ingest"]["lines_read"].clone();
+    eprintln!(
+        "a client that does not honour `Connection: close`: {unanswered} of 12 bodies got no \
+         answer, over {} connections",
+        deaf.opened
+    );
+
+    // All twelve are answered: this is the assertion the missing header fails.
+    let lost: Vec<String> = answers
+        .iter()
+        .enumerate()
+        .filter_map(|(nth, a)| {
+            a.as_ref()
+                .err()
+                .map(|why| format!("body {}: {why}", nth + 1))
+        })
+        .collect();
+    assert!(
+        lost.is_empty(),
+        "{} of 12 bodies sent down a kept connection got no answer:\n{}",
+        lost.len(),
+        lost.join("\n")
+    );
+    for (nth, answer) in answers.iter().enumerate() {
+        let (status, headers, text) = answer.as_ref().expect("answered");
+        assert_eq!(*status, 503, "body {}: {text}", nth + 1);
+        assert!(headers.contains("retry-after:"), "{headers}");
+        assert!(
+            says_close(headers),
+            "body {}: a 503 for a body that was not read, on a connection the server then \
+             closes, without `Connection: close`:\n{headers}",
+            nth + 1
+        );
+    }
+    // One connection each: the client was told, every time.
+    assert_eq!(kept.opened, 12);
+    // None of the twenty-four was stored, or so much as read.
+    assert_eq!(after, read, "a refused body was read");
+    assert_eq!(server.query("COUNT LOG {}")["count"], 1);
+}
+
+/// And an answer that says nothing of the kind leaves the connection open: the header is
+/// the truth both ways. Every request here goes down a kept connection whose client does
+/// as it is told, so each is answered - whatever was refused before it, read or unread.
+///
+/// The bodies left unread are far past what the server reads in one go (about 400KB): one
+/// that is a little over its limit can be read to its end by the read that crosses the
+/// limit, and then the connection stays open and the answer rightly does not say `close`.
+#[test]
+fn a_kept_connection_is_closed_only_where_the_answer_says_so() {
+    let server = Server::start_with(&["--max-body-bytes", "65536"]);
+    let small = br#"{"ts": 1705314600, "x": 0}"#;
+    let big = lines_of(100 * 1024);
+    let far = lines_of(3 * 1024 * 1024);
+
+    // (method, path, body, status, whether the body is read to its end before the answer)
+    let asks: [(&str, &str, &[u8], u16, bool); 14] = [
+        ("POST", "/ingest", small, 200, true),
+        ("POST", "/ingest", small, 200, true),
+        ("POST", "/query", b"not json", 400, true),
+        ("POST", "/query", &big, 400, true),
+        ("POST", "/query", &far, 413, false),
+        ("POST", "/ingest", &far, 413, false),
+        ("POST", "/ingest", small, 200, true),
+        ("POST", "/nope", &big, 404, false),
+        ("POST", "/health", &big, 405, false),
+        ("GET", "/health", &big, 200, false),
+        ("POST", "/load", &big, 403, true),
+        ("POST", "/compact", b"{}", 403, true),
+        ("POST", "/compact", &far, 413, false),
+        ("GET", "/health", b"", 200, true),
+    ];
+    let mut kept = Kept::new(server.port, true);
+    // Each is answered: none went into a connection the server had closed without a word.
+    let answers: Vec<_> = asks
+        .iter()
+        .enumerate()
+        .map(|(nth, (method, path, body, ..))| {
+            kept.send(method, path, body).unwrap_or_else(|why| {
+                panic!(
+                    "ask {nth}, {method} {path} with {} bytes, got no answer: {why}",
+                    body.len()
+                )
+            })
+        })
+        .collect();
+    let mut closes = 0;
+    for (nth, ((method, path, body, want, read), (status, headers, text))) in
+        asks.iter().zip(&answers).enumerate()
+    {
+        assert_eq!(status, want, "ask {nth}, {method} {path}: {text}");
+        assert_eq!(
+            says_close(headers),
+            !*read,
+            "ask {nth}, {method} {path} with {} bytes: {headers}",
+            body.len()
+        );
+        closes += usize::from(!*read);
+    }
+    assert_eq!(
+        kept.opened,
+        closes + 1,
+        "a connection was closed that no answer said would be"
+    );
+}
+
+/// A client of HTTP/1.0 that asked for its connection to be kept is told the same.
+///
+/// It is the one client an answer has to say `keep-alive` to, and the answer to a body
+/// left unread said it too - on a connection the server then closed. Here it says `close`
+/// in place of `keep-alive`, and `keep-alive` wherever the connection is in fact kept.
+#[test]
+fn a_kept_connection_of_http_1_0_is_told_the_same() {
+    let server = Server::start();
+    let big = lines_of(100 * 1024);
+
+    // (method, path, body, status, whether the body is read to its end before the answer)
+    let asks: [(&str, &str, &[u8], u16, bool); 6] = [
+        ("POST", "/query", b"not json", 400, true),
+        ("POST", "/nope", &big, 404, false),
+        ("POST", "/query", &big, 400, true),
+        ("GET", "/health", &big, 200, false),
+        ("POST", "/health", &big, 405, false),
+        ("GET", "/health", b"", 200, true),
+    ];
+    let mut kept = Kept::old(server.port);
+    let mut closes = 0;
+    for (nth, (method, path, body, want, read)) in asks.iter().enumerate() {
+        let (status, headers, text) = kept.send(method, path, body).unwrap_or_else(|why| {
+            panic!(
+                "ask {nth}, {method} {path} with {} bytes, got no answer: {why}",
+                body.len()
+            )
+        });
+        assert_eq!(status, *want, "ask {nth}, {method} {path}: {text}");
+        assert_eq!(
+            (says_close(&headers), says(&headers, "keep-alive")),
+            (!*read, *read),
+            "ask {nth}, {method} {path} with {} bytes: {headers}",
+            body.len()
+        );
+        closes += usize::from(!*read);
+    }
+    assert_eq!(
+        kept.opened,
+        closes + 1,
+        "a connection was closed that no answer said would be"
     );
 }

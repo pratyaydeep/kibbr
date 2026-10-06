@@ -27,20 +27,23 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use flate2::read::MultiGzDecoder;
+use http_body::{Frame, SizeHint};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{Notify, Semaphore};
@@ -48,7 +51,7 @@ use tokio_util::sync::CancellationToken;
 
 use std::path::Path;
 
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, CatalogError};
 use crate::compact;
 use crate::config::{ApiLimits, Limits, Schema, Storage};
 use crate::db;
@@ -1150,6 +1153,11 @@ struct IngestReport {
     errors: Vec<LineError>,
     /// Rejections past `MAX_REPORTED_ERRORS`, counted but not described.
     omitted: u64,
+    /// Of the lines rejected - described or not - the ones that parsed and were refused
+    /// because the catalog could not write the record they needed. Counted where the
+    /// append fails, by the error's type, and not read back out of a message. Not in the
+    /// JSON: it decides the status (`nothing_taken`).
+    unwritten: u64,
 }
 
 impl IngestReport {
@@ -1177,6 +1185,20 @@ impl IngestReport {
         }
         report
     }
+
+    /// No line of the body was taken, and every line was refused for a write this server
+    /// could not make. Then the answer is not a `200`: the sender got nothing wrong, has
+    /// nothing to drop, and should send the body again (`nothing_taken`).
+    ///
+    /// False for a body with no refusal at all - an empty one, or blank lines - and for
+    /// one where any refusal is the line's own: that line is refused the same way every
+    /// time it is sent. `omitted` is in the sum because the rule is about every line, and
+    /// `errors` stops at `MAX_REPORTED_ERRORS`.
+    fn nothing_taken(&self) -> bool {
+        self.ingested == 0
+            && self.unwritten > 0
+            && self.unwritten == self.errors.len() as u64 + self.omitted
+    }
 }
 
 /// The two ways a body fails whole: the client's fault and the server's, which is the
@@ -1186,8 +1208,10 @@ enum IngestFailure {
     Body(BodyError),
     /// A lock poisoned mid-body. Fails every line after it too, so the body is abandoned
     /// rather than answered with 500 copies of one message. A catalog append that fails
-    /// is not this: it costs its line, reported in `errors`, and the body goes on. Nor is
-    /// a store that cannot take a row, which costs nothing and is not an error at all.
+    /// is not this: it costs its line, reported in `errors`, and the body goes on - and a
+    /// body that lost every line that way is refused from its report, with the errors
+    /// still in it, and not from here (`IngestReport::nothing_taken`). Nor is a store
+    /// that cannot take a row, which costs nothing and is not an error at all.
     Fatal(IngestError),
 }
 
@@ -1209,12 +1233,14 @@ enum IngestFailure {
 /// and the only thing this caller changes is where a rejection goes - to a `Vec` that
 /// becomes the response body, instead of to a stderr an HTTP client cannot read.
 ///
-/// **A body the log cannot take is refused, and nothing else that parsed is.** Not a row
-/// the store cannot take: by then the line is durable, its sender is told `Ok`, and the
-/// failure is the applier's to log (`Held`). The error this returns cannot carry a
-/// store's - see `IngestError` - and is the log's, or the trie's lock poisoned, which
-/// fails every line after it too, so the body is abandoned rather than answered with 500
-/// copies of one message.
+/// **A body the log cannot take is refused, and so is one the catalog could write
+/// nothing for.** Not a row the store cannot take: by then the line is durable, its
+/// sender is told `Ok`, and the failure is the applier's to log (`Held`). The error this
+/// returns cannot carry a store's - see `IngestError` - and is the log's, or the trie's
+/// lock poisoned, which fails every line after it too, so the body is abandoned rather
+/// than answered with 500 copies of one message. The catalog's refusal is not an error of
+/// this function: each line it cost is in the report, the report counts them, and the
+/// handler answers `503` when they are all there is (`IngestReport::nothing_taken`).
 fn ingest(
     server: &Server,
     body: &[u8],
@@ -1262,6 +1288,7 @@ fn ingest(
     // record that defines the id is flushed by the time `place_in` returns.
     let mut apply_errors = Vec::new();
     let mut rejected = stats.rejected;
+    let mut unwritten = 0u64;
     let mut lines: Vec<wal::Line> = Vec::with_capacity(parsed.len());
     for (line, parsed, prepared) in parsed {
         let kind = match db::place_in(&server.trie, &parsed, prepared, now) {
@@ -1284,9 +1311,17 @@ fn ingest(
             // The line parsed and its template could not be made durable. Counted and
             // reported exactly as a line that did not parse: to the client both are
             // "this one is not in the database", and the message says which.
-            Err(e @ TrieError::Catalog(_)) => DetectorErrorKind::NotDurable {
-                detail: error::chain(&e),
-            },
+            Err(e @ TrieError::Catalog(_)) => {
+                // And counted apart, as a write that failed: a body of nothing but these
+                // is sent again, and a record that would not encode is no reason to -
+                // it would not encode the next time either.
+                if !matches!(e, TrieError::Catalog(CatalogError::Serialize { .. })) {
+                    unwritten += 1;
+                }
+                DetectorErrorKind::NotDurable {
+                    detail: error::chain(&e),
+                }
+            }
             // The trie's lock poisoned, which fails every line after it too.
             Err(e) => return Err(e.into()),
         };
@@ -1363,6 +1398,7 @@ fn ingest(
         ingested,
         omitted: rejected - errors.len() as u64,
         errors,
+        unwritten,
     })
 }
 
@@ -1395,16 +1431,16 @@ async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
 
 impl Server {
     /// What is wrong with this server's writing, if anything is: the log first, because
-    /// that is the one `/ingest` refuses on.
+    /// while it cannot write `/ingest` refuses every body.
     ///
     /// A store that cannot write is degraded and refuses nothing: its rows are in the log
-    /// and are written when it can, or put back by the next start.
+    /// and are written when it can, or put back by the next start. A catalog that cannot
+    /// write is not reported here: it costs the lines that needed a new record, and a body
+    /// of nothing else is refused in its own answer, which names the write (`nothing_taken`).
     fn degraded(&self) -> Option<String> {
-        if let Some(wal) = self.wal.as_ref().filter(|wal| !wal.is_healthy()) {
+        if let Some(why) = self.wal.as_ref().and_then(Wal::refusal) {
             return Some(format!(
-                "the write-ahead log cannot write, and /ingest answers 503 until it can: {}",
-                wal.last_error()
-                    .unwrap_or_else(|| "the last flush could not write".to_string())
+                "the write-ahead log cannot write, and /ingest answers 503 until it can: {why}"
             ));
         }
         if self.write_health.is_degraded() {
@@ -1433,13 +1469,17 @@ impl Server {
 /// back. The difference is in the body, which names the write error - an operator reading
 /// a shipper's log needs to see `No space left on device` there and not "try later".
 ///
-/// **This is the one refusal that is about durability, and it is the log's.** A `200` means
+/// **This is the refusal that is about durability, and it is the log's.** A `200` means
 /// the line is in the log and flushed, so a log that cannot write has no `200` to give; a
 /// `503` keeps the line at the shipper, where it can still be sent again. It used to be
 /// the store's: with no log a `200` meant *buffered*, and on a full disk every batch got
 /// one, the shutdown log said "90,000 rows written", and after a restart `COUNT LOG {}`
 /// was 0. A store that cannot write is no longer a reason to refuse anything - the line is
 /// safe in the log, and a `503` would make a shipper resend a line that is already stored.
+///
+/// One other refusal is about durability, and it is the catalog's: a body that never
+/// reached the log, because no line of it could be given the record it needed before it
+/// counts. That one is answered apart (`nothing_taken`), with its errors by line.
 fn cannot_log(detail: &str) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -1452,6 +1492,35 @@ fn cannot_log(detail: &str) -> Response {
             ),
             "retry_after": RETRY_AFTER_SECONDS,
         })),
+    )
+        .into_response()
+}
+
+/// The answer to a body of which nothing was taken because nothing could be written for
+/// it (`IngestReport::nothing_taken`): 503 and a `Retry-After`, as the log's refusal is,
+/// around the report a `200` would have carried - `ingested: 0` and each line's error
+/// against its number, which is where the write that failed and its path are named.
+///
+/// A `200` here told a shipper that goes by the status to drop a body of well-formed
+/// lines this server had none of. `error` is for the client that reads that field of
+/// every refusal and no further, and repeats the first line's reason.
+///
+/// The body was read to its end, so the connection is left as it is.
+fn nothing_taken(report: &IngestReport) -> Response {
+    let first = match report.errors.first() {
+        Some(error) => format!("line {}: {}", error.line, error.msg),
+        None => "no line's error was kept".to_string(),
+    };
+    let mut body = report.to_json();
+    body["error"] = json!(format!(
+        "the catalog could not write the record each line of this body needed, so nothing \
+         of it was taken. Keep the body and send it again: {first}"
+    ));
+    body["retry_after"] = json!(RETRY_AFTER_SECONDS);
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(body),
     )
         .into_response()
 }
@@ -1536,6 +1605,11 @@ async fn post_ingest(
     .await;
 
     match done {
+        // The one report that is not a 200: no line was taken, and every one was refused
+        // for a write the catalog could not make. Nothing landed that a retry could
+        // duplicate and nothing in the body is the sender's to fix, so it is told what
+        // the log's refusal tells it - keep the body, come back.
+        Ok(Ok(report)) if report.nothing_taken() => nothing_taken(&report),
         // 200 even with errors in it. The body was accepted and part of it was stored;
         // a 4xx would tell a shipper to retry the whole batch and duplicate the 497
         // lines that landed, and there is nothing the client could have sent differently
@@ -1632,6 +1706,14 @@ fn percent_decode(text: &str) -> String {
 /// the batch, times out, and opens another connection - so a merely slow server gathers
 /// connections until it is unreachable. The immediate refusal is the kinder answer
 /// precisely because a client knows what to do with it.
+///
+/// **A refusal from here tells the client that the connection closes.** The body is still
+/// unread when it is answered, so the connection cannot carry another request and the
+/// server closes it. `say_close`, the outermost layer, puts `Connection: close` on the
+/// answer for that reason; without it a shipper that keeps its connection sends its next
+/// batch into a closed socket. The refusals do not set the header themselves: the handler
+/// returns two of them, `cannot_log` and `log_busy`, after the body was read, where the
+/// connection stays open.
 async fn admit(State(server): State<Arc<Server>>, mut request: Request, next: Next) -> Response {
     // **First, and in the layer rather than in the handler**, for the reason the shed is
     // here: a layer runs before the extractors, so a body this server cannot make durable
@@ -1644,10 +1726,7 @@ async fn admit(State(server): State<Arc<Server>>, mut request: Request, next: Ne
     // (`Wal::probe`), so the door opens within a tick of the disk coming back.
     //
     // **The log, and not the store.** A store that cannot write refuses nothing here.
-    if let Some(wal) = server.wal.as_ref().filter(|wal| !wal.is_healthy()) {
-        let detail = wal
-            .last_error()
-            .unwrap_or_else(|| "the last flush could not write".to_string());
+    if let Some(detail) = server.wal.as_ref().and_then(Wal::refusal) {
         return cannot_log(&detail);
     }
     // Past twice the buffer limit the flush is falling behind what arrives, even closing
@@ -2691,6 +2770,100 @@ async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) 
     next.run(request).await
 }
 
+/// `Connection: close` on every answer after which this server closes the connection
+/// (RFC 9112 section 9.6).
+///
+/// An answer written while the request's body is still unread leaves half a request on
+/// the connection, and it cannot carry another: the server closes it once the answer is
+/// out. A client that is not told sends its next request into the closed socket and gets
+/// no answer at all. With the log failing that was every other batch of a shipper that
+/// keeps its connection, where each should have been a 503 it knows what to do with.
+///
+/// **One layer, and not a header on each refusal.** What closes the connection is the body
+/// left unread, not which answer was built. `cannot_log` and `log_busy` come from the door
+/// before the body is read, and from the handler after it - where the connection stays
+/// open and must not be told to close. So the body is wrapped in `Watched`, and the answer
+/// is marked when the body it was given was not read to its end. That covers the answers
+/// this file does not build as well: axum's 413 from a body limit, its 404 and 405, and
+/// a `GET` that was sent a body.
+///
+/// The header is not only a report. With it in the answer the connection is closed after
+/// the answer whatever becomes of the rest of the body, so the two cannot disagree. A
+/// refused body small enough to have arrived whole with its head used to leave its
+/// connection open, by the luck of one read; it is closed now, and said to be.
+///
+/// Nothing is read here to keep the connection: the refusal comes before the body is read,
+/// and stays that way.
+async fn say_close(request: Request, next: Next) -> Response {
+    // A request with no body has nothing left unread, whatever answers it.
+    if request.body().is_end_stream() {
+        return next.run(request).await;
+    }
+    let version = request.version();
+    let ended = Arc::new(AtomicBool::new(false));
+    let request = request.map(|inner| {
+        Body::new(Watched {
+            inner,
+            ended: Arc::clone(&ended),
+        })
+    });
+    let mut response = next.run(request).await;
+    if !ended.load(Ordering::Relaxed) {
+        // `insert`, so an answer that came with a `Connection` header leaves with this one
+        // and not with two.
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+        // In the client's own version. An answer of HTTP/1.1 to a client of HTTP/1.0 that
+        // asked to keep its connection is given `keep-alive` on its way out, over the
+        // header above, and the connection is closed all the same; one of HTTP/1.0 keeps
+        // the header it came with.
+        *response.version_mut() = version;
+    }
+    response
+}
+
+/// A request body that records whether it was read to its end: see `say_close`.
+struct Watched {
+    inner: Body,
+    ended: Arc<AtomicBool>,
+}
+
+impl HttpBody for Watched {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+        let polled = Pin::new(&mut self.inner).poll_frame(cx);
+        // The end is `None`, or a frame with nothing after it. A body with a
+        // `Content-Length` ends on its last data frame, and a reader that stops there has
+        // read all of it: the body limit does, when the frame that crosses the limit is
+        // also the last.
+        let ended = match &polled {
+            Poll::Ready(None) => true,
+            Poll::Ready(Some(Ok(_))) => self.inner.is_end_stream(),
+            _ => false,
+        };
+        if ended {
+            self.ended.store(true, Ordering::Relaxed);
+        }
+        polled
+    }
+
+    // Both as the body underneath has them, so the body limit and the `Bytes` extractor
+    // see what they saw before this was put around it.
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
+
 fn router(server: Arc<Server>) -> Router {
     Router::new()
         .route("/", get(get_viewer))
@@ -2723,6 +2896,11 @@ fn router(server: Arc<Server>) -> Router {
             Arc::clone(&server),
             track,
         ))
+        // Last, so outermost of all: outside `admit` and outside every body limit. It has
+        // to see the body before anything can refuse it or stop reading it, to know that
+        // the answer went out with the body unread - and then the answer tells the client
+        // that the connection closes.
+        .layer(axum::middleware::from_fn(say_close))
         .with_state(server)
 }
 
@@ -3532,5 +3710,178 @@ mod tests {
         assert!(held.apply(&stores, 42, placed(8)));
         assert_eq!(stores.rows(), 1);
         assert_eq!((held.from(), held.rows()), (Some(40), 2));
+    }
+
+    // ── A body of which nothing was taken ─────────────────────────────────────────────
+    //
+    // These call the handler itself, with the door's permits made by hand, so the status,
+    // the headers and the body are the ones a client gets; nothing here needs a disk that
+    // is full.
+
+    /// What `/ingest` answers `body`: status, headers, and the JSON.
+    fn answer(server: &Arc<Server>, body: &[u8]) -> (StatusCode, HeaderMap, Value) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let permit = Permit {
+                parse: Arc::new(
+                    Arc::clone(&server.ingest_permits)
+                        .try_acquire_owned()
+                        .expect("a parse permit"),
+                ),
+                body: Arc::new(
+                    Arc::clone(&server.ingest_bodies)
+                        .try_acquire_owned()
+                        .expect("a body permit"),
+                ),
+            };
+            let response = post_ingest(
+                State(Arc::clone(server)),
+                axum::Extension(permit),
+                axum::http::Uri::from_static("/ingest"),
+                HeaderMap::new(),
+                Ok(Bytes::copy_from_slice(body)),
+            )
+            .await;
+            let (parts, body) = response.into_parts();
+            let bytes = axum::body::to_bytes(body, usize::MAX)
+                .await
+                .expect("the response body");
+            let report = serde_json::from_slice(&bytes).expect("the answer is JSON");
+            (parts.status, parts.headers, report)
+        })
+    }
+
+    /// A server in memory whose catalog refuses every append: what a full disk under
+    /// `catalog.log` looks like to a line that needs a new template. `known` is taken
+    /// first, while there is no catalog to ask, so its template exists.
+    fn server_whose_catalog_cannot_write(tag: &str, known: &[u8]) -> Arc<Server> {
+        let server = server();
+        if !known.is_empty() {
+            let (status, _, report) = answer(&server, known);
+            assert_eq!(status, StatusCode::OK, "{report}");
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "kibbr-serve-catalog-{tag}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        server
+            .trie
+            .attach_catalog(Catalog::read_only(&dir.join("dead.log")).expect("read-only"));
+        // The catalog keeps its handle, and nothing reads the file by name again.
+        let _ = std::fs::remove_dir_all(&dir);
+        server
+    }
+
+    /// No line taken, and every refusal the catalog's write: a 503, a `Retry-After`, and
+    /// the errors still by line. It was a 200.
+    #[test]
+    fn a_body_the_catalog_could_write_none_of_is_a_503_with_its_errors_by_line() {
+        let server = server_whose_catalog_cannot_write("none", b"");
+        let body = b"{\"ts\":1705314600,\"a\":1}\n{\"ts\":1705314601,\"a\":2}\n\
+                     {\"ts\":1705314602,\"b\":3}\n";
+        let (status, headers, report) = answer(&server, body);
+
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "three well-formed lines, none taken: {report}"
+        );
+        assert_eq!(
+            headers.get(header::RETRY_AFTER).and_then(|v| v.to_str().ok()),
+            Some(RETRY_AFTER_SECONDS.to_string().as_str()),
+            "{headers:?}"
+        );
+        // The handler has the whole body, and does not itself ask for the connection to be
+        // closed: that is `say_close`'s to say, and only of a body left unread.
+        assert!(headers.get(header::CONNECTION).is_none(), "{headers:?}");
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["ingested"], 0);
+        assert_eq!(report["retry_after"], RETRY_AFTER_SECONDS, "{report}");
+        let errors = report["errors"].as_array().expect("errors");
+        assert_eq!(errors.len(), 3, "{report}");
+        for (at, error) in errors.iter().enumerate() {
+            assert_eq!(error["line"], at + 1, "{report}");
+            let msg = error["msg"].as_str().unwrap_or_default();
+            assert!(msg.starts_with("not ingested: catalog: "), "{msg}");
+            assert!(msg.contains("dead.log"), "{msg}");
+        }
+        // The shape every other 503 here has, for a client that reads `error` and no
+        // further: what to do with the body, and the first line's own reason.
+        let said = report["error"].as_str().unwrap_or_default();
+        assert!(said.contains("send it again"), "{report}");
+        assert!(
+            said.ends_with(errors[0]["msg"].as_str().unwrap_or("no message")),
+            "{report}"
+        );
+        assert_eq!(server.trie.template_count(), 0, "a refused template exists");
+    }
+
+    /// Any line taken, or any line the sender got wrong, and the answer is the one it
+    /// was: a 200 that lists what did not land. A 503 for the first would have the
+    /// taken line sent and stored again; a 503 for the second would have the malformed
+    /// line sent again for ever.
+    #[test]
+    fn a_body_with_a_line_taken_or_a_malformed_line_keeps_its_200() {
+        let known = b"{\"ts\":1705314600,\"known\":1}\n";
+
+        // A line of a template that exists is taken; the line beside it is not.
+        let server = server_whose_catalog_cannot_write("taken", known);
+        let (status, headers, report) = answer(
+            &server,
+            b"{\"ts\":1705314601,\"known\":2}\n{\"ts\":1705314602,\"new\":3}\n",
+        );
+        assert_eq!(status, StatusCode::OK, "{report}");
+        assert!(headers.get(header::RETRY_AFTER).is_none(), "{headers:?}");
+        assert_eq!((&report["ok"], &report["ingested"]), (&json!(false), &json!(1)));
+        assert_eq!(report["errors"][0]["line"], 2);
+        assert!(report.get("error").is_none() && report.get("retry_after").is_none());
+
+        // Nothing taken, and one of the refusals is the line's own fault.
+        let server = server_whose_catalog_cannot_write("mixed", b"");
+        let (status, headers, report) =
+            answer(&server, b"{\"ts\":1705314601,\"new\":2}\nnot json\n");
+        assert_eq!(status, StatusCode::OK, "{report}");
+        assert!(headers.get(header::RETRY_AFTER).is_none(), "{headers:?}");
+        assert_eq!((&report["ok"], &report["ingested"]), (&json!(false), &json!(0)));
+        assert_eq!(report["errors"].as_array().map(Vec::len), Some(2));
+        assert!(report.get("error").is_none() && report.get("retry_after").is_none());
+
+        // Nothing taken and nothing written for: every line is malformed.
+        let (status, _, report) = answer(&server, b"not json\n[1]\n");
+        assert_eq!(status, StatusCode::OK, "{report}");
+        assert_eq!((&report["ok"], &report["ingested"]), (&json!(false), &json!(0)));
+
+        // And nothing sent: no line, or blank ones. Nothing was refused.
+        for empty in [&b""[..], &b"\n\n  \n"[..]] {
+            let (status, _, report) = answer(&server, empty);
+            assert_eq!(status, StatusCode::OK, "{report}");
+            assert_eq!(report, json!({"ok": true, "ingested": 0, "errors": []}));
+        }
+    }
+
+    /// The rule counts every refusal and not the thousand the answer describes: a
+    /// malformed line past the cap still makes the body a mix, and a body of catalog
+    /// refusals past the cap is still all of them.
+    #[test]
+    fn the_rule_counts_refusals_past_the_ones_the_answer_describes() {
+        let server = server_whose_catalog_cannot_write("cap", b"");
+        let mut body = Vec::new();
+        for n in 0..=MAX_REPORTED_ERRORS {
+            body.extend_from_slice(format!("{{\"ts\":1705314600,\"new\":{n}}}\n").as_bytes());
+        }
+        let (status, headers, report) = answer(&server, &body);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(headers.get(header::RETRY_AFTER).is_some());
+        assert_eq!(report["ingested"], 0);
+        assert_eq!(report["errors"].as_array().map(Vec::len), Some(MAX_REPORTED_ERRORS));
+        assert_eq!(report["errors_omitted"], 1);
+
+        body.extend_from_slice(b"not json\n");
+        let (status, _, report) = answer(&server, &body);
+        assert_eq!(status, StatusCode::OK, "a malformed line past the cap was not counted");
+        assert_eq!(report["errors_omitted"], 2);
     }
 }

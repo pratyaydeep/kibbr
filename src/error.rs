@@ -16,6 +16,10 @@ pub enum DetectorErrorKind {
     /// before it counts. Not the line's fault, but it is the line that did not land, and
     /// `{"line":N,"msg":"..."}` is the one place a client hears that. The next line that
     /// needs no new record still goes in, which is why this is per line and not the body.
+    /// A body of nothing but these has no next line: where each was a write that failed,
+    /// `/ingest` answers it `503`, with the same errors by line, so its sender keeps it
+    /// and sends it again. A record that would not encode, or a template whose lock is
+    /// poisoned, is not such a write, and a body of those is still a `200`.
     #[error("not ingested: {detail}")]
     NotDurable { detail: String },
 
@@ -257,11 +261,14 @@ pub enum IngestError {
     #[error(transparent)]
     Trie(#[from] crate::trie::TrieError),
 
-    /// The write-ahead log could not take the body. **The one refusal that is about
-    /// durability**, and the only way a body whose lines parsed is refused: none of it is
-    /// in the log - a body goes in whole or not at all - so nothing has it, the sender is
-    /// told `503`, and sending it again stores nothing twice. The text is the log's own
-    /// error; the log knows nothing of the store.
+    /// The write-ahead log could not take the body. **The refusal that is about
+    /// durability**, and the only error here by which a body whose lines parsed is
+    /// refused: none of it is in the log - a body goes in whole or not at all - so nothing
+    /// has it, the sender is told `503`, and sending it again stores nothing twice. The
+    /// text is the log's own error; the log knows nothing of the store. The other such
+    /// body is one the catalog could write nothing for, and that is no error of this
+    /// type: every line of it is refused by number (`DetectorErrorKind::NotDurable`), and
+    /// `/ingest` answers `503` from the count of them.
     #[error("the write-ahead log could not take the body: {0}")]
     Log(String),
 

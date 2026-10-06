@@ -23,6 +23,11 @@ mimalloc = "0.1.52"
 # for it. Already in the build under tokio and mimalloc; named here because src/ now
 # calls it.
 libc = "0.2"
+# `Frame` and `SizeHint`, the two types the `Body` trait's methods are written in: the
+# server puts a body of its own around each request's, to know whether it was read to its
+# end, and axum hands on the trait without them. Already in the build under axum and
+# hyper; named here because src/ now implements the trait.
+http-body = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"

@@ -101,7 +101,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -528,9 +528,10 @@ struct Shared {
     /// The checkpoint its file holds: behind `checkpoint` for as long as the file could
     /// not be written.
     filed: AtomicU64,
-    /// Whether the last flush could write. Read by the door without a lock.
-    healthy: AtomicBool,
-    last_error: Mutex<Option<String>>,
+    /// Whether the last flush could write, and why not: one value, read in one step, so
+    /// no reader is told the log cannot write and left to find the reason where it is not
+    /// yet. Its lock is taken alone or inside the queue's, never the other way round.
+    health: RwLock<Health>,
     /// No thread is taking lines: before `start`, after `close`, or because one died.
     stopped: AtomicBool,
     /// The writer has ended, and whatever it had taken off the queue it will not finish.
@@ -541,6 +542,80 @@ struct Shared {
     /// deleted, where it would have stayed until it was full.
     drained: AtomicBool,
     flushes: AtomicU64,
+}
+
+/// Whether the log can write. Either it can, or it cannot and here is why: there is no
+/// value for "it cannot" that has no reason in it.
+#[derive(Debug)]
+enum Health {
+    /// The last flush could write. `last_error` is what the last one that could not
+    /// failed with: kept, so `/stats` still says it once the disk is back.
+    Writing { last_error: Option<String> },
+    /// It could not, and every refusal, `/health` and `/stats` say `why`.
+    Cannot { why: String },
+    /// A thread of the log has died, and `why` says to restart the server. Nothing a
+    /// flush finds changes that: one that fails is not the reason the log takes nothing,
+    /// and one that succeeds wrote what nothing will apply.
+    Died { why: String },
+}
+
+impl Health {
+    /// Whether the log can write, and what it last could not write for - now, or before
+    /// it wrote again.
+    fn report(&self) -> (bool, Option<String>) {
+        match self {
+            Health::Writing { last_error } => (true, last_error.clone()),
+            Health::Cannot { why } | Health::Died { why } => (false, Some(why.clone())),
+        }
+    }
+}
+
+impl Shared {
+    /// The health as it is now. Recovering from a poisoning as `lock` does: it is one
+    /// value, replaced whole.
+    fn health(&self) -> RwLockReadGuard<'_, Health> {
+        self.health.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Why the log cannot write, and `None` while it can.
+    fn refusal(&self) -> Option<String> {
+        match &*self.health() {
+            Health::Writing { .. } => None,
+            Health::Cannot { why } | Health::Died { why } => Some(why.clone()),
+        }
+    }
+
+    /// A flush could not write, for this reason. Returns whether the log could until now.
+    fn cannot(&self, why: &str) -> bool {
+        let mut health = self.health.write().unwrap_or_else(|e| e.into_inner());
+        let could = match *health {
+            Health::Writing { .. } => true,
+            Health::Cannot { .. } => false,
+            Health::Died { .. } => return false,
+        };
+        *health = Health::Cannot {
+            why: why.to_string(),
+        };
+        could
+    }
+
+    /// A flush could write. Returns whether the log could not until now.
+    fn writing(&self) -> bool {
+        let mut health = self.health.write().unwrap_or_else(|e| e.into_inner());
+        let Health::Cannot { why } = &mut *health else {
+            return false;
+        };
+        let last_error = Some(std::mem::take(why));
+        *health = Health::Writing { last_error };
+        true
+    }
+
+    /// A thread of the log has died, and this is what every refusal says from here on.
+    fn died(&self, why: &str) {
+        *self.health.write().unwrap_or_else(|e| e.into_inner()) = Health::Died {
+            why: why.to_string(),
+        };
+    }
 }
 
 /// What a thread of the log's leaves behind when it ends, however it ends: the log takes
@@ -558,8 +633,7 @@ impl Drop for Stopping {
         // Not at a close: a thread died. Unhealthy, so the door refuses before it reads,
         // and it stays so - the writer, if it is the one left, does not say otherwise.
         let why = "a thread of the write-ahead log stopped; restart the server".to_string();
-        shared.healthy.store(false, Ordering::Release);
-        *lock(&shared.last_error) = Some(why.clone());
+        shared.died(&why);
         queue.bytes = 0;
         for waiting in queue.waiting.drain(..) {
             waiting
@@ -744,13 +818,22 @@ impl Wal {
         self.shared.applied.load(Ordering::Acquire)
     }
 
-    /// Whether the last flush could write: what the door reads before it takes a body.
+    /// Whether the last flush could write.
     pub fn is_healthy(&self) -> bool {
-        self.shared.healthy.load(Ordering::Acquire)
+        matches!(*self.shared.health(), Health::Writing { .. })
     }
 
+    /// Why the log cannot write, and `None` while it can: what the door reads before it
+    /// takes a body, and what `/health` and `commit` say. Whether and why are one read,
+    /// so there is never the one without the other.
+    pub fn refusal(&self) -> Option<String> {
+        self.shared.refusal()
+    }
+
+    /// What the last flush that could not write failed with: the reason the log is
+    /// refusing for now, or the one kept from before it wrote again.
     pub fn last_error(&self) -> Option<String> {
-        lock(&self.shared.last_error).clone()
+        self.shared.health().report().1
     }
 
     /// Read every record past the checkpoint back, in order, and hand each to `each`. An
@@ -862,11 +945,10 @@ impl Wal {
         // position of it.
         if let Err(e) = log.ensure(next_seq) {
             let why = e.to_string();
+            self.shared.cannot(&why);
             say(&format!(
                 "ERROR write-ahead log - {why}; /ingest answers 503 until it can write"
             ));
-            self.shared.healthy.store(false, Ordering::Release);
-            *lock(&self.shared.last_error) = Some(why);
         }
         self.shared.stopped.store(false, Ordering::Release);
         let (tx, rx) = channel::<Batch>();
@@ -910,11 +992,8 @@ impl Wal {
             // it empties the queue: a body is refused here or by that flush, never left
             // waiting behind it.
             let mut queue = lock(&self.shared.queue);
-            if !self.shared.healthy.load(Ordering::Acquire) {
-                return Err(Refused::Cannot(
-                    self.last_error()
-                        .unwrap_or_else(|| "the last flush could not write".to_string()),
-                ));
+            if let Some(why) = self.shared.refusal() {
+                return Err(Refused::Cannot(why));
             }
             if queue.closing || self.shared.stopped.load(Ordering::Acquire) {
                 return Err(Refused::Cannot("the write-ahead log is closed".to_string()));
@@ -1038,6 +1117,9 @@ impl Wal {
 
     pub fn stats(&self) -> Stats {
         let segments = lock(&self.shared.segments).clone();
+        // The two from one read of the health: never unhealthy beside no reason, or beside
+        // the reason of a failure before this one.
+        let (healthy, last_error) = self.shared.health().report();
         Stats {
             stream: self.stream,
             segments: segments.len(),
@@ -1047,8 +1129,8 @@ impl Wal {
             applied: self.applied(),
             checkpoint: self.checkpoint(),
             flushes: self.shared.flushes.load(Ordering::Relaxed),
-            healthy: self.is_healthy(),
-            last_error: self.last_error(),
+            healthy,
+            last_error,
         }
     }
 
@@ -1080,8 +1162,7 @@ impl Shared {
             applied: AtomicU64::new(checkpoint),
             checkpoint: AtomicU64::new(checkpoint),
             filed: AtomicU64::new(checkpoint),
-            healthy: AtomicBool::new(true),
-            last_error: Mutex::new(None),
+            health: RwLock::new(Health::Writing { last_error: None }),
             // No writer yet: `start` clears it.
             stopped: AtomicBool::new(true),
             writer_gone: AtomicBool::new(false),
@@ -1571,33 +1652,45 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
                 // Not while the applier is gone: the log can write, and nothing it wrote
                 // would reach the store. `Stopping` said so under this lock, and it stays
                 // said.
-                let _queue = lock(&shared.queue);
-                if !shared.stopped.load(Ordering::Acquire)
-                    && !shared.healthy.swap(true, Ordering::AcqRel)
-                {
+                let again = {
+                    let _queue = lock(&shared.queue);
+                    !shared.stopped.load(Ordering::Acquire) && shared.writing()
+                };
+                // Said once the lock is let go: a stderr that will not take the line
+                // keeps nobody from the queue.
+                if again {
                     say("write-ahead log - writing again");
                 }
             }
             Err(e) => {
                 // `to_string`, not the chain: a `WalError` prints its cause itself.
                 let why = e.to_string();
-                // Under the queue's lock, so no body joins the queue behind a flush that
-                // has failed: see `Wal::commit`.
-                let mut queue = lock(&shared.queue);
-                if shared.healthy.swap(false, Ordering::AcqRel) {
+                let first = {
+                    // Under the queue's lock, so no body joins the queue behind a flush
+                    // that has failed: see `Wal::commit`.
+                    let mut queue = lock(&shared.queue);
+                    // The reason goes in with the verdict, and before any body is
+                    // refused: whoever is told the log cannot write is told why, from the
+                    // first `503` on. Unless a thread has died - what `Stopping` said
+                    // then is kept, and only this flush's own bodies hear of the disk.
+                    let first = shared.cannot(&why);
+                    let refused = Progress::Refused(Refused::Cannot(why.clone()));
+                    for outcome in &taken {
+                        outcome.set(refused.clone());
+                    }
+                    queue.bytes = 0;
+                    for waiting in queue.waiting.drain(..) {
+                        waiting.outcome.set(refused.clone());
+                    }
+                    first
+                };
+                // Said last, and once the lock is let go: a stderr that will not take the
+                // line delays the line, and not a `503` or the reason in it.
+                if first {
                     say(&format!(
                         "ERROR write-ahead log - {why}; /ingest answers 503 until it can \
                          write again"
                     ));
-                }
-                *lock(&shared.last_error) = Some(why.clone());
-                let refused = Progress::Refused(Refused::Cannot(why));
-                for outcome in &taken {
-                    outcome.set(refused.clone());
-                }
-                queue.bytes = 0;
-                for waiting in queue.waiting.drain(..) {
-                    waiting.outcome.set(refused.clone());
                 }
             }
         }
@@ -2152,6 +2245,190 @@ mod tests {
         }
         assert!(wal.is_healthy());
         assert_eq!(wal.commit(body(0, 1), 0), Ok(()));
+    }
+
+    /// Readers that ask `wrong` of the log over and over until `stop` is set, half of
+    /// them in two reads - whether it can write, then why not - and half as `/stats`
+    /// does. Each returns how often the answer was yes, and how often it asked.
+    #[cfg(unix)]
+    fn readers_asking(
+        wal: &Arc<Wal>,
+        stop: &Arc<AtomicBool>,
+        wrong: impl Fn(bool, Option<String>) -> bool + Send + Sync + 'static,
+    ) -> Vec<JoinHandle<(u64, u64)>> {
+        const READERS: usize = 4;
+        let wrong = Arc::new(wrong);
+        let ready = Arc::new(std::sync::Barrier::new(READERS + 1));
+        let readers = (0..READERS)
+            .map(|n| {
+                let (wal, stop) = (Arc::clone(wal), Arc::clone(stop));
+                let (wrong, ready) = (Arc::clone(&wrong), Arc::clone(&ready));
+                std::thread::spawn(move || {
+                    ready.wait();
+                    let (mut times, mut looks) = (0u64, 0u64);
+                    while !stop.load(Ordering::Relaxed) {
+                        looks += 1;
+                        times += u64::from(if n % 2 == 0 {
+                            let healthy = wal.is_healthy();
+                            wrong(healthy, wal.last_error())
+                        } else {
+                            let stats = wal.stats();
+                            wrong(stats.healthy, stats.last_error)
+                        });
+                    }
+                    (times, looks)
+                })
+            })
+            .collect();
+        ready.wait();
+        // Every reader is asking before the log is made to fail.
+        std::thread::sleep(Duration::from_millis(5));
+        readers
+    }
+
+    /// The log's first failure, with readers asking "can it write?" and then "why not?"
+    /// the whole way across it. None of them is ever told the log cannot write and given
+    /// no reason.
+    #[test]
+    #[cfg(unix)]
+    fn no_reader_sees_the_log_unhealthy_without_a_reason() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("reason-race");
+        let (wal, _) = started(&scratch, tiny());
+        assert_eq!(wal.commit(body(0, 1), 0), Ok(()));
+        let dir = scratch.0.join(DIR);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("chmod");
+
+        let wal = Arc::new(wal);
+        let stop = Arc::new(AtomicBool::new(false));
+        let readers = readers_asking(&wal, &stop, |healthy, reason| !healthy && reason.is_none());
+        // The next flush needs a new segment, and the directory will not take one.
+        let refused = wal.commit(body(1, 3), 0);
+        std::thread::sleep(Duration::from_millis(5));
+        stop.store(true, Ordering::Relaxed);
+        let seen: Vec<(u64, u64)> = readers
+            .into_iter()
+            .map(|r| r.join().expect("reader"))
+            .collect();
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
+
+        assert!(matches!(refused, Err(Refused::Cannot(_))), "{refused:?}");
+        assert!(!wal.is_healthy());
+        let bare: u64 = seen.iter().map(|(bare, _)| bare).sum();
+        assert_eq!(
+            bare, 0,
+            "the log was unhealthy with no reason given, (times, looks) per reader: {seen:?}"
+        );
+    }
+
+    /// A second failure, once the log has written again, with the same readers across
+    /// it. The first failure's reason is still there to be read while the log writes, and
+    /// is never the reason given for the second.
+    #[test]
+    #[cfg(unix)]
+    fn a_second_failure_is_never_told_with_the_reason_of_the_first() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("second-reason");
+        let (wal, _) = started(&scratch, tiny());
+        assert_eq!(wal.commit(body(0, 1), 0), Ok(()));
+        let dir = scratch.0.join(DIR);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("chmod");
+        let Err(Refused::Cannot(first)) = wal.commit(body(1, 2), 0) else {
+            panic!("the log wrote to a directory that takes no file");
+        };
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("chmod");
+        wal.probe();
+        for _ in 0..200 {
+            if wal.is_healthy() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(wal.is_healthy());
+        // Kept, now that the log writes again.
+        assert_eq!(wal.last_error(), Some(first.clone()));
+        // Into the segment the probe made: the flush after it needs the next one, whose
+        // name is in its error, so the two reasons differ.
+        assert_eq!(wal.commit(body(2, 3), 0), Ok(()));
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("chmod");
+
+        let wal = Arc::new(wal);
+        let stop = Arc::new(AtomicBool::new(false));
+        let earlier = first.clone();
+        let readers = readers_asking(&wal, &stop, move |healthy, reason| {
+            !healthy && reason.as_deref() == Some(earlier.as_str())
+        });
+        let refused = wal.commit(body(3, 4), 0);
+        std::thread::sleep(Duration::from_millis(5));
+        stop.store(true, Ordering::Relaxed);
+        let seen: Vec<(u64, u64)> = readers
+            .into_iter()
+            .map(|r| r.join().expect("reader"))
+            .collect();
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
+
+        let Err(Refused::Cannot(second)) = refused else {
+            panic!("the log wrote to a directory that takes no file: {refused:?}");
+        };
+        assert_ne!(first, second);
+        assert_eq!(wal.last_error(), Some(second));
+        let stale: u64 = seen.iter().map(|(stale, _)| stale).sum();
+        assert_eq!(
+            stale, 0,
+            "the second failure was given the first's reason, {first}; (times, looks) per \
+             reader: {seen:?}"
+        );
+    }
+
+    /// Once a thread of the log has died the reason is to restart the server, and a flush
+    /// that was under way does not change it: not by failing, which would name a disk
+    /// whose mending cures nothing, and not by succeeding, which would open the door.
+    #[test]
+    fn a_flush_does_not_change_the_reason_once_a_thread_has_died() {
+        let shared = Shared::new(Vec::new(), 0);
+        assert_eq!(shared.refusal(), None);
+        assert!(shared.cannot("no room"), "the first failure is the news");
+        assert!(!shared.cannot("still no room"));
+        assert_eq!(shared.refusal().as_deref(), Some("still no room"));
+
+        shared.died("restart the server");
+        assert!(!shared.cannot("no room"));
+        assert!(!shared.writing());
+        assert_eq!(shared.refusal().as_deref(), Some("restart the server"));
+        assert_eq!(
+            shared.health().report(),
+            (false, Some("restart the server".to_string()))
+        );
+    }
+
+    /// A thread of the log that dies leaves the log saying so: the body already in the log
+    /// is acknowledged, and from then on the door, `/stats` and the next body's refusal
+    /// give the one reason - restart the server - which neither a probe nor a close takes
+    /// away.
+    #[test]
+    fn a_thread_that_dies_leaves_the_log_unhealthy_and_saying_to_restart() {
+        let scratch = Scratch::new("died");
+        let wal = Wal::create(&scratch.0).expect("create");
+        wal.start(tiny(), Box::new(|_| panic!("the applier dies")))
+            .expect("start");
+        // Written before the applier is handed it: durable, so acknowledged.
+        assert_eq!(wal.commit(body(0, 1), 0), Ok(()));
+        for _ in 0..200 {
+            if !wal.is_healthy() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let why = "a thread of the write-ahead log stopped; restart the server".to_string();
+        let told = |wal: &Wal| (wal.is_healthy(), wal.refusal(), wal.stats().last_error);
+        assert_eq!(told(&wal), (false, Some(why.clone()), Some(why.clone())));
+        assert_eq!(wal.commit(body(1, 2), 0), Err(Refused::Cannot(why.clone())));
+        // The writer is still there to be asked, and is not: a close waits for it.
+        wal.probe();
+        wal.close();
+        assert_eq!(told(&wal), (false, Some(why.clone()), Some(why)));
     }
 
     /// The number in a test line, `{"n":N}`.
