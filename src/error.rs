@@ -469,6 +469,8 @@ pub enum CliError {
     Load(#[from] crate::load::LoadError),
     #[error(transparent)]
     Compact(#[from] crate::compact::CompactError),
+    #[error(transparent)]
+    Speed(#[from] crate::speed::SpeedError),
 }
 
 /// The error and every cause below it on one line.

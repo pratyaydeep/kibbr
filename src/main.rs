@@ -1,6 +1,8 @@
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-use kibbr::{bench, compact, config, demo, error, farm, gen, infer, load, parse, query, serve};
+use kibbr::{
+    bench, compact, config, demo, error, farm, gen, infer, load, parse, query, serve, speed,
+};
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -301,6 +303,107 @@ enum Command {
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },
+    /// Measure how fast this build is on one farm day, and print the numbers a change to
+    /// it is held to: ingest lines a second from four senders, the four standard queries
+    /// on an idle server and under that ingest, scan rows per CPU-second, and the plan
+    /// step at 10,000 templates. Each server measured is this binary, started on its own
+    /// copy of one loaded directory and killed when its part is done; every number is the
+    /// median over the runs. The result is saved with every sample behind it, and the raw
+    /// log beside it. `--baseline` prints each number with its speed-up on a saved
+    /// result; `--table` prints saved results side by side and measures nothing.
+    Bench {
+        /// Lines in the farm day that is loaded (seed 42), and in the live stream sent to
+        /// the servers (seed 43). The measurement is `--lines 1000000`.
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u64).range(1..),
+            required_unless_present_any = ["table", "plan_only"]
+        )]
+        lines: Option<u64>,
+        /// Only `farm` is measured: the queries and their expected answers are the
+        /// farm's. `hostile` is refused.
+        #[arg(long, value_enum, required_unless_present_any = ["table", "plan_only"])]
+        profile: Option<Profile>,
+        /// Where the result is saved, with the raw log beside it under the same name
+        /// ending `.log`. A file that exists is refused before anything runs: a saved
+        /// result is not written over. So is a place no file can be made in; the
+        /// result's directory is made then, if it is not there.
+        /// [default: <dir>/results/<UTC time>-<commit>.json]
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+        /// A saved result to compare with. It is read and held to be the same work - the
+        /// same flags, loaded bytes, queries, answers, server command line and machine -
+        /// before anything is measured; each number is then printed with its speed-up on
+        /// it, above 1 when this build is faster.
+        #[arg(long, value_name = "FILE")]
+        baseline: Option<PathBuf>,
+        /// The heading of this result's column, saved in the file.
+        /// [default: baseline, or `this run` with --baseline]
+        #[arg(long, value_name = "TEXT")]
+        label: Option<String>,
+        /// Holds the loaded directory - built once, and never opened by a server - each
+        /// server's copy of it, and the default results. One volume, so that a copy can
+        /// be a clone.
+        #[arg(long, value_name = "PATH", default_value = speed::DEFAULT_DIR)]
+        dir: PathBuf,
+        /// How many times the whole sequence is run; each printed number is the middle
+        /// one. Odd. Two results compare only at the same value.
+        #[arg(long, value_name = "R", default_value_t = speed::DEFAULT_RUNS, value_parser = odd)]
+        runs: usize,
+        /// Timed asks of each query on the idle server, servers each query is asked on
+        /// once under ingest, and timed plans of each shape; the scan rate is read off a
+        /// quarter as many asks. Under 100, the p99 is of that many samples and the table
+        /// says so. Two results compare only at the same value.
+        #[arg(
+            long,
+            value_name = "K",
+            default_value_t = speed::DEFAULT_SAMPLES,
+            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+        )]
+        samples: usize,
+        /// Lines in one `/ingest` body. A body is one flush of the write-ahead log, so
+        /// this is part of what the ingest number means. Two results compare only at the
+        /// same value.
+        #[arg(
+            long,
+            value_name = "L",
+            default_value_t = speed::DEFAULT_BODY_LINES,
+            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+        )]
+        body_lines: usize,
+        /// Skip what makes a run a measurement - the pause before each run, the waits for
+        /// a machine with no other kibbr process and no swapping, the look after each
+        /// server that throws a disturbed one's numbers away - and allow a debug build.
+        /// The result is marked `UNCHECKED - not a measurement`. For tests, which run
+        /// beside other tests' servers.
+        #[arg(long)]
+        unchecked: bool,
+        /// Measure nothing: print the table from saved results, the first as the baseline
+        /// and one column a file, headed by its label.
+        #[arg(
+            long,
+            value_name = "FILE",
+            num_args = 2..,
+            conflicts_with_all = [
+                "lines", "profile", "out", "baseline", "label", "dir", "runs", "samples",
+                "body_lines", "unchecked", "plan_only"
+            ]
+        )]
+        table: Vec<PathBuf>,
+        // What a run starts as a child, once a run: build the trie of 10,000 templates,
+        // time `--samples` plans of each shape, print them as one JSON line. Hidden,
+        // because its line is read by the bench and not by a person - though it is also
+        // the answer, by hand, to whether the plan step is over a millisecond.
+        #[arg(
+            long,
+            hide = true,
+            conflicts_with_all = [
+                "lines", "profile", "out", "baseline", "label", "dir", "runs", "body_lines",
+                "unchecked"
+            ]
+        )]
+        plan_only: bool,
+    },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
     Explain {
@@ -584,6 +687,48 @@ fn run(cli: Cli) -> Result<(), CliError> {
             config::Schema::load(time_columns),
             &mut out,
         ),
+        Command::Bench {
+            lines,
+            profile,
+            out: save,
+            baseline,
+            label,
+            dir,
+            runs,
+            samples,
+            body_lines,
+            unchecked,
+            table,
+            plan_only,
+        } => {
+            let result = if plan_only {
+                speed::plan_only(samples, &mut out)
+            } else if !table.is_empty() {
+                speed::table(&table, &mut out)
+            } else {
+                match (lines, profile) {
+                    (Some(lines), Some(Profile::Farm)) => speed::run(
+                        &speed::Args {
+                            lines,
+                            out: save,
+                            baseline,
+                            label,
+                            dir,
+                            runs,
+                            samples,
+                            body_lines,
+                            unchecked,
+                        },
+                        &mut out,
+                    ),
+                    // Both are asked for unless `--table` or `--plan-only` is given, so
+                    // what is left is the other profile. Refused here, before the module
+                    // is reached: it is handed no profile, and makes nothing under `--dir`.
+                    _ => Err(speed::SpeedError::Profile),
+                }
+            };
+            result.map_err(CliError::from)
+        }
         Command::Explain {
             query,
             max_rows,
@@ -653,6 +798,18 @@ fn run(cli: Cli) -> Result<(), CliError> {
 enum Profile {
     Hostile,
     Farm,
+}
+
+/// `bench --runs`: an odd count, so that the median of the runs is one of them and not a
+/// number between two.
+fn odd(text: &str) -> Result<usize, String> {
+    match text.parse::<usize>() {
+        Ok(runs) if runs % 2 == 1 => Ok(runs),
+        Ok(runs) => Err(format!(
+            "{runs} is not odd; each printed number is the middle one of the runs"
+        )),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// A flag that belongs to the other profile is refused rather than ignored: a `--day` that

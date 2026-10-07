@@ -18,9 +18,12 @@ flate2 = "1.1"
 # The global allocator, in place of the system's - why is at `#[global_allocator]` in
 # src/main.rs. C under the hood, like zstd.
 mimalloc = "0.1.52"
-# `statvfs`, and nothing else: compaction writes a day a second time beside the files it
-# reads, and asks how much room the volume has before it writes a byte. std has no call
-# for it. Already in the build under tokio and mimalloc; named here because src/ now
+# Two things std has no call for. `statvfs`: compaction writes a day a second time beside
+# the files it reads, and asks how much room the volume has before it writes a byte. And a
+# child process's CPU time, with this process's own to check it against: `kibbr bench`
+# divides the rows a server scanned by the CPU-seconds it used, and that server is a child
+# (`proc_pid_rusage` and the Mach timebase on macOS, `sysconf` for `/proc`'s tick on Linux,
+# `getrusage`). Already in the build under tokio and mimalloc; named here because src/
 # calls it.
 libc = "0.2"
 # `Frame` and `SizeHint`, the two types the `Body` trait's methods are written in: the

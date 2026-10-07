@@ -27,6 +27,7 @@ pub mod query;
 pub mod reference;
 pub mod rng;
 pub mod serve;
+pub mod speed;
 pub mod store;
 pub mod trie;
 pub mod triefile;

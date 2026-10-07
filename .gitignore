@@ -16,4 +16,15 @@ sample.ndjson
 !/testdata/sample_logs.ndjson
 !/testdata/v3/
 
+# `kibbr bench` keeps its loaded directory, its work and its default results under
+# testdata/bench/, and all of that is scratch. A result saved there by name, with the raw
+# log beside it, is not: a baseline is taken once and every later result is compared with
+# it. In this order - the last line keeps the loaded directory's marker and its load log,
+# which end in .json and .log too, out.
+!/testdata/bench/
+/testdata/bench/*
+!/testdata/bench/*.json
+!/testdata/bench/*.log
+/testdata/bench/farm-*
+
 /brag*
