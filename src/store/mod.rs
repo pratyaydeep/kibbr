@@ -38,10 +38,10 @@
 // implementations were written against, and scoped so the allow cannot spread past this
 // module.
 //
-// `ScanOptions::columns` is no longer among them. It was unreachable for a stated reason -
-// a `Predicate` is an opaque `Box<dyn Fn(&Row)>`, so nothing could know which columns one
-// reads - and the way past it needed no interface change: the engine builds every
-// predicate from a `Match` that still has its key. See `engine::execute`.
+// `ScanOptions::columns` is no longer among them. It was unreachable while a scan's filter
+// was a list of opaque `Box<dyn Fn(&Row)>`, which nothing could ask which columns they
+// read. A filter is now a list of `Term`s, and a term is data that still has its key: the
+// engine names the columns from the same terms it hands the scan. See `engine::execute`.
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -55,9 +55,12 @@ use thiserror::Error;
 use crate::infer::infer;
 use crate::types::ColValue;
 
+pub mod columns;
 pub mod disk;
 pub mod manifest;
 pub mod memory;
+#[cfg(test)]
+pub(crate) mod pool;
 pub mod v3;
 
 pub use disk::DiskStore;
@@ -219,9 +222,120 @@ impl Row {
     }
 }
 
-/// Passed beside `ScanOptions` rather than inside it: `Box<dyn Fn>` is not `Clone`, which
-/// would cost `ScanOptions` its `Default`.
-pub type Predicate = Box<dyn Fn(&Row) -> bool + Send + Sync>;
+/// One term of a pattern that the path could not settle, as a scan holds it: the key it
+/// reads, and what it wants there.
+///
+/// **Data, and read through the ladder once.** A term's text has two readings - itself,
+/// and what the ladder types it as; `engine::value_matches` says why - and neither depends
+/// on the row. While a term was a closure over its text both were made again for every
+/// row: the text cloned, and the whole ladder run on it wherever the string reading missed,
+/// which is every row that does not match. `Term::exact` makes them when the term is made,
+/// and a scan only compares.
+///
+/// Data still has its key, too, which a closure could not be asked for: a store can tell
+/// which column a term reads, and put the term to a value before any row holds it.
+///
+/// Still passed beside `ScanOptions` and not inside it. That began because a boxed closure
+/// is not `Clone` and would have cost the options their `Default`; it stays because the
+/// options are what a snapshot is taken with, before any leaf's terms exist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Term {
+    key: String,
+    want: Want,
+}
+
+/// What a term wants of the value under its key.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Want {
+    /// `*`: the key is present and not null.
+    Any,
+    /// One value: the term's text, and what the ladder reads that text as - `infer(text)`,
+    /// run where the term is made and nowhere in a scan.
+    Exact { text: String, inferred: ColValue },
+}
+
+impl Term {
+    pub fn any(key: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            want: Want::Any,
+        }
+    }
+
+    /// A term for one value. The one place the ladder is run on a term's text.
+    pub fn exact(key: impl Into<String>, text: &str) -> Self {
+        Self {
+            key: key.into(),
+            want: Want::Exact {
+                text: text.to_string(),
+                inferred: infer(text).value,
+            },
+        }
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn want(&self) -> &Want {
+        &self.want
+    }
+
+    /// Does a value satisfy the term? `seen` is the value as a rendered row holds it.
+    ///
+    /// `engine::value_matches`, with nothing made per call: the string reading first, so a
+    /// JSON string `"149.00"` is matched by its own text, and then the ladder's reading,
+    /// which is how `ts=2024-01-15T10:30:00Z` finds a `Datetime`. The oracle still calls
+    /// `value_matches` itself, so the two are held to each other by every differential,
+    /// and value by value by a test beside it.
+    pub fn matches(&self, seen: &ColValue) -> bool {
+        match &self.want {
+            Want::Any => !matches!(seen, ColValue::Null),
+            Want::Exact { text, inferred } => {
+                matches!(seen, ColValue::String(s) if s == text) || seen == inferred
+            }
+        }
+    }
+
+    /// `matches`, for one stored value no row was rendered for. `text_column` says the
+    /// column's type is now `String`: a `Datetime` stored there is compared as the text it
+    /// arrived as, which is what `render_row` would have put in its place.
+    pub fn matches_cell(
+        &self,
+        value: &ColValue,
+        written: Option<&serde_json::Value>,
+        text_column: bool,
+    ) -> bool {
+        match (value, text_column) {
+            (ColValue::Datetime(_), true) => {
+                render_text(value, written).is_some_and(|seen| self.matches(&seen))
+            }
+            _ => self.matches(value),
+        }
+    }
+
+    /// A row already rendered: a row without the term's key matches nothing, `*` included.
+    pub fn matches_row(&self, row: &Row) -> bool {
+        row.get(&self.key).is_some_and(|have| self.matches(have))
+    }
+
+    /// A stored row, not rendered: what `matches_row` answers for `render_row` of it, with
+    /// no row cloned to find out. `text_column`: the term's key is a column whose type is
+    /// now `String`.
+    ///
+    /// What the line wrote is looked up only in the one arm that reads it, a `Datetime` in
+    /// a text column. Asked for every row it is a second hash of the key wherever a row
+    /// keeps any spelling at all, for a value nearly no row needs.
+    pub fn matches_in(&self, row: &Row, text_column: bool) -> bool {
+        match row.get(&self.key) {
+            None => false,
+            Some(value @ ColValue::Datetime(_)) if text_column => {
+                render_text(value, row.written(&self.key)).is_some_and(|seen| self.matches(&seen))
+            }
+            Some(value) => self.matches(value),
+        }
+    }
+}
 
 /// The column a time filter reads when none is named. A fallback for a `_leaf.json` that
 /// predates the time source; every current caller names the column.
@@ -480,7 +594,7 @@ pub struct Scan {
     /// 16,694 segment files were read. A file whose every row group the
     /// window pruned is not counted: nothing in it was read.
     pub files_read: u64,
-    /// Rows examined, including those the time window and the predicates rejected.
+    /// Rows examined, including those the time window and the terms rejected.
     ///
     /// A partition the disk store skipped unread contributes nothing, which is the honest
     /// number and the reason the two backends report different ones. Making the disk
@@ -632,6 +746,31 @@ pub struct FlushSummary {
 
 // ── The scan interface ─────────────────────────────────────────────────────────────
 
+/// What a visitor reads of a row that passed the window and the terms.
+///
+/// Asked once for a leaf, before anything is read. **A hint, as `ScanOptions::columns`
+/// is**: a store whose rows are rows already may hand over more than was asked for, and a
+/// visitor must not lean on being handed less. What it buys is on the disk store, where a
+/// row is built out of columns: a count builds none, and a grouping builds a row of the
+/// few columns it labels by.
+///
+/// Whatever is said here, `Scan::matched` counts every row that passed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Wants {
+    /// Nothing: the count is `Scan::matched`. A store need build no row and call no `row`.
+    Nothing,
+    /// Rows holding at least these columns, in storage order.
+    Columns(Vec<String>),
+    /// Every column the scan read, in storage order. The default.
+    Rows,
+    /// Every column the scan read, in storage order, and only the rows `wants_row` says
+    /// yes to: for a visitor that keeps the newest few it is handed and drops the rest,
+    /// most of whose rows would be built to be dropped. A store that builds each row out
+    /// of columns asks it about a row before building it; a store whose rows are rows
+    /// already hands it every row, as it hands `Rows`.
+    Newest,
+}
+
 /// Where a scan's surviving rows go.
 ///
 /// A trait and not `&mut dyn FnMut(&Row, u64)`, which is what this was while storage was
@@ -649,6 +788,50 @@ pub trait Visitor {
     fn wants_partition(&mut self, newest: Option<i64>) -> bool {
         let _ = newest;
         true
+    }
+
+    /// What `row` reads of the row it is handed: see `Wants`. The default is the whole
+    /// row, which is what a closure that was never asked must be assumed to read.
+    fn wants(&self) -> Wants {
+        Wants::Rows
+    }
+
+    /// Is this row worth building? Asked of a visitor that said `Wants::Newest`, for a
+    /// row that passed the window and the terms, before the row is built, in storage
+    /// order.
+    ///
+    /// `ts` is the row's effective time, as `effective_ts` reads it off the row `row`
+    /// would be handed, and `seq` is the ordinal `row` would be handed beside it.
+    ///
+    /// `placed` says that time lies in the day the store keeps the row under. A row's
+    /// day is chosen from its time when it is stored and `ts` is read when it is asked
+    /// for, and the two are one reading for as long as the ladder reads the stored value
+    /// the way it did then. It is `false` only for a row where it no longer does, which
+    /// is a row whose order among the others a visitor can no longer take from its time
+    /// and its ordinal alone. A store with no days says `true`.
+    ///
+    /// `false` means the row cannot change what the visitor keeps. The row is then not
+    /// built and not handed over, and it is still counted in `Scan::matched`.
+    ///
+    /// **Advisory.** A store may hand `row` a row it never asked about - the memory store
+    /// asks about none - so `row` must not lean on having been asked: handed a row this
+    /// would have refused, it must end with the answer it would have had without it.
+    fn wants_row(&mut self, ts: Option<i64>, seq: u64, placed: bool) -> bool {
+        let _ = (ts, seq, placed);
+        true
+    }
+}
+
+/// The visitor of a count: it reads nothing of a row, and says so, so that a store which
+/// would have to build each row out of columns builds none. The count itself is
+/// `Scan::matched`, which the scan keeps whether or not anything is handed over.
+pub struct Counted;
+
+impl Visitor for Counted {
+    fn row(&mut self, _: &Row, _: u64) {}
+
+    fn wants(&self) -> Wants {
+        Wants::Nothing
     }
 }
 
@@ -689,12 +872,13 @@ pub trait LeafStore: Send + Sync {
         self.append(row)
     }
 
-    /// Hand every surviving row to `v`. The one place filtering happens, so the count,
-    /// fetch and group-by paths cannot drift.
+    /// Hand every surviving row to `v`, as far as `v` reads rows (`Visitor::wants`), and
+    /// count every one of them in `Scan::matched` either way. The one place filtering
+    /// happens, so the count, fetch and group-by paths cannot drift.
     fn visit(
         &self,
         opts: &ScanOptions,
-        preds: &[Predicate],
+        terms: &[Term],
         v: &mut dyn Visitor,
     ) -> Result<Scan, StoreError>;
 
@@ -716,11 +900,11 @@ pub trait LeafStore: Send + Sync {
     ///
     /// Defaulted once rather than written twice: it is `visit` with a `Vec` under it, and
     /// two copies of that would be two places for the projection rule to drift.
-    fn scan(&self, opts: &ScanOptions, preds: &[Predicate]) -> Result<Scan, StoreError> {
+    fn scan(&self, opts: &ScanOptions, terms: &[Term]) -> Result<Scan, StoreError> {
         let mut rows = Vec::new();
         let mut scan = {
             let mut sink = Rows(|row: &Row, _: u64| rows.push(project(row, &opts.columns)));
-            self.visit(opts, preds, &mut sink)?
+            self.visit(opts, terms, &mut sink)?
         };
         scan.rows = rows;
         Ok(scan)
@@ -753,7 +937,7 @@ pub trait Snapshot: Send {
         &mut self,
         template_id: u64,
         opts: &ScanOptions,
-        preds: &[Predicate],
+        terms: &[Term],
         v: &mut dyn Visitor,
     ) -> Option<Result<Scan, StoreError>>;
 }
@@ -773,12 +957,12 @@ impl Snapshot for Live {
         &mut self,
         template_id: u64,
         opts: &ScanOptions,
-        preds: &[Predicate],
+        terms: &[Term],
         v: &mut dyn Visitor,
     ) -> Option<Result<Scan, StoreError>> {
         self.0
             .remove(&template_id)
-            .map(|leaf| leaf.visit(opts, preds, v))
+            .map(|leaf| leaf.visit(opts, terms, v))
     }
 }
 
@@ -1312,16 +1496,19 @@ impl Default for StoreManager {
 
 // ── Reading a row's place in time ──────────────────────────────────────────────────
 
-/// A column's value as an instant, or `None` for a value that is not one.
+/// A value as an instant, or `None` for a value that is not one.
 ///
 /// A `Datetime` is one. So is *text* the ladder reads as one: a partition that stores its
 /// time column as text after a second date form arrived hands the value back as
 /// the string it was ingested as, and the row's place in time is still what that string
-/// says. Anything else - absent, null, `"N/A"` - is not an instant.
-pub fn ts_of(row: &Row, column: &str) -> Option<i64> {
-    match row.get(column) {
-        Some(ColValue::Datetime(ns)) => Some(*ns),
-        Some(ColValue::String(text)) => match infer(text).value {
+/// says. Anything else - null, `"N/A"`, a number - is not an instant.
+///
+/// Apart from `ts_of` because a value is not always in a row: a scan reads a column's
+/// instants off its decoded chunk, and must read each as a row holding it would.
+pub fn instant_of(value: &ColValue) -> Option<i64> {
+    match value {
+        ColValue::Datetime(ns) => Some(*ns),
+        ColValue::String(text) => match infer(text).value {
             ColValue::Datetime(ns) => Some(ns),
             _ => None,
         },
@@ -1329,15 +1516,36 @@ pub fn ts_of(row: &Row, column: &str) -> Option<i64> {
     }
 }
 
+/// A row's value under `column` as an instant: `instant_of` it, and `None` for a row
+/// that has no such column.
+pub fn ts_of(row: &Row, column: &str) -> Option<i64> {
+    row.get(column).and_then(instant_of)
+}
+
 /// **The effective time of a row**: the template's time column where it holds an
 /// instant, and otherwise the arrival time the row was stored with.
 ///
-/// **One function, four callers**, and that is the point: the time window reads it, the
-/// result order reads it, `GROUP BY time(...)` reads it and the disk store partitions by
-/// it. Two readings that disagree by one type would put a row in a dated directory while
+/// **One rule, and it is read in two ways.** Of a row it is this function: the result
+/// order reads it, `GROUP BY time(...)` reads it, the disk store partitions by it, and the
+/// time window reads it of a row held in memory. The disk scan reads the same rule where
+/// it has no row to hand this function, as `instant_of` of the time column's value and
+/// then of the arrival time's: in `disk::scan::Unit::times`, for the window over a stored
+/// row group and for the time a row is asked about before it is built; in
+/// `Unit::seen_ts`, for that time where a time column is now text; and in
+/// `Ask::seen_ts_of`, for it of a row not yet in a row group, which is not rendered to be
+/// asked about. `scan::slow_pick`, which a debug build checks each window with, spells it
+/// a fourth time. **Change the rule here and change it there.**
+///
+/// Two readings that disagree by one type would put a row in a dated directory while
 /// ranking it as undated, and the partition holding it would then be skipped by a query
-/// that should have found it - only under a limit, only once the heap fills, so an
-/// unlimited query and a small fixture would both pass.
+/// that should have found it; and a row asked about with another time than it shows
+/// would not be built. Both only under a limit, only once the heap fills, so an unlimited
+/// query and a small fixture would both pass. What holds the readings to this function
+/// is the debug assertions in `scan::hand` and `scan::tail`, and the tests
+/// `a_column_s_instants_are_what_each_row_s_cell_reads_as`,
+/// `the_scan_answers_what_the_plain_scan_answers_whatever_is_read` and
+/// `a_row_is_asked_about_with_the_time_it_shows_and_in_the_day_it_is_stored_under`. A
+/// release build has only the tests.
 ///
 /// `None` only for a row from before the arrival-time column: one with neither an instant
 /// in its time column nor a system column, which is a row in an `undated` partition.
@@ -1738,5 +1946,118 @@ mod tests {
         );
         assert_eq!(whole, (0, 0, 0), "the whole leaf is not every row once");
         assert_eq!(after, rows, "a restart does not hold every row");
+    }
+
+    // ── A term, and a row that was not rendered ────────────────────────────────────
+
+    /// 2024-01-15T10:30:00Z: the instant the pool spells in every form the ladder takes.
+    const INSTANT: i64 = 1_705_314_600_000_000_000;
+
+    fn spelling(text: &str) -> Option<serde_json::Value> {
+        Some(serde_json::Value::String(text.to_string()))
+    }
+
+    /// A row whose one key, `v`, holds `value` beside what a line wrote for it.
+    fn holding(value: ColValue, written: Option<serde_json::Value>) -> Row {
+        let mut row = Row::new();
+        row.insert_written("v".into(), value, written);
+        row
+    }
+
+    /// A `Datetime` under each kind of spelling `render_text` tells apart - none, a string
+    /// that is not its canonical print, a string that is, a JSON number, a string of digits
+    /// - and a value of every other type with a spelling kept and with none.
+    fn spelled() -> Vec<Row> {
+        let seconds = serde_json::Value::from(1_705_314_600_i64);
+        let millis = serde_json::Value::from(1_705_314_600_000_i64);
+        vec![
+            holding(ColValue::Datetime(INSTANT), None),
+            holding(
+                ColValue::Datetime(INSTANT),
+                spelling("2024-01-15T16:00:00+05:30"),
+            ),
+            holding(
+                ColValue::Datetime(INSTANT),
+                spelling(&crate::fmt::rfc3339(INSTANT)),
+            ),
+            holding(ColValue::Datetime(INSTANT), Some(seconds)),
+            holding(ColValue::Datetime(INSTANT), Some(millis)),
+            holding(ColValue::Datetime(INSTANT), spelling("1705314600")),
+            holding(ColValue::String("INFO".into()), None),
+            holding(
+                ColValue::String("[1,2]".into()),
+                Some(serde_json::json!([1, 2])),
+            ),
+            holding(ColValue::Int64(45), None),
+            holding(ColValue::Int64(45), spelling("0045")),
+            holding(ColValue::Float64(200.0), None),
+            holding(ColValue::Float64(200.0), spelling("2e2")),
+            holding(ColValue::Bool(true), None),
+            holding(ColValue::Bool(true), spelling("True")),
+            holding(ColValue::Null, None),
+        ]
+    }
+
+    /// A term put to a stored row answers what it answers for that row rendered, and so
+    /// does a term put to the row's one value and what was written beside it: over every
+    /// value the pool ingests and every spelling above, every term of the pool, in a column
+    /// that is still its own type and in one that is now text.
+    ///
+    /// Rendering clones the row to change one value, which is the cost the two unrendered
+    /// readings are there to avoid; this is what lets a scan use them in its place.
+    #[test]
+    fn a_term_reads_a_stored_row_as_it_reads_the_rendered_one() {
+        let mut rows = spelled();
+        rows.extend(pool::rows());
+        let mut terms = vec![Term::any("v"), Term::any("w"), Term::exact("w", "INFO")];
+        terms.extend(pool::TEXTS.iter().map(|text| Term::exact("v", text)));
+
+        let mut matched = [0u32; 2];
+        for row in &rows {
+            for text_columns in [Vec::new(), vec!["v".to_string()]] {
+                let rendered = render_row(row, &text_columns);
+                let seen = rendered.as_ref().unwrap_or(row);
+                for term in &terms {
+                    let is_text = text_columns.iter().any(|column| column == term.key());
+                    let want = term.matches_row(seen);
+                    assert_eq!(
+                        term.matches_in(row, is_text),
+                        want,
+                        "{term:?} put to {row:?}, text column: {is_text}"
+                    );
+                    let by_value = row.get(term.key()).is_some_and(|value| {
+                        term.matches_cell(value, row.written(term.key()), is_text)
+                    });
+                    assert_eq!(
+                        by_value, want,
+                        "{term:?} put to the value of {row:?}, text column: {is_text}"
+                    );
+                    matched[usize::from(is_text)] += u32::from(want);
+                }
+            }
+        }
+        // Not agreement on nothing: both readings said yes, and often.
+        assert!(matched[0] > 100 && matched[1] > 100, "{matched:?}");
+
+        // And the case the two readings exist for, by hand. In a `Datetime` column every
+        // spelling of the instant finds the row; once the column is text, only the
+        // spelling it arrived in does.
+        let zulu = Term::exact("v", "2024-01-15T10:30:00Z");
+        let arrived = Term::exact("v", "2024-01-15T16:00:00+05:30");
+        let digits = Term::exact("v", "1705314600");
+        let offset = holding(
+            ColValue::Datetime(INSTANT),
+            spelling("2024-01-15T16:00:00+05:30"),
+        );
+        assert!(zulu.matches_in(&offset, false) && arrived.matches_in(&offset, false));
+        assert!(!zulu.matches_in(&offset, true) && arrived.matches_in(&offset, true));
+        let epoch = holding(
+            ColValue::Datetime(INSTANT),
+            Some(serde_json::Value::from(1_705_314_600_i64)),
+        );
+        assert!(zulu.matches_in(&epoch, false) && digits.matches_in(&epoch, false));
+        assert!(!zulu.matches_in(&epoch, true) && digits.matches_in(&epoch, true));
+        // A row without the key matches nothing, `*` included.
+        assert!(!Term::any("w").matches_in(&epoch, false) && !Term::any("w").matches_row(&epoch));
     }
 }

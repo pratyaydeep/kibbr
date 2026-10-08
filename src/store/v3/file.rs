@@ -953,6 +953,14 @@ impl Writer {
 
 // ── Reading row groups ─────────────────────────────────────────────────────────────
 
+/// One chunk as its file stores it: its bytes, CRC-checked and not decoded, and the file
+/// offset they start at, which is the place a refusal of anything in them names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredChunk {
+    pub bytes: Vec<u8>,
+    pub at: u64,
+}
+
 /// A file open for reading row groups. `F` is what holds its bytes: a `File` everywhere
 /// but in the fuzz target, which reads a file held in memory through the same code.
 pub struct Reader<F = File> {
@@ -1153,6 +1161,48 @@ impl<F: Read + Seek> Reader<F> {
                 read::chunk(&body, start, dir, header.row_count as usize)
                     .map_err(|b| b.in_file(&self.path))?,
             );
+        }
+        Ok((out, read))
+    }
+
+    /// The chunks of the columns at `wanted` as the file stores them, each held to
+    /// `MAX_BODY`, read and CRC-checked as `chunks` checks it and not decoded; and the
+    /// chunk bytes read.
+    ///
+    /// What a query reads. Which of a row group's columns it needs decoded depends on
+    /// what its filter finds, and a count of every row needs none; so the reading and the
+    /// CRC come first, for every wanted chunk, and decoding is left to whoever asks.
+    pub fn stored(
+        &mut self,
+        entry: &Entry,
+        header: &Header,
+        wanted: &[usize],
+    ) -> Result<(Vec<StoredChunk>, u64), FormatError> {
+        let area = self.area(entry)?;
+        let offsets = header.chunk_offsets();
+        let mut out = Vec::with_capacity(wanted.len());
+        let mut read = 0u64;
+        for at in wanted {
+            let dir = &header.chunks[*at];
+            // Saturating, as in `chunks`: the read refuses a start no offset can say.
+            let start = area.saturating_add(offsets[*at]);
+            if dir.stored_len > MAX_BODY {
+                return Err(FormatError::Corrupt {
+                    path: self.path.clone(),
+                    offset: start,
+                    what: format!("a chunk of {} bytes", dir.stored_len),
+                });
+            }
+            let bytes = self.read_at(start, dir.stored_len as usize, "a chunk")?;
+            read += bytes.len() as u64;
+            if frame::crc32c(&bytes) != dir.stored_crc {
+                return Err(FormatError::Corrupt {
+                    path: self.path.clone(),
+                    offset: start,
+                    what: "a chunk's CRC does not hold".into(),
+                });
+            }
+            out.push(StoredChunk { bytes, at: start });
         }
         Ok((out, read))
     }
@@ -1362,6 +1412,69 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         assert!(offset > e.offset && offset < len, "{what}");
         assert!(what.contains("a chunk of 268435456 bytes"), "{what}");
+    }
+
+    /// A chunk read as it is stored is the bytes `chunks` decodes, read and checked the
+    /// same way: the same bytes counted, each chunk the file's bytes where the header puts
+    /// it, and the same refusal - a chunk the file does not have, one past what a body may
+    /// be, one whose CRC does not hold - at the same offset in the same words.
+    #[test]
+    fn a_stored_chunk_is_the_bytes_chunks_decodes() {
+        let (dir, path, index) = two_groups("stored-chunks");
+        let bytes = fs::read(&path).expect("read");
+        let len = bytes.len() as u64;
+        let mut reader = Reader::open(&path).expect("open");
+        for e in &index.entries {
+            let columns = index.schemas[e.schema_id as usize].len();
+            let header = reader.header(e, columns).expect("header");
+            let (cells, read) = reader.chunks(e, &header, &[0, 1]).expect("chunks");
+            let (stored, read_stored) = reader.stored(e, &header, &[0, 1]).expect("stored");
+            assert_eq!((stored.len(), read_stored), (2, read));
+            let area = e.offset + u64::from(e.frame_len);
+            let offsets = header.chunk_offsets();
+            for (at, chunk) in stored.iter().enumerate() {
+                let dir = &header.chunks[at];
+                assert_eq!(chunk.at, area + offsets[at]);
+                let from = chunk.at as usize;
+                assert_eq!(chunk.bytes[..], bytes[from..from + dir.stored_len as usize]);
+                assert_eq!(frame::crc32c(&chunk.bytes), dir.stored_crc);
+                // Not decoded, and nothing lost by that: decoding them gives the cells.
+                assert_eq!(
+                    read::chunk(&chunk.bytes, chunk.at, dir, 1).as_ref(),
+                    Ok(&cells[at])
+                );
+            }
+            // One column asked for is one chunk read.
+            let (one, read_one) = reader.stored(e, &header, &[1]).expect("stored");
+            assert_eq!(read_one, u64::from(header.chunks[1].stored_len));
+            assert_eq!(one, stored[1..]);
+
+            let far = Entry {
+                offset: len + 1,
+                ..*e
+            };
+            let refusal = corrupt(reader.stored(&far, &header, &[0]));
+            assert_eq!(refusal.0, len, "{}", refusal.1);
+            assert_eq!(refusal, corrupt(reader.chunks(&far, &header, &[0])));
+
+            let mut lying = header.clone();
+            for (stored_len, why) in [
+                (MAX_BODY, "runs past the end of the file"),
+                (MAX_BODY + 1, "a chunk of 268435457 bytes"),
+            ] {
+                lying.chunks[1].stored_len = stored_len;
+                let refusal = corrupt(reader.stored(e, &lying, &[1]));
+                assert!(refusal.1.contains(why), "{}", refusal.1);
+                assert_eq!(refusal, corrupt(reader.chunks(e, &lying, &[1])));
+            }
+
+            let mut wrong = header.clone();
+            wrong.chunks[0].stored_crc ^= 1;
+            let refusal = corrupt(reader.stored(e, &wrong, &[0]));
+            assert_eq!(refusal, (area, "a chunk's CRC does not hold".to_string()));
+            assert_eq!(refusal, corrupt(reader.chunks(e, &wrong, &[0])));
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A header's `chunks_len` is held to the bytes its entry has for the chunk area, so a

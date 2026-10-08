@@ -5,15 +5,76 @@
 use serde_json::Value;
 
 use super::build::{build, schema_of, BuildError, Level, RowGroup};
+use super::column::{Column, Memo};
 use super::read::{self, ChunkDir, Header, PieceDir};
 use super::{
-    index_width, put_varint, unzigzag, zigzag, Bytes, Form, JsonKind, Source, BITS, CONSTANT,
+    index_width, put_varint, unzigzag, zigzag, Bad, Bytes, Form, JsonKind, Source, BITS, CONSTANT,
     DELTA, DICTIONARY, MAX_BODY, MAX_ROWS, NO_COMPRESSION, PLAIN, VARINT, ZSTD,
 };
 use crate::db::row_of;
 use crate::flatten::parse_line;
 use crate::frame::Next;
 use crate::store::{effective_ts, Row};
+
+/// `read::chunk`, with the typed decoder held to it on the way: what every test here
+/// decodes a chunk through, so that each chunk they build - the ones built to be refused
+/// among them - is read both ways.
+///
+/// The two readers walk one layout and must not drift. `read::chunk` gives cells exactly
+/// when the typed decoder takes the chunk and prints every row of it, and then each row
+/// prints as the cell `read::chunk` made, asked for alone or through a memo. Where
+/// `read::chunk` refuses, the typed decoder refuses the chunk or one of its rows: which,
+/// and in what words, is `read::chunk`'s to say and is what the tests here go on to pin.
+pub(super) fn chunk_both(
+    stored: &[u8],
+    at: u64,
+    dir: &ChunkDir,
+    rows: usize,
+) -> Result<Vec<read::Cell>, Bad> {
+    let cells = read::chunk(stored, at, dir, rows);
+    let column = Column::decode(stored, at, dir, rows);
+    match (&cells, &column) {
+        (Ok(cells), Ok(column)) => {
+            let col = column
+                .over(stored)
+                .expect("a column over the bytes it was decoded from");
+            assert_eq!(col.rows(), cells.len(), "a column of another length");
+            let mut memo = Memo::default();
+            for (row, cell) in cells.iter().enumerate() {
+                assert_eq!(col.cell(row).as_ref(), Ok(cell), "row {row}");
+                assert_eq!(
+                    col.cell_with(row, &mut memo).as_ref(),
+                    Ok(cell),
+                    "row {row}, through the memo"
+                );
+            }
+            // A second pass finds every word and constant already printed.
+            for (row, cell) in cells.iter().enumerate() {
+                assert_eq!(
+                    col.cell_with(row, &mut memo).as_ref(),
+                    Ok(cell),
+                    "row {row}, out of the memo"
+                );
+            }
+            assert!(col.cell(cells.len()).is_err(), "a row past the last");
+        }
+        (Ok(_), Err(bad)) => panic!(
+            "the typed decoder refused a chunk `read::chunk` decodes: {}",
+            bad.what
+        ),
+        (Err(_), Ok(column)) => {
+            let col = column
+                .over(stored)
+                .expect("a column over the bytes it was decoded from");
+            assert!(
+                (0..col.rows()).any(|row| col.cell(row).is_err()),
+                "the typed decoder printed every row of a chunk `read::chunk` refuses"
+            );
+        }
+        (Err(_), Err(_)) => {}
+    }
+    cells
+}
 
 /// Lines through the real parser into one row group, as the store would build it.
 fn group_of(lines: &[String]) -> (Vec<String>, RowGroup) {
@@ -56,7 +117,7 @@ fn rows_of(columns: &[String], rg: &RowGroup) -> Vec<Value> {
         .zip(header.chunk_offsets())
         .map(|(dir, at)| {
             let body = &rg.chunks[at as usize..at as usize + dir.stored_len as usize];
-            read::chunk(body, at, dir, header.row_count as usize).expect("chunk")
+            chunk_both(body, at, dir, header.row_count as usize).expect("chunk")
         })
         .collect();
     (0..header.row_count as usize)
@@ -543,7 +604,7 @@ fn read_piece(
         a: Some(PieceDir { form, encoding }),
         b: None,
     };
-    read::chunk(body, 0, &dir, rows).map_err(|bad| bad.what)
+    chunk_both(body, 0, &dir, rows).map_err(|bad| bad.what)
 }
 
 /// A few stored bytes never decode to more than a plain body could hold: a constant or a
@@ -612,10 +673,10 @@ fn a_row_group_past_the_row_cap_is_neither_written_nor_read() {
         a: None,
         b: None,
     };
-    let cells = read::chunk(&[], 0, &null, MAX_ROWS as usize).expect("chunk");
+    let cells = chunk_both(&[], 0, &null, MAX_ROWS as usize).expect("chunk");
     assert_eq!(cells.len(), MAX_ROWS as usize);
     for rows in [MAX_ROWS as usize + 1, 1_000_000_000] {
-        let bad = read::chunk(&[], 0, &null, rows).expect_err("refused");
+        let bad = chunk_both(&[], 0, &null, rows).expect_err("refused");
         assert!(bad.what.contains("past the 8192"), "{}", bad.what);
     }
     let flag = Form::Bool {
@@ -668,7 +729,7 @@ fn read_stored(
         }),
         b: None,
     };
-    read::chunk(stored, 0, &dir, rows).map_err(|bad| bad.what)
+    chunk_both(stored, 0, &dir, rows).map_err(|bad| bad.what)
 }
 
 /// A word list of these words, then these indexes, one byte each.
@@ -753,7 +814,7 @@ fn read_edited(values: &[&str], edit: impl Fn(&mut Vec<u8>)) -> Result<Vec<read:
     let dir = header.chunks[at].clone();
     let mut body = rg.chunks[offset..offset + dir.stored_len as usize].to_vec();
     edit(&mut body);
-    read::chunk(&body, 0, &dir, header.row_count as usize).map_err(|bad| bad.what)
+    chunk_both(&body, 0, &dir, header.row_count as usize).map_err(|bad| bad.what)
 }
 
 #[test]

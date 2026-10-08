@@ -74,12 +74,12 @@ use super::v3::build::{self, schema_of, Encoded, Level};
 use super::v3::file::{self, Entry, Index, Mark, Reader, Writer};
 use super::v3::{day_of, FormatError, Source, DAY_NS};
 use super::{
-    effective_ts, in_window, lock, nanos_of, render_row, value_bytes, DiskOptions, FlushKind,
-    Flushed, LeafStore, Predicate, Row, RowGroupLimits, Scan, ScanOptions, Snapshot, Store,
-    StoreError, Visitor, DEFAULT_TS_COLUMN,
+    effective_ts, lock, nanos_of, value_bytes, DiskOptions, FlushKind, Flushed, LeafStore, Row,
+    RowGroupLimits, Scan, ScanOptions, Snapshot, Store, StoreError, Term, Visitor,
 };
 
 mod compact;
+mod scan;
 
 // Named through here by whoever runs a compaction: the command, the server's job and its
 // scheduler, the bench.
@@ -1991,12 +1991,12 @@ impl Snapshot for DiskSnapshot {
         &mut self,
         template_id: u64,
         opts: &ScanOptions,
-        preds: &[Predicate],
+        terms: &[Term],
         v: &mut dyn Visitor,
     ) -> Option<Result<Scan, StoreError>> {
         self.leaves
             .remove(&template_id)
-            .map(|frozen| frozen.visit(opts, preds, v))
+            .map(|frozen| frozen.visit(opts, terms, v))
     }
 }
 
@@ -2191,9 +2191,11 @@ impl Day {
         batch
     }
 
-    /// Everything a query reads of this day.
-    fn view(&self) -> View {
+    /// Everything a query reads of this day. `day` is the day itself: the key this is
+    /// filed under, which it does not hold.
+    fn view(&self, day: i64) -> View {
         View {
+            day,
             stored: Arc::clone(&self.stored),
             closing: self.closing.clone(),
             buffer: self.buffer.clone(),
@@ -2205,6 +2207,9 @@ impl Day {
 
 /// A day as one query found it: copied under the leaf's lock, read with it released.
 struct View {
+    /// The UTC day these rows are kept under: the day each one's time was in when it was
+    /// stored. A scan measures the time it reads off a row against it.
+    day: i64,
     stored: Arc<Vec<Stored>>,
     closing: Option<Arc<Batch>>,
     buffer: Vec<Arc<Buffered>>,
@@ -2511,20 +2516,20 @@ impl DiskLeaf {
                 frozen.pruned += part.stored.len() as u64;
                 continue;
             }
-            frozen.views.push(part.view());
+            frozen.views.push(part.view(*day));
         }
         frozen
     }
 
     /// How many rows this day contributes to `count`, if that can be known without reading
-    /// it: no predicate could reject a row, and the window holds the whole day's range.
+    /// it: no term could reject a row, and the window holds the whole day's range.
     fn countable(
         view: &View,
-        preds: &[Predicate],
+        terms: &[Term],
         since: Option<i64>,
         until: Option<i64>,
     ) -> Option<u64> {
-        if !preds.is_empty() {
+        if !terms.is_empty() {
             return None;
         }
         let Some((lo, hi)) = view.span else {
@@ -2545,112 +2550,6 @@ impl DiskLeaf {
         let hi = span.map_or(start.saturating_add(DAY_NS - 1), |(_, hi)| hi);
         since.is_none_or(|from| hi >= from) && until.is_none_or(|to| lo < to)
     }
-
-    /// One day's rows - stored, then in memory - handed to the visitor. `false` once the
-    /// limit is reached.
-    fn visit_day(
-        view: &View,
-        opts: &ScanOptions,
-        preds: &[Predicate],
-        v: &mut dyn Visitor,
-        out: &mut Scan,
-        readers: &mut HashMap<PathBuf, Reader>,
-    ) -> Result<bool, StoreError> {
-        let ts_name = opts.ts_column.as_deref().unwrap_or(DEFAULT_TS_COLUMN);
-        let since = opts.since.map(nanos_of);
-        let until = opts.until.map(nanos_of);
-        let windowed = since.is_some() || until.is_some();
-
-        // A row's position is the rows of its template and day before it in storage order,
-        // counted from the index: the pruned row groups' counts are added unread.
-        let mut seq = 0u64;
-        for s in view.stored.iter() {
-            let rows = u64::from(s.entry.row_count);
-            if windowed
-                && !(since.is_none_or(|from| s.entry.max_time >= from)
-                    && until.is_none_or(|to| s.entry.min_time < to))
-            {
-                out.row_groups_pruned += 1;
-                seq += rows;
-                continue;
-            }
-            out.row_groups_read += 1;
-            // Empty means every column: a `MATCH` returns whole rows. A window always reads
-            // the time column, because it filters on it.
-            let wanted: Vec<usize> = (0..s.schema.len())
-                .filter(|at| {
-                    let name = &s.schema[*at];
-                    opts.columns.is_empty()
-                        || opts.columns.iter().any(|w| w == name)
-                        || (windowed && (name == ts_name || name == super::RECEIVED_AT_COLUMN))
-                })
-                .collect();
-            let reader = match readers.entry(s.file.path.clone()) {
-                std::collections::hash_map::Entry::Occupied(slot) => slot.into_mut(),
-                // The one place a data file is opened for reading, so the one place that
-                // counts them: a file whose every row group the window pruned is not.
-                std::collections::hash_map::Entry::Vacant(slot) => {
-                    out.files_read += 1;
-                    slot.insert(Reader::open(&s.file.path)?)
-                }
-            };
-            let header = reader.header(&s.entry, s.schema.len())?;
-            let (columns, read) = reader.chunks(&s.entry, &header, &wanted)?;
-            out.bytes_read += read;
-
-            let mut row = Row::with_capacity(wanted.len());
-            for r in 0..header.row_count as usize {
-                out.scanned += 1;
-                row.clear();
-                for (at, cells) in wanted.iter().zip(&columns) {
-                    let (value, written) = &cells[r];
-                    row.insert_written(s.schema[*at].clone(), value.clone(), written.clone());
-                }
-                let position = seq;
-                seq += 1;
-                if windowed && !in_window(effective_ts(&row, ts_name), since, until) {
-                    continue;
-                }
-                let rendered = render_row(&row, &opts.text_columns);
-                let seen = rendered.as_ref().unwrap_or(&row);
-                if !preds.iter().all(|pred| pred(seen)) {
-                    continue;
-                }
-                out.matched += 1;
-                v.row(seen, position);
-                if opts.limit != 0 && out.matched as usize >= opts.limit {
-                    return Ok(false);
-                }
-            }
-        }
-
-        // Then the rows not yet in a row group - moved aside first, then buffered - after the
-        // stored ones, because that is the position they will have once written.
-        let in_memory = view
-            .closing
-            .iter()
-            .flat_map(|batch| batch.rows.iter())
-            .chain(view.buffer.iter());
-        for b in in_memory {
-            out.scanned += 1;
-            let position = seq;
-            seq += 1;
-            if windowed && !in_window(effective_ts(&b.row, ts_name), since, until) {
-                continue;
-            }
-            let rendered = render_row(&b.row, &opts.text_columns);
-            let seen = rendered.as_ref().unwrap_or(&b.row);
-            if !preds.iter().all(|pred| pred(seen)) {
-                continue;
-            }
-            out.matched += 1;
-            v.row(seen, position);
-            if opts.limit != 0 && out.matched as usize >= opts.limit {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
 }
 
 /// One leaf as a query found it: see `DiskLeaf::freeze`. Read with no lock held.
@@ -2666,7 +2565,7 @@ impl Frozen {
     fn visit(
         &self,
         opts: &ScanOptions,
-        preds: &[Predicate],
+        terms: &[Term],
         v: &mut dyn Visitor,
     ) -> Result<Scan, StoreError> {
         let since = opts.since.map(nanos_of);
@@ -2675,18 +2574,20 @@ impl Frozen {
             row_groups_pruned: self.pruned,
             ..Scan::default()
         };
+        // What the visitor reads of a row is asked once, here, and not of every row.
+        let ask = scan::Ask::new(opts, terms, v.wants());
         let mut readers = HashMap::new();
         for view in &self.views {
             if !v.wants_partition(view.span.map(|(_, hi)| hi)) {
                 // The visitor has no use for a row from here, but a limit bounds the rows in
                 // the answer and not the rows that matched: the day is still counted, free
                 // when nothing inside it could reject a row, and read otherwise.
-                if let Some(matched) = DiskLeaf::countable(view, preds, since, until) {
+                if let Some(matched) = DiskLeaf::countable(view, terms, since, until) {
                     out.matched += matched;
                     continue;
                 }
             }
-            if !DiskLeaf::visit_day(view, opts, preds, v, &mut out, &mut readers)? {
+            if !scan::day(view, &ask, v, &mut out, &mut readers)? {
                 break;
             }
         }
@@ -2746,11 +2647,11 @@ impl LeafStore for DiskLeaf {
     fn visit(
         &self,
         opts: &ScanOptions,
-        preds: &[Predicate],
+        terms: &[Term],
         v: &mut dyn Visitor,
     ) -> Result<Scan, StoreError> {
         self.freeze(opts.since.map(nanos_of), opts.until.map(nanos_of))
-            .visit(opts, preds, v)
+            .visit(opts, terms, v)
     }
 
     fn len(&self) -> u64 {
@@ -2808,7 +2709,7 @@ pub fn data_files(base: &Path) -> BTreeSet<PathBuf> {
 mod tests {
     use super::*;
     use crate::store::v3::Source;
-    use crate::store::Rows;
+    use crate::store::{in_window, render_row, Counted, Rows, DEFAULT_TS_COLUMN};
     use crate::types::ColValue;
     use std::time::Duration;
 
@@ -3272,7 +3173,7 @@ mod tests {
     }
 
     /// Row groups of `rows` rows and `bytes` payload, and a timeout that never comes.
-    fn thresholds(rows: usize, bytes: usize) -> DiskOptions {
+    pub(super) fn thresholds(rows: usize, bytes: usize) -> DiskOptions {
         DiskOptions {
             row_groups: RowGroupLimits {
                 rows,
@@ -4358,5 +4259,445 @@ mod tests {
         );
         assert!(!said.contains("neither here"), "{said}");
         assert!(staging.exists(), "staging was removed by a start that was refused");
+    }
+
+    // ── What a scan reads ──────────────────────────────────────────────────────────
+
+    /// One day's rows read the plain way: every wanted chunk decoded to cells, a `Row` built
+    /// for every stored row, then the window, then the terms, then the visitor.
+    ///
+    /// **`DiskLeaf::visit_day` as it stood while that was how a day was read, line for
+    /// line.** It calls the reader and the decoder and nothing else of the scan's, so
+    /// whatever the scan does to keep from building a row nobody reads, a test can ask both
+    /// the same question and compare everything they answer: the rows, their positions and
+    /// every counter. Nothing here is to be made faster.
+    pub(super) fn slow_day(
+        view: &View,
+        opts: &ScanOptions,
+        terms: &[Term],
+        v: &mut dyn Visitor,
+        out: &mut Scan,
+        readers: &mut HashMap<PathBuf, Reader>,
+    ) -> Result<bool, StoreError> {
+        let ts_name = opts.ts_column.as_deref().unwrap_or(DEFAULT_TS_COLUMN);
+        let since = opts.since.map(nanos_of);
+        let until = opts.until.map(nanos_of);
+        let windowed = since.is_some() || until.is_some();
+
+        let mut seq = 0u64;
+        for s in view.stored.iter() {
+            let rows = u64::from(s.entry.row_count);
+            if windowed
+                && !(since.is_none_or(|from| s.entry.max_time >= from)
+                    && until.is_none_or(|to| s.entry.min_time < to))
+            {
+                out.row_groups_pruned += 1;
+                seq += rows;
+                continue;
+            }
+            out.row_groups_read += 1;
+            let wanted: Vec<usize> = (0..s.schema.len())
+                .filter(|at| {
+                    let name = &s.schema[*at];
+                    opts.columns.is_empty()
+                        || opts.columns.iter().any(|w| w == name)
+                        || (windowed
+                            && (name == ts_name || name == crate::store::RECEIVED_AT_COLUMN))
+                })
+                .collect();
+            let reader = match readers.entry(s.file.path.clone()) {
+                std::collections::hash_map::Entry::Occupied(slot) => slot.into_mut(),
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    out.files_read += 1;
+                    slot.insert(Reader::open(&s.file.path)?)
+                }
+            };
+            let header = reader.header(&s.entry, s.schema.len())?;
+            let (columns, read) = reader.chunks(&s.entry, &header, &wanted)?;
+            out.bytes_read += read;
+
+            let mut row = Row::with_capacity(wanted.len());
+            for r in 0..header.row_count as usize {
+                out.scanned += 1;
+                row.clear();
+                for (at, cells) in wanted.iter().zip(&columns) {
+                    let (value, written) = &cells[r];
+                    row.insert_written(s.schema[*at].clone(), value.clone(), written.clone());
+                }
+                let position = seq;
+                seq += 1;
+                if windowed && !in_window(effective_ts(&row, ts_name), since, until) {
+                    continue;
+                }
+                let rendered = render_row(&row, &opts.text_columns);
+                let seen = rendered.as_ref().unwrap_or(&row);
+                if !terms.iter().all(|term| term.matches_row(seen)) {
+                    continue;
+                }
+                out.matched += 1;
+                v.row(seen, position);
+                if opts.limit != 0 && out.matched as usize >= opts.limit {
+                    return Ok(false);
+                }
+            }
+        }
+
+        let in_memory = view
+            .closing
+            .iter()
+            .flat_map(|batch| batch.rows.iter())
+            .chain(view.buffer.iter());
+        for b in in_memory {
+            out.scanned += 1;
+            let position = seq;
+            seq += 1;
+            if windowed && !in_window(effective_ts(&b.row, ts_name), since, until) {
+                continue;
+            }
+            let rendered = render_row(&b.row, &opts.text_columns);
+            let seen = rendered.as_ref().unwrap_or(&b.row);
+            if !terms.iter().all(|term| term.matches_row(seen)) {
+                continue;
+            }
+            out.matched += 1;
+            v.row(seen, position);
+            if opts.limit != 0 && out.matched as usize >= opts.limit {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// `Frozen::visit` over `slow_day`: the same days, asked for and counted the same way.
+    pub(super) fn slow_visit(
+        frozen: &Frozen,
+        opts: &ScanOptions,
+        terms: &[Term],
+        v: &mut dyn Visitor,
+    ) -> Result<Scan, StoreError> {
+        let since = opts.since.map(nanos_of);
+        let until = opts.until.map(nanos_of);
+        let mut out = Scan {
+            row_groups_pruned: frozen.pruned,
+            ..Scan::default()
+        };
+        let mut readers = HashMap::new();
+        for view in &frozen.views {
+            if !v.wants_partition(view.span.map(|(_, hi)| hi)) {
+                if let Some(matched) = DiskLeaf::countable(view, terms, since, until) {
+                    out.matched += matched;
+                    continue;
+                }
+            }
+            if !slow_day(view, opts, terms, v, &mut out, &mut readers)? {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Everything a scan counts, in the order `Scan` names it.
+    pub(super) fn counters(scan: &Scan) -> [u64; 6] {
+        [
+            scan.matched,
+            scan.scanned,
+            scan.row_groups_read,
+            scan.row_groups_pruned,
+            scan.files_read,
+            scan.bytes_read,
+        ]
+    }
+
+    const SECOND: i64 = 1_000_000_000;
+
+    /// The rows of `four_units` in each of its units, and all of them.
+    const UNIT: i64 = 16;
+    const TAIL: i64 = 10;
+    const ROWS: i64 = 3 * UNIT + TAIL;
+
+    /// Row 7 of the first row group, of the second, and of the rows in memory: each alone in
+    /// its second, so a window one second long has it as its first row and its only one.
+    const HITS: [(i64, i64); 3] = [(7, 1_000), (UNIT + 7, 2_000), (3 * UNIT + 7, 3_000)];
+
+    /// A second no row is in, inside the first row group's range and after every other's.
+    const QUIET: i64 = 4_000;
+
+    /// One template and one day in four units of storage: three row groups of sixteen rows
+    /// in the day's file, then five rows a flush has moved aside and not yet written, then
+    /// five still buffered.
+    ///
+    /// Row `n` is at `T0 + n` seconds, but for the three rows `HITS` names and the last row
+    /// of the first row group, which is at 5,000 seconds: its range then holds every window
+    /// the tests ask for, so the first row group is always read, and the second and third
+    /// are pruned by a window past their last row.
+    fn four_units(scratch: &Scratch) -> (DiskStore, Arc<DiskLeaf>) {
+        let at = |n: i64| {
+            let second = match HITS.iter().find(|(row, _)| *row == n) {
+                Some((_, second)) => *second,
+                None if n == UNIT - 1 => 5_000,
+                None => n,
+            };
+            row(T0 + second * SECOND, n)
+        };
+        let s = store_with(scratch, thresholds(UNIT as usize, usize::MAX));
+        let opened = s.open(7, "ts").expect("leaf");
+        for n in 0..3 * UNIT {
+            opened.append(at(n));
+        }
+        let done = s.flush(FlushKind::Tick);
+        assert!(done.failed.is_empty(), "{:?}", done.failed);
+        assert_eq!((done.rows, done.row_groups), (3 * UNIT as u64, 3));
+
+        let leaf = Arc::clone(&s.leaves.read().expect("leaves")[&7]);
+        for n in 3 * UNIT..3 * UNIT + TAIL / 2 {
+            leaf.append(at(n));
+        }
+        // The first hold of a flush and not its second: the rows are moved aside and stay
+        // there, as they are while the flush is encoding and writing them.
+        assert!(
+            leaf.move_day(day_of(T0)).is_some(),
+            "nothing was moved aside"
+        );
+        for n in 3 * UNIT + TAIL / 2..ROWS {
+            leaf.append(at(n));
+        }
+        {
+            let state = leaf.state();
+            let part = &state.days[&day_of(T0)];
+            assert_eq!(
+                (
+                    part.stored.len(),
+                    part.closing.as_ref().map_or(0, |batch| batch.rows.len()),
+                    part.buffer.len(),
+                ),
+                (3, 5, 5)
+            );
+        }
+        (s, leaf)
+    }
+
+    /// The second `second` of the day, as a window, and what `Exists` asks of a store: one
+    /// row, and no column but the ones the window reads.
+    fn exists_in(second: i64) -> ScanOptions {
+        let from = T0 + second * SECOND;
+        ScanOptions {
+            columns: vec![crate::store::RECEIVED_AT_COLUMN.into(), "ts".into()],
+            limit: 1,
+            since: Some(SystemTime::UNIX_EPOCH + Duration::from_nanos(from as u64)),
+            until: Some(SystemTime::UNIX_EPOCH + Duration::from_nanos((from + SECOND) as u64)),
+            ts_column: Some("ts".into()),
+            ..ScanOptions::default()
+        }
+    }
+
+    /// "Is anything in this window?" stops on the first row inside it, on disk as in
+    /// memory, and `scanned` is the rows it looked at to get there: every row of a row group
+    /// read to its end, none of a row group the window pruned, and the rows up to the hit
+    /// in the unit where it stopped. With nothing inside, that is every row of every row
+    /// group the window could not rule out, and every row in memory.
+    ///
+    /// The count is rows looked at, and not rows decoded or rows built: it is what an
+    /// answer reports as `rows_scanned`, and it must not move when the scan stops building
+    /// a row to look at it.
+    #[test]
+    fn exists_on_disk_stops_on_the_first_row_inside_the_window() {
+        let scratch = Scratch::new("exists-window");
+        let (_s, leaf) = four_units(&scratch);
+        // Each window, then: rows matched, rows scanned, row groups read and pruned.
+        let cases = [
+            // Row 7 of the first row group: the seven before it, and it.
+            (HITS[0].1, (1, 8, 1, 0)),
+            // Row 7 of the second: the first row group whole, then eight.
+            (HITS[1].1, (1, UNIT as u64 + 8, 2, 0)),
+            // Row 7 of the rows in memory: the first row group whole, the other two
+            // pruned, then eight.
+            (HITS[2].1, (1, UNIT as u64 + 8, 1, 2)),
+            // Nothing: the first row group whole, and every row in memory.
+            (QUIET, (0, (UNIT + TAIL) as u64, 1, 2)),
+        ];
+        for (second, want) in cases {
+            let scan = leaf
+                .visit(&exists_in(second), &[], &mut Counted)
+                .expect("scan");
+            assert_eq!(
+                (
+                    scan.matched,
+                    scan.scanned,
+                    scan.row_groups_read,
+                    scan.row_groups_pruned
+                ),
+                want,
+                "the window at second {second}"
+            );
+        }
+    }
+
+    /// The same question settled by a term and not by the window: the scan stops on the
+    /// first row the term matches, and `scanned` is that row and every row before it. No
+    /// row group is pruned - a term rules none out - so each one before the hit is read to
+    /// its end. With a window that holds the whole day beside the term, the same numbers.
+    #[test]
+    fn exists_on_disk_stops_on_the_first_row_a_term_matches() {
+        let scratch = Scratch::new("exists-term");
+        let (_s, leaf) = four_units(&scratch);
+        let open = ScanOptions {
+            columns: vec![
+                crate::store::RECEIVED_AT_COLUMN.into(),
+                "n".into(),
+                "ts".into(),
+            ],
+            limit: 1,
+            ts_column: Some("ts".into()),
+            ..ScanOptions::default()
+        };
+        let all_day = ScanOptions {
+            since: Some(SystemTime::UNIX_EPOCH + Duration::from_nanos(T0 as u64)),
+            until: Some(
+                SystemTime::UNIX_EPOCH + Duration::from_nanos((T0 + 6_000 * SECOND) as u64),
+            ),
+            ..open.clone()
+        };
+        // Each `n`, then: rows matched, rows scanned, row groups read.
+        let cases = [
+            (HITS[0].0, (1, 8, 1)),
+            (HITS[1].0, (1, UNIT as u64 + 8, 2)),
+            (HITS[2].0, (1, 3 * UNIT as u64 + 8, 3)),
+            // An `n` no row holds: every row was looked at.
+            (ROWS, (0, ROWS as u64, 3)),
+        ];
+        for (n, want) in cases {
+            // As the row's value prints, and as its line wrote it: one `Int64` to a term.
+            for text in [n.to_string(), format!("{n:04}")] {
+                for opts in [&open, &all_day] {
+                    let scan = leaf
+                        .visit(opts, &[Term::exact("n", &text)], &mut Counted)
+                        .expect("scan");
+                    assert_eq!(
+                        (
+                            scan.matched,
+                            scan.scanned,
+                            scan.row_groups_read,
+                            scan.row_groups_pruned
+                        ),
+                        (want.0, want.1, want.2, 0),
+                        "n = {text}, windowed: {}",
+                        opts.since.is_some()
+                    );
+                }
+            }
+        }
+    }
+
+    /// The scan and `slow_visit` over one frozen leaf, each handing its rows to a visitor
+    /// that keeps them: the rows, their positions and their order must be the same, and so
+    /// must every counter. What the scan answered is returned.
+    fn scan_both(leaf: &DiskLeaf, opts: &ScanOptions, terms: &[Term]) -> (Scan, Vec<(Row, u64)>) {
+        let frozen = leaf.freeze(opts.since.map(nanos_of), opts.until.map(nanos_of));
+        let mut rows = Vec::new();
+        let scan = frozen
+            .visit(
+                opts,
+                terms,
+                &mut Rows(|row: &Row, seq: u64| rows.push((row.clone(), seq))),
+            )
+            .expect("scan");
+        let mut slow_rows = Vec::new();
+        let slow = slow_visit(
+            &frozen,
+            opts,
+            terms,
+            &mut Rows(|row: &Row, seq: u64| slow_rows.push((row.clone(), seq))),
+        )
+        .expect("the plain scan");
+        assert_eq!(counters(&scan), counters(&slow), "counters, for {opts:?}");
+        assert_eq!(rows, slow_rows, "rows, for {opts:?}");
+        (scan, rows)
+    }
+
+    /// The plain scan is the scan: over row groups, rows moved aside and rows buffered,
+    /// with a window and without, stopped by a limit and not, reading every column and
+    /// reading one, both hand over the same rows at the same positions and count the same.
+    /// And a row's position is the rows of its day before it, whichever unit holds it and
+    /// whether or not the row groups before it were read.
+    #[test]
+    fn the_plain_scan_hands_over_what_the_scan_does() {
+        let scratch = Scratch::new("plain-scan");
+        let (_s, leaf) = four_units(&scratch);
+        let whole = ScanOptions {
+            ts_column: Some("ts".into()),
+            ..ScanOptions::default()
+        };
+        let (scan, rows) = scan_both(&leaf, &whole, &[]);
+        assert_eq!((scan.matched, scan.scanned), (ROWS as u64, ROWS as u64));
+        for (at, (row, seq)) in rows.iter().enumerate() {
+            assert_eq!(
+                (row.get("n"), *seq),
+                (Some(&ColValue::Int64(at as i64)), at as u64)
+            );
+        }
+
+        for (row, second) in HITS {
+            for limit in [0, 1] {
+                for columns in [Vec::new(), vec!["ts".to_string()]] {
+                    let opts = ScanOptions {
+                        columns,
+                        limit,
+                        ..exists_in(second)
+                    };
+                    let (scan, rows) = scan_both(&leaf, &opts, &[]);
+                    assert_eq!(scan.matched, 1, "{opts:?}");
+                    let seqs: Vec<u64> = rows.iter().map(|(_, seq)| *seq).collect();
+                    assert_eq!(seqs, [row as u64], "{opts:?}");
+                }
+            }
+        }
+        let (scan, rows) = scan_both(&leaf, &exists_in(QUIET), &[]);
+        assert_eq!((scan.matched, rows.len()), (0, 0));
+        // A window the whole day is outside of: the day is ruled out before it is read.
+        let (scan, _) = scan_both(&leaf, &exists_in(2 * 86_400), &[]);
+        assert_eq!(counters(&scan), [0, 0, 0, 3, 0, 0]);
+
+        // Terms: one that a single row matches, in a row group and in memory; `*` on a
+        // key every row has and on one none has; two together; and a term beside a window
+        // that holds its row, then beside one that does not.
+        let second = HITS[1].0.to_string();
+        let buffered = HITS[2].0.to_string();
+        let lists: [(Vec<Term>, Vec<u64>); 5] = [
+            (vec![Term::exact("n", &second)], vec![HITS[1].0 as u64]),
+            (vec![Term::exact("n", &buffered)], vec![HITS[2].0 as u64]),
+            (vec![Term::any("n")], (0..ROWS as u64).collect()),
+            (vec![Term::any("absent")], Vec::new()),
+            (
+                vec![Term::any("ts"), Term::exact("n", &second)],
+                vec![HITS[1].0 as u64],
+            ),
+        ];
+        for (terms, want) in &lists {
+            for limit in [0, 1] {
+                let opts = ScanOptions {
+                    limit,
+                    ..whole.clone()
+                };
+                let (scan, rows) = scan_both(&leaf, &opts, terms);
+                let seqs: Vec<u64> = rows.iter().map(|(_, seq)| *seq).collect();
+                let kept = if limit == 0 {
+                    want.len()
+                } else {
+                    want.len().min(1)
+                };
+                assert_eq!(seqs, want[..kept], "{terms:?}, limit {limit}");
+                assert_eq!(scan.matched, kept as u64, "{terms:?}, limit {limit}");
+            }
+        }
+        let term = [Term::exact("n", &second)];
+        for (window, want) in [(HITS[1].1, 1), (HITS[0].1, 0)] {
+            // Every column, so the term's own is among the ones read.
+            let opts = ScanOptions {
+                columns: Vec::new(),
+                ..exists_in(window)
+            };
+            let (scan, _) = scan_both(&leaf, &opts, &term);
+            assert_eq!(scan.matched, want, "the window at second {window}");
+        }
     }
 }

@@ -2,7 +2,18 @@
 //!
 //! Every length is compared with the bytes that remain before it is used, every CRC is
 //! checked before the bytes it covers are decoded, and every field is held to its closed
-//! set of values. What a query reads is what this checked.
+//! set of values. Compaction, recovery and the walk decode a chunk through `chunk`, so
+//! what they read is what this checked, every value of it.
+//!
+//! **A query is held to less, and by choice.** It reads a row group's header through
+//! `header`, and its chunks as the file stores them, CRC-checked and not decoded
+//! (`file::Reader::stored`). Of those it decodes the ones its window, its terms or a row
+//! it builds ask for, with `column::Column`, which makes the checks `piece` makes on the
+//! layout and leaves what only printing a value finds - text that is not UTF-8, a literal
+//! row that is not JSON, a float that is not finite, a date its form cannot print - to
+//! `cell`, called for the rows the query prints and for no other. So a count can answer
+//! from a chunk none of whose values was printed, and a chunk nothing asked for has been
+//! held to its CRC and no further.
 
 use serde_json::Value;
 
@@ -204,7 +215,7 @@ pub fn header(
 }
 
 /// A row count past what a row group holds, named where it is written.
-fn too_many_rows(at: u64, rows: usize) -> Bad {
+pub(super) fn too_many_rows(at: u64, rows: usize) -> Bad {
     Bad::at(
         at,
         format!("row group of {rows} rows, past the {MAX_ROWS} a row group holds"),
@@ -291,8 +302,9 @@ fn piece_form(r: &mut Bytes<'_>) -> Result<PieceDir, Bad> {
 
 // ── Chunks ─────────────────────────────────────────────────────────────────────────
 
-/// One decoded value: what a query compares against, and - where printing that would not
-/// give back what was ingested - the JSON value that was.
+/// One decoded value: what a row holds, and so what a term is said of
+/// (`Term::matches_cell`), and - where printing that would not give back what was
+/// ingested - the JSON value that was.
 pub type Cell = (ColValue, Option<Value>);
 
 /// A chunk's stored bytes, already CRC-checked, into one cell per row. `base` is the
@@ -324,7 +336,7 @@ pub fn chunk(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Ve
 
 /// A zstd chunk's body: one zstd frame (RFC 8878) holding the whole of it and nothing else,
 /// which decompresses to exactly `body_len` bytes.
-fn unzstd(stored: &[u8], body_len: u32) -> Result<Vec<u8>, String> {
+pub(super) fn unzstd(stored: &[u8], body_len: u32) -> Result<Vec<u8>, String> {
     let frame = zstd::zstd_safe::find_frame_compressed_size(stored).map_err(|code| {
         format!(
             "not a zstd frame: {}",
@@ -607,7 +619,7 @@ fn print_once(
 }
 
 /// One value as an encoding lays it out, before its form prints it.
-enum Raw<'a> {
+pub(super) enum Raw<'a> {
     Text(&'a [u8]),
     Int(i64),
     Float(f64),
@@ -618,7 +630,7 @@ enum Raw<'a> {
 }
 
 /// One value in plain layout.
-fn plain_value<'a>(r: &mut Bytes<'a>, form: &Form) -> Result<Raw<'a>, Bad> {
+pub(super) fn plain_value<'a>(r: &mut Bytes<'a>, form: &Form) -> Result<Raw<'a>, Bad> {
     let at = r.offset();
     Ok(match *form {
         Form::String { .. } => {
@@ -638,10 +650,13 @@ fn plain_value<'a>(r: &mut Bytes<'a>, form: &Form) -> Result<Raw<'a>, Bad> {
     })
 }
 
-/// A value printed through its form: what a query compares against, and - where printing
-/// that would not give back what was ingested - the JSON value that was. `at` is where the
-/// value's bytes are, for the error.
-fn cell(
+/// A value printed through its form: what a row holds, and so what a term is said of,
+/// and - where printing that would not give back what was ingested - the JSON value that
+/// was. `at` is where the value's bytes are, for the error.
+///
+/// A scan puts a term to a column's typed values and comes here for a row it builds, and
+/// for a value no typed compare is known to answer for.
+pub(super) fn cell(
     raw: &Raw<'_>,
     form: &Form,
     lit: bool,

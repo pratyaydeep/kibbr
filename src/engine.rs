@@ -18,8 +18,8 @@ use crate::flatten::{promoted_token, split_token};
 use crate::fmt::{col_text, commas, duration_text};
 use crate::infer::infer;
 use crate::store::{
-    effective_ts, nanos_of, Predicate, Row, Rows, ScanOptions, StoreError, StoreManager, Visitor,
-    RECEIVED_AT_COLUMN,
+    effective_ts, nanos_of, Counted, Row, ScanOptions, StoreError, StoreManager, Term, Visitor,
+    Wants, RECEIVED_AT_COLUMN,
 };
 use crate::trie::{Node, Trie};
 use crate::types::{ColValue, ColumnType};
@@ -1171,6 +1171,18 @@ struct Newest {
     /// `None` = keep everything.
     keep: Option<usize>,
     heap: BinaryHeap<Ranked>,
+    /// Whether a store may be told that a row is not worth building: see
+    /// `Fetch::wants_row`. It starts `true` and goes `false`, for the rest of the query,
+    /// at the first row asked about whose time is not in the day it is stored under.
+    ///
+    /// Until such a row no two rows offered carry one `Rank`, and the rows kept are then
+    /// the best of the rows that matched whichever of the rest were offered. From such a
+    /// row on two rows can carry one `Rank` - one position in each of two days, and one
+    /// time, or none - and which of the two the heap keeps is decided by where its equal
+    /// rows lie, which every push moves, one that is popped at once among them. So from
+    /// there every row is offered, in storage order, and the heap goes through the states
+    /// it would have gone through had no row ever been asked about.
+    gate: bool,
 }
 
 impl Newest {
@@ -1178,6 +1190,18 @@ impl Newest {
         Self {
             keep,
             heap: BinaryHeap::new(),
+            gate: true,
+        }
+    }
+
+    /// A heap that is offered every row from the first, and asks to be asked about none:
+    /// what a fetch was before a store could ask, kept for the tests to hold the answer
+    /// to.
+    #[cfg(test)]
+    fn offered_every_row(keep: Option<usize>) -> Self {
+        Self {
+            gate: false,
+            ..Self::new(keep)
         }
     }
 
@@ -1230,8 +1254,9 @@ impl Newest {
 /// The `Fetch` mode's sink: rank each row, drop the ones an earlier page served, and let
 /// the heap keep the best.
 ///
-/// A struct rather than a closure because it answers `wants_partition` too, and that is
-/// the whole reason `Visitor` is a trait.
+/// A struct rather than a closure because a closure can only be handed rows: this one
+/// also says whether a day is worth opening (`wants_partition`) and, while there is a
+/// limit to fill, whether a row is worth building (`wants`, `wants_row`).
 struct Fetch<'a> {
     keep: &'a mut Newest,
     key: u64,
@@ -1269,6 +1294,102 @@ impl Visitor for Fetch<'_> {
     fn wants_partition(&mut self, newest: Option<i64>) -> bool {
         let best = (Reverse(newest), self.key, 0u64);
         self.keep.worst().is_none_or(|worst| best < worst)
+    }
+
+    /// Asked before each row while there is a limit to fill, and until the gate is off.
+    /// With no limit every row is kept and there is nothing to ask.
+    fn wants(&self) -> Wants {
+        if self.keep.keep.is_some() && self.keep.gate {
+            Wants::Newest
+        } else {
+            Wants::Rows
+        }
+    }
+
+    /// Could `row` change what the heap holds? Not for a row at or before the cursor,
+    /// which `row` drops before the heap sees it; and not for a row ranked after the
+    /// worst row of a full heap, which `offer` would push and pop again at once.
+    ///
+    /// A rank equal to the worst is let through: the push and the pop then run as they
+    /// would have, and which of the two equal rows is left is theirs to say.
+    ///
+    /// **Refusing a row leaves the heap as offering it would have**, and that is what
+    /// lets a row go unbuilt without the answer moving: pushing a rank greater than every
+    /// rank held and popping it puts each row back where it was. It holds while the ranks
+    /// held are all different, which they are until a row that is not `placed` - so the
+    /// first such row turns the gate off, and it stays off: see `Newest::gate`.
+    ///
+    /// `ts` only decides whether the row is built. `row` ranks the row it is handed by
+    /// the time it reads off it, as it always did.
+    fn wants_row(&mut self, ts: Option<i64>, seq: u64, placed: bool) -> bool {
+        if !placed {
+            self.keep.gate = false;
+        }
+        if !self.keep.gate {
+            return true;
+        }
+        let rank = (Reverse(ts), self.key, seq);
+        if self.after.is_some_and(|stop| rank <= stop) {
+            return false;
+        }
+        self.keep.worst().is_none_or(|worst| rank <= worst)
+    }
+}
+
+/// The `GroupBy` mode's sink: each row counted under its bucket and its label.
+///
+/// A struct rather than a closure because it says what it reads of a row, which a closure
+/// cannot be asked: the grouping's columns, and the two time columns when the rows are
+/// bucketed. A store that builds each row out of columns then builds one of those few and
+/// not of every column the terms read beside them.
+struct Grouped<'a> {
+    tally: &'a mut Tally,
+    columns: &'a [String],
+    /// What `row` reads: `columns`, and under `time(...)` the leaf's time column and the
+    /// arrival time a row falls back on.
+    reads: Vec<String>,
+    ts: &'a str,
+    bucket_ns: Option<i64>,
+}
+
+impl<'a> Grouped<'a> {
+    fn new(
+        tally: &'a mut Tally,
+        columns: &'a [String],
+        ts: &'a str,
+        bucket_ns: Option<i64>,
+    ) -> Self {
+        let mut reads = columns.to_vec();
+        if bucket_ns.is_some() {
+            reads.push(ts.to_string());
+            reads.push(RECEIVED_AT_COLUMN.to_string());
+        }
+        Self {
+            tally,
+            columns,
+            reads,
+            ts,
+            bucket_ns,
+        }
+    }
+}
+
+impl Visitor for Grouped<'_> {
+    fn row(&mut self, row: &Row, _: u64) {
+        // `None` twice over: no `time(...)` was asked for, or one was and this row has no
+        // timestamp to place it by. The renderers tell the two apart from the width, which
+        // they already hold.
+        let bucket = self
+            .bucket_ns
+            .and_then(|w| effective_ts(row, self.ts).map(|ns| bucket_of(ns, w)));
+        *self
+            .tally
+            .entry((bucket, group_values(row, self.columns)))
+            .or_insert(0) += 1;
+    }
+
+    fn wants(&self) -> Wants {
+        Wants::Columns(self.reads.clone())
     }
 }
 
@@ -1308,6 +1429,18 @@ pub fn execute(
     stores: &StoreManager,
     query: &Query,
 ) -> Result<QueryResult, ExecError> {
+    answer(trie, stores, query, Newest::new(query.limit))
+}
+
+/// `execute`, handed the heap a fetch keeps its rows in. There is one such heap for a
+/// query, made for the query's limit; a test hands over one that is offered every row, to
+/// hold the answer to what it is when no store asks before it builds a row.
+fn answer(
+    trie: &Trie,
+    stores: &StoreManager,
+    query: &Query,
+    mut newest: Newest,
+) -> Result<QueryResult, ExecError> {
     let exists_only = query.mode == QueryMode::Exists;
     let mut opts = query.scan_options();
     let started = Instant::now();
@@ -1342,7 +1475,6 @@ pub fn execute(
     let Some(mut snapshot) = snapshot else {
         return Ok(result);
     };
-    let mut newest = Newest::new(query.limit);
     // Split once rather than per leaf: the width decides the time axis and the columns
     // decide the label, and neither changes between leaves.
     let (width, columns) = match &query.mode {
@@ -1357,16 +1489,16 @@ pub fn execute(
     let mut tally = Tally::new();
 
     for leaf in &plan.leaves {
-        let preds: Vec<Predicate> = leaf.residual.iter().map(predicate).collect();
+        let terms: Vec<Term> = leaf.residual.iter().map(term).collect();
         let ts = leaf.time_column.as_str();
         opts.ts_column = Some(leaf.time_column.clone());
         opts.text_columns = leaf.text_columns.clone();
 
-        // **Column pruning**, without touching `Predicate`: every predicate here was
-        // built from a `Match` two lines up, so its key is known even though a
-        // `Box<dyn Fn(&Row)>` cannot be asked. Those keys, the group keys and the
-        // timestamp column are all any mode but `Fetch` reads, so a store may skip the
-        // rest. `Fetch` returns whole rows and names nothing - empty is every column.
+        // **Column pruning**: every term the scan is handed was made from a `Match` of
+        // `leaf.residual`, and a term's key is the column it reads. Those keys, the group
+        // keys and the timestamp column are all any mode but `Fetch` reads, so a store may
+        // skip the rest. `Fetch` returns whole rows and names nothing - empty is every
+        // column.
         opts.columns = match &query.mode {
             QueryMode::Fetch => Vec::new(),
             _ => {
@@ -1391,10 +1523,9 @@ pub fn execute(
 
         let id = leaf.template_id;
         let scan = match &query.mode {
-            // One row is the whole answer, and `visit` stops on it.
-            QueryMode::Exists | QueryMode::Count => {
-                snapshot.visit(id, &opts, &preds, &mut Rows(|_: &Row, _| {}))
-            }
+            // One row is the whole answer, and `visit` stops on it. Neither mode reads a
+            // row: the answer is how many passed, which the scan counts.
+            QueryMode::Exists | QueryMode::Count => snapshot.visit(id, &opts, &terms, &mut Counted),
             QueryMode::Fetch => {
                 let mut fetch = Fetch {
                     keep: &mut newest,
@@ -1402,25 +1533,11 @@ pub fn execute(
                     ts,
                     after: query.cursor.map(|c| c.rank),
                 };
-                snapshot.visit(id, &opts, &preds, &mut fetch)
+                snapshot.visit(id, &opts, &terms, &mut fetch)
             }
             QueryMode::GroupBy(_) => {
-                let (tally, columns) = (&mut tally, &columns);
-                snapshot.visit(
-                    id,
-                    &opts,
-                    &preds,
-                    &mut Rows(|row: &Row, _| {
-                        // `None` twice over: no `time(...)` was asked for, or one was and this
-                        // row has no timestamp to place it by. The renderers tell the two
-                        // apart from the width, which they already hold.
-                        let bucket = bucket_ns
-                            .and_then(|w| effective_ts(row, ts).map(|ns| bucket_of(ns, w)));
-                        *tally
-                            .entry((bucket, group_values(row, columns)))
-                            .or_insert(0) += 1;
-                    }),
-                )
+                let mut grouped = Grouped::new(&mut tally, &columns, ts, bucket_ns);
+                snapshot.visit(id, &opts, &terms, &mut grouped)
             }
         };
         // A planned template with no leaf is a known template holding no rows: the second
@@ -1476,11 +1593,13 @@ pub fn execute(
     Ok(result)
 }
 
-/// One residual term as a scan predicate.
-fn predicate(term: &Match) -> Predicate {
-    let key = term.key.clone();
-    let want = term.value.clone();
-    Box::new(move |row: &Row| row.get(&key).is_some_and(|have| value_matches(&want, have)))
+/// One residual term as the scan holds it: its key, and its text read through the ladder
+/// here - once for the leaf, where it used to be read again for every row.
+fn term(m: &Match) -> Term {
+    match &m.value {
+        MatchValue::Any => Term::any(m.key.clone()),
+        MatchValue::Exact(text) => Term::exact(m.key.clone(), text),
+    }
 }
 
 /// Does a stored value satisfy `KEY=VALUE`?
@@ -1493,6 +1612,11 @@ fn predicate(term: &Match) -> Predicate {
 /// can only be matched by putting the flag through the same ladder the value went through.
 /// The string reading comes first so a JSON string `"149.00"` is matched by its own text
 /// rather than by the float it would infer to.
+///
+/// **The contract as it is said, not as a scan asks it.** Both readings are made on every
+/// call, so a scan asks `store::Term::matches` instead - this, with the readings made once
+/// when the term is. The oracle calls this one, and a test holds the two equal on every
+/// value either can be handed.
 pub fn value_matches(want: &MatchValue, stored: &ColValue) -> bool {
     match want {
         MatchValue::Any => !matches!(stored, ColValue::Null),
@@ -1643,8 +1767,7 @@ mod tests {
     #[test]
     fn a_publish_between_the_plan_and_the_snapshot_plans_again() {
         use crate::store::{
-            LeafStore, MemoryStore, Predicate, Scan, ScanOptions, Snapshot, Store, StoreError,
-            Visitor,
+            LeafStore, MemoryStore, Scan, ScanOptions, Snapshot, Store, StoreError, Term, Visitor,
         };
         use std::sync::atomic::{AtomicBool, AtomicU64};
 
@@ -1665,7 +1788,7 @@ mod tests {
                 &mut self,
                 _: u64,
                 _: &ScanOptions,
-                _: &[Predicate],
+                _: &[Term],
                 _: &mut dyn Visitor,
             ) -> Option<Result<Scan, StoreError>> {
                 None
@@ -2223,5 +2346,1303 @@ mod tests {
         let edge = nanos_of(at(EPOCH + 137));
         assert_eq!(bucket_of(edge, width), nanos_of(at(EPOCH)));
         assert_eq!(nanos_of(at(EPOCH)), ns(EPOCH));
+    }
+
+    /// A term read through the ladder once gives `value_matches`' answer for every value
+    /// it can be put to: each value the pool ingests, as the ladder typed it and as the
+    /// text it would be in a column since widened, and null - against every text of the
+    /// pool as a term, and `*`.
+    ///
+    /// `value_matches` is the contract and the oracle's side of every differential; the
+    /// scan no longer calls it. This is what says the scan's side is the same question.
+    #[test]
+    fn a_term_read_once_matches_what_value_matches_does() {
+        use crate::store::pool;
+
+        let mut values = vec![ColValue::Null];
+        for row in pool::rows() {
+            values.extend(row.get("v").cloned());
+        }
+        for text in pool::TEXTS {
+            values.push(ColValue::String(text.to_string()));
+        }
+        let mut wants = vec![MatchValue::Any];
+        wants.extend(
+            pool::TEXTS
+                .iter()
+                .map(|text| MatchValue::Exact(text.to_string())),
+        );
+
+        let (mut by_text, mut by_ladder) = (0, 0);
+        for value in wants {
+            let m = Match {
+                key: "v".to_string(),
+                value,
+            };
+            let held = term(&m);
+            assert_eq!(held.key(), "v");
+            for seen in &values {
+                let want = value_matches(&m.value, seen);
+                assert_eq!(held.matches(seen), want, "{m:?} put to {seen:?}");
+                // Which of the two readings said yes: a string value can only be the
+                // text itself, and any other value only what the ladder made of it.
+                match (want, &m.value, seen) {
+                    (true, MatchValue::Exact(_), ColValue::String(_)) => by_text += 1,
+                    (true, MatchValue::Exact(_), _) => by_ladder += 1,
+                    _ => {}
+                }
+            }
+        }
+        // Not agreement on nothing: every text found itself as a string, and the ladder's
+        // reading of one found a value that is not a string over a hundred times.
+        assert!(
+            by_text >= pool::TEXTS.len() && by_ladder > 100,
+            "{by_text} {by_ladder}"
+        );
+    }
+
+    /// **What filtering on columns stands on.** A term put to a decoded column selects
+    /// the rows `value_matches` says yes to when it is put to each row as a scan would
+    /// have built and rendered it - on generated columns of every type and every mix of
+    /// types, for every term of the pool, in a column that is still its own type and in
+    /// one that is now text.
+    ///
+    /// Two hundred seeded rounds. Each draws up to three hundred values of one key from
+    /// one, two or three kinds - one type in one spelling, two that share a piece or take
+    /// one each, three that leave the smaller ones as text - with nulls in a third of the
+    /// rounds, one kind in the majority in half, and in a few a single value of each
+    /// kind, which a writer stores once. It makes them a row group the way the store
+    /// does: lines through the parser, rows through the builder.
+    ///
+    /// The expected side is the scan as it was: the chunk decoded to cells by
+    /// `read::chunk`, each row's cell put in a `Row` with what its line wrote, the row
+    /// rendered, and `value_matches` asked of what it then holds. It touches neither the
+    /// typed decoder nor `Term`. The other side is the typed decoder and `Term`, twice:
+    /// by typed compare (`hits`), and by each row printed and asked (`hits_by_row`).
+    #[test]
+    fn a_term_put_to_a_column_selects_the_rows_value_matches_does() {
+        use crate::store::columns::{hits, hits_by_row, Sel};
+        use crate::store::v3::column::{Column, ValuesRef};
+        use crate::store::v3::{read, samples};
+        use crate::store::{pool, render_row};
+
+        let mut wants = vec![MatchValue::Any];
+        wants.extend(pool::terms().into_iter().map(MatchValue::Exact));
+        let matches: Vec<Match> = wants
+            .into_iter()
+            .map(|value| Match {
+                key: "v".to_string(),
+                value,
+            })
+            .collect();
+
+        // Rows a term for one value matched, by the type of the piece that held the row
+        // and by whether the column was text; and what the rounds were made of.
+        let mut matched: BTreeMap<&'static str, [u64; 2]> = BTreeMap::new();
+        let (mut present, mut null, mut two_pieces, mut one_piece) = (0u64, 0u64, 0, 0);
+        let mut constants = 0;
+        for seed in 0..200u64 {
+            let mut rng = Rng::new(seed);
+            let rows = rng.between(1, 300) as usize;
+            let single = rng.chance(15);
+            let kinds: Vec<&[&str]> = (0..rng.between(1, 3))
+                .map(|_| {
+                    let kind: &[&str] = rng.pick(pool::KINDS);
+                    if single {
+                        let at = rng.below(kind.len() as u64) as usize;
+                        &kind[at..=at]
+                    } else {
+                        kind
+                    }
+                })
+                .collect();
+            let majority = rng.chance(50);
+            let nulls = rng.chance(33);
+            let values: Vec<&str> = (0..rows)
+                .map(|_| {
+                    if nulls && rng.chance(20) {
+                        return "null";
+                    }
+                    let kind = if majority && rng.chance(85) {
+                        kinds[0]
+                    } else {
+                        *rng.pick(&kinds)
+                    };
+                    *rng.pick(kind)
+                })
+                .collect();
+            let lines = samples::lines_of(&values);
+            let sample = samples::of_lines("generated", &lines);
+            let chunk = &sample.chunks[sample.place("v").expect("a column v")];
+
+            let cells = read::chunk(&chunk.bytes, chunk.at, &chunk.dir, rows)
+                .expect("a chunk the builder made decodes");
+            let column = Column::decode(&chunk.bytes, chunk.at, &chunk.dir, rows)
+                .expect("a chunk the builder made decodes typed");
+            let col = column.over(&chunk.bytes).expect("over its own bytes");
+
+            // Which piece holds each row: bookkeeping for the counts below, not part of
+            // either side.
+            let pieces = col.pieces().expect("pieces");
+            let piece_of: Vec<Option<&'static str>> = (0..rows)
+                .map(|row| {
+                    let (in_b, _) = match col.slots() {
+                        None => (false, row),
+                        Some(slots) => slots[row].get()?,
+                    };
+                    let piece = pieces[usize::from(in_b)].as_ref()?;
+                    Some(piece.form.column_type().as_str())
+                })
+                .collect();
+            match &pieces {
+                [Some(_), Some(_)] => two_pieces += 1,
+                [Some(_), None] => one_piece += 1,
+                _ => {}
+            }
+            constants += pieces
+                .iter()
+                .flatten()
+                .filter(|piece| {
+                    !matches!(
+                        piece.values,
+                        ValuesRef::Ints(_)
+                            | ValuesRef::Floats(_)
+                            | ValuesRef::Times(_)
+                            | ValuesRef::Bools(_)
+                            | ValuesRef::Words { .. }
+                            | ValuesRef::Texts(_)
+                            | ValuesRef::Fixed { .. }
+                    )
+                })
+                .count();
+
+            for is_text in [false, true] {
+                let text_columns: Vec<String> = if is_text {
+                    vec!["v".to_string()]
+                } else {
+                    Vec::new()
+                };
+                // What a rendered row holds under `v`, for each row.
+                let seen: Vec<Option<ColValue>> = cells
+                    .iter()
+                    .map(|(value, written)| {
+                        let mut row = Row::new();
+                        row.insert_written("v".to_string(), value.clone(), written.clone());
+                        let rendered = render_row(&row, &text_columns);
+                        rendered.as_ref().unwrap_or(&row).get("v").cloned()
+                    })
+                    .collect();
+                // `value_matches` runs the ladder on the term's text at every call, and a
+                // round holds a few dozen values over hundreds of rows: it is asked once
+                // for each value that differs, which is all it can tell apart.
+                let mut distinct: Vec<&ColValue> = Vec::new();
+                let which: Vec<Option<usize>> = seen
+                    .iter()
+                    .map(|have| {
+                        let have = have.as_ref()?;
+                        Some(match distinct.iter().position(|known| *known == have) {
+                            Some(at) => at,
+                            None => {
+                                distinct.push(have);
+                                distinct.len() - 1
+                            }
+                        })
+                    })
+                    .collect();
+
+                for m in &matches {
+                    let said: Vec<bool> = distinct
+                        .iter()
+                        .map(|have| value_matches(&m.value, have))
+                        .collect();
+                    let mut expected = Sel::none(rows);
+                    for (row, which) in which.iter().enumerate() {
+                        if which.is_some_and(|at| said[at]) {
+                            expected.set(row);
+                        }
+                    }
+
+                    let held = term(m);
+                    let typed = hits(col, &held, is_text).expect("a typed compare");
+                    assert_eq!(
+                        typed,
+                        expected,
+                        "seed {seed}, {m:?}, text column: {is_text}, by typed compare, over:\n{}",
+                        lines.join("\n")
+                    );
+                    let printed = hits_by_row(col, &held, is_text).expect("each row printed");
+                    assert_eq!(
+                        printed,
+                        expected,
+                        "seed {seed}, {m:?}, text column: {is_text}, row by row, over:\n{}",
+                        lines.join("\n")
+                    );
+
+                    if matches!(m.value, MatchValue::Any) {
+                        present += expected.count();
+                        null += rows as u64 - expected.count();
+                        continue;
+                    }
+                    for row in expected.iter() {
+                        let kind = piece_of[row].expect("a term matched a null");
+                        matched.entry(kind).or_default()[usize::from(is_text)] += 1;
+                    }
+                }
+            }
+        }
+        // Not agreement on nothing: a piece of every type matched terms by the thousand,
+        // as its own type and as text; columns of one piece and of two; nulls; and pieces
+        // that are one value stored once.
+        let kinds: Vec<&str> = matched.keys().copied().collect();
+        assert_eq!(
+            kinds,
+            ["Bool", "Datetime", "Float64", "Int64", "Ip", "String", "Uuid"],
+            "{matched:?}"
+        );
+        assert!(
+            matched
+                .values()
+                .all(|[own, text]| *own > 1_000 && *text > 1_000),
+            "{matched:?}"
+        );
+        assert!(
+            present > 10_000 && null > 1_000 && two_pieces > 20 && one_piece > 20,
+            "{present} {null} {two_pieces} {one_piece}"
+        );
+        assert!(constants > 20, "{constants} constant pieces");
+    }
+
+    /// A day of two templates for both stores. One has a time column whose dates come in
+    /// two spellings and as epoch seconds, and are missing from one line in eleven, which
+    /// then goes by its arrival time; a `when` that is a date until a line says `N/A` -
+    /// so it is text by the time anything is asked - and a `status` that is a number, a
+    /// word or a null. The other has no time of its own.
+    fn two_store_lines() -> Vec<String> {
+        two_templates(900, 1)
+    }
+
+    /// `two_store_lines`, of `count` lines of the first template, with each run of
+    /// `tied` of them written at one second: rows only their position tells apart.
+    fn two_templates(count: i64, tied: i64) -> Vec<String> {
+        let mut rng = Rng::new(23);
+        let mut out = Vec::new();
+        for n in 0..count {
+            let secs = EPOCH + (n - n % tied) * 37;
+            let at = chrono::DateTime::from_timestamp(secs, 0).expect("a representable instant");
+            let offset = at
+                .with_timezone(&chrono::FixedOffset::east_opt(19_800).expect("an offset"))
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+            let zulu = at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let ts = match n % 7 {
+                _ if n % 11 == 4 => "null".to_string(),
+                3 => secs.to_string(),
+                5 => format!(r#""{offset}""#),
+                _ => format!(r#""{zulu}""#),
+            };
+            let when = match n % 50 {
+                7 => "N/A",
+                _ if n % 4 == 1 => offset.as_str(),
+                _ => zulu.as_str(),
+            };
+            let level = ["ERROR", "WARN", "INFO"][rng.below(3) as usize];
+            let status = ["200", "200", "404", r#""N/A""#, "null"][rng.below(5) as usize];
+            out.push(format!(
+                r#"{{"ts":{ts},"level":"{level}","status":{status},"when":"{when}","n":{n}}}"#
+            ));
+            if n % 3 == 0 {
+                out.push(format!(r#"{{"level":"ERROR","event":"untimed","n":{n}}}"#));
+            }
+        }
+        out
+    }
+
+    /// The lines through `db::ingest_line` into a trie and a store of their own.
+    /// `flush_after`: a tick once that many lines are in, so that a disk store holds the
+    /// lines before it in row groups and the rest in memory.
+    fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) -> db::Db {
+        let schema = crate::config::Schema::default();
+        let trie = Trie::new().with_time_columns(schema.time_columns.clone());
+        let now = chrono::DateTime::from_timestamp(EPOCH + DAY / 2, 0).expect("an instant");
+        for (at, line) in lines.iter().enumerate() {
+            let parsed = crate::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+            db::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
+            if flush_after == Some(at + 1) {
+                let done = stores.flush_all(crate::store::FlushKind::Tick);
+                assert_eq!(done.failed, 0);
+            }
+        }
+        db::Db {
+            trie,
+            stores,
+            stats: db::LoadStats::default(),
+        }
+    }
+
+    /// **A count, a grouping and a fetch answer from columns what they answer from rows.**
+    ///
+    /// The same lines go into the memory store, which holds rows and asks each rendered
+    /// row its terms, and into a disk store whose row groups close at a hundred and
+    /// twenty-eight rows, flushed two thirds of the way in: so the disk store answers from
+    /// columns for most rows and from rows not yet written for the rest. Every mode is
+    /// asked of both, with terms on a word, on a number in a column that also holds words,
+    /// on a null, on a date by each of its spellings and on a key only one template has,
+    /// with a window and without. What the two answer must be equal: the count, the rows
+    /// and their order, the groups, whether the answer was cut, and the cursor.
+    ///
+    /// A count on disk builds no row and a grouping builds a row of the columns it reads,
+    /// so this is also what holds those two to the whole row the memory store reads.
+    #[test]
+    fn a_count_a_grouping_and_a_fetch_answer_from_columns_what_they_answer_from_rows() {
+        use crate::store::{DiskOptions, RowGroupLimits};
+
+        let dir = Scratch::new("two-stores");
+        let lines = two_store_lines();
+        let memory = stored(StoreManager::memory(), &lines, None);
+        let options = DiskOptions {
+            row_groups: RowGroupLimits {
+                rows: 128,
+                ..RowGroupLimits::default()
+            },
+            ..DiskOptions::default()
+        };
+        let disk = stored(
+            StoreManager::disk(dir.0.clone(), options).expect("a disk store"),
+            &lines,
+            Some(lines.len() * 2 / 3),
+        );
+        assert!(disk.stores.buffered() > 100, "nothing was left in memory");
+        assert!(disk.stores.rows() - disk.stores.buffered() > 400);
+
+        let exact = |key: &str, text: &str| Match {
+            key: key.into(),
+            value: MatchValue::Exact(text.into()),
+        };
+        let any = |key: &str| Match {
+            key: key.into(),
+            value: MatchValue::Any,
+        };
+        let patterns = [
+            vec![],
+            vec![exact("level", "ERROR")],
+            vec![exact("status", "200")],
+            vec![exact("status", "N/A")],
+            vec![any("status")],
+            vec![exact("level", "WARN"), exact("status", "404")],
+            // The time column is a date however a line spelled it: line 149 by an offset
+            // and by its instant, and line 150 by the epoch seconds it wrote.
+            vec![exact("ts", "2024-01-15T07:01:53+05:30")],
+            vec![exact("ts", "2024-01-15T01:31:53Z")],
+            vec![exact("ts", "1705282350")],
+            // `when` is text: line 149 by the offset it wrote and not by its instant,
+            // line 150 by its own text, and the lines that say `N/A`.
+            vec![exact("when", "2024-01-15T07:01:53+05:30")],
+            vec![exact("when", "2024-01-15T01:31:53Z")],
+            vec![exact("when", "2024-01-15T01:32:30Z")],
+            vec![exact("when", "N/A")],
+            vec![any("event")],
+            vec![exact("n", "120")],
+        ];
+        let column = |name: &str| GroupKey::Column(name.to_string());
+        let hour = GroupKey::Time(Duration::from_secs(3_600));
+        let modes = [
+            (QueryMode::Count, None),
+            (QueryMode::Exists, None),
+            (QueryMode::GroupBy(vec![hour.clone()]), None),
+            (QueryMode::GroupBy(vec![column("level")]), None),
+            (QueryMode::GroupBy(vec![hour, column("status")]), None),
+            (
+                QueryMode::GroupBy(vec![column("event"), column("level")]),
+                None,
+            ),
+            (QueryMode::GroupBy(vec![column("when")]), None),
+            (QueryMode::Fetch, None),
+            (QueryMode::Fetch, Some(7)),
+        ];
+        let windows = [
+            (None, None),
+            (Some(EPOCH + 3_000), Some(EPOCH + 9_000)),
+            (Some(EPOCH + 30_000), None),
+        ];
+
+        let (mut counted, mut grouped, mut fetched, mut read) = (0u64, 0usize, 0usize, 0u64);
+        for pattern in &patterns {
+            for (mode, limit) in &modes {
+                for (since, until) in windows {
+                    let ask = || {
+                        Query::new(
+                            pattern.clone(),
+                            mode.clone(),
+                            TimeRange {
+                                since: since.map(at),
+                                until: until.map(at),
+                            },
+                            *limit,
+                            None,
+                            at(EPOCH + DAY),
+                            Limits {
+                                max_rows: 0,
+                                max_buckets: 0,
+                                max_groups: 0,
+                            },
+                        )
+                    };
+                    let said = format!("{pattern:?} as {mode:?} in {since:?}..{until:?}");
+                    let rows = execute(&memory.trie, &memory.stores, &ask()).expect("memory");
+                    let columns = execute(&disk.trie, &disk.stores, &ask()).expect("disk");
+                    assert_eq!(columns.exists, rows.exists, "{said}");
+                    assert_eq!(columns.count, rows.count, "{said}");
+                    assert_eq!(shown(&columns.rows), shown(&rows.rows), "{said}");
+                    assert_eq!(columns.groups, rows.groups, "{said}");
+                    assert_eq!(
+                        (
+                            columns.meta.templates_matched,
+                            columns.meta.rows_returned,
+                            columns.meta.truncated,
+                            &columns.meta.next_cursor,
+                        ),
+                        (
+                            rows.meta.templates_matched,
+                            rows.meta.rows_returned,
+                            rows.meta.truncated,
+                            &rows.meta.next_cursor,
+                        ),
+                        "{said}"
+                    );
+                    counted += columns.count;
+                    grouped += columns.groups.iter().filter(|g| g.count > 0).count();
+                    fetched += columns.rows.len();
+                    read += columns.meta.row_groups_read;
+                }
+            }
+        }
+        // Not agreement on nothing, and not one store asked twice.
+        assert!(
+            counted > 10_000 && grouped > 400 && fetched > 2_000,
+            "{counted} {grouped} {fetched}"
+        );
+        assert!(read > 500, "{read} row groups read");
+        let count_of = |pattern: &Vec<Match>| {
+            let q = Query::new(
+                pattern.clone(),
+                QueryMode::Count,
+                TimeRange::default(),
+                None,
+                None,
+                at(EPOCH + DAY),
+                Limits {
+                    max_rows: 0,
+                    max_buckets: 0,
+                    max_groups: 0,
+                },
+            );
+            execute(&disk.trie, &disk.stores, &q).expect("disk").count
+        };
+        // Every pattern finds a row but the one that asks a text column for an instant.
+        for pattern in &patterns[1..] {
+            let found = count_of(pattern);
+            let instant = *pattern == vec![exact("when", "2024-01-15T01:31:53Z")];
+            assert_eq!(found == 0, instant, "{pattern:?} found {found}");
+        }
+        // And `when` is text and the time column is not, as the lines were written to
+        // make them.
+        let q = Query::new(
+            vec![any("when")],
+            QueryMode::Count,
+            TimeRange::default(),
+            None,
+            None,
+            at(EPOCH + DAY),
+            Limits {
+                max_rows: 0,
+                max_buckets: 0,
+                max_groups: 0,
+            },
+        );
+        let planned = plan(&disk.trie, &q);
+        assert_eq!(planned.leaves.len(), 1);
+        let text = &planned.leaves[0].text_columns;
+        assert!(
+            text.iter().any(|c| c == "when") && !text.iter().any(|c| c == "ts"),
+            "{text:?}"
+        );
+    }
+
+    // ── A fetch that is asked before a row is built ────────────────────────────────
+
+    /// A row that is only its number, at a time when it has one.
+    fn numbered(id: u64, ts: Option<i64>) -> Row {
+        let mut row = Row::new();
+        row.insert("id".to_string(), ColValue::Int64(id as i64));
+        if let Some(at) = ts {
+            row.insert("ts".to_string(), ColValue::Datetime(at));
+        }
+        row
+    }
+
+    /// One page as these tests compare it: the ranks the heap held when the scan ended,
+    /// in the order it held them, then the rows and the rank to resume after.
+    type Page = (Vec<Rank>, Vec<Row>, Option<Rank>);
+
+    /// Rows offered to one heap, each as a template's key, the row's position and time,
+    /// and the row; and how many the fetch refused. With `ask`, the fetch is asked about
+    /// each row first, as a row that lies in its day, and handed it only on a yes.
+    fn offered(
+        rows: &[(u64, u64, Option<i64>, Row)],
+        keep: Option<usize>,
+        after: Option<Rank>,
+        ask: bool,
+    ) -> (Page, usize) {
+        let mut newest = Newest::new(keep);
+        let mut refused = 0;
+        for (key, seq, ts, row) in rows {
+            let mut fetch = Fetch {
+                keep: &mut newest,
+                key: *key,
+                ts: "ts",
+                after,
+            };
+            if ask && !fetch.wants_row(*ts, *seq, true) {
+                refused += 1;
+                continue;
+            }
+            fetch.row(row, *seq);
+        }
+        let held = newest.heap.iter().map(|ranked| ranked.rank).collect();
+        let (rows, next) = newest.finish();
+        ((held, rows, next), refused)
+    }
+
+    /// **Asking first changes no page**, while no two rows carry one `Rank`.
+    ///
+    /// Rows of up to three templates, with few instants among them so that many share a
+    /// time and none shares a whole `Rank`, are offered to a fetch three ways: every row
+    /// handed over; each row asked about first, in the same order; and asked about first
+    /// in a shuffled order. For every limit - none, zero, one, a few, more than there are
+    /// rows, and the greatest a client can write - and from every cursor a page ends on
+    /// or a row could be: the rows and the cursor are the same all three ways.
+    ///
+    /// And in the same order **the heap itself is left the same**, rank for rank and
+    /// place for place. That is the property the fetch leans on once rows can tie: a row
+    /// it refuses is one the heap would have pushed and popped at once, and such a push
+    /// and pop puts every row back where it was. The standard library does not promise
+    /// that; this is where it is held.
+    ///
+    /// It draws no two equal `Rank`s on purpose. With two, which of them is kept depends
+    /// on the order of offers, and the shuffled half would fail for a reason that is no
+    /// defect: that case is the next test's.
+    #[test]
+    fn a_fetch_asked_first_keeps_the_rows_it_keeps_when_handed_every_row() {
+        let (mut pages, mut refused, mut shared) = (0usize, 0usize, 0usize);
+        for seed in 0..300u64 {
+            let mut rng = Rng::new(seed);
+            let instants: Vec<i64> = (0..rng.between(1, 5))
+                .map(|_| ns(EPOCH + rng.between(0, 20)))
+                .collect();
+            let mut rows = Vec::new();
+            for key in [11u64, 5, 23].into_iter().take(rng.between(1, 3) as usize) {
+                for seq in 0..rng.between(1, 25) as u64 {
+                    let ts = (!rng.chance(10)).then(|| *rng.pick(&instants));
+                    rows.push((key, seq, ts, numbered(rows.len() as u64, ts)));
+                }
+            }
+            let ranks: BTreeSet<Rank> = rows
+                .iter()
+                .map(|(key, seq, ts, _)| (Reverse(*ts), *key, *seq))
+                .collect();
+            assert_eq!(ranks.len(), rows.len(), "two rows of one rank were drawn");
+            let times: BTreeSet<Option<i64>> = rows.iter().map(|row| row.2).collect();
+            shared += rows.len() - times.len();
+            let mut shuffled = rows.clone();
+            rng.shuffle(&mut shuffled);
+
+            let few = rng.between(2, 9) as usize;
+            for keep in [
+                None,
+                Some(0),
+                Some(1),
+                Some(few),
+                Some(rows.len()),
+                Some(usize::MAX),
+            ] {
+                // Every cursor a page of this limit ends on, and a few that are a row's
+                // rank or between two.
+                let mut cursors = vec![None];
+                cursors.extend((0..3).map(|_| {
+                    let (key, seq, ts, _) = rng.pick(&rows);
+                    Some((Reverse(*ts), *key, *seq + rng.below(2)))
+                }));
+                while let Some(after) = cursors.pop() {
+                    let said = format!("seed {seed}, limit {keep:?}, after {after:?}");
+                    let (every, _) = offered(&rows, keep, after, false);
+                    let (asked, turned_away) = offered(&rows, keep, after, true);
+                    assert_eq!(asked, every, "{said}");
+                    let (mixed, _) = offered(&shuffled, keep, after, true);
+                    assert_eq!((&mixed.1, &mixed.2), (&every.1, &every.2), "{said}");
+                    pages += 1;
+                    refused += turned_away;
+                    if let (Some(next), None) = (every.2, after) {
+                        cursors.push(Some(next));
+                    } else if let (Some(next), Some(was)) = (every.2, after) {
+                        assert!(was < next, "{said}: a page ended where it began");
+                        cursors.push(Some(next));
+                    }
+                }
+            }
+        }
+        // Not agreement on nothing: thousands of pages, most rows sharing their time
+        // with another, and rows turned away by the ten thousand.
+        assert!(
+            pages > 5_000 && refused > 50_000 && shared > 5_000,
+            "{pages} {refused} {shared}"
+        );
+    }
+
+    /// One day of one template in a model of a store that keeps days: the day, the
+    /// newest time stored in it, and its rows in storage order, each with the time the
+    /// row shows when it is read. That time is the row's stored time in a healthy store,
+    /// and can be no time or another day's where a store is read otherwise than it was
+    /// written.
+    struct ModelDay {
+        day: i64,
+        newest: Option<i64>,
+        rows: Vec<(Option<i64>, Row)>,
+    }
+
+    /// How a store offers a fetch its rows.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Offers {
+        /// Every row handed over and none asked about.
+        Every,
+        /// Each row asked about first, with whether its time lies in its day.
+        Asked,
+        /// Each row asked about first and said to lie in its day whether or not it does:
+        /// what asking first would be if it did not look.
+        AskedAsIfPlaced,
+    }
+
+    /// One page of a fetch over the model, driven as a disk leaf drives its visitor: a
+    /// leaf after a leaf, each asked once whether it wants to be asked first; its days
+    /// newest first, each offered through `wants_partition` and, when declined, skipped -
+    /// or read all the same under `reads_declined`, as a day is that has a term to ask;
+    /// its rows first to last, each at its position in its day.
+    fn page_of(
+        leaves: &[(u64, Vec<ModelDay>)],
+        keep: Option<usize>,
+        after: Option<Rank>,
+        offers: Offers,
+        reads_declined: bool,
+    ) -> Page {
+        let mut newest = Newest::new(keep);
+        for (key, days) in leaves {
+            let mut fetch = Fetch {
+                keep: &mut newest,
+                key: *key,
+                ts: "ts",
+                after,
+            };
+            let asks = offers != Offers::Every && fetch.wants() == Wants::Newest;
+            for day in days {
+                if !fetch.wants_partition(day.newest) && !reads_declined {
+                    continue;
+                }
+                for (seq, (ts, row)) in day.rows.iter().enumerate() {
+                    let placed = offers == Offers::AskedAsIfPlaced
+                        || crate::store::v3::day_of(ts.unwrap_or(0)) == day.day;
+                    if asks && !fetch.wants_row(*ts, seq as u64, placed) {
+                        continue;
+                    }
+                    fetch.row(row, seq as u64);
+                }
+            }
+        }
+        let held = newest.heap.iter().map(|ranked| ranked.rank).collect();
+        let (rows, next) = newest.finish();
+        (held, rows, next)
+    }
+
+    /// Every page of a fetch over the model, each from the cursor the one before ended
+    /// on.
+    fn pages_of(
+        leaves: &[(u64, Vec<ModelDay>)],
+        keep: Option<usize>,
+        offers: Offers,
+        reads_declined: bool,
+    ) -> Vec<Page> {
+        let mut pages: Vec<Page> = Vec::new();
+        let mut after = None;
+        loop {
+            let page = page_of(leaves, keep, after, offers, reads_declined);
+            let next = page.2;
+            pages.push(page);
+            match next {
+                Some(rank) => {
+                    assert!(
+                        after.is_none_or(|was| was < rank),
+                        "a page ended where it began"
+                    );
+                    after = Some(rank);
+                }
+                None => return pages,
+            }
+        }
+    }
+
+    /// A model day of rows written at `stored` seconds into day `day`, each shown at
+    /// the time `shown` gives for it.
+    fn model_day(
+        day: i64,
+        ids: &mut u64,
+        stored: &[i64],
+        mut shown: impl FnMut(i64) -> Option<i64>,
+    ) -> ModelDay {
+        let start = day * crate::store::v3::DAY_NS;
+        ModelDay {
+            day,
+            newest: stored.iter().map(|secs| start + ns(*secs)).max(),
+            rows: stored
+                .iter()
+                .map(|secs| {
+                    let ts = shown(start + ns(*secs));
+                    *ids += 1;
+                    (ts, numbered(*ids, ts))
+                })
+                .collect(),
+        }
+    }
+
+    /// **Asking first changes no page when rows tie either**, because the fetch stops
+    /// asking at the first row whose time is not in its day.
+    ///
+    /// Two rows of one template carry one `Rank` only when they hold one position in two
+    /// different days and show one time, so that one of them shows a time that is not in
+    /// the day it is stored under - which a store written and read under one setting
+    /// never holds, and one read under a narrower epoch window can. Which of two such
+    /// rows a page serves is then decided by where the heap's equal rows happen to lie,
+    /// and that is moved by every push, one that is popped at once among them.
+    ///
+    /// So over a model of such a store - up to three templates, up to three days each,
+    /// rows of few instants, and in half the sets rows that show no time or another
+    /// day's - every page is followed to the end through its cursors with every row
+    /// handed over, and again with each row asked about first. **The heap, the rows and
+    /// the cursor of every page are equal.** The third run asks first without looking at
+    /// whether a row is in its day, and its pages are not equal: that is what the look
+    /// is for, and what makes the equality above more than agreement on nothing.
+    ///
+    /// The four rows written out first are the smallest case there is: two days of two
+    /// rows that show no time, behind one row that shows its own.
+    #[test]
+    fn a_fetch_stops_asking_at_the_first_row_that_is_not_in_its_day() {
+        let none = |_: i64| None;
+        let mut ids = 0;
+        let smallest = vec![(
+            7u64,
+            vec![
+                model_day(19_739, &mut ids, &[5], Some),
+                model_day(19_738, &mut ids, &[1, 2], none),
+                model_day(19_737, &mut ids, &[1, 2], none),
+            ],
+        )];
+        let every = pages_of(&smallest, Some(1), Offers::Every, false);
+        assert_eq!(pages_of(&smallest, Some(1), Offers::Asked, false), every);
+        assert_ne!(
+            pages_of(&smallest, Some(1), Offers::AskedAsIfPlaced, false),
+            every,
+            "asking first without looking served the rows it serves when it looks"
+        );
+
+        let (mut pages, mut tied_sets, mut moved, mut moved_healthy) = (0usize, 0, 0, 0);
+        for seed in 0..1_500u64 {
+            let mut rng = Rng::new(seed);
+            let odd = rng.chance(50);
+            let days = [19_739i64, 19_738, 19_737];
+            let mut ids = 0;
+            let mut leaves = Vec::new();
+            for key in [7u64, 3, 12].into_iter().take(rng.between(1, 3) as usize) {
+                let mut held = Vec::new();
+                for day in days {
+                    if rng.chance(25) {
+                        continue;
+                    }
+                    let stored: Vec<i64> =
+                        (0..rng.between(1, 5)).map(|_| rng.between(0, 3)).collect();
+                    held.push(model_day(day, &mut ids, &stored, |at| {
+                        match rng.below(10) {
+                            0..=3 if odd => None,
+                            4 if odd => Some(*rng.pick(&days) * crate::store::v3::DAY_NS + ns(1)),
+                            _ => Some(at),
+                        }
+                    }));
+                }
+                leaves.push((key, held));
+            }
+            let mut ranks = BTreeSet::new();
+            let mut rows = 0;
+            for (key, held) in &leaves {
+                for day in held {
+                    for (seq, (ts, _)) in day.rows.iter().enumerate() {
+                        ranks.insert((Reverse(*ts), *key, seq as u64));
+                        rows += 1;
+                    }
+                }
+            }
+            let tied = ranks.len() < rows;
+            assert!(
+                odd || !tied,
+                "seed {seed}: a healthy store held two rows of one rank"
+            );
+            tied_sets += usize::from(tied);
+
+            for keep in [
+                None,
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(5),
+                Some(usize::MAX),
+            ] {
+                for reads_declined in [false, true] {
+                    let said = format!(
+                        "seed {seed}, limit {keep:?}, reads declined days: {reads_declined}"
+                    );
+                    let every = pages_of(&leaves, keep, Offers::Every, reads_declined);
+                    let asked = pages_of(&leaves, keep, Offers::Asked, reads_declined);
+                    assert_eq!(asked, every, "{said}");
+                    pages += every.len();
+                    let blind = pages_of(&leaves, keep, Offers::AskedAsIfPlaced, reads_declined);
+                    if blind != every {
+                        moved += 1;
+                        moved_healthy += usize::from(!odd);
+                    }
+                }
+            }
+        }
+        // Thousands of pages, hundreds of sets with tied rows; pages that move when the
+        // fetch does not look, and none of them in a store whose rows are all in their
+        // days.
+        assert!(pages > 20_000 && tied_sets > 300, "{pages} {tied_sets}");
+        assert!(moved > 20 && moved_healthy == 0, "{moved} {moved_healthy}");
+    }
+
+    /// A directory of a test's own under the system's, removed when the test ends.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "kibbr-engine-{name}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Rows as an answer shows them: each key under the name it is shown by, with the
+    /// JSON its line wrote. A disk row holds a null arrival time where its row group has
+    /// that column for another row's sake, and an answer leaves it out; so two stores'
+    /// rows are compared as they are shown and not as they are held.
+    fn shown(rows: &[Row]) -> Vec<BTreeMap<String, Option<serde_json::Value>>> {
+        rows.iter()
+            .map(|row| {
+                crate::store::present(row)
+                    .into_iter()
+                    .map(|(name, key)| (name, row.json(key)))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Every page of a fetch, first to last, each asked with the cursor the one before
+    /// ended on. `limit` is the caller's and `max_rows` the server's backstop; `run`
+    /// answers one query.
+    fn pages(
+        db: &db::Db,
+        pattern: &[Match],
+        (since, until): (Option<i64>, Option<i64>),
+        (limit, max_rows): (Option<usize>, usize),
+        run: &dyn Fn(&db::Db, &Query) -> QueryResult,
+    ) -> Vec<QueryResult> {
+        let mut out = Vec::new();
+        let mut cursor = None;
+        loop {
+            let q = Query::new(
+                pattern.to_vec(),
+                QueryMode::Fetch,
+                TimeRange {
+                    since: since.map(at),
+                    until: until.map(at),
+                },
+                limit,
+                cursor,
+                at(EPOCH + 7 * DAY),
+                Limits {
+                    max_rows,
+                    max_buckets: 0,
+                    max_groups: 0,
+                },
+            );
+            let page = run(db, &q);
+            let next = page.meta.next_cursor.clone();
+            out.push(page);
+            assert!(out.len() < 10_000, "a fetch that never ends");
+            match next {
+                Some(text) => {
+                    cursor = Some(Cursor::decode(&text).expect("the engine's own cursor"));
+                }
+                None => return out,
+            }
+        }
+    }
+
+    /// Two runs of pages are one answer: page for page the same rows in the same order,
+    /// the same count, cut or not alike, and the same cursor.
+    fn assert_same_pages(one: &[QueryResult], other: &[QueryResult], said: &str) {
+        assert_eq!(one.len(), other.len(), "{said}: pages");
+        for (n, (a, b)) in one.iter().zip(other).enumerate() {
+            assert_eq!(shown(&a.rows), shown(&b.rows), "{said}: page {n}");
+            assert_eq!(
+                (
+                    a.count,
+                    a.meta.rows_returned,
+                    a.meta.truncated,
+                    &a.meta.next_cursor
+                ),
+                (
+                    b.count,
+                    b.meta.rows_returned,
+                    b.meta.truncated,
+                    &b.meta.next_cursor
+                ),
+                "{said}: page {n}"
+            );
+        }
+    }
+
+    fn executed(db: &db::Db, q: &Query) -> QueryResult {
+        execute(&db.trie, &db.stores, q).expect("the query answers")
+    }
+
+    /// **A fetch pages through columns as it pages through rows.**
+    ///
+    /// The same lines in the memory store and in a disk store whose row groups close at
+    /// sixty-four rows, flushed two thirds of the way in. Every four lines of the timed
+    /// template share one second, and the lines of the other share their arrival time,
+    /// so most rows are told from their neighbours by position alone: a position counted
+    /// wrong across a row group's end, or across the stored rows' end, would hand a page
+    /// the wrong one of them.
+    ///
+    /// The memory store is handed every row and is never asked about one. The disk store
+    /// asks before it builds a row, in row groups and in memory. Each fetch is followed
+    /// to its last page in both - with a limit of none of the rows, one, two, seven, more
+    /// than there are, and with no limit under the server's own - and page for page the
+    /// rows, the count, whether the page was cut and the cursor are equal. And over the
+    /// pages of one fetch every row that matched is served once.
+    #[test]
+    fn a_fetch_pages_through_columns_as_it_pages_through_rows() {
+        use crate::store::{DiskOptions, RowGroupLimits};
+
+        let dir = Scratch::new("pages");
+        let lines = two_templates(300, 4);
+        let memory = stored(StoreManager::memory(), &lines, None);
+        let options = DiskOptions {
+            row_groups: RowGroupLimits {
+                rows: 64,
+                ..RowGroupLimits::default()
+            },
+            ..DiskOptions::default()
+        };
+        let disk = stored(
+            StoreManager::disk(dir.0.clone(), options).expect("a disk store"),
+            &lines,
+            Some(lines.len() * 2 / 3),
+        );
+        assert!(disk.stores.buffered() > 50, "nothing was left in memory");
+        assert!(disk.stores.rows() - disk.stores.buffered() > 150);
+
+        let exact = |key: &str, text: &str| Match {
+            key: key.into(),
+            value: MatchValue::Exact(text.into()),
+        };
+        let patterns = [
+            vec![],
+            vec![exact("level", "ERROR")],
+            vec![exact("status", "200")],
+        ];
+        let windows = [(None, None), (Some(EPOCH + 2_000), Some(EPOCH + 9_000))];
+        let limits = [
+            (Some(0), 0),
+            (Some(1), 0),
+            (Some(2), 0),
+            (Some(7), 0),
+            (Some(500), 0),
+            (None, 150),
+        ];
+        let (mut asked, mut served) = (0usize, 0u64);
+        for pattern in &patterns {
+            for window in windows {
+                for limit in limits {
+                    let said = format!("{pattern:?} in {window:?}, limit {limit:?}");
+                    let rows = pages(&memory, pattern, window, limit, &executed);
+                    let columns = pages(&disk, pattern, window, limit, &executed);
+                    assert_same_pages(&columns, &rows, &said);
+                    let count = columns[0].count;
+                    assert!(count > 20, "{said}: {count} rows matched");
+                    let handed: u64 = columns.iter().map(|page| page.meta.rows_returned).sum();
+                    if limit.0 == Some(0) {
+                        assert_eq!((columns.len(), handed), (1, 0), "{said}");
+                    } else {
+                        assert_eq!(handed, count, "{said}");
+                    }
+                    asked += columns.len();
+                    served += handed;
+                }
+            }
+        }
+        assert!(asked > 1_000 && served > 4_000, "{asked} {served}");
+    }
+
+    /// A fetch's visitor with a record kept of what a store asked it and handed it.
+    struct Watched<'a> {
+        fetch: Fetch<'a>,
+        /// Each row it was asked about: its time, its position, whether the store said
+        /// the time is in the row's day, and what the fetch answered.
+        asked: Vec<(Option<i64>, u64, bool, bool)>,
+        handed: u64,
+    }
+
+    impl Visitor for Watched<'_> {
+        fn row(&mut self, row: &Row, seq: u64) {
+            self.handed += 1;
+            self.fetch.row(row, seq);
+        }
+
+        fn wants_partition(&mut self, newest: Option<i64>) -> bool {
+            self.fetch.wants_partition(newest)
+        }
+
+        fn wants(&self) -> Wants {
+            self.fetch.wants()
+        }
+
+        fn wants_row(&mut self, ts: Option<i64>, seq: u64, placed: bool) -> bool {
+            let said = self.fetch.wants_row(ts, seq, placed);
+            self.asked.push((ts, seq, placed, said));
+            said
+        }
+    }
+
+    /// **Rows that tie across two days page as they did before a store could ask.**
+    ///
+    /// The state in which two rows carry one `Rank`, made in one process. A template
+    /// whose time column has become text is given, by hand, three rows in each of two
+    /// days whose time is an instant and whose line is said to have written it as ten
+    /// digits the ladder does not read as one: seconds of the year 2112, past the epoch
+    /// window. So each is filed under the day of its instant and, in a column that shows
+    /// a date as the text it arrived as, shows no time; and the rows at one position of
+    /// the two days are one `Rank`. It is what ten digits stored as an instant become
+    /// when a later process reads them under a narrower window. Around them are rows that
+    /// are in their days: a newer day, read first, an older one, and a second template.
+    ///
+    /// With the rows in memory, and again with them written to row groups - where the
+    /// writer keeps each as the instant and its digits - a fetch of one, two and three
+    /// rows a page, with a term and with none, is followed to its end as the engine runs
+    /// it and as it ran before a store could ask: a heap that is offered every row. Page
+    /// for page they are equal.
+    ///
+    /// And driven directly, the first template's scan is asked first, refuses rows of
+    /// its newest day, is told of a row that is not in its day, and from that row on
+    /// refuses nothing; and the second template's scan, which comes after it, is not
+    /// asked first at all. One row out of its day turns the asking off for the query.
+    #[test]
+    fn rows_that_tie_across_two_days_page_as_they_did_before_a_store_could_ask() {
+        use crate::store::{DiskOptions, FlushKind};
+
+        let dir = Scratch::new("tied");
+        let mut lines = vec![
+            r#"{"ts":"2024-01-15T10:00:00Z","v":"old"}"#.to_string(),
+            // What makes the time column text. It goes by its arrival time.
+            r#"{"ts":"N/A","v":"undated"}"#.to_string(),
+        ];
+        // The newest day, newest row first: a full heap then has no use for the rest.
+        for n in 0..6 {
+            let second = 5 - n;
+            lines.push(format!(
+                r#"{{"ts":"2113-01-01T10:00:0{second}Z","v":"new {n}"}}"#
+            ));
+        }
+        for n in 0..4 {
+            lines.push(format!(
+                r#"{{"ts":"2024-01-16T09:00:0{n}Z","u":{n},"v":"other {n}"}}"#
+            ));
+        }
+        let disk = stored(
+            StoreManager::disk(dir.0.clone(), DiskOptions::default()).expect("a disk store"),
+            &lines,
+            None,
+        );
+
+        let any = |key: &str| Match {
+            key: key.into(),
+            value: MatchValue::Any,
+        };
+        let planned = |pattern: Vec<Match>| {
+            let q = Query::new(
+                pattern,
+                QueryMode::Fetch,
+                TimeRange::default(),
+                Some(1),
+                None,
+                at(EPOCH + 7 * DAY),
+                Limits {
+                    max_rows: 0,
+                    max_buckets: 0,
+                    max_groups: 0,
+                },
+            );
+            plan(&disk.trie, &q).leaves
+        };
+        let leaves = planned(vec![any("v")]);
+        assert_eq!(leaves.len(), 2);
+        let (tied, other) = (&leaves[0], &leaves[1]);
+        assert!(tied.text_columns.iter().any(|c| c == "ts"), "{tied:?}");
+        assert!(other.path.iter().any(|token| token == "u"), "{other:?}");
+        assert!(!tied.residual.is_empty() && !other.residual.is_empty());
+
+        // By hand, into the first template: a row stored under the day of its instant,
+        // in a column that shows it as the digits it is said to have arrived as. Two
+        // days of August 2112, ten hours into each.
+        let adrift_days = [52_083i64, 52_084];
+        let adrift_at = |day: i64, k: i64| day * DAY + 36_000 + k;
+        for day in adrift_days {
+            for k in 0..3 {
+                let secs = adrift_at(day, k);
+                assert!(infer(&secs.to_string()).value == ColValue::Int64(secs));
+                let mut row = Row::new();
+                row.insert_written(
+                    "ts".to_string(),
+                    ColValue::Datetime(ns(secs)),
+                    Some(serde_json::Value::Number(secs.into())),
+                );
+                row.insert(
+                    "v".to_string(),
+                    ColValue::String(format!("day {day} row {k}")),
+                );
+                disk.stores
+                    .append(tied.template_id, "ts", row)
+                    .expect("appended");
+            }
+        }
+
+        let every_row = |db: &db::Db, q: &Query| {
+            answer(&db.trie, &db.stores, q, Newest::offered_every_row(q.limit))
+                .expect("the query answers")
+        };
+        let check = |state: &str| {
+            let mut asked_pages = 0;
+            for pattern in [vec![], vec![any("v")]] {
+                for limit in [1, 2, 3] {
+                    let said = format!("{state}: {pattern:?}, limit {limit}");
+                    let limit = (Some(limit), 0);
+                    let asked = pages(&disk, &pattern, (None, None), limit, &executed);
+                    let every = pages(&disk, &pattern, (None, None), limit, &every_row);
+                    assert_same_pages(&asked, &every, &said);
+                    for (a, b) in asked.iter().zip(&every) {
+                        assert_eq!(a.rows, b.rows, "{said}");
+                    }
+                    assert_eq!(asked[0].count, 18, "{said}");
+                    asked_pages += asked.len();
+                }
+            }
+            assert!(asked_pages > 30, "{state}: {asked_pages} pages");
+
+            // One page of two rows, driven by hand so that what the store asks is seen.
+            let mut opts = ScanOptions::default();
+            let ids = [tied.template_id, other.template_id];
+            let mut snapshot = disk.stores.snapshot(&ids, &opts);
+            let mut newest = Newest::new(Some(2));
+            let mut seen = Vec::new();
+            for leaf in [tied, other] {
+                opts.ts_column = Some(leaf.time_column.clone());
+                opts.text_columns = leaf.text_columns.clone();
+                let terms: Vec<Term> = leaf.residual.iter().map(term).collect();
+                let mut watched = Watched {
+                    fetch: Fetch {
+                        keep: &mut newest,
+                        key: leaf_key(&leaf.path),
+                        ts: leaf.time_column.as_str(),
+                        after: None,
+                    },
+                    asked: Vec::new(),
+                    handed: 0,
+                };
+                let first = watched.wants();
+                let scan = snapshot
+                    .visit(leaf.template_id, &opts, &terms, &mut watched)
+                    .expect("the template has a leaf")
+                    .expect("scan");
+                seen.push((first, watched.asked, watched.handed, scan.matched));
+            }
+            let (first, asked, handed, matched) = &seen[0];
+            assert_eq!((first, *matched), (&Wants::Newest, 14), "{state}");
+            assert_eq!(asked.len() as u64, *matched, "{state}");
+            let lost = asked
+                .iter()
+                .position(|(_, _, placed, _)| !placed)
+                .expect("no row out of its day was asked about");
+            // Before it, the newest day's six rows: asked about, and some refused.
+            assert_eq!(lost, 6, "{state}: {asked:?}");
+            assert!(asked[..lost].iter().any(|(.., said)| !said), "{state}");
+            // From it on nothing is refused, in its day or out of it.
+            assert!(asked[lost..].iter().all(|(.., said)| *said), "{state}");
+            let turned_away = asked.iter().filter(|(.., said)| !said).count() as u64;
+            assert_eq!(*handed, matched - turned_away, "{state}");
+            // And the rows out of their days are the tied ones: no time, and each
+            // position twice.
+            let adrift: Vec<(Option<i64>, u64)> = asked
+                .iter()
+                .filter(|(_, _, placed, _)| !placed)
+                .map(|(ts, seq, ..)| (*ts, *seq))
+                .collect();
+            let nowhere = |seq: u64| (None, seq);
+            assert_eq!(adrift, [0, 1, 2, 0, 1, 2].map(nowhere), "{state}");
+
+            let (first, asked, handed, matched) = &seen[1];
+            assert_eq!((first, asked.len()), (&Wants::Rows, 0), "{state}");
+            assert_eq!((*handed, *matched), (4, 4), "{state}");
+        };
+
+        check("in memory");
+        // Every buffer written out, short as each is.
+        let done = disk.stores.flush_all(FlushKind::Final);
+        assert_eq!(done.failed, 0);
+        assert_eq!(disk.stores.buffered(), 0);
+        // The writer took the six rows as the instants they are: read with the time
+        // column not text, each is still its date.
+        let as_dates = ScanOptions {
+            ts_column: Some("ts".to_string()),
+            ..ScanOptions::default()
+        };
+        let leaf = disk
+            .stores
+            .lookup(tied.template_id)
+            .expect("the template has a leaf");
+        let held = leaf.scan(&as_dates, &[]).expect("scan").rows;
+        let adrift = held
+            .iter()
+            .filter(|row| {
+                matches!(row.get("ts"), Some(ColValue::Datetime(at))
+                    if adrift_days.contains(&crate::store::v3::day_of(*at)))
+            })
+            .count();
+        assert_eq!((held.len(), adrift), (14, 6));
+        check("in row groups");
     }
 }

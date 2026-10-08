@@ -23,8 +23,8 @@ use std::path::Path;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use super::{
-    effective_ts, in_window, render_row, value_bytes, LeafStore, Predicate, Row, Scan, ScanOptions,
-    Store, StoreError, Visitor, DEFAULT_TS_COLUMN,
+    effective_ts, in_window, render_row, value_bytes, LeafStore, Row, Scan, ScanOptions, Store,
+    StoreError, Term, Visitor, DEFAULT_TS_COLUMN,
 };
 
 pub struct MemoryStore;
@@ -98,7 +98,7 @@ impl LeafStore for MemoryLeaf {
     fn visit(
         &self,
         opts: &ScanOptions,
-        preds: &[Predicate],
+        terms: &[Term],
         v: &mut dyn Visitor,
     ) -> Result<Scan, StoreError> {
         let ts = opts.ts_column.as_deref().unwrap_or(DEFAULT_TS_COLUMN);
@@ -110,7 +110,7 @@ impl LeafStore for MemoryLeaf {
         for (seq, stored) in self.rows().iter().enumerate() {
             out.scanned += 1;
             // A column that has widened to text since this row arrived: its `Datetime`
-            // is compared as the text it was ingested as, before the predicates see it,
+            // is compared as the text it was ingested as, before the terms see it,
             // so `order_id=4500000101` matches and a `MATCH` returns it. The effective
             // time is read first, off the instant.
             let rendered = render_row(stored, &opts.text_columns);
@@ -118,7 +118,7 @@ impl LeafStore for MemoryLeaf {
             if windowed && !in_window(effective_ts(stored, ts), since, until) {
                 continue;
             }
-            if !preds.iter().all(|pred| pred(row)) {
+            if !terms.iter().all(|term| term.matches_row(row)) {
                 continue;
             }
             out.matched += 1;

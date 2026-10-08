@@ -22,6 +22,8 @@
 //!   out. No clock, no lock, no knowledge of who is calling it - closing a live row group,
 //!   compaction and the bulk loader all hand it rows the same way;
 //! - `read` - a row group's header and chunks, decoded and checked;
+//! - `column` - one chunk decoded a second way, to typed values with no cell printed:
+//!   what a query filters on before it builds a row;
 //! - `file` - a whole file: writing it, sealing it, opening a sealed one through its
 //!   footer, walking an unsealed one frame by frame, and recovering it.
 //!
@@ -43,10 +45,13 @@ use thiserror::Error;
 use crate::types::ColumnType;
 
 pub mod build;
+pub mod column;
 #[cfg(test)]
 mod encodings;
 pub mod file;
 pub mod read;
+#[cfg(test)]
+pub(crate) mod samples;
 #[cfg(test)]
 mod vectors;
 

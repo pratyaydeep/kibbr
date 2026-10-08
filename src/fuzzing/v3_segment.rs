@@ -2,7 +2,10 @@
 //! the unsealed walk that recovery runs (`file::walk`), the sealed open through trailer and
 //! footer (`file::sealed`, which is `file::open_sealed` without the file), and each row
 //! group's header, chunks and copy through `file::Reader` - what a query reads and what
-//! compaction copies - over `read::header` and `read::chunk`.
+//! compaction copies - over `read::header` and `read::chunk`. A query reads a chunk's
+//! stored bytes through `Reader::stored` and decodes them with `column::Column`, the typed
+//! decoder that prints no cell until one is asked for; both are driven here beside
+//! `Reader::chunks` and `read::chunk`, and held to them.
 //!
 //! What it is held to, over sealed and unsealed files alike: it never panics; it never
 //! reads outside the file, and never asks for bytes the file does not have; a length is
@@ -34,6 +37,12 @@
 //! (`hold_body`): every bitmap, length, word list and value in its place, nothing left
 //! over, and no byte that is not one of the values its field may hold.
 //!
+//! **The second decoder.** `column::Column` walks the same layout as `read::chunk` and
+//! must take and refuse the same chunks (`hold_column`). Where `read::chunk` decoded, the
+//! typed decoder decodes and prints every row as the same cell. Where `read::chunk`
+//! refused, the typed decoder refuses the chunk or refuses to print one of its rows - it
+//! leaves to printing what only printing finds - and names a place inside the file.
+//!
 //! **Memory.** Under the fuzzer `-malloc_limit_mb=512` is the judge of what one
 //! allocation may take, as it is for every target. A chunk is decoded into one cell a row,
 //! and an all-null chunk or a constant stores no bytes that vouch for its rows, so the row
@@ -62,6 +71,7 @@ use std::path::Path;
 
 use crate::frame::{self, Next};
 use crate::store::v3::build::RowGroup;
+use crate::store::v3::column::{Column, Memo};
 use crate::store::v3::file::{self, Entry, Index, Reader};
 use crate::store::v3::read::{self, Cell, ChunkDir, Header, PieceDir};
 use crate::store::v3::{
@@ -344,9 +354,19 @@ fn walk(file: &[u8], id: [u8; 16]) -> Result<Option<(Index, usize)>, Declined> {
                     weigh(header.row_count, &mut work)?;
                     let stored = &area[*from..*to];
                     let at = (end + from) as u64;
+                    let chunk = Chunk {
+                        dir,
+                        rows: header.row_count,
+                        stored,
+                        at,
+                    };
                     match read::chunk(stored, at, dir, header.row_count as usize) {
-                        Ok(cells) => hold_cells(dir, header.row_count, stored, &cells),
+                        Ok(cells) => {
+                            hold_cells(dir, header.row_count, stored, &cells);
+                            hold_column(&chunk, file.len(), Some(&cells));
+                        }
                         Err(bad) => {
+                            hold_column(&chunk, file.len(), None);
                             refused_at(&bad, file.len());
                             return Ok(None);
                         }
@@ -711,6 +731,89 @@ fn hold_cells(dir: &ChunkDir, rows: u32, stored: &[u8], cells: &[Cell]) {
     }
 }
 
+// ── The typed decoder ──────────────────────────────────────────────────────────────
+
+/// One chunk as a reader was handed it: its directory entry, its row group's row count,
+/// its stored bytes and the file offset they start at.
+struct Chunk<'a> {
+    dir: &'a ChunkDir,
+    rows: u32,
+    stored: &'a [u8],
+    at: u64,
+}
+
+/// The typed decoder over a chunk `read::chunk` has judged. `cells` is what `read::chunk`
+/// decoded, or `None` where it refused; `len` is the file's length.
+///
+/// With cells: the chunk decodes, reads over its own bytes and over no others, and every
+/// row prints as its cell - alone, through a memo, and out of the memo a second time.
+/// With none: the chunk is refused, or one of its rows is. A refusal names a place inside
+/// the file either way.
+fn hold_column(chunk: &Chunk<'_>, len: usize, cells: Option<&[Cell]>) {
+    let rows = chunk.rows as usize;
+    let column = match Column::decode(chunk.stored, chunk.at, chunk.dir, rows) {
+        Ok(column) => column,
+        Err(bad) => {
+            assert!(
+                cells.is_none(),
+                "the typed decoder refused a chunk the reader decoded: {}",
+                bad.what
+            );
+            refused_at(&bad, len);
+            return;
+        }
+    };
+    let col = match column.over(chunk.stored) {
+        Ok(col) => col,
+        Err(bad) => panic!(
+            "a column does not read over the bytes it was decoded from: {}",
+            bad.what
+        ),
+    };
+    assert_eq!(col.rows(), rows, "a column that is not one value a row");
+    assert!(
+        col.cell(rows).is_err(),
+        "a column printed a row past its last"
+    );
+    let other: &[u8] = match chunk.stored.split_last() {
+        Some((_, shorter)) => shorter,
+        None => &[0],
+    };
+    assert!(
+        column.over(other).is_err(),
+        "a column read over bytes of another length"
+    );
+    let Some(cells) = cells else {
+        let refusal = (0..rows).find_map(|row| col.cell(row).err());
+        match refusal {
+            Some(bad) => refused_at(&bad, len),
+            None => panic!("the typed decoder printed every row of a chunk the reader refused"),
+        }
+        return;
+    };
+    let mut memo = Memo::default();
+    for pass in 0..2 {
+        for (row, cell) in cells.iter().enumerate() {
+            if pass == 0 {
+                match col.cell(row) {
+                    Ok(printed) => assert!(printed == *cell, "row {row} prints as another cell"),
+                    Err(bad) => panic!("row {row} of a chunk the reader decoded: {}", bad.what),
+                }
+            }
+            match col.cell_with(row, &mut memo) {
+                Ok(printed) => assert!(
+                    printed == *cell,
+                    "row {row} prints as another cell through the memo"
+                ),
+                Err(bad) => panic!(
+                    "row {row} of a chunk the reader decoded, through the memo: {}",
+                    bad.what
+                ),
+            }
+        }
+    }
+}
+
 // ── What a decoded chunk's body holds ──────────────────────────────────────────────
 
 /// The next `n` bytes of a body the reader decoded, which must be there.
@@ -994,6 +1097,35 @@ fn sealed(file: &[u8], kept: bool) -> Option<Index> {
             if weigh(header.row_count, &mut work).is_err() {
                 return Some(index);
             }
+            // What a query reads: the chunk as it is stored, checked and not decoded.
+            let undecoded = match reader.stored(e, &header, &[at]) {
+                Ok((chunks, read)) => {
+                    assert_eq!(chunks.len(), 1, "one column was asked for");
+                    assert_eq!(read, u64::from(dir.stored_len), "the bytes read");
+                    let chunk = &chunks[0];
+                    assert!(
+                        file.get(area + from..area + to) == Some(&chunk.bytes[..])
+                            && chunk.at == (area + from) as u64,
+                        "a stored chunk is not the file's bytes where the header puts it"
+                    );
+                    assert_eq!(
+                        frame::crc32c(&chunk.bytes),
+                        crc,
+                        "a chunk whose CRC does not hold was handed over"
+                    );
+                    chunks.into_iter().next()
+                }
+                Err(err) => {
+                    refused(&err, file.len());
+                    None
+                }
+            };
+            let typed = undecoded.as_ref().map(|chunk| Chunk {
+                dir,
+                rows: header.row_count,
+                stored: &chunk.bytes,
+                at: chunk.at,
+            });
             match reader.chunks(e, &header, &[at]) {
                 Ok((cells, read)) => {
                     assert_eq!(cells.len(), 1, "one column was asked for");
@@ -1006,10 +1138,21 @@ fn sealed(file: &[u8], kept: bool) -> Option<Index> {
                         "a chunk whose CRC does not hold was decoded"
                     );
                     hold_cells(dir, header.row_count, stored, &cells[0]);
+                    // The two readers check the same bytes the same way before either
+                    // decodes, so a chunk one of them reads the other hands over.
+                    let Some(typed) = &typed else {
+                        panic!("a chunk the reader decoded was not handed over undecoded");
+                    };
+                    hold_column(typed, file.len(), Some(&cells[0]));
                 }
                 Err(err) => {
                     assert!(!kept, "a chunk the walk kept does not read: {err}");
                     refused(&err, file.len());
+                    // Refused for its bytes, and then neither reader hands it over; or
+                    // for what they decode to, and then the typed decoder refuses it too.
+                    if let Some(typed) = &typed {
+                        hold_column(typed, file.len(), None);
+                    }
                 }
             }
         }
