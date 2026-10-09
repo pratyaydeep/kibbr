@@ -329,6 +329,181 @@ fn a_window_over_one_row_group_reads_one_and_says_so() {
     );
 }
 
+/// An answer with how long it took left out: everything else in it is the same from one
+/// asking to the next, and from one server on a directory to the next.
+fn but_the_duration(mut answer: serde_json::Value) -> serde_json::Value {
+    let taken = answer["meta"]
+        .as_object_mut()
+        .and_then(|meta| meta.remove("duration_ms"));
+    assert!(taken.is_some(), "an answer with no duration: {answer}");
+    answer
+}
+
+/// What the machine reports as its cores, as the server counts them.
+fn cores() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// **A query answers the same whether its scan is shared between threads or not**, asked
+/// of the binary over HTTP.
+///
+/// One directory with a day of three row groups in one template, served three times:
+/// with nothing said; with `--scan-threads 1`, so every query chooses its rows on its own
+/// thread; and with as many scan threads as four cores allow and `--scan-fan-rows 0`, so
+/// every run of two row groups or more is shared out. A count by a term, a count under
+/// a window that prunes one row group, a grouping, and a fetch followed page by page to
+/// its end answer the same JSON from all three, but for how long each took: the count,
+/// the rows in their order, the groups, the cursor, and every counter of the scan.
+///
+/// `/stats` says how many runs were shared out: none by the second server, and some by
+/// the third - without which this would be three servers answering on one thread each.
+/// A machine with one core has no third server to start: it is refused, and that is held
+/// by `more_scan_threads_than_the_machine_has_cores_are_refused_at_the_start`.
+///
+/// **And each server says what it resolved**, in `/stats` beside that count and in its
+/// banner: the threads one query may use and the rows under which a run is never shared
+/// out. The default depends on the machine, and a count of no runs shared out reads the
+/// same for one thread as for four with nothing worth sharing, so without the two
+/// numbers nobody outside the process can tell which they are looking at.
+#[test]
+fn a_scan_shared_between_threads_answers_what_one_thread_answers() {
+    let db = Db::new();
+    // One close, at the shutdown: two full row groups at 8,192 rows and a third.
+    let first = db.start_with(&[
+        "--flush-interval-ms",
+        "3600000",
+        "--row-group-timeout-ms",
+        "3600000",
+    ]);
+    first.ingest(&one_template(20_000));
+    first.shutdown();
+
+    // Every answer to the questions, the fetch page by page; and what /stats says.
+    let asked = |extra: &[&str]| -> (Vec<serde_json::Value>, u64) {
+        let said = |server: &Server, key: &str| -> u64 {
+            server.stats()["queries"][key]
+                .as_u64()
+                .unwrap_or_else(|| panic!("no queries.{key} in /stats"))
+        };
+        let server = db.start_with(extra);
+        let mut answers: Vec<serde_json::Value> = [
+            r#"COUNT LOG {"host":"h3"}"#,
+            // The first row group ends at 12:16:31, before this, and is pruned.
+            r#"COUNT LOG {} BETWEEN "2024-01-15T12:30:00Z" AND "2024-01-15T15:40:00Z""#,
+            r#"COUNT LOG {"level":"info"} GROUP BY time(1h), "host""#,
+        ]
+        .iter()
+        .map(|q| but_the_duration(server.query(q)))
+        .collect();
+        let mut cursor: Option<String> = None;
+        for page in 0.. {
+            assert!(page < 10, "a fetch that never ends");
+            let after = cursor.map_or(String::new(), |c| format!(r#" AFTER "{c}""#));
+            let answer = server.query(&format!(r#"MATCH LOG {{"host":"h3"}} LIMIT 900{after}"#));
+            cursor = answer["meta"]["next_cursor"].as_str().map(str::to_string);
+            answers.push(but_the_duration(answer));
+            if cursor.is_none() {
+                break;
+            }
+        }
+        let shared_out = server.stats()["queries"]["scan_fan_outs"]
+            .as_u64()
+            .expect("queries.scan_fan_outs");
+        let (threads, fan_rows) = (
+            said(&server, "scan_threads"),
+            said(&server, "scan_fan_rows"),
+        );
+        // What was asked for, where anything was; and otherwise the default, unless the
+        // environment this test runs in sets it.
+        let flag = |name: &str| -> Option<u64> {
+            let at = extra.iter().position(|arg| *arg == name)?;
+            extra[at + 1].parse().ok()
+        };
+        let set = |var: &str| std::env::var(var).ok().and_then(|v| v.trim().parse().ok());
+        let default = ((cores() / 2).clamp(1, 4)) as u64;
+        let want_threads = flag("--scan-threads")
+            .or_else(|| set("KIBBR__QUERY__SCAN_THREADS"))
+            .unwrap_or(default);
+        let want_rows = flag("--scan-fan-rows")
+            .or_else(|| set("KIBBR__QUERY__SCAN_FAN_ROWS"))
+            .unwrap_or(32_768);
+        // None and one are both the query's own thread and no other.
+        assert_eq!(threads, want_threads.max(1), "{extra:?}");
+        assert_eq!(fan_rows, want_rows, "{extra:?}");
+        // The banner's line is past what `start_with` reads of it: it is in the rest.
+        let mut banner = server.banner.clone();
+        banner.push_str(&server.shutdown());
+        let line = if threads == 1 {
+            "  scan        1 thread to a query - no scan is shared out".to_string()
+        } else {
+            format!("  scan        {threads} threads to a query, its own among them")
+        };
+        assert!(banner.contains(&line), "no `{line}` in:\n{banner}");
+        (answers, shared_out)
+    };
+
+    let (plain, _) = asked(&[]);
+    assert_eq!(plain[0]["count"], 2_500);
+    assert_eq!(plain[1]["meta"]["row_groups_pruned"], 1, "{}", plain[1]);
+    assert_eq!(plain[1]["meta"]["row_groups_read"], 2, "{}", plain[1]);
+    assert!(plain[2]["groups"].as_array().is_some_and(|g| g.len() > 8));
+    // 2,500 rows at 900 a page.
+    assert_eq!(plain.len(), 3 + 3);
+    assert_eq!(plain[3]["rows"].as_array().map(Vec::len), Some(900));
+
+    let (alone, shared_out) = asked(&["--scan-threads", "1"]);
+    assert_eq!(
+        shared_out, 0,
+        "a server with one scan thread shared a scan out"
+    );
+    assert_eq!(alone, plain);
+
+    let threads = cores().min(4);
+    if threads < 2 {
+        return;
+    }
+    let (together, shared_out) = asked(&[
+        "--scan-threads",
+        &threads.to_string(),
+        "--scan-fan-rows",
+        "0",
+    ]);
+    // Each of the six questions has a run of two or three row groups to share out.
+    assert_eq!(shared_out, 6, "runs of row groups shared out");
+    assert_eq!(together, plain);
+}
+
+/// More scan threads than the machine has cores would only take turns on the same
+/// cores, and the first query to need them would wait while they were started. The
+/// server says so and does not start: by the flag, and by the variable.
+#[test]
+fn more_scan_threads_than_the_machine_has_cores_are_refused_at_the_start() {
+    let db = Db::new();
+    let many = (cores() + 1).to_string();
+    let refused = |flag: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
+        command
+            .args(["serve", "--port", "0"])
+            .args(["--data-dir", &db.dir.display().to_string()]);
+        if flag {
+            command.args(["--scan-threads", &many]);
+        } else {
+            command.env("KIBBR__QUERY__SCAN_THREADS", &many);
+        }
+        let out = command.output().expect("failed to run kibbr serve");
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(1), "{said}");
+        let want = format!(
+            "scan threads ({many}) is above the {} core(s) this machine has",
+            cores()
+        );
+        assert!(said.contains(&want), "{said}");
+        assert!(!said.contains("listening"), "{said}");
+    };
+    refused(true);
+    refused(false);
+}
+
 /// The row groups a query reads, and the rows still buffered: what the tick has closed so
 /// far, as a client sees it.
 fn closed(server: &Server) -> (u64, u64) {

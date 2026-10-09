@@ -367,6 +367,27 @@ or `KIBBR__QUERY__MAX_ROWS` to change it, `0` to turn it off - and says so:
 as `AFTER` for the rest. A `LIMIT` you asked for is honoured above it rather
 than clamped to it, and `COUNT` and `GROUP BY` return no rows for it to bound.
 
+**A query may choose a day's rows on several threads.** A day of one template is
+stored as row groups, and choosing which rows of a row group match needs nothing
+but that row group, so a run of them can be shared out: the thread answering the
+query reads every row group and hands every row over, in order, and between the
+two it and a few others each take the next row group nobody has taken. The answer
+and every counter in `meta` are the same either way. `--scan-threads`
+(`KIBBR__QUERY__SCAN_THREADS`) is how many threads one query may use, its own
+among them: half the cores and at most 4 by default, `1` for never, and more than
+the machine has cores is refused at startup. A run holding fewer than
+`--scan-fan-rows` rows (`KIBBR__QUERY__SCAN_FAN_ROWS`, 32,768) is not worth
+waking a thread for and is never shared, which is most queries; nor is any run
+while an `/ingest` body is between the door and its answer - its parse and its
+wait for the log's flush both - so a server taking steady ingest, however light,
+answers each query on one thread, and `queries.scan_fan_outs` stays where it was.
+It buys time and costs CPU - on eight cores, a count over 433,000 rows of a day
+in about half the time for 14 to 34% more CPU in replays of the bench's scan
+(`kibbr bench` has not yet taken that row). `/stats` counts the runs shared out
+as `queries.scan_fan_outs`, beside the two settings as this server resolved
+them, `queries.scan_threads` and `queries.scan_fan_rows`, and the startup banner
+says them too.
+
 **`GROUP BY time(5m)` emits empty buckets as zeros.** Six hours at five minutes
 is 72 observations, and a bucket nothing landed in is one of them - the thing was
 quiet, which is not the same statement as a bucket nobody asked about. So the
@@ -491,6 +512,17 @@ zcat archive.gz | kibbr load --data-dir kibbr-data -       # standard input
 
 `scripts/two_doors.sh` sends the same 200,000 lines through both doors into two data
 directories and asks both `scripts/agree.sh`'s query set: they must answer identically.
+
+It, `scripts/store_agree.sh` (the memory store against the disk store) and
+`scripts/roundtrip.sh` (every line back out as it went in) each print how many runs of
+row groups their disk servers shared between threads, and with `NEED_FAN_OUTS=1` fail
+at none. That is for a run made to hold the shared scan to the plain one, with
+`KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0` in the environment: on
+the scripts' own data almost nothing is shared out, and such a run would pass having
+checked nothing. `two_doors.sh` with `BIN` an earlier build and `RESTART_BIN` this one
+holds every shared-out answer to that build's; `store_agree.sh` wants `BODIES=4` and a
+short row-group timeout, and `roundtrip.sh` wants `FARM=60000`, to have a day in two
+row groups at all - each script's header has the line.
 
 ## Compact a finished day
 

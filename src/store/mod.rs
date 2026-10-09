@@ -57,6 +57,7 @@ use crate::types::ColValue;
 
 pub mod columns;
 pub mod disk;
+pub mod fan;
 pub mod manifest;
 pub mod memory;
 #[cfg(test)]
@@ -634,8 +635,21 @@ pub const DEFAULT_MAX_OPEN_SEGMENTS: usize = 512;
 /// payload a row, 1,537 by the estimate, 1.8KB of resident size.
 pub const DEFAULT_MAX_BUFFER_BYTES: u64 = 512 * 1024 * 1024;
 
+/// A run of a day's row groups holding fewer rows than this, by the index, is chosen on
+/// the thread that asked and never shared with the scan threads (`fan`).
+///
+/// **Four full row groups, one a thread.** Sharing a run out costs a wake-up of each
+/// thread, measured at 0.03 to 0.06 ms of a query's time and 0.07 to 0.25 ms of CPU, and
+/// choosing a row costs about 8 ns for a count and 14 ns for a fetch that is asked first:
+/// four threads break even near 8,000 to 13,000 rows. This is three times that, and it is
+/// the least power of two at which no query that was under two milliseconds on a day of a
+/// million rows over 145 templates was shared out: at half of it one of them lost 2.5%,
+/// and at a quarter 11%, because nearly every chunk it reads is a constant and there was
+/// nothing for a second thread to decode.
+pub const DEFAULT_FAN_ROWS: u64 = 32_768;
+
 /// What the disk store is held to: when a row group closes, how many files may be open,
-/// how large one may grow, and how much may wait in memory.
+/// how large one may grow, how much may wait in memory, and what a scan may use.
 #[derive(Debug, Clone, Copy)]
 pub struct DiskOptions {
     pub row_groups: RowGroupLimits,
@@ -645,6 +659,14 @@ pub struct DiskOptions {
     pub segment_max_bytes: u64,
     /// See `DEFAULT_MAX_BUFFER_BYTES`.
     pub max_buffer_bytes: u64,
+    /// Threads one scan may choose rows on, the asking thread among them. 0 and 1: every
+    /// scan chooses in turn. **The default is 0**: only a server answers queries from a
+    /// disk store, and it asks for its threads (`config::Storage::with_scan`). A load, a
+    /// compaction and a test get none.
+    pub scan_threads: usize,
+    /// See `DEFAULT_FAN_ROWS`. 0 in a test that wants every run of two row groups shared
+    /// out.
+    pub fan_rows: u64,
 }
 
 impl Default for DiskOptions {
@@ -654,6 +676,8 @@ impl Default for DiskOptions {
             max_open_files: DEFAULT_MAX_OPEN_SEGMENTS,
             segment_max_bytes: disk::DEFAULT_SEGMENT_MAX_BYTES,
             max_buffer_bytes: DEFAULT_MAX_BUFFER_BYTES,
+            scan_threads: 0,
+            fan_rows: DEFAULT_FAN_ROWS,
         }
     }
 }
@@ -1009,6 +1033,12 @@ pub trait Store: Send + Sync {
     fn as_disk(&self) -> Option<&DiskStore> {
         None
     }
+    /// The disk store's scan threads: for the door to say a body is in its task, and
+    /// for the server to keep them until its runtime is gone. `None` for a store that
+    /// has none, which is every store but a server's disk store.
+    fn fan(&self) -> Option<Arc<fan::Fan>> {
+        None
+    }
 
     /// How many times a load or a replace has published here, bumped in the same step as
     /// the publish: a query that sees it move between planning and its snapshot plans
@@ -1164,6 +1194,11 @@ impl StoreManager {
     /// The disk store underneath, if there is one: what a bulk load commits through.
     pub fn disk_store(&self) -> Option<&DiskStore> {
         self.backend.as_disk()
+    }
+
+    /// The scan threads of the store underneath, if it has any. See `Store::fan`.
+    pub fn fan(&self) -> Option<Arc<fan::Fan>> {
+        self.backend.fan()
     }
 
     /// Open the store on first write, then buffer the row.

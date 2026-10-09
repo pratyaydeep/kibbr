@@ -69,6 +69,7 @@ use std::time::{Instant, SystemTime};
 
 use chrono::{DateTime, NaiveDate};
 
+use super::fan::Fan;
 use super::manifest::{self, FileRecord, Manifest, Record};
 use super::v3::build::{self, schema_of, Encoded, Level};
 use super::v3::file::{self, Entry, Index, Mark, Reader, Writer};
@@ -778,6 +779,10 @@ pub struct DiskStore {
     segment_max_bytes: u64,
     /// Threads a flush encodes row groups on: one per core, up to eight.
     encoders: usize,
+    /// The threads a scan may choose a day's rows on beside its own, where the store was
+    /// opened with any: handed to each leaf as it opens, and by a leaf to each query's
+    /// copy of it. See `fan`.
+    fan: Option<Arc<Fan>>,
     files: Mutex<Files>,
     /// Every leaf this store has opened, by template: for a flush to walk, and for a query
     /// to take its snapshot from in the hold a load publishes under.
@@ -1017,6 +1022,8 @@ impl DiskStore {
             max_buffer_bytes: options.max_buffer_bytes,
             segment_max_bytes: options.segment_max_bytes,
             encoders: std::thread::available_parallelism().map_or(1, |n| n.get().min(8)),
+            // A struct and no thread: the first scan that has a use for them starts them.
+            fan: Fan::new(options.scan_threads, options.fan_rows),
             files: Mutex::new(Files {
                 data,
                 manifest,
@@ -1889,6 +1896,7 @@ impl Store for DiskStore {
             limits: self.limits,
             held: Arc::clone(&self.buffered),
             applied: Arc::clone(&self.wal_applied),
+            fan: self.fan.clone(),
             state: Mutex::new(LeafState { days, buffered: 0 }),
         });
         leaves.insert(template_id, Arc::clone(&leaf));
@@ -1902,6 +1910,10 @@ impl Store for DiskStore {
 
     fn as_disk(&self) -> Option<&DiskStore> {
         Some(self)
+    }
+
+    fn fan(&self) -> Option<Arc<Fan>> {
+        self.fan.clone()
     }
 
     /// One short hold of each leaf's lock. A buffer is in position order and the rows a
@@ -2234,6 +2246,8 @@ pub struct DiskLeaf {
     held: Arc<AtomicU64>,
     /// The store's `wal_applied`, raised by every positioned row a leaf takes.
     applied: Arc<AtomicU64>,
+    /// The store's scan threads, if it has any.
+    fan: Option<Arc<Fan>>,
     state: Mutex<LeafState>,
 }
 
@@ -2510,7 +2524,10 @@ impl DiskLeaf {
     fn freeze(&self, since: Option<i64>, until: Option<i64>) -> Frozen {
         let windowed = since.is_some() || until.is_some();
         let state = self.state();
-        let mut frozen = Frozen::default();
+        let mut frozen = Frozen {
+            fan: self.fan.clone(),
+            ..Frozen::default()
+        };
         for (day, part) in state.days.iter().rev() {
             if windowed && !Self::overlaps(*day, part.span(), since, until) {
                 frozen.pruned += part.stored.len() as u64;
@@ -2557,6 +2574,8 @@ impl DiskLeaf {
 struct Frozen {
     views: Vec<View>,
     pruned: u64,
+    /// The store's scan threads, if it has any: a frozen leaf carries them to its scan.
+    fan: Option<Arc<Fan>>,
 }
 
 impl Frozen {
@@ -2587,7 +2606,7 @@ impl Frozen {
                     continue;
                 }
             }
-            if !scan::day(view, &ask, v, &mut out, &mut readers)? {
+            if !scan::day(view, &ask, v, &mut out, &mut readers, self.fan.as_deref())? {
                 break;
             }
         }

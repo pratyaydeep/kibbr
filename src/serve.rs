@@ -29,7 +29,7 @@ use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -61,6 +61,7 @@ use crate::fmt::{commas, rfc3339_at};
 use crate::load;
 use crate::query;
 use crate::store::disk::CompactOptions;
+use crate::store::fan::Fan;
 use crate::store::{FlushKind, StoreError, StoreManager};
 use crate::trie::{Trie, TrieError};
 use crate::wal::{self, Wal};
@@ -221,6 +222,10 @@ pub struct Server {
     /// Set once, when shutdown begins, and the one switch every compaction here is run
     /// with: whichever is running then stops before its record and removes what it wrote.
     compact_cancel: Arc<AtomicBool>,
+    /// The disk store's scan threads, where it has any: for the door to say a body is
+    /// in its task, which keeps a query from sharing its scan out meanwhile, and for
+    /// `/stats` to say how many runs of row groups were shared out.
+    fan: Option<Arc<Fan>>,
 }
 
 /// The header a `/load` or `/compact` request carries its token in.
@@ -376,6 +381,7 @@ impl Server {
         };
 
         let write_health = stores.health();
+        let fan = stores.fan();
         Ok(Self {
             trie,
             stores,
@@ -402,6 +408,7 @@ impl Server {
             load_token,
             compactions: std::sync::Mutex::new(compact::Jobs::default()),
             compact_cancel: Arc::new(AtomicBool::new(false)),
+            fan,
         })
     }
 }
@@ -1598,6 +1605,12 @@ async fn post_ingest(
     // spending it on a runtime thread would stall every other endpoint while the server
     // was being attacked.
     let done = tokio::task::spawn_blocking(move || {
+        // Said from before the body is inflated until its answer is ready: while any
+        // body is in its task a query chooses its rows on its own thread, so the scan
+        // threads take no core from the parse and the walk - and none while the body
+        // waits on the log either, which is most of a small body's time. So one sender
+        // of small bodies back to back is enough to keep every scan on one thread.
+        let _body = held.fan.as_deref().map(Fan::body);
         let decoded = decode(&body, encoding.as_deref(), held.api.max_decompressed_bytes)
             .map_err(IngestFailure::Body)?;
         ingest(&held, &decoded, now, permit).map_err(IngestFailure::Fatal)
@@ -2745,6 +2758,18 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
         "queries": {
             "served": queries,
             "per_second": rate(queries, uptime),
+            // Runs of a day's row groups whose rows were chosen on more threads than the
+            // query's own, over the life of the process. Zero on a server with one scan
+            // thread, and it stays where it is while bodies are being ingested: a query
+            // asked then is answered on its own thread.
+            "scan_fan_outs": server.fan.as_ref().map_or(0, |fan| fan.fanned()),
+            // What this server resolved: the threads one query may choose a day's rows
+            // on, its own among them - 1 where there is nobody to share with (the memory
+            // store, or `--scan-threads` 0 or 1) - and the rows under which a run of row
+            // groups is never shared out. Without them a count of 0 above reads the same
+            // for one thread as for four with nothing worth sharing.
+            "scan_threads": scan_threads(&server),
+            "scan_fan_rows": server.storage.scan_fan_rows,
         },
     }))
     .into_response()
@@ -2919,12 +2944,16 @@ pub fn run(
     storage: Storage,
     schema: Schema,
 ) -> Result<(), CliError> {
+    // The scan threads' last owner. Declared before the runtime, so let go after it: the
+    // pool's own `Drop` then runs here, on the main thread, when no runtime thread exists
+    // and no `async fn` is on the stack (see `store::fan`).
+    let scan: OnceLock<Arc<Fan>> = OnceLock::new();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .max_blocking_threads(ingest_bodies(&api) + OTHER_BLOCKING_THREADS)
         .build()
         .map_err(ServeError::Runtime)?;
-    runtime.block_on(serve(host, port, limits, api, storage, schema))?;
+    runtime.block_on(serve(host, port, limits, api, storage, schema, &scan))?;
     Ok(())
 }
 
@@ -2935,6 +2964,7 @@ async fn serve(
     api: ApiLimits,
     storage: Storage,
     schema: Schema,
+    scan: &OnceLock<Arc<Fan>>,
 ) -> Result<(), ServeError> {
     // Read-only, so it runs before the lock and the port: a data directory holding a
     // segment from another format version is not served at all, and nothing is listening
@@ -2985,6 +3015,11 @@ async fn serve(
         schema,
         load_token.clone(),
     )?);
+    // Handed to `run` before anything below can fail or answer a query, so that on every
+    // way out of here the scan threads are let go by `run`, after the runtime.
+    if let Some(fan) = &server.fan {
+        let _ = scan.set(Arc::clone(fan));
+    }
     // Where `kibbr load` finds this server - written once it can answer. An address of
     // all interfaces is reached on loopback from the same machine, which is where the
     // directory is.
@@ -3361,6 +3396,27 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     Ok(())
 }
 
+/// The threads one query of this server may choose a day's rows on, its own among them:
+/// what was resolved from the flag, the variable and the cores, and 1 where there is
+/// nobody to share with - the memory store, or a disk store told 0 or 1.
+fn scan_threads(server: &Server) -> usize {
+    server.fan.as_ref().map_or(1, |_| server.storage.scan_threads)
+}
+
+/// The banner's line about the scan threads. The default depends on the machine, and
+/// nothing else at startup says what it came to.
+fn scan_line(server: &Server) -> String {
+    match scan_threads(server) {
+        1 => "  scan        1 thread to a query - no scan is shared out".to_string(),
+        threads => format!(
+            "  scan        {threads} threads to a query, its own among them; a run of a\n\
+             \x20             day's row groups under {} rows is never shared out, nor\n\
+             \x20             any while an /ingest body is between the door and its answer",
+            commas(server.storage.scan_fan_rows),
+        ),
+    }
+}
+
 /// The startup banner.
 ///
 /// stderr, and not stdout, so that `kibbr serve >/dev/null` still prints the paragraph
@@ -3463,6 +3519,7 @@ fn banner(addr: SocketAddr, server: &Server) {
             api.ingest_concurrency,
             INGEST_QUEUE_WAIT.as_millis(),
         ),
+        scan_line(server),
         // On every start: the cost of learning it later is a fleet of shipper configs that
         // all have to change at once. `post_ingest` has the long form.
         "  tenancy     single tenant - /ingest takes no stream or tenant identifier,\n\
@@ -3883,5 +3940,208 @@ mod tests {
         let (status, _, report) = answer(&server, &body);
         assert_eq!(status, StatusCode::OK, "a malformed line past the cap was not counted");
         assert_eq!(report["errors_omitted"], 2);
+    }
+
+    /// **A scan is shared between threads from a thread that may block, and never from a
+    /// runtime worker.** Sharing a run of row groups out blocks the thread that asked
+    /// until the run is chosen; on a worker that is every request in flight, stalled.
+    ///
+    /// A server on disk whose queries may use four threads, with one template's day in
+    /// two row groups, on a runtime of one worker. `post_query` is run as a task on that
+    /// worker, as a request is: the one run its count shares out is shared out from
+    /// another thread - the `spawn_blocking` thread the handler moves the query to.
+    ///
+    /// **And the control**, so that this is known to be able to fail: the same query
+    /// answered by a task that calls the engine itself. The run is then shared out from
+    /// the worker. A worker and a blocking thread cannot be told apart from inside, which
+    /// is why this is a test and not an assertion in the scan.
+    ///
+    /// The scan threads are kept by a local declared before the runtime, as `run` keeps
+    /// them, so that they are let go after it.
+    #[test]
+    fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
+        let dir = std::env::temp_dir().join(format!("kibbr-serve-fan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let storage = Storage {
+            base_path: Some(dir.clone()),
+            trie_file: Some(dir.join("trie.json")),
+            row_group_timeout: Duration::ZERO,
+            scan_threads: 4,
+            scan_fan_rows: 0,
+            ..Storage::default()
+        };
+        let scan: OnceLock<Arc<Fan>> = OnceLock::new();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let server = Server::new(
+            Utc::now(),
+            Limits::default(),
+            ApiLimits::default(),
+            storage,
+            Schema::default(),
+            None,
+        );
+        let server = Arc::new(server.expect("a server on disk"));
+        let fan = Arc::clone(server.fan.as_ref().expect("the server has scan threads"));
+        let _ = scan.set(Arc::clone(&fan));
+
+        // Two row groups in one day: each tick closes what is buffered.
+        let now = Utc::now();
+        for half in 0..2 {
+            let lines: String = (0..50)
+                .map(|n| {
+                    format!(
+                        "{{\"ts\":\"2024-01-15T00:0{half}:{n:02}Z\",\"level\":\"info\",\"n\":{n}}}\n"
+                    )
+                })
+                .collect();
+            db::read_lines(
+                lines.as_bytes(),
+                &mut |_, parsed| db::ingest_line(&server.trie, Some(&server.stores), &parsed, now),
+                &mut |_| {},
+            )
+            .expect("the lines are read");
+            let flushed = server.stores.flush_all(FlushKind::Tick);
+            assert_eq!((flushed.failed, flushed.row_groups), (0, 1));
+        }
+
+        let text = r#"COUNT LOG {"level":"info"}"#;
+        let me = std::thread::current().id();
+        let worker = runtime
+            .block_on(async { tokio::spawn(async { std::thread::current().id() }).await })
+            .expect("the task ran");
+        assert_ne!(worker, me);
+
+        // As a request: the handler, on the worker.
+        let asked = Bytes::from(json!({ "q": text }).to_string());
+        let answer: Value = runtime.block_on(async {
+            let response = tokio::spawn(post_query(State(Arc::clone(&server)), asked))
+                .await
+                .expect("the handler ran");
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("the response body");
+            serde_json::from_slice(&bytes).expect("the answer is JSON")
+        });
+        assert_eq!(answer["count"], 100, "{answer}");
+        assert_eq!(answer["meta"]["row_groups_read"], 2, "{answer}");
+        let entered = fan.entered();
+        assert_eq!(entered.len(), 1, "{entered:?}");
+        assert!(
+            entered[0] != worker && entered[0] != me,
+            "the scan was shared out from a runtime thread"
+        );
+
+        // The control: the engine called from a task, on the worker.
+        let query = query::from_trieql(text, Utc::now(), server.limits).expect("a query");
+        let held = Arc::clone(&server);
+        let count = runtime
+            .block_on(async {
+                tokio::spawn(async move {
+                    engine::execute(&held.trie, &held.stores, &query).map(|result| result.count)
+                })
+                .await
+            })
+            .expect("the task ran")
+            .expect("the query answers");
+        assert_eq!(count, 100);
+        assert_eq!(fan.entered(), [entered[0], worker]);
+        assert_eq!(fan.fanned(), 2);
+
+        drop(server);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **A server says what its queries may use**, in `/stats` and in its banner: the
+    /// threads one query may choose a day's rows on, and the rows under which a run of
+    /// row groups is never shared out. The default is half the cores, so it is not the
+    /// same on two machines, and `scan_fan_outs` at 0 reads the same for a server with
+    /// one thread as for one with four and nothing worth sharing out.
+    ///
+    /// The threads said are the ones a scan can use, which is not always what was
+    /// resolved: a server in memory has no scan to share whatever its flags came to, and
+    /// a disk store told none or one has the query's own thread and no other.
+    #[test]
+    fn a_server_says_the_scan_threads_it_resolved_in_stats_and_in_its_banner() {
+        let dir = std::env::temp_dir().join(format!("kibbr-serve-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let on_disk = |name: &str, scan_threads: usize, scan_fan_rows: u64| {
+            let base = dir.join(name);
+            std::fs::create_dir_all(&base).expect("mkdir");
+            Storage {
+                trie_file: Some(base.join("trie.json")),
+                base_path: Some(base),
+                scan_threads,
+                scan_fan_rows,
+                ..Storage::default()
+            }
+        };
+        // In memory, with the four threads `with_scan` resolves on a machine of eight
+        // cores still in its settings.
+        let in_memory = Storage {
+            scan_threads: 4,
+            ..Storage::default()
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        // Each server's settings, and the threads and the rows it must then say.
+        let cases = [
+            (in_memory, 1, crate::store::DEFAULT_FAN_ROWS),
+            (on_disk("none", 0, 7), 1, 7),
+            (on_disk("one", 1, 7), 1, 7),
+            (on_disk("two", 2, crate::store::DEFAULT_FAN_ROWS), 2, 32_768),
+            (on_disk("four", 4, 0), 4, 0),
+        ];
+        for (storage, threads, fan_rows) in cases {
+            let server = Server::new(
+                Utc::now(),
+                Limits::default(),
+                ApiLimits::default(),
+                storage,
+                Schema::default(),
+                None,
+            );
+            let server = Arc::new(server.expect("a server"));
+            assert_eq!(server.fan.is_some(), threads > 1);
+            let stats: Value = runtime.block_on(async {
+                let response = get_stats(State(Arc::clone(&server))).await;
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .expect("the response body");
+                serde_json::from_slice(&bytes).expect("/stats is JSON")
+            });
+            let queries = &stats["queries"];
+            assert_eq!(queries["scan_threads"], threads, "{queries}");
+            assert_eq!(queries["scan_fan_rows"], fan_rows, "{queries}");
+            assert_eq!(queries["scan_fan_outs"], 0, "{queries}");
+
+            let line = scan_line(&server);
+            if threads == 1 {
+                assert_eq!(
+                    line,
+                    "  scan        1 thread to a query - no scan is shared out"
+                );
+                continue;
+            }
+            let first = format!("  scan        {threads} threads to a query, its own among them;");
+            assert!(line.starts_with(&first), "{line}");
+            let rows = format!("under {} rows is never shared out", commas(fan_rows));
+            assert!(line.contains(&rows), "{line}");
+            // And when else none is: for as long as a body is at the door, not only
+            // while it is parsed.
+            assert!(
+                line.ends_with("any while an /ingest body is between the door and its answer"),
+                "{line}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

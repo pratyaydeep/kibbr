@@ -37,6 +37,8 @@
 #   scripts/roundtrip.sh
 #   HOSTILE=5000 FARM=5000 scripts/roundtrip.sh
 #   BIN=/path/to/an/older/kibbr scripts/roundtrip.sh
+#   FARM=60000 NEED_FAN_OUTS=1 KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0 \
+#     KIBBR__API__MAX_BODY_BYTES=67108864 scripts/roundtrip.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -46,6 +48,13 @@ BIN=${BIN:-./target/release/kibbr}
 HOSTILE=${HOSTILE:-3000}
 FARM=${FARM:-3000}
 CASES=testdata/roundtrip.ndjson
+# 1: fail unless the disk server shared out at least one run of row groups
+# (`queries.scan_fan_outs` in /stats). For a run made to hold a scan shared between
+# threads to the memory store - KIBBR__QUERY__SCAN_THREADS and KIBBR__QUERY__SCAN_FAN_ROWS=0
+# in the environment, which reach the servers started here: without this such a run
+# passes having asked nothing of it. It needs a template's day in two row groups, which
+# FARM=60000 gives: the farm's largest templates then pass the 8,192 rows one closes at.
+NEED_FAN_OUTS=${NEED_FAN_OUTS:-}
 
 [ "$BIN" = ./target/release/kibbr ] && { cargo build --release --quiet || exit 1; }
 WORK=$(mktemp -d)
@@ -88,6 +97,14 @@ stop() {  # stop <pid>
   wait "$1" 2>/dev/null
 }
 
+# The runs of row groups a server has shared between threads so far; 0 from a build with
+# no such counter.
+fan_outs() {  # fan_outs <port>
+  curl -s "http://127.0.0.1:$1/stats" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["queries"].get("scan_fan_outs", 0))'
+}
+FAN_OUTS=0
+
 start "$WORK/mem.log" --storage memory || exit 1
 MEM_PID=$PID; MEM_PORT=$PORT
 start "$WORK/disk.log" --data-dir "$WORK/data" || exit 1
@@ -126,10 +143,12 @@ PY
 
 page_all "$MEM_PORT" "$WORK/memory.json" || exit 1
 page_all "$DISK_PORT" "$WORK/warm.json" || exit 1
+FAN_OUTS=$((FAN_OUTS + $(fan_outs "$DISK_PORT")))
 stop "$DISK_PID"
 start "$WORK/disk2.log" --data-dir "$WORK/data" || exit 1
 DISK_PID=$PID; DISK_PORT=$PORT
 page_all "$DISK_PORT" "$WORK/restarted.json" || exit 1
+FAN_OUTS=$((FAN_OUTS + $(fan_outs "$DISK_PORT")))
 
 python3 - "$INPUT" "$WORK/ingest.$MEM_PORT.json" "$WORK/memory.json" "$WORK/warm.json" \
           "$WORK/restarted.json" <<'PY'
@@ -224,3 +243,11 @@ for label, path in answers:
         status = 1
 sys.exit(status)
 PY
+status=$?
+
+echo "scan fan-outs on the disk server: $FAN_OUTS"
+if [ "$NEED_FAN_OUTS" = 1 ] && [ "$FAN_OUTS" -eq 0 ]; then
+  echo "FAIL: NEED_FAN_OUTS=1 and no scan was shared out; this run held nothing of the fan-out"
+  exit 1
+fi
+exit $status

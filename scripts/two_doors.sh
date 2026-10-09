@@ -62,6 +62,8 @@
 #   NLINES=200000 COMBOS=100 SEED=7 GEN_SEED=1 scripts/two_doors.sh
 #   PROFILE=farm scripts/two_doors.sh
 #   BIN=$PWD/old/kibbr RESTART_BIN=$PWD/target/release/kibbr scripts/two_doors.sh
+#   NEED_FAN_OUTS=1 KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0 \
+#     BIN=$PWD/old/kibbr RESTART_BIN=$PWD/target/release/kibbr scripts/two_doors.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -73,6 +75,15 @@ PROFILE=${PROFILE:-hostile}
 COMBOS=${COMBOS:-100}
 SEED=${SEED:-7}
 BATCH=2000
+# 1: fail unless a server here shared out at least one run of row groups
+# (`queries.scan_fan_outs` in /stats). For a run made to hold a scan shared between
+# threads to one that is not - KIBBR__QUERY__SCAN_THREADS and KIBBR__QUERY__SCAN_FAN_ROWS=0
+# in the environment, which reach the servers started here: without this such a run
+# passes having asked nothing of it. With BIN an earlier build and RESTART_BIN this one,
+# round 1 is answered with no scan shared out and round 2, on the same files, with every
+# run of two row groups shared out; "0 answers changed across the restart" is then the
+# one held to the other, query by query.
+NEED_FAN_OUTS=${NEED_FAN_OUTS:-}
 
 # Another build can be checked by naming its binary; the default is built first.
 [ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
@@ -157,6 +168,14 @@ stop() {  # stop <pid>; sets CODE
 field() {  # field <json file> <key>
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
 }
+
+# The runs of row groups a server has shared between threads so far; 0 from a build with
+# no such counter.
+fan_outs() {  # fan_outs <port>
+  curl -s "http://127.0.0.1:$1/stats" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["queries"].get("scan_fan_outs", 0))'
+}
+FAN_OUTS=0
 
 buffered() {  # buffered <port>
   curl -s "http://127.0.0.1:$1/stats" \
@@ -462,6 +481,7 @@ done < "$WORK/queries.txt"
 
 echo "round 1    the live door holds $(buffered "$LIVE_PORT") of its rows in buffers"
 round "round 1 (live door buffered)" "$WORK/tally.1" "$WORK/answers.1"
+FAN_OUTS=$((FAN_OUTS + $(fan_outs "$LIVE_PORT") + $(fan_outs "$BULK_PORT")))
 
 stop "$LIVE_PID"; LIVE_PID=""
 [ "$CODE" = 0 ] || { echo "FAIL the live server's SIGTERM exit was $CODE, want 0"; FAIL=1; }
@@ -474,6 +494,7 @@ BULK_PID=$PID; BULK_PORT=$PORT
 
 [ "$RESTART_BIN" = "$BIN" ] || echo "round 2    restarted with $RESTART_BIN"
 round "round 2 (both restarted)" "$WORK/tally.2" "$WORK/answers.2"
+FAN_OUTS=$((FAN_OUTS + $(fan_outs "$LIVE_PORT") + $(fan_outs "$BULK_PORT")))
 # A restart changes no answer: each door's round 2 against its own round 1. Between two
 # builds a cursor is held to its rank alone - the row the page stopped at - and not to its
 # guard, the last eight hex digits: the guard is a hash of the pattern, a build may spell
@@ -521,6 +542,12 @@ stop "$LIVE_PID"; LIVE_PID=""
 [ "$CODE" = 0 ] || { echo "FAIL the live server's second SIGTERM exit was $CODE, want 0"; FAIL=1; }
 stop "$BULK_PID"; BULK_PID=""
 [ "$CODE" = 0 ] || { echo "FAIL the bulk server's second SIGTERM exit was $CODE, want 0"; FAIL=1; }
+
+echo "scan fan-outs on the two servers, both rounds: $FAN_OUTS"
+if [ "$NEED_FAN_OUTS" = 1 ] && [ "$FAN_OUTS" -eq 0 ]; then
+  echo "FAIL: NEED_FAN_OUTS=1 and no scan was shared out; this run held nothing of the fan-out"
+  FAIL=1
+fi
 
 echo
 if [ "$FAIL" = 0 ]; then

@@ -31,6 +31,15 @@ libc = "0.2"
 # end, and axum hands on the trait without them. Already in the build under axum and
 # hyper; named here because src/ now implements the trait.
 http-body = "1"
+# The threads a query chooses a day's rows on beside its own: one small pool, owned by
+# the disk store of a server and started by the first query that has a use for it
+# (src/store/fan.rs, the only file that names this crate). A scope on that pool and
+# nothing else of rayon's - not its global pool, which is made on first use and shared
+# with whatever calls it next, and not `par_iter`, whose caller sleeps while the pool
+# works: here the thread that asked takes row groups too, so a pool that is given no
+# core costs a query a wait and not its answer. Entered only from a thread that may
+# block: a query is on a `spawn_blocking` thread before it reaches the store.
+rayon = "1.12.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"

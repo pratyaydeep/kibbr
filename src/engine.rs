@@ -3645,4 +3645,448 @@ mod tests {
         assert_eq!((held.len(), adrift), (14, 6));
         check("in row groups");
     }
+
+    // ── A scan shared between threads ──────────────────────────────────────────────
+
+    /// Three templates over two days for a store whose row groups close at two rows:
+    /// the lines to write out, seven row groups a template and day, and the lines to
+    /// hold in memory behind them afterwards.
+    ///
+    /// Two templates are timed, and written at the same seconds as each other, two lines
+    /// to a second: rows a time cannot tell apart, in one leaf and across two. The third
+    /// is the one of `rows_that_tie_across_two_days_page_as_they_did_before_a_store_could_ask`:
+    /// its time column is text, and `adrift` goes into it by hand.
+    fn three_templates() -> (Vec<String>, Vec<String>) {
+        let mut rng = Rng::new(31);
+        let mut line = |day: i64, n: i64| {
+            let secs = EPOCH + day * DAY + 3_600 + (n - n % 2) * 613;
+            let ts = chrono::DateTime::from_timestamp(secs, 0)
+                .expect("a representable instant")
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let level = ["ERROR", "WARN", "INFO"][rng.below(3) as usize];
+            let status = ["200", "404", r#""N/A""#, "null"][rng.below(4) as usize];
+            [
+                format!(r#"{{"ts":"{ts}","level":"{level}","status":{status},"n":{n}}}"#),
+                format!(
+                    r#"{{"ts":"{ts}","level":"{level}","job":"j{}","n":{n}}}"#,
+                    n % 3
+                ),
+            ]
+        };
+        let (mut stored, mut in_memory) = (Vec::new(), Vec::new());
+        for day in 0..2 {
+            for n in 0..14 {
+                stored.extend(line(day, n));
+            }
+            for n in 14..17 {
+                in_memory.extend(line(day, n));
+            }
+        }
+        // The third template after the other two, so that a query reads it last: the
+        // first of its rows that is not in its day ends the asking for the rest of a
+        // fetch, and a scan that is not asked first has nothing to share out.
+        stored.push(r#"{"ts":"2024-01-15T10:00:00Z","v":"old"}"#.to_string());
+        // What makes its time column text.
+        stored.push(r#"{"ts":"N/A","v":"undated"}"#.to_string());
+        for n in 0..6 {
+            stored.push(format!(
+                r#"{{"ts":"2113-01-01T10:00:0{}Z","v":"new {n}"}}"#,
+                5 - n
+            ));
+        }
+        in_memory.push(r#"{"ts":"2113-01-01T10:00:09Z","v":"late"}"#.to_string());
+        (stored, in_memory)
+    }
+
+    /// Into the template whose time column is text, by hand: five rows in each of two
+    /// days of 2112 whose time is an instant and whose line is said to have written it
+    /// as ten digits the ladder does not read as one. Each shows no time, so the rows at
+    /// one position of the two days are one `Rank`.
+    fn adrift(stores: &StoreManager, template_id: u64) {
+        for day in [52_083i64, 52_084] {
+            for k in 0..5 {
+                let secs = day * DAY + 36_000 + k;
+                let mut row = Row::new();
+                row.insert_written(
+                    "ts".to_string(),
+                    ColValue::Datetime(ns(secs)),
+                    Some(serde_json::Value::Number(secs.into())),
+                );
+                row.insert(
+                    "v".to_string(),
+                    ColValue::String(format!("day {day} row {k}")),
+                );
+                stores.append(template_id, "ts", row).expect("appended");
+            }
+        }
+    }
+
+    /// A query with no limit of the server's.
+    fn asking(
+        pattern: &[Match],
+        mode: QueryMode,
+        (since, until): (Option<i64>, Option<i64>),
+    ) -> Query {
+        Query::new(
+            pattern.to_vec(),
+            mode,
+            TimeRange {
+                since: since.map(at),
+                until: until.map(at),
+            },
+            None,
+            None,
+            at(EPOCH + 7 * DAY),
+            Limits {
+                max_rows: 0,
+                max_buckets: 0,
+                max_groups: 0,
+            },
+        )
+    }
+
+    /// A directory another store wrote, opened again: the templates of `known` learnt
+    /// without a row of them stored, every template's leaf opened on the row groups the
+    /// directory holds, and then `in_memory` ingested and left unwritten.
+    fn reopened(
+        dir: &Scratch,
+        options: crate::store::DiskOptions,
+        known: &[String],
+        in_memory: &[String],
+    ) -> db::Db {
+        let stores = StoreManager::disk(dir.0.clone(), options).expect("a disk store");
+        let schema = crate::config::Schema::default();
+        let trie = Trie::new().with_time_columns(schema.time_columns.clone());
+        let now = chrono::DateTime::from_timestamp(EPOCH + DAY / 2, 0).expect("an instant");
+        for (at, line) in known.iter().enumerate() {
+            let parsed = crate::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+            db::ingest_line(&trie, None, &parsed, now).expect("learnt");
+        }
+        for leaf in plan(&trie, &asking(&[], QueryMode::Count, (None, None))).leaves {
+            stores
+                .open_existing(leaf.template_id, &leaf.time_column)
+                .expect("opened");
+        }
+        for (at, line) in in_memory.iter().enumerate() {
+            let parsed = crate::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+            db::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
+        }
+        db::Db {
+            trie,
+            stores,
+            stats: db::LoadStats::default(),
+        }
+    }
+
+    /// Everything an answer says but how long it took: what a caller reads, and every
+    /// counter of the scan behind it.
+    fn whole(r: &QueryResult) -> impl PartialEq + std::fmt::Debug + '_ {
+        (
+            (r.exists, r.count, &r.rows, &r.groups),
+            (&r.meta.templates_matched, &r.meta.template_ids),
+            (
+                r.meta.files_opened,
+                r.meta.leaves_opened,
+                r.meta.row_groups_read,
+                r.meta.row_groups_pruned,
+                r.meta.bytes_read,
+                r.meta.rows_scanned,
+                r.meta.rows_returned,
+            ),
+            (r.meta.truncated, r.meta.limit_source, &r.meta.next_cursor),
+        )
+    }
+
+    /// **The same questions two hundred times, with every scan shared between threads:
+    /// one answer, and one set of counters.**
+    ///
+    /// One directory - three templates, two days, seven row groups a template and day,
+    /// and rows of one `Rank` in two days of the third - is opened twice with the same
+    /// rows put in memory behind what it holds: once by a store with no scan threads,
+    /// and once by a store that shares every run of two row groups between four. Each
+    /// question is asked of the first once, and of the second two hundred times: a
+    /// count, a count under a window that prunes, a count by a term; a fetch a row a
+    /// page, five rows a page and at the server's own page size, each followed by its
+    /// cursor to its last page, open and through the rows that tie; a grouping by a
+    /// column and by the hour and a column; and whether a row exists, in a window that
+    /// has one and in one that has none.
+    ///
+    /// Every answer of the second must be the first's whole, but for how long it took:
+    /// whether a template exists, the count, the rows in their order, the groups in
+    /// theirs, the templates, whether it was cut, the cursor, and all seven counters.
+    /// Which thread chose a row group's rows, and which finished first, is different
+    /// from one of the two hundred to the next, and nothing a caller can read may be.
+    #[test]
+    fn the_same_questions_answer_the_same_every_time_with_their_scans_shared_out() {
+        use crate::store::{DiskOptions, FlushKind, RowGroupLimits};
+
+        const TIMES: u64 = 200;
+        /// Every row: the two timed templates' seventeen lines a day each, the third's
+        /// nine lines, and the ten put into it by hand.
+        const ROWS: u64 = 2 * 2 * 17 + 9 + 10;
+        let dir = Scratch::new("shared-out");
+        let (lines, in_memory) = three_templates();
+        let small = DiskOptions {
+            row_groups: RowGroupLimits {
+                rows: 2,
+                ..RowGroupLimits::default()
+            },
+            ..DiskOptions::default()
+        };
+        let any = |key: &str| Match {
+            key: key.into(),
+            value: MatchValue::Any,
+        };
+        let exact = |key: &str, text: &str| Match {
+            key: key.into(),
+            value: MatchValue::Exact(text.into()),
+        };
+        {
+            let written = stored(
+                StoreManager::disk(dir.0.clone(), small).expect("a disk store"),
+                &lines,
+                None,
+            );
+            let tied = plan(
+                &written.trie,
+                &asking(&[any("v")], QueryMode::Count, (None, None)),
+            )
+            .leaves;
+            assert_eq!(tied.len(), 1);
+            assert!(tied[0].text_columns.iter().any(|c| c == "ts"), "{tied:?}");
+            adrift(&written.stores, tied[0].template_id);
+            let done = written.stores.flush_all(FlushKind::Final);
+            assert_eq!((done.failed, written.stores.buffered()), (0, 0));
+        }
+        let in_turn = reopened(&dir, small, &lines, &in_memory);
+        let shared = reopened(
+            &dir,
+            DiskOptions {
+                scan_threads: 4,
+                fan_rows: 0,
+                ..small
+            },
+            &lines,
+            &in_memory,
+        );
+        assert!(in_turn.stores.fan().is_none());
+        let fan = shared.stores.fan().expect("the store has scan threads");
+        for db in [&in_turn, &shared] {
+            assert_eq!(db.stores.rows(), ROWS);
+            assert_eq!(db.stores.buffered(), in_memory.len() as u64);
+        }
+
+        let column = |name: &str| GroupKey::Column(name.to_string());
+        let hour = GroupKey::Time(Duration::from_secs(3_600));
+        // The second day from its third hour: of each timed template's seven row groups
+        // that day the first three are before it, and pruned, and four are read.
+        let later = (Some(EPOCH + DAY + 2 * 3_600), Some(EPOCH + 2 * DAY));
+        let one = |pattern: Vec<Match>, mode: QueryMode, window| {
+            move |db: &db::Db| vec![executed(db, &asking(&pattern, mode.clone(), window))]
+        };
+        let paged = |pattern: Vec<Match>, window, limit: (Option<usize>, usize)| {
+            move |db: &db::Db| pages(db, &pattern, window, limit, &executed)
+        };
+        type Asked<'a> = Box<dyn Fn(&db::Db) -> Vec<QueryResult> + 'a>;
+        let questions: Vec<(&str, Asked<'_>)> = vec![
+            (
+                "a count",
+                Box::new(one(vec![], QueryMode::Count, (None, None))),
+            ),
+            (
+                "a count under a window that prunes",
+                Box::new(one(vec![], QueryMode::Count, later)),
+            ),
+            (
+                "a count by a term",
+                Box::new(one(
+                    vec![exact("level", "ERROR")],
+                    QueryMode::Count,
+                    (None, None),
+                )),
+            ),
+            (
+                "a count by a term under the window",
+                Box::new(one(vec![exact("status", "200")], QueryMode::Count, later)),
+            ),
+            (
+                "a fetch under the window, a row a page",
+                Box::new(paged(vec![], later, (Some(1), 0))),
+            ),
+            (
+                "a fetch, five rows a page",
+                Box::new(paged(vec![], (None, None), (Some(5), 0))),
+            ),
+            (
+                "a fetch at the server's page size",
+                Box::new(paged(vec![], (None, None), (None, 40))),
+            ),
+            (
+                "a fetch by a term, a row a page",
+                Box::new(paged(
+                    vec![exact("level", "WARN")],
+                    (None, None),
+                    (Some(1), 0),
+                )),
+            ),
+            (
+                "a fetch under the window, five rows a page",
+                Box::new(paged(vec![any("n")], later, (Some(5), 0))),
+            ),
+            (
+                "a fetch through the rows that tie, a row a page",
+                Box::new(paged(vec![any("v")], (None, None), (Some(1), 0))),
+            ),
+            (
+                "a fetch through the rows that tie, two rows a page",
+                Box::new(paged(vec![any("v")], (None, None), (Some(2), 0))),
+            ),
+            (
+                "a grouping by a column",
+                Box::new(one(
+                    vec![any("n")],
+                    QueryMode::GroupBy(vec![column("level")]),
+                    (None, None),
+                )),
+            ),
+            (
+                "a grouping by the hour and a column",
+                Box::new(one(
+                    vec![any("n")],
+                    QueryMode::GroupBy(vec![hour, column("status")]),
+                    (Some(EPOCH), Some(EPOCH + 2 * DAY)),
+                )),
+            ),
+            (
+                "whether a row exists, in a window that has one",
+                Box::new(one(vec![], QueryMode::Exists, later)),
+            ),
+            (
+                "whether a row exists, in a window that has none",
+                Box::new(one(
+                    vec![any("n")],
+                    QueryMode::Exists,
+                    (Some(EPOCH + 3 * DAY), Some(EPOCH + 4 * DAY)),
+                )),
+            ),
+        ];
+
+        let mut each_time = None;
+        for (said, ask) in &questions {
+            let first = ask(&in_turn);
+            let before = fan.fanned();
+            for time in 0..TIMES {
+                let again = ask(&shared);
+                assert_eq!(again.len(), first.len(), "{said}, time {time}: pages");
+                for (n, (a, b)) in again.iter().zip(&first).enumerate() {
+                    assert!(
+                        whole(a) == whole(b),
+                        "{said}, time {time}, page {n}:\n{:?}\nin turn:\n{:?}",
+                        whole(a),
+                        whole(b)
+                    );
+                }
+                // The scans of one asking are shared out as often as of the next.
+                let shared_out = fan.fanned() - before;
+                assert_eq!(shared_out % (time + 1), 0, "{said}, time {time}");
+                each_time = Some(shared_out / (time + 1));
+            }
+            let each_time = each_time.take().expect("asked at least once");
+            // Not agreement between two scans in turn: runs of row groups were shared
+            // out for every question but the count of every row, which decodes nothing,
+            // and the two that stop at their first row.
+            let in_turn_only = *said == "a count" || said.starts_with("whether");
+            assert_eq!(each_time == 0, in_turn_only, "{said}: {each_time}");
+            // And not agreement on nothing.
+            match *said {
+                "a count" => assert_eq!(first[0].count, ROWS),
+                "a count under a window that prunes" => {
+                    let meta = &first[0].meta;
+                    assert!(
+                        first[0].count > 10 && meta.row_groups_pruned > 10,
+                        "{meta:?}"
+                    );
+                    assert!(meta.row_groups_read > 5, "{meta:?}");
+                }
+                "a fetch, five rows a page" => {
+                    assert_eq!(
+                        (first.len() as u64, first[0].count),
+                        (ROWS.div_ceil(5), ROWS)
+                    );
+                }
+                "a fetch under the window, a row a page" => {
+                    assert_eq!(first.len() as u64, first[0].count);
+                    assert!(first.len() > 20, "{} pages", first.len());
+                }
+                "a fetch through the rows that tie, a row a page" => {
+                    // A cursor cannot stand between two rows of one `Rank`: a page that
+                    // ends on one of a pair is followed by the page after both. So the
+                    // nineteen rows are fewer pages than rows, here as in turn.
+                    assert_eq!(first[0].count, 19);
+                    assert!(first.len() < 19, "{} pages", first.len());
+                    let tied = first
+                        .iter()
+                        .flat_map(|page| &page.rows)
+                        .filter(|row| {
+                            matches!(row.get("v"), Some(ColValue::String(v)) if v.starts_with("day "))
+                        })
+                        .count();
+                    assert!((5..10).contains(&tied), "{tied} of the rows that tie");
+                }
+                "whether a row exists, in a window that has one" => {
+                    assert_eq!((first[0].exists, first[0].count), (true, 1));
+                }
+                "whether a row exists, in a window that has none" => {
+                    assert_eq!((first[0].exists, first[0].count), (true, 0));
+                }
+                _ => assert!(first[0].count > 0, "{said}: no row"),
+            }
+        }
+
+        // The rows that tie were themselves read shared out, and are still told apart
+        // from rows in their days: driven by hand, the scan of their template shares its
+        // runs out, and asks about each position of the two days twice with no time.
+        let leaves = plan(
+            &shared.trie,
+            &asking(&[any("v")], QueryMode::Fetch, (None, None)),
+        )
+        .leaves;
+        let tied = &leaves[0];
+        let opts = ScanOptions {
+            ts_column: Some(tied.time_column.clone()),
+            text_columns: tied.text_columns.clone(),
+            ..ScanOptions::default()
+        };
+        let terms: Vec<Term> = tied.residual.iter().map(term).collect();
+        assert!(!terms.is_empty());
+        let mut newest = Newest::new(Some(2));
+        let mut watched = Watched {
+            fetch: Fetch {
+                keep: &mut newest,
+                key: leaf_key(&tied.path),
+                ts: tied.time_column.as_str(),
+                after: None,
+            },
+            asked: Vec::new(),
+            handed: 0,
+        };
+        let before = fan.fanned();
+        shared
+            .stores
+            .snapshot(&[tied.template_id], &opts)
+            .visit(tied.template_id, &opts, &terms, &mut watched)
+            .expect("the template has a leaf")
+            .expect("scan");
+        // Its newest day's three row groups, and each of the two days of rows that tie.
+        assert_eq!(fan.fanned() - before, 3);
+        let mut out_of_its_day: Vec<(Option<i64>, u64)> = watched
+            .asked
+            .iter()
+            .filter(|(_, _, placed, _)| !placed)
+            .map(|(ts, seq, ..)| (*ts, *seq))
+            .collect();
+        out_of_its_day.sort_unstable();
+        let twice: Vec<(Option<i64>, u64)> = (0..5).flat_map(|seq| [(None, seq); 2]).collect();
+        assert_eq!(out_of_its_day, twice);
+    }
 }

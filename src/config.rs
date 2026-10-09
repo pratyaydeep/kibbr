@@ -76,10 +76,34 @@ fn default_ingest_concurrency() -> usize {
     std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
 }
 
+/// The cores this machine reports; one where it reports none.
+fn cores() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
+/// Half the cores, and no more than four: what one query may choose rows on. Half
+/// leaves the other half to the runtime and the ingest path. Four is as many fast cores
+/// as the machine this was measured on has; more than four was not measured on this scan.
+///
+/// **What four costs, in replays on eight cores, four of them fast; `kibbr bench` has
+/// not yet taken it.** A count over 433,000 rows of one day answers in 2.1 to 2.5 ms
+/// where one thread takes 4.5, and a fetch of the newest 500 rows of a million in 41 ms
+/// where one takes 45. The same count uses 14 to 34% more CPU than on one thread when it
+/// is asked of a server that has been idle (its rows per CPU-second fall 12 to 25%), and
+/// 10% more of one that is busy with such counts (a fall of 9%): about 3 points of that
+/// are the wake-ups, and the rest is what cores that have just been woken charge for the
+/// same work. Two threads keep about half of each gain for about half of that cost,
+/// which is what `--scan-threads 2` buys.
+fn default_scan_threads() -> usize {
+    (cores() / 2).clamp(1, 4)
+}
+
 /// Environment variable for the max_rows configuration.
 const MAX_ROWS_ENV: &str = "KIBBR__QUERY__MAX_ROWS";
 const MAX_BUCKETS_ENV: &str = "KIBBR__QUERY__MAX_BUCKETS";
 const MAX_GROUPS_ENV: &str = "KIBBR__QUERY__MAX_GROUPS";
+const SCAN_THREADS_ENV: &str = "KIBBR__QUERY__SCAN_THREADS";
+const SCAN_FAN_ROWS_ENV: &str = "KIBBR__QUERY__SCAN_FAN_ROWS";
 const MAX_BODY_BYTES_ENV: &str = "KIBBR__API__MAX_BODY_BYTES";
 const MAX_DECOMPRESSED_BYTES_ENV: &str = "KIBBR__API__MAX_DECOMPRESSED_BYTES";
 const INGEST_CONCURRENCY_ENV: &str = "KIBBR__API__INGEST_CONCURRENCY";
@@ -183,6 +207,16 @@ pub enum ConfigError {
     /// that may take no line takes none, and every body waits for ever.
     #[error("batch size must be at least 1 line; 0 would let a flush of the write-ahead log take nothing")]
     NoBatch,
+
+    /// Refused rather than clamped, for the reason `DecompressedAboveLineCap` is. A pool of
+    /// 511 threads on eight cores ran a scan at four times its CPU and no faster, and one of
+    /// 99,999 held the first query that needed it for sixteen seconds while the system
+    /// refused its threads - with every answer still right, so nothing said so.
+    #[error(
+        "scan threads ({asked}) is above the {cores} core(s) this machine has; the threads \
+         past that would only take turns on the same cores"
+    )]
+    ScanThreadsAboveCores { asked: usize, cores: usize },
 
     /// Refused rather than defaulted: the window decides what type a value is stored as,
     /// and an operator who set one would believe it was in force.
@@ -316,6 +350,12 @@ pub struct Storage {
     /// this many lines. Not a target and not a wait - a flush takes what has queued - and
     /// not a bound on a body, which goes in whole.
     pub wal_batch_lines: usize,
+    /// Threads one query may choose a day's rows on, its own among them. 0 and 1: its
+    /// own alone. Only a server asks for more (`with_scan`).
+    pub scan_threads: usize,
+    /// A run of row groups holding fewer rows than this is never shared between those
+    /// threads: see `store::DEFAULT_FAN_ROWS`.
+    pub scan_fan_rows: u64,
 }
 
 impl Default for Storage {
@@ -331,6 +371,8 @@ impl Default for Storage {
             compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
             wal_segment_bytes: crate::wal::DEFAULT_SEGMENT_BYTES,
             wal_batch_lines: crate::wal::DEFAULT_BATCH_LINES,
+            scan_threads: 0,
+            scan_fan_rows: crate::store::DEFAULT_FAN_ROWS,
         }
     }
 }
@@ -403,6 +445,12 @@ impl Storage {
         let wal_segment_bytes = crate::wal::DEFAULT_SEGMENT_BYTES;
         let wal_batch_lines = crate::wal::DEFAULT_BATCH_LINES;
 
+        // No scan threads here, for the same reason again: only `serve` answers a query
+        // from a disk store, and it asks for its threads in `with_scan`. A load and a
+        // compaction start none.
+        let scan_threads = 0;
+        let scan_fan_rows = crate::store::DEFAULT_FAN_ROWS;
+
         if !durable {
             return Ok(Self {
                 base_path: None,
@@ -415,6 +463,8 @@ impl Storage {
                 compact_interval,
                 wal_segment_bytes,
                 wal_batch_lines,
+                scan_threads,
+                scan_fan_rows,
             });
         }
 
@@ -443,6 +493,8 @@ impl Storage {
             compact_interval,
             wal_segment_bytes,
             wal_batch_lines,
+            scan_threads,
+            scan_fan_rows,
         })
     }
 
@@ -493,6 +545,31 @@ impl Storage {
         Ok(self)
     }
 
+    /// What a server's queries may use: `--scan-threads` and `--scan-fan-rows`, each over
+    /// its variable, over the default. Apart from `load` for the reason `with_wal` is:
+    /// only `serve` answers a query from a disk store, so only it has the flags, and a
+    /// load or a compaction starts no scan thread. More threads than the machine has
+    /// cores are refused; 0 and 1 are both "the query's own thread and no other".
+    pub fn with_scan(
+        mut self,
+        threads: Option<usize>,
+        fan_rows: Option<usize>,
+    ) -> Result<Self, ConfigError> {
+        let cores = cores();
+        self.scan_threads = match resolve(threads, SCAN_THREADS_ENV, default_scan_threads())? {
+            asked if asked > cores => {
+                return Err(ConfigError::ScanThreadsAboveCores { asked, cores })
+            }
+            n => n,
+        };
+        self.scan_fan_rows = resolve(
+            fan_rows,
+            SCAN_FAN_ROWS_ENV,
+            crate::store::DEFAULT_FAN_ROWS as usize,
+        )? as u64;
+        Ok(self)
+    }
+
     /// What the write-ahead log is written with.
     pub fn wal_options(&self) -> crate::wal::Options {
         crate::wal::Options {
@@ -521,6 +598,8 @@ impl Storage {
             max_open_files: self.max_open_segments,
             segment_max_bytes: self.segment_max_bytes,
             max_buffer_bytes: self.max_buffer_bytes,
+            scan_threads: self.scan_threads,
+            fan_rows: self.scan_fan_rows,
         }
     }
 
@@ -652,4 +731,131 @@ fn env_usize(var: &'static str) -> Result<Option<usize>, ConfigError> {
         .parse()
         .map(Some)
         .map_err(|_| ConfigError::BadEnv { var, value: text })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two scan variables as a test found them, put back when it ends.
+    struct Kept([(&'static str, Option<String>); 2]);
+
+    impl Kept {
+        fn cleared() -> Self {
+            let kept =
+                [SCAN_THREADS_ENV, SCAN_FAN_ROWS_ENV].map(|var| (var, std::env::var(var).ok()));
+            for (var, _) in &kept {
+                std::env::remove_var(var);
+            }
+            Self(kept)
+        }
+    }
+
+    impl Drop for Kept {
+        fn drop(&mut self) {
+            for (var, was) in &self.0 {
+                match was {
+                    Some(value) => std::env::set_var(var, value),
+                    None => std::env::remove_var(var),
+                }
+            }
+        }
+    }
+
+    /// **What a server's queries may use is the flag, or else the variable, or else the
+    /// default; and more threads than the machine has cores are refused.**
+    ///
+    /// One test, because the variables are the process's: nothing else in this crate's
+    /// tests reads these two, and this sets and clears them in turn.
+    #[test]
+    fn scan_threads_are_the_flag_then_the_variable_then_the_default_and_never_above_the_cores() {
+        let _kept = Kept::cleared();
+        let cores = cores();
+        let scan = |threads: Option<usize>, fan_rows: Option<usize>| {
+            Storage::default()
+                .with_scan(threads, fan_rows)
+                .map(|storage| (storage.scan_threads, storage.scan_fan_rows))
+        };
+
+        // Nobody but `with_scan` asks for a thread: a load and a compaction have none.
+        let untouched = Storage::default();
+        assert_eq!(
+            (untouched.scan_threads, untouched.scan_fan_rows),
+            (0, crate::store::DEFAULT_FAN_ROWS)
+        );
+        assert_eq!(untouched.disk_options().scan_threads, 0);
+
+        // The default: half the cores, at least one, at most four, never above the cores.
+        let default = default_scan_threads();
+        assert!(
+            (1..=4).contains(&default) && default <= cores,
+            "{default} of {cores}"
+        );
+        assert_eq!(default, (cores / 2).clamp(1, 4));
+        assert_eq!(
+            scan(None, None).expect("the defaults"),
+            (default, crate::store::DEFAULT_FAN_ROWS)
+        );
+
+        // The variable over the default, and the flag over the variable.
+        std::env::set_var(SCAN_THREADS_ENV, "1");
+        std::env::set_var(SCAN_FAN_ROWS_ENV, " 4096 ");
+        assert_eq!(scan(None, None).expect("the variables"), (1, 4096));
+        assert_eq!(scan(Some(0), None).expect("a flag"), (0, 4096));
+        assert_eq!(scan(None, Some(0)).expect("a flag"), (1, 0));
+        assert_eq!(scan(Some(cores), Some(7)).expect("both flags"), (cores, 7));
+
+        // An unreadable variable is refused, unless the flag that overrides it is given.
+        std::env::set_var(SCAN_THREADS_ENV, "four");
+        assert!(matches!(
+            scan(None, Some(7)),
+            Err(ConfigError::BadEnv { var, value }) if var == SCAN_THREADS_ENV && value == "four"
+        ));
+        assert_eq!(scan(Some(1), None).expect("the flag"), (1, 4096));
+        std::env::set_var(SCAN_THREADS_ENV, "1");
+        std::env::set_var(SCAN_FAN_ROWS_ENV, "-1");
+        assert!(matches!(
+            scan(None, None),
+            Err(ConfigError::BadEnv { var, .. }) if var == SCAN_FAN_ROWS_ENV
+        ));
+        assert_eq!(scan(None, Some(9)).expect("the flag"), (1, 9));
+        std::env::remove_var(SCAN_FAN_ROWS_ENV);
+
+        // As many threads as there are cores are taken; one more is refused, by the flag
+        // and by the variable, and the refusal names both numbers. None and one are taken.
+        std::env::remove_var(SCAN_THREADS_ENV);
+        for few in [0, 1, cores] {
+            assert_eq!(scan(Some(few), None).expect("taken").0, few);
+            std::env::set_var(SCAN_THREADS_ENV, few.to_string());
+            assert_eq!(scan(None, None).expect("taken").0, few);
+            std::env::remove_var(SCAN_THREADS_ENV);
+        }
+        let refused = |got: Result<(usize, u64), ConfigError>, asked: usize| match got {
+            Err(e @ ConfigError::ScanThreadsAboveCores { .. }) => {
+                let said = e.to_string();
+                assert!(
+                    said.contains(&format!(
+                        "scan threads ({asked}) is above the {cores} core(s)"
+                    )),
+                    "{said}"
+                );
+            }
+            other => panic!("{asked} threads on {cores} cores: {other:?}"),
+        };
+        for many in [cores + 1, 512, 100_000] {
+            refused(scan(Some(many), None), many);
+            std::env::set_var(SCAN_THREADS_ENV, many.to_string());
+            refused(scan(None, None), many);
+            // And the flag, when it is in range, is not refused for the variable.
+            assert_eq!(scan(Some(1), None).expect("the flag").0, 1);
+            std::env::remove_var(SCAN_THREADS_ENV);
+        }
+
+        // What a server opens its disk store with is what was resolved.
+        let options = Storage::default()
+            .with_scan(Some(1), Some(12))
+            .expect("taken")
+            .disk_options();
+        assert_eq!((options.scan_threads, options.fan_rows), (1, 12));
+    }
 }

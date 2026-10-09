@@ -19,6 +19,9 @@
 # starts lying about what it tested.
 #
 #   COMBOS=200 SEED=7 NLINES=4000 scripts/store_agree.sh
+#   BODIES=4 NEED_FAN_OUTS=1 KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0 \
+#     KIBBR__INGESTOR__FLUSH_INTERVAL_MS=100 KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS=100 \
+#     scripts/store_agree.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -29,6 +32,22 @@ COMBOS=${COMBOS:-120}
 SEED=${SEED:-7}
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
+# The corpus goes in as this many bodies, in file order, with BODY_GAP seconds after each.
+# One is the run this script always made. More, beside a short row-group timeout
+# (KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS and ..FLUSH_INTERVAL_MS in the environment), leave
+# a template's day in several row groups, which is what a scan shares between threads.
+BODIES=${BODIES:-1}
+BODY_GAP=${BODY_GAP:-0.5}
+# Refused before anything is built or started: the corpus is split by a division by this.
+case "$BODIES" in
+  ""|*[!0-9]*|0*) echo "BODIES must be a whole number, 1 or more; it is '$BODIES'" >&2; exit 1;;
+esac
+# 1: fail unless the disk server shared out at least one run of row groups
+# (`queries.scan_fan_outs` in /stats). For a run made to hold a scan shared between
+# threads to the memory store - KIBBR__QUERY__SCAN_THREADS and KIBBR__QUERY__SCAN_FAN_ROWS=0
+# in the environment, which reach the servers started here: without this such a run
+# passes having asked nothing of it.
+NEED_FAN_OUTS=${NEED_FAN_OUTS:-}
 
 [ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 WORK=$(mktemp -d)
@@ -84,6 +103,14 @@ stop() {  # stop <pid>
   return 1
 }
 
+# The runs of row groups a server has shared between threads so far; 0 from a build with
+# no such counter.
+fan_outs() {  # fan_outs <port>
+  curl -s "http://127.0.0.1:$1/stats" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["queries"].get("scan_fan_outs", 0))'
+}
+FAN_OUTS=0
+
 start "$WORK/mem.log" --storage memory || exit 1
 MEM_PID=$PID; MEM_PORT=$PORT
 start "$WORK/disk.log" --data-dir "$WORK/data" || exit 1
@@ -94,12 +121,22 @@ DISK_PID=$PID; DISK_PORT=$PORT
 # put a different `_received_at` on the same row on each side - a disagreement about the
 # clock, not about the store.
 RECEIVED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-for port in "$MEM_PORT" "$DISK_PORT"; do
-  code=$(curl -s -o "$WORK/ingest.$port" -w '%{http_code}' \
-         -X POST "http://127.0.0.1:$port/ingest?received_at=$RECEIVED_AT" --data-binary "@$INPUT")
-  if [ "$code" != "200" ]; then
-    echo "ingest into :$port answered $code" >&2; cat "$WORK/ingest.$port" >&2; exit 1
-  fi
+# A split that fails ends the run: `split` leaves the pieces it wrote, so both servers
+# would be given the same part of the corpus, agree about it, and the line below would
+# still say every line went in. Four letters to a piece's name, because two stop at 676
+# pieces. And the pieces are held to the corpus byte for byte before one is sent.
+split -a 4 -l $(( (NLINES + BODIES - 1) / BODIES )) "$INPUT" "$WORK/body." || exit 1
+cat "$WORK"/body.* | cmp -s - "$INPUT" \
+  || { echo "the $BODIES bodies are not the corpus they were split from" >&2; exit 1; }
+for body in "$WORK"/body.*; do
+  for port in "$MEM_PORT" "$DISK_PORT"; do
+    code=$(curl -s -o "$WORK/ingest.$port" -w '%{http_code}' \
+           -X POST "http://127.0.0.1:$port/ingest?received_at=$RECEIVED_AT" --data-binary "@$body")
+    if [ "$code" != "200" ]; then
+      echo "ingest into :$port answered $code" >&2; cat "$WORK/ingest.$port" >&2; exit 1
+    fi
+  done
+  [ "$BODIES" -gt 1 ] && sleep "$BODY_GAP"
 done
 echo "input: $NLINES lines, ingested into memory (:$MEM_PORT) and disk (:$DISK_PORT)"
 
@@ -224,6 +261,7 @@ round "round 1 (disk warm)" "$MEM_PORT" "$DISK_PORT" || status=1
 
 # The restart. The memory server is left alone - it is the reference, and restarting it
 # would empty it.
+FAN_OUTS=$((FAN_OUTS + $(fan_outs "$DISK_PORT")))
 stop "$DISK_PID" || exit 1
 [ -f "$WORK/data/trie.json" ] || { echo "the graceful exit wrote no trie.json:" >&2
                                    cat "$WORK/disk.log" >&2; exit 1; }
@@ -233,10 +271,19 @@ grep -q "restored" "$WORK/disk2.log" || { echo "the restart restored no template
                                           cat "$WORK/disk2.log" >&2; status=1; }
 
 round "round 2 (disk restarted)" "$MEM_PORT" "$DISK_PORT" || status=1
+FAN_OUTS=$((FAN_OUTS + $(fan_outs "$DISK_PORT")))
 
 echo
+# Apart from `status`, so that the verdict below is still about the two stores.
+unforced=0
+echo "scan fan-outs on the disk server: $FAN_OUTS"
+if [ "$NEED_FAN_OUTS" = 1 ] && [ "$FAN_OUTS" -eq 0 ]; then
+  echo "FAIL: NEED_FAN_OUTS=1 and no scan was shared out; this run held nothing of the fan-out"
+  unforced=1
+fi
 raw=$(du -sh "$INPUT" | cut -f1)
 stored=$(du -sh "$WORK/data" | cut -f1)
 echo "raw ndjson $raw, on disk $stored"
 [ "$status" -eq 0 ] && echo "stores agree" || echo "STORES DISAGREE"
+[ "$unforced" -eq 0 ] || status=1
 exit $status

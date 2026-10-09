@@ -181,6 +181,19 @@ enum Command {
         /// Overrides `KIBBR__STORAGE__COMPACT_INTERVAL_MS`. [default: 60000]
         #[arg(long, value_name = "MS")]
         compact_interval_ms: Option<usize>,
+        /// Threads one query may choose a day's rows on, its own among them. 0 or 1: its
+        /// own alone. Defaults to half the cores, at most 4; more than the machine has
+        /// cores is refused. The other threads are started by the first query with enough
+        /// rows to share, and are left alone while any `/ingest` body is between the door
+        /// and its answer, the wait for the log's flush included.
+        /// Overrides `KIBBR__QUERY__SCAN_THREADS`.
+        #[arg(long, value_name = "N")]
+        scan_threads: Option<usize>,
+        /// A run of a day's row groups holding fewer rows than this is never shared
+        /// between those threads: waking them costs more than they would save.
+        /// Overrides `KIBBR__QUERY__SCAN_FAN_ROWS`. [default: 32768]
+        #[arg(long, value_name = "ROWS")]
+        scan_fan_rows: Option<usize>,
         /// The key names a new template's time column is chosen from, in order; the
         /// first one the template holds as a Datetime wins, and a template holding none
         /// takes its rows' arrival time. Comma-separated.
@@ -582,6 +595,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
             segment_max_bytes,
             max_buffer_bytes,
             compact_interval_ms,
+            scan_threads,
+            scan_fan_rows,
             time_columns,
         } => serve::run(
             &host,
@@ -599,7 +614,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 max_buffer_bytes,
             )?
             .with_compact_interval(compact_interval_ms)?
-            .with_wal(wal_segment_bytes, batch_size)?,
+            .with_wal(wal_segment_bytes, batch_size)?
+            .with_scan(scan_threads, scan_fan_rows)?,
             config::Schema::load(time_columns),
         ),
         Command::Load {
