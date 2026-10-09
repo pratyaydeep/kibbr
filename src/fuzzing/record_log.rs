@@ -762,6 +762,12 @@ fn check_rebuild(records: &[catalog::Record]) {
         "catalog: {templates} templates from {} template ids",
         ids.len()
     );
+    // What a plan reads in place of the nodes is built beside them, one template at a
+    // time, and has to be the nodes' whatever records they were built from. Asserted
+    // here and not left to the trie's own check, which only a debug build makes.
+    if let Err(why) = trie.keys_agree() {
+        panic!("catalog: the key index a plan reads is not the rebuilt trie's: {why}");
+    }
     // Each id the next templates take is above every id a template record names and
     // above the one before it, until there is none left to take: never an id twice. A
     // counter that wraps is no panic in a release build, and only this sees it. Every id

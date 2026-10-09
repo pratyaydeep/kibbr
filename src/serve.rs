@@ -137,13 +137,15 @@ const VIEWER: &str = include_str!("viewer.html");
 
 /// Everything the handlers share.
 ///
-/// **Nothing here is behind a lock of the server's.** `Trie` synchronises itself per node,
-/// so an ingest and a walk proceed together; `StoreManager` locks each leaf on its own, and
-/// a flush holds no lock an append or a query waits on while it writes. There used to be
-/// one `RwLock` over the whole registry, taken for writing by every ingest body and by the
-/// flush tick across every fsync, and for reading by every query for the whole of its run:
-/// with queries running, ingest fell from 44,800 lines a second to 1,645, and a count by a
-/// promoted value went from 33ms to 1.1s.
+/// **Nothing here is behind a lock of the server's.** `Trie` synchronises itself: each node
+/// has its own locks, and the one lock for the whole trie is its key index's, which a plan
+/// reads while it chooses its templates and only a new template or a changed column writes,
+/// for one `put` - so an ingest and a query proceed together; `StoreManager` locks each leaf
+/// on its own, and a flush holds no lock an append or a query waits on while it writes.
+/// There used to be one `RwLock` over the whole registry, taken for writing by every ingest
+/// body and by the flush tick across every fsync, and for reading by every query for the
+/// whole of its run: with queries running, ingest fell from 44,800 lines a second to 1,645,
+/// and a count by a promoted value went from 33ms to 1.1s.
 ///
 /// **What that gave up: a body is no longer atomic to a query running beside it.** Each
 /// row is visible from the moment its leaf takes it, so a query that runs while a body is
@@ -2570,7 +2572,7 @@ async fn get_viewer() -> Response {
 /// `LeafMeta` does not record which names were promoted into the fingerprint, so
 /// `event=login_failed, ts, user` and a leaf holding the same three names arranged
 /// differently would print identically. `Trie::leaf_paths` carries the tokens for that
-/// reason, as `PlannedLeaf::path` does in the engine.
+/// reason, as `Template::path` does for the engine's plan.
 async fn get_templates(State(server): State<Arc<Server>>) -> Response {
     let stores = &server.stores;
     let mut templates = Vec::new();

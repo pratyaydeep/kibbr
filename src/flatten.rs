@@ -1,7 +1,7 @@
 //! Flattening, fingerprinting, and the parsed row.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 use serde_json::error::Category;
@@ -114,6 +114,33 @@ pub(crate) fn split_token(token: &str) -> Option<(Cow<'_, str>, &str)> {
         }
     }
     None
+}
+
+/// The `key=value` tokens on this path, split back into pairs.
+///
+/// A promoted token has a bare `=` and a plain key's token has none
+/// (`split_token`), so the label tells the two apart without consulting the
+/// promotion rules, and the key it reads back is the column's name, unescaped.
+pub(crate) fn promoted_of<'a>(
+    path: &'a [String],
+    columns: &BTreeSet<&str>,
+) -> BTreeMap<Cow<'a, str>, &'a str> {
+    let mut out = BTreeMap::new();
+    for label in path {
+        // A leaf made before `=` was escaped can hold a column named as one of its own
+        // labels reads: the literal key `event=login` and the promoted `event=login` were
+        // one edge then, and one leaf took the rows of both. The label does not speak
+        // for every row of such a leaf, so the term is left to the scan.
+        if columns.contains(label.as_str()) {
+            continue;
+        }
+        if let Some((key, value)) = split_token(label) {
+            if columns.contains(key.as_ref()) {
+                out.insert(key, value);
+            }
+        }
+    }
+    out
 }
 
 /// One line, flattened, fingerprinted and typed.

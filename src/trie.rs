@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -24,6 +24,11 @@ use thiserror::Error;
 use crate::catalog::{Catalog, CatalogError, Record, Token};
 use crate::flatten::ParsedLog;
 use crate::types::{join, ColumnType, TimeSource};
+
+mod keys;
+
+pub use keys::Template;
+pub(crate) use keys::{KeyIndex, Posting};
 
 /// The root carries a label so that a rendered tree and a serialized one agree about
 /// what sits above the first edge.
@@ -111,6 +116,12 @@ pub struct Node {
     /// to re-sort and one of them to forget.
     pub children: RwLock<Vec<Edge>>,
     pub is_leaf: AtomicBool,
+    /// What a plan reads of it - the columns, the storage path and the time source - is
+    /// written by `Trie::publish` and `Trie::amend` and by nothing else: each puts the
+    /// template in the trie's key index before this lock is let go, and a writer that
+    /// went round them would leave a plan reading a template that is not this one.
+    /// `ingest` bumps `last_seen` itself, which no plan reads, and a node rebuilt from
+    /// `trie.json` arrives with its meta and is put in the index by `Trie::restored`.
     pub leaf_meta: RwLock<Option<LeafMeta>>,
 }
 
@@ -204,9 +215,31 @@ pub struct Trie {
     /// Owned by the trie because the trie is what a catalog describes: `ingest` writes the
     /// record *before* it changes a leaf, and the two would drift apart the moment they had
     /// two owners. A `Mutex` and not the per-node locks - a record is taken while one
-    /// leaf's meta lock is held, and the order is always leaf then catalog, so two lines
-    /// creating two templates cannot deadlock on each other.
+    /// leaf's meta lock is held, and the order is always leaf then catalog then `keys`, so
+    /// two lines creating two templates cannot deadlock on each other.
     catalog: Mutex<Option<Catalog>>,
+    /// For each key the templates that have it, and what a plan carries of each: what a
+    /// plan reads in place of crossing the nodes.
+    ///
+    /// The one lock here that belongs to the whole trie and not to a node. A plan takes
+    /// it for reading while it chooses its templates and for no longer. A new template
+    /// and a change to a template's columns take it for writing, for one `put`, as the
+    /// last thing they do and with the leaf's meta lock still held - so a plan sees a
+    /// template under every one of its keys or under none, and what it sees is what the
+    /// leaf holds. A line of a template that exists and changes no column never takes it.
+    ///
+    /// **Never a node's lock while this one is held.** `publish` and `amend` come to it
+    /// holding a leaf's lock, so a holder of this one that waited for a node could wait
+    /// for ever. A plan reads the index and the templates behind it and nothing else, and
+    /// anything that compares the index with the nodes walks them first and looks here
+    /// after.
+    ///
+    /// Read and written through poison. It is poisoned only by a panic inside a `put`,
+    /// which would leave one template under some of its keys and not others; refusing
+    /// every plan and every new template from then on would turn that into a dead server,
+    /// and refusing a new template here would refuse a line whose record is already in
+    /// the catalog.
+    keys: RwLock<KeyIndex>,
 }
 
 impl Default for Trie {
@@ -229,6 +262,7 @@ impl Trie {
             next_template_id: AtomicU64::new(FIRST_TEMPLATE_ID),
             tokens: AtomicU64::new(0),
             catalog: Mutex::new(None),
+            keys: RwLock::new(KeyIndex::default()),
         }
     }
 
@@ -238,6 +272,10 @@ impl Trie {
     /// only the loader has seen the whole file - and they are *derived* from it rather than
     /// trusted: a stale counter hands out an id that is already in use, and for a template
     /// id that means two leaves sharing one storage directory.
+    ///
+    /// The nodes arrive finished, so the key index is built here by one walk of them. In
+    /// id order, where the walk gives path order: each `put` is then an append, and in
+    /// path order it would move the tail of every list it touched.
     pub fn restored(
         root: Arc<Node>,
         data_dir: &str,
@@ -245,7 +283,7 @@ impl Trie {
         next_template_id: u64,
         tokens: u64,
     ) -> Self {
-        Self {
+        let trie = Self {
             root,
             data_dir: data_dir.to_string(),
             time_columns: crate::config::Schema::default().time_columns,
@@ -253,7 +291,17 @@ impl Trie {
             next_template_id: AtomicU64::new(next_template_id),
             tokens: AtomicU64::new(tokens),
             catalog: Mutex::new(None),
+            keys: RwLock::new(KeyIndex::default()),
+        };
+        let walked = trie.walked();
+        {
+            let mut keys = trie.keys.write().unwrap_or_else(PoisonError::into_inner);
+            for (id, names, template) in walked {
+                keys.put(id, names.iter().map(String::as_str), Arc::new(template));
+            }
         }
+        debug_assert_eq!(trie.keys_agree(), Ok(()));
+        trie
     }
 
     /// The names a new template's time column is chosen from. Affects templates created
@@ -456,18 +504,19 @@ impl Trie {
                     derived
                 }
             };
-            *slot = Some(LeafMeta {
+            let meta = LeafMeta {
                 template_id: id,
                 columns: pending.columns.into_values().collect(),
                 storage_path: format!("{data_dir}/leaf_{id}"),
                 first_seen: pending.created_at,
                 last_seen: pending.last_at,
                 time_source,
-            });
-            leaf.is_leaf.store(true, Ordering::Release);
-            trie.tokens
-                .fetch_add(labels.len() as u64, Ordering::Relaxed);
+            };
+            let depth = labels.len() as u64;
+            trie.publish(&leaf, &mut slot, labels, meta);
+            trie.tokens.fetch_add(depth, Ordering::Relaxed);
         }
+        debug_assert_eq!(trie.keys_agree(), Ok(()));
         Ok((trie, backfill))
     }
 
@@ -550,6 +599,110 @@ impl Trie {
 
     pub fn root(&self) -> Arc<Node> {
         Arc::clone(&self.root)
+    }
+
+    /// The key index, for a plan. Held for as long as the guard is, so a caller reads
+    /// what it needs and lets go before it does anything that could make a template.
+    pub(crate) fn keys(&self) -> RwLockReadGuard<'_, KeyIndex> {
+        self.keys.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The one place a template comes to exist in memory: its place in the key index,
+    /// its meta and its leaf flag, inside one hold of the index's write lock.
+    ///
+    /// All three inside the hold, so a plan that finds the template in the index finds
+    /// the leaf made, and a walk that finds the leaf made finds the template in the
+    /// index. Called with the leaf's meta lock held and the template's record already in
+    /// the catalog, and it cannot fail: a line is refused before its record is durable
+    /// or not at all.
+    fn publish(&self, leaf: &Node, slot: &mut Option<LeafMeta>, path: Vec<String>, meta: LeafMeta) {
+        let template = Arc::new(Template::of(path, &meta));
+        let mut keys = self.keys.write().unwrap_or_else(PoisonError::into_inner);
+        keys.put(
+            meta.template_id,
+            meta.columns.iter().map(|col| col.name.as_str()),
+            template,
+        );
+        *slot = Some(meta);
+        leaf.is_leaf.store(true, Ordering::Release);
+    }
+
+    /// The one place a template's columns change: the changes applied to `meta`, the
+    /// template made again whole from it, and that template put in the key index.
+    ///
+    /// The index's lock is held for the `put` alone. The changes are applied and the
+    /// template is built under the leaf's meta lock, which the caller holds and without
+    /// which nothing reads a leaf's columns. Called with the changes' records already in
+    /// the catalog, and it cannot fail.
+    fn amend(
+        &self,
+        meta: &mut LeafMeta,
+        path: &[String],
+        changes: Vec<(String, Option<ColumnType>, bool)>,
+        now: DateTime<Utc>,
+    ) {
+        for (name, col_type, widened) in changes {
+            match meta
+                .columns
+                .binary_search_by(|col| col.name.as_str().cmp(&name))
+            {
+                Ok(at) => {
+                    meta.columns[at].col_type = col_type;
+                    if widened {
+                        meta.columns[at].widened_at = Some(now);
+                    }
+                }
+                Err(at) => meta.columns.insert(
+                    at,
+                    ColumnDef {
+                        name,
+                        col_type,
+                        widened_at: None,
+                    },
+                ),
+            }
+        }
+        let template = Arc::new(Template::of(path.to_vec(), meta));
+        self.keys
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .put(
+                meta.template_id,
+                meta.columns.iter().map(|col| col.name.as_str()),
+                template,
+            );
+    }
+
+    /// Every template a walk of the nodes finds, in id order: its id, its column names
+    /// and what a plan would carry of it. A leaf whose lock is poisoned is left out, as
+    /// a plan that walks leaves it out.
+    fn walked(&self) -> Vec<keys::Walked> {
+        let mut walked = Vec::new();
+        for (path, leaf) in self.leaf_paths() {
+            let Ok(slot) = leaf.leaf_meta.read() else {
+                continue;
+            };
+            let Some(meta) = slot.as_ref() else {
+                continue;
+            };
+            let names = meta.columns.iter().map(|col| col.name.clone()).collect();
+            walked.push((meta.template_id, names, Template::of(path, meta)));
+        }
+        walked.sort_by_key(|(id, ..)| *id);
+        walked
+    }
+
+    /// Whether the key index is the one a walk of the nodes would build: the same
+    /// templates, each described as its leaf describes it and listed under exactly its
+    /// columns, every list in id order. The reason, where it is not.
+    ///
+    /// For tests, the fuzz harness and the checks a debug build makes after it rebuilds a
+    /// trie. It says something only while nothing ingests: the nodes are walked first and
+    /// the index read after, never one under the other's lock, so a template made in
+    /// between is a difference that is not a fault.
+    pub fn keys_agree(&self) -> Result<(), String> {
+        let walked = self.walked();
+        self.keys().agrees_with(&walked)
     }
 
     /// Sequential, from an `AtomicU64` fetch-and-increment. Ids are therefore handed out
@@ -648,8 +801,10 @@ impl Trie {
     /// build two nodes wearing one label, and the second silently owns a template's worth
     /// of rows nothing can walk to.
     ///
-    /// Built this way while the program is still single-threaded on purpose: the lock is
-    /// per node with no global one, and retrofitting that means touching every call site.
+    /// Built this way while the program is still single-threaded on purpose: the lock on
+    /// a node's children is that node's own, and retrofitting that means touching every
+    /// call site. The one lock for the whole trie is `keys`, and a line of a template
+    /// that exists takes it only when it changes a column.
     fn child_or_create(&self, node: &Arc<Node>, token: &str) -> Result<Arc<Node>, TrieError> {
         if let Some(child) = exact_child(&read(&node.children)?, token) {
             return Ok(child);
@@ -748,7 +903,7 @@ impl Trie {
     /// `/templates` reports the template, and a template *is* its path: `LeafMeta` holds
     /// the columns but not which of them were promoted into the fingerprint, so the
     /// columns alone cannot say whether a leaf is `event=login_failed, ts, user` or some
-    /// other arrangement of the same names. `PlannedLeaf::path` carries the same tokens
+    /// other arrangement of the same names. `Template::path` carries the same tokens
     /// for the same reason.
     ///
     /// Depth-first over children already sorted by label, so two runs over one file list
@@ -849,17 +1004,17 @@ impl Trie {
                     );
                 }
 
-                *slot = Some(LeafMeta {
+                let meta = LeafMeta {
                     template_id,
                     columns,
                     storage_path: format!("{}/leaf_{template_id}", self.data_dir),
                     first_seen: now,
                     last_seen: now,
                     time_source,
-                });
-                leaf.is_leaf.store(true, Ordering::Release);
-                self.tokens
-                    .fetch_add(tokens.len() as u64, Ordering::Relaxed);
+                };
+                let depth = tokens.len() as u64;
+                self.publish(&leaf, &mut slot, tokens, meta);
+                self.tokens.fetch_add(depth, Ordering::Relaxed);
                 true
             }
             Some(meta) => {
@@ -921,29 +1076,11 @@ impl Trie {
                         }
                     }
                 }
-                if !records.is_empty() {
+                // Every change has its record, so a line that changes nothing appends
+                // nothing and goes nowhere near the key index.
+                if !changes.is_empty() {
                     self.record(&records)?;
-                }
-                for (name, col_type, widened) in changes {
-                    match meta
-                        .columns
-                        .binary_search_by(|col| col.name.as_str().cmp(&name))
-                    {
-                        Ok(at) => {
-                            meta.columns[at].col_type = col_type;
-                            if widened {
-                                meta.columns[at].widened_at = Some(now);
-                            }
-                        }
-                        Err(at) => meta.columns.insert(
-                            at,
-                            ColumnDef {
-                                name,
-                                col_type,
-                                widened_at: None,
-                            },
-                        ),
-                    }
+                    self.amend(meta, &tokens, changes, now);
                 }
                 meta.last_seen = now;
                 false
@@ -1050,6 +1187,49 @@ mod tests {
         parse_line(line.as_bytes(), 1).expect("a valid line")
     }
 
+    /// The ids the key index lists under `key`; none where it has no list.
+    fn listed(trie: &Trie, key: &str) -> Vec<u64> {
+        trie.keys()
+            .of(key)
+            .map(|list| list.iter().map(|(id, _)| *id).collect())
+            .unwrap_or_default()
+    }
+
+    /// Every id the key index holds, in the order it holds them.
+    fn all_ids(trie: &Trie) -> Vec<u64> {
+        trie.keys().all().iter().map(|(id, _)| *id).collect()
+    }
+
+    /// What a plan gives for one term on `key`: that value, or any where none is named.
+    fn planned(trie: &Trie, key: &str, value: Option<&str>) -> crate::engine::Plan {
+        use crate::engine::{Match, MatchValue, Query, QueryMode, TimeRange};
+        let term = Match {
+            key: key.to_string(),
+            value: value.map_or(MatchValue::Any, |text| MatchValue::Exact(text.to_string())),
+        };
+        let query = Query::new(
+            vec![term],
+            QueryMode::Count,
+            TimeRange::default(),
+            None,
+            None,
+            std::time::SystemTime::UNIX_EPOCH,
+            crate::config::Limits::default(),
+        );
+        crate::engine::plan(trie, &query)
+    }
+
+    /// Template `id` as the key index hands it to a plan.
+    fn held(trie: &Trie, id: u64) -> Arc<Template> {
+        let keys = trie.keys();
+        let (_, template) = keys
+            .all()
+            .iter()
+            .find(|(have, _)| *have == id)
+            .expect("the template is in the index");
+        Arc::clone(template)
+    }
+
     /// The write rule: no record on disk, no template in memory. The line is refused
     /// with the catalog's reason, the trie walks to nothing, and a later line that needs
     /// no record still lands.
@@ -1064,6 +1244,8 @@ mod tests {
         let first = parsed(r#"{"event":"login","user":7}"#);
         assert!(trie.ingest(&first, now).expect("first line").1);
         assert_eq!(trie.template_count(), 1);
+        assert_eq!(trie.keys_agree(), Ok(()));
+        let edits = trie.keys().edits();
 
         // Swap in a catalog that cannot be written to.
         trie.attach_catalog(Catalog::read_only(&dir.join("dead.log")).expect("read-only"));
@@ -1085,6 +1267,15 @@ mod tests {
         let walked = trie.walk(&borrowed).expect("the interior nodes may exist");
         assert!(!walked.is_leaf, "the refused template is a leaf");
         assert_eq!(walked.template_id, None);
+        // Nor is it anywhere a plan looks: the index holds the one template, untouched.
+        assert_eq!(trie.keys_agree(), Ok(()));
+        assert_eq!(all_ids(&trie), [FIRST_TEMPLATE_ID]);
+        assert_eq!(listed(&trie, "event"), [FIRST_TEMPLATE_ID]);
+        assert_eq!(listed(&trie, "user"), [FIRST_TEMPLATE_ID]);
+        assert_eq!(trie.keys().edits(), edits);
+        let refused = planned(&trie, "event", Some("logout"));
+        assert!(refused.leaves.is_empty(), "{refused:?}");
+        assert_eq!(planned(&trie, "event", None).leaves.len(), 1);
 
         // A widening on the existing template (Int64 ⊔ String): refused, and the column
         // unchanged.
@@ -1105,6 +1296,13 @@ mod tests {
         assert_eq!(user.col_type, Some(ColumnType::Int64));
         assert_eq!(user.widened_at, None);
         drop(slot);
+        // And a plan is handed the columns as they were: `user` is not text.
+        assert_eq!(trie.keys_agree(), Ok(()));
+        assert_eq!(trie.keys().edits(), edits);
+        assert_eq!(held(&trie, FIRST_TEMPLATE_ID).text_columns, ["event"]);
+        let plan = planned(&trie, "user", None);
+        assert_eq!(plan.leaves.len(), 1);
+        assert_eq!(plan.leaves[0].template.text_columns, ["event"]);
 
         // A repeat of the first line needs no record, so it still goes in.
         assert!(
@@ -1113,6 +1311,8 @@ mod tests {
                 .expect("a repeat needs no record")
                 .1
         );
+        assert_eq!(trie.keys_agree(), Ok(()));
+        assert_eq!(trie.keys().edits(), edits);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1172,6 +1372,8 @@ mod tests {
         };
         let before = describe(&trie);
         assert_eq!(before, describe(&rebuilt));
+        assert_eq!(trie.keys_agree(), Ok(()));
+        assert_eq!(rebuilt.keys_agree(), Ok(()));
         assert!(
             before
                 .iter()
@@ -1192,6 +1394,190 @@ mod tests {
             created_at: DateTime::from_timestamp(1_705_314_600, 0).expect("a valid timestamp"),
             tokens: vec![Token::Key { key: key.into() }],
         }
+    }
+
+    fn column_record(id: u64, name: &str, col_type: Option<ColumnType>) -> Record {
+        Record::Column {
+            template_id: id,
+            name: name.into(),
+            col_type,
+            widened_from: None,
+            at: None,
+        }
+    }
+
+    /// A template is listed under each of its columns from the line that makes it. A
+    /// column that widens to text is text in the template the index hands out from the
+    /// line that widens it, and a template handed out before is the template as it was. A
+    /// line that changes no column goes nowhere near the index.
+    #[test]
+    fn the_key_index_follows_a_new_template_and_a_widening() {
+        let trie = Trie::new();
+        let now = Utc::now();
+        trie.ingest(&parsed(r#"{"event":"login","user":7}"#), now)
+            .expect("a new template");
+        trie.ingest(&parsed(r#"{"level":"warn","user":8}"#), now)
+            .expect("a new template");
+        assert_eq!(trie.keys_agree(), Ok(()));
+        assert_eq!(all_ids(&trie), [101, 102]);
+        assert_eq!(listed(&trie, "user"), [101, 102]);
+        assert_eq!(listed(&trie, "event"), [101]);
+        assert_eq!(listed(&trie, "level"), [102]);
+        assert!(trie.keys().of("nosuch").is_none());
+        // An edge label is not a key.
+        assert!(trie.keys().of("event=login").is_none());
+
+        let before = held(&trie, 101);
+        assert_eq!(before.path, ["event=login", "user"]);
+        assert_eq!(before.storage_path, format!("{DEFAULT_DATA_DIR}/leaf_101"));
+        assert_eq!(before.text_columns, ["event"]);
+        assert_eq!(before.promoted("event"), Some("login"));
+        assert_eq!(before.promoted("user"), None);
+
+        let edits = trie.keys().edits();
+        trie.ingest(&parsed(r#"{"event":"login","user":9}"#), now)
+            .expect("a line of a template that exists");
+        assert_eq!(trie.keys().edits(), edits, "a line that changes nothing");
+        assert!(Arc::ptr_eq(&before, &held(&trie, 101)));
+
+        // Int64 ⊔ String.
+        trie.ingest(&parsed(r#"{"event":"login","user":"u1"}"#), now)
+            .expect("a widening");
+        assert_eq!(trie.keys().edits(), edits + 1);
+        let after = held(&trie, 101);
+        assert_eq!(after.text_columns, ["event", "user"]);
+        assert_eq!(before.text_columns, ["event"]);
+        for key in ["event", "user"] {
+            let keys = trie.keys();
+            let list = keys.of(key).expect("a list");
+            assert!(
+                Arc::ptr_eq(&list[0].1, &after),
+                "`{key}` still lists the template as it was"
+            );
+        }
+        assert_eq!(listed(&trie, "user"), [101, 102]);
+        assert_eq!(trie.keys_agree(), Ok(()));
+    }
+
+    /// A leaf from before `=` was escaped in a key's token: its one label reads as a
+    /// promoted `event` and its one column is the literal key spelled that way. A line
+    /// whose `event` promotes to that label walks to the same leaf and adds the column
+    /// `event`, so the template is listed under a key it was not listed under before.
+    #[test]
+    fn a_column_added_to_a_leaf_lists_its_template_under_the_new_key() {
+        let records = vec![
+            Record::Template {
+                id: 101,
+                created_at: DateTime::from_timestamp(1_705_314_600, 0).expect("a valid timestamp"),
+                tokens: vec![Token::Promoted {
+                    promoted: "event".into(),
+                    value: "login".into(),
+                }],
+            },
+            column_record(101, "event=login", Some(ColumnType::Int64)),
+        ];
+        let trie = Trie::from_catalog("data", &records, &mut |_| {}).expect("rebuild");
+        assert_eq!(listed(&trie, "event=login"), [101]);
+        assert!(trie.keys().of("event").is_none());
+
+        let (_, is_new) = trie
+            .ingest(&parsed(r#"{"event":"login"}"#), Utc::now())
+            .expect("a line of the leaf that exists");
+        assert!(!is_new);
+        assert_eq!(listed(&trie, "event"), [101]);
+        assert_eq!(listed(&trie, "event=login"), [101]);
+        let template = held(&trie, 101);
+        assert_eq!(template.path, ["event=login"]);
+        // The label is also a column, so it speaks for no row's `event`.
+        assert_eq!(template.promoted("event"), None);
+        assert_eq!(template.text_columns, ["event"]);
+        assert_eq!(trie.keys_agree(), Ok(()));
+    }
+
+    /// The three records a replay skips - an id past the last one, a second record under
+    /// an id, a second template on a path - make no template, so none of them is in the
+    /// index and none of the keys only they name has a list.
+    #[test]
+    fn a_record_a_replay_skips_leaves_nothing_in_the_key_index() {
+        let int = Some(ColumnType::Int64);
+        let records = vec![
+            template_record(u64::MAX, "past"),
+            column_record(u64::MAX, "past", int),
+            template_record(101, "user"),
+            column_record(101, "user", int),
+            template_record(101, "twice"),
+            template_record(102, "user"),
+            column_record(102, "other", int),
+        ];
+        let mut warnings = Vec::new();
+        let trie =
+            Trie::from_catalog("data", &records, &mut |w| warnings.push(w)).expect("rebuild");
+        assert_eq!(warnings.len(), 4, "{warnings:?}");
+        assert_eq!(trie.template_count(), 1);
+        assert_eq!(all_ids(&trie), [101]);
+        assert_eq!(listed(&trie, "user"), [101]);
+        for key in ["past", "twice", "other"] {
+            assert!(trie.keys().of(key).is_none(), "`{key}` has a list");
+        }
+        assert_eq!(trie.keys().edits(), 1);
+        assert_eq!(trie.keys_agree(), Ok(()));
+    }
+
+    /// A line with no keys walks no token, so the root is its leaf: a template with an
+    /// empty path, among all templates and under no key.
+    #[test]
+    fn a_line_with_no_keys_is_a_template_under_no_key() {
+        let trie = Trie::new();
+        let now = Utc::now();
+        trie.ingest(&parsed("{}"), now).expect("the root as a leaf");
+        trie.ingest(&parsed(r#"{"user":7}"#), now)
+            .expect("a new template");
+        assert_eq!(all_ids(&trie), [101, 102]);
+        assert!(held(&trie, 101).path.is_empty());
+        assert_eq!(listed(&trie, "user"), [102]);
+        assert!(trie.keys().of("").is_none());
+        assert_eq!(trie.keys_agree(), Ok(()));
+    }
+
+    /// A panic inside a hold of the index's write lock poisons it, and nothing after that
+    /// is refused for it: a line of a new template is taken and its template is planned,
+    /// a widening of it shows in the next plan, and the index is still the nodes'. A line
+    /// refused here would be one whose record the catalog already holds.
+    #[test]
+    fn a_poisoned_key_index_still_takes_templates_and_answers_plans() {
+        let trie = Trie::new();
+        let now = Utc::now();
+        trie.ingest(&parsed(r#"{"user":7}"#), now)
+            .expect("a new template");
+
+        std::thread::scope(|scope| {
+            let holder = scope.spawn(|| {
+                let _held = trie.keys.write().expect("not poisoned yet");
+                panic!("a panic inside a hold of the key index's write lock");
+            });
+            assert!(holder.join().is_err());
+        });
+        assert!(trie.keys.is_poisoned());
+
+        let (_, is_new) = trie
+            .ingest(&parsed(r#"{"host":"a","n":1}"#), now)
+            .expect("a new template through a poisoned lock");
+        assert!(is_new);
+        assert_eq!(all_ids(&trie), [101, 102]);
+        assert_eq!(listed(&trie, "host"), [102]);
+        assert_eq!(held(&trie, 102).text_columns, ["host"]);
+        let plan = planned(&trie, "host", Some("a"));
+        assert_eq!(plan.leaves.len(), 1);
+        assert_eq!(plan.leaves[0].template_id, 102);
+        assert_eq!(plan.leaves[0].template.text_columns, ["host"]);
+
+        trie.ingest(&parsed(r#"{"host":"a","n":"x"}"#), now)
+            .expect("a widening through a poisoned lock");
+        assert_eq!(held(&trie, 102).text_columns, ["host", "n"]);
+        let plan = planned(&trie, "n", None);
+        assert_eq!(plan.leaves.len(), 1);
+        assert_eq!(plan.leaves[0].template.text_columns, ["host", "n"]);
+        assert_eq!(trie.keys_agree(), Ok(()));
     }
 
     /// A template record whose id has no `max + 1` is skipped with a WARN that names it,

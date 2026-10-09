@@ -1,12 +1,11 @@
-//! The query engine: a walk, a scan, and the result shape every surface above reports.
+//! The query engine: a plan, a scan, and the result shape every surface above reports.
 //!
-//! The walk crosses the trie and touches no data. The scan opens only the leaves the walk
-//! chose. The split is enforced by the types: `plan` cannot see a store, so `--explain`
-//! cannot accidentally read a row.
+//! The plan chooses templates from the trie and touches no data. The scan opens only the
+//! leaves the plan chose. The split is enforced by the types: `plan` cannot see a store,
+//! so `--explain` cannot accidentally read a row.
 
-use std::borrow::Cow;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
+use std::collections::{BTreeSet, BinaryHeap, HashMap};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -14,15 +13,15 @@ use std::time::{Duration, Instant, SystemTime};
 use thiserror::Error;
 
 use crate::config::Limits;
-use crate::flatten::{promoted_token, split_token};
+use crate::flatten::{promoted_of, promoted_token};
 use crate::fmt::{col_text, commas, duration_text};
 use crate::infer::infer;
 use crate::store::{
     effective_ts, nanos_of, Counted, Row, ScanOptions, StoreError, StoreManager, Term, Visitor,
     Wants, RECEIVED_AT_COLUMN,
 };
-use crate::trie::{Node, Trie};
-use crate::types::{ColValue, ColumnType};
+use crate::trie::{KeyIndex, Node, Posting, Template, Trie};
+use crate::types::ColValue;
 
 /// The column a `time(...)` bucket is reported under, on every surface.
 pub const BUCKET_COLUMN: &str = "bucket";
@@ -641,51 +640,242 @@ fn zero_fill(
     Ok(groups)
 }
 
-// ── The walk ───────────────────────────────────────────────────────────────────────
+// ── The plan ───────────────────────────────────────────────────────────────────────
 
-/// What the walk decided, and nothing else. No rows, no store handles.
+/// What the plan decided, and nothing else. No rows, no store handles.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub leaves: Vec<PlannedLeaf>,
-    /// Root subtrees the trie let us skip without looking inside.
+    /// Root subtrees a walk of the trie skips without looking inside: the root's edges
+    /// that hold another value of a key the pattern names exactly.
     pub skipped: usize,
     pub duration: Duration,
 }
 
-#[derive(Debug)]
+/// One template a plan chose, and what is left for the scan to ask of its rows.
+#[derive(Debug, PartialEq)]
 pub struct PlannedLeaf {
     pub template_id: u64,
-    /// The leaf's key set as walk tokens - what `ParsedLog::walk_tokens` produces for any
-    /// line in it.
+    /// The template's path, storage path, time column and text columns, as the template
+    /// was when the plan was made.
     ///
-    /// Carried because it is the leaf's *content-derived* identity, where `template_id` is
-    /// a counter handed out in the order templates were first seen. The result order needs
-    /// a tiebreak for rows a timestamp cannot separate, and a tiebreak the reference
-    /// scanner cannot recompute is one the two sides will disagree about - which they did,
-    /// on every template whose time column is not called `ts`.
-    pub path: Vec<String>,
-    /// Collected by the walk; nothing opens one while the store is a `Vec<Row>`. It is
-    /// what the scan will hand to the file layer once there is one.
-    #[allow(dead_code)]
-    pub storage_path: String,
+    /// Shared and not copied. A plan of thousands of leaves was thousands of copies of
+    /// twenty strings each, which cost more than choosing the leaves did; this is one
+    /// count raised for a leaf. A column that widens makes a new template, so a plan
+    /// already made goes on reading the one it holds.
+    pub template: Arc<Template>,
     /// Terms the path could not settle - the scan's predicates. Empty means the leaf
     /// answers the pattern by its shape alone and every row in it matches.
     pub residual: Vec<Match>,
-    /// Whether this template carries the column a time filter reads.
-    ///
-    /// The template's time column: what its rows are ordered, windowed and
-    /// bucketed by, falling back to the system column on a row where it holds no
-    /// instant. Every template has one, so every leaf has a time axis.
-    pub time_column: String,
-    /// Columns whose type is now `String`. A `Datetime` stored in one of them is rendered
-    /// back to its ingested text by the store before the row is read.
-    pub text_columns: Vec<String>,
 }
 
-/// Walk the trie, collect the leaves that could hold a matching row. Reads no data.
+/// Choose the templates that could hold a matching row. Reads no data.
 ///
-/// Cost is the trie's size, not the file's - the property `--explain` is timed on.
+/// Read from the trie's key index and not walked: a term's key gives the list of the
+/// templates that have that column, and the lists are merged. The cost is the length of
+/// the lists a pattern names and no longer the size of the trie, which a walk paid in
+/// full - a lock and a copied label for every node - whatever was asked.
+///
+/// **The plan is the one the walk makes**, leaf for leaf and in the same order: see
+/// `chosen`, which applies the walk's two filters, and `plan_by_walk`, which is the walk
+/// and is what a debug build holds every plan to.
 pub fn plan(trie: &Trie, query: &Query) -> Plan {
+    let started = Instant::now();
+    let refused = refusals(query);
+    let (skipped, edges) = pruned(trie, &refused);
+    // The index's lock is let go at the end of this block and before anything else is
+    // done: nothing below may wait on a node while it is held.
+    let (leaves, edits) = {
+        let keys = trie.keys();
+        (chosen(&keys, query, &refused), keys.edits())
+    };
+    let duration = started.elapsed();
+    if cfg!(debug_assertions) {
+        hold_to_the_walk(trie, query, &leaves, (skipped, edges), edits);
+    }
+    Plan {
+        leaves,
+        skipped,
+        duration,
+    }
+}
+
+/// A debug build's check of every plan: the walk is made beside it and the two compared.
+///
+/// Each half only where no other thread moved it in between, and each half by what moves
+/// it. The leaves are compared when the index took no `put` from the plan's read of it to
+/// the end of the walk: a template is put while its leaf's lock is held, and the walk
+/// reads a leaf under that lock, so no `put` means the walk saw the templates the index
+/// described. `skipped` counts root edges, and a line makes its root edge before its
+/// template's record is durable and long before the `put` - or with no `put` at all,
+/// when the line is then refused - so it is compared when the root has the edges it had.
+/// Edges are only ever added, so the same count is the same edges.
+fn hold_to_the_walk(
+    trie: &Trie,
+    query: &Query,
+    leaves: &[PlannedLeaf],
+    (skipped, edges): (usize, usize),
+    edits: u64,
+) {
+    let walked = plan_by_walk(trie, query);
+    if trie.keys().edits() == edits {
+        assert_eq!(
+            leaves,
+            walked.leaves.as_slice(),
+            "the plan read from the key index is not the plan a walk of the trie makes, \
+             for the pattern {:?}",
+            query.tokens()
+        );
+    }
+    let edges_now = trie
+        .root()
+        .children
+        .read()
+        .map_or(0, |children| children.len());
+    if edges_now == edges {
+        assert_eq!(
+            skipped,
+            walked.skipped,
+            "the root subtrees counted as skipped are not the ones a walk of the trie \
+             skips, for the pattern {:?}",
+            query.tokens()
+        );
+    }
+}
+
+/// Each exact term's promoted token and the length of its `KEY=` prefix: what the root
+/// filter reads. Made once for a query, where `keeps` makes them again for every edge - a
+/// plan asks about the first label of thousands of templates and cannot afford that.
+fn refusals(query: &Query) -> Vec<(String, usize)> {
+    query
+        .matches
+        .iter()
+        .filter_map(|m| match &m.value {
+            MatchValue::Exact(v) => {
+                let token = promoted_token(&m.key, v);
+                let prefix = token.len() - v.len();
+                Some((token, prefix))
+            }
+            MatchValue::Any => None,
+        })
+        .collect()
+}
+
+/// Whether the root filter refuses a root edge with this label: `!keeps(label, query)`,
+/// with the tokens already made. The one predicate both the count of skipped root edges
+/// and the choice of templates use, so the two cannot come to disagree.
+fn refuses(label: &str, refused: &[(String, usize)]) -> bool {
+    refused
+        .iter()
+        .any(|(token, prefix)| label != token && label.starts_with(&token[..*prefix]))
+}
+
+/// `Plan::skipped` and the count of the root's edges, read in one hold of the root's
+/// lock.
+///
+/// Counted at the root and not from the index: an edge whose subtree holds no template is
+/// counted by the walk too, and a line refused after its nodes were made leaves one. The
+/// edge count is what a debug build's check knows the root by.
+fn pruned(trie: &Trie, refused: &[(String, usize)]) -> (usize, usize) {
+    let root = trie.root();
+    let Ok(children) = root.children.read() else {
+        return (0, 0);
+    };
+    let skipped = children
+        .iter()
+        .filter(|edge| refuses(&edge.label, refused))
+        .count();
+    (skipped, children.len())
+}
+
+/// The templates the pattern could match, in id order, each with the terms left to the
+/// scan.
+///
+/// **The walk's two filters, both of them.** The walk keeps a leaf when `keeps` accepts
+/// the root edge it hangs under and `select` accepts the leaf, and the second does not
+/// imply the first: a path settles nothing from a label that is also one of the leaf's
+/// columns, and it keeps the last token of a key it holds twice, and in both cases
+/// `select` leaves the term to the scan for a leaf the root filter had already dropped. So
+/// a template under a root edge the filter refuses is dropped here by its first label, as
+/// the walk never opens it; and what is left is `select`, with "the leaf's columns hold
+/// the term's key" read as "the template is in that key's list".
+///
+/// The root filter is asked of every template and is not skipped when no root edge was
+/// counted as refused: the root's edges were read before the index was, and a line makes
+/// its root edge before its template is put, so a template can be here under an edge that
+/// count did not see.
+///
+/// Every list is in ascending id and the walk's plan is sorted by id, so the shortest
+/// list is read front to back with the others merged against it, and nothing is sorted.
+fn chosen(keys: &KeyIndex, query: &Query, refused: &[(String, usize)]) -> Vec<PlannedLeaf> {
+    // One list a term, with how far into it the merge has come. A key no template has
+    // is a pattern no template can match.
+    let mut lists: Vec<(&[Posting], usize)> = Vec::with_capacity(query.matches.len());
+    for term in &query.matches {
+        match keys.of(&term.key) {
+            Some(list) => lists.push((list, 0)),
+            None => return Vec::new(),
+        }
+    }
+    // With no term, every template: the root as a leaf has no key and is found here and
+    // by no term.
+    let driver = lists
+        .iter()
+        .map(|(list, _)| *list)
+        .min_by_key(|list| list.len())
+        .unwrap_or(keys.all());
+
+    let mut leaves = Vec::new();
+    'next: for (id, template) in driver {
+        for (list, at) in &mut lists {
+            while *at < list.len() && list[*at].0 < *id {
+                *at += 1;
+            }
+            if list.get(*at).map(|posting| posting.0) != Some(*id) {
+                continue 'next;
+            }
+        }
+        // The root as a leaf has no first label and is kept, as the walk keeps it.
+        if !refused.is_empty()
+            && template
+                .path
+                .first()
+                .is_some_and(|first| refuses(first, refused))
+        {
+            continue 'next;
+        }
+        let mut residual = Vec::new();
+        for term in &query.matches {
+            match template.promoted(&term.key) {
+                // The value is in the path, so the template settles the term now and
+                // every row in it agrees - no predicate, and the scan has nothing to
+                // check.
+                Some(have) => match &term.value {
+                    MatchValue::Any => {}
+                    MatchValue::Exact(want) if want == have => {}
+                    MatchValue::Exact(_) => continue 'next,
+                },
+                None => residual.push(term.clone()),
+            }
+        }
+        leaves.push(PlannedLeaf {
+            template_id: *id,
+            template: Arc::clone(template),
+            residual,
+        });
+    }
+    leaves
+}
+
+/// The plan as a walk of the trie makes it: every node crossed, every leaf under a root
+/// edge `keeps` accepts put to `select`, the survivors sorted by id.
+///
+/// This was the plan, and it is kept whole as what the plan is held to: a debug build
+/// makes it beside every plan it answers, and the tests compare the two on generated
+/// tries. A change to `keeps`, `select` or `flatten::promoted_of` is a change to make to
+/// `refuses`, `chosen` and `Template::of` as well, and those comparisons are what say so
+/// when only one side moved.
+fn plan_by_walk(trie: &Trie, query: &Query) -> Plan {
     let started = Instant::now();
     let root = trie.root();
     let mut found = Vec::new();
@@ -719,16 +909,8 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
         if let Some(residual) = select(&path, &columns, query) {
             leaves.push(PlannedLeaf {
                 template_id: meta.template_id,
-                path: path.clone(),
-                storage_path: meta.storage_path.clone(),
+                template: Arc::new(Template::of(path, meta)),
                 residual,
-                time_column: meta.time_source.column().to_string(),
-                text_columns: meta
-                    .columns
-                    .iter()
-                    .filter(|c| c.col_type == Some(ColumnType::String))
-                    .map(|c| c.name.clone())
-                    .collect(),
             });
         }
     }
@@ -753,6 +935,8 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
 ///
 /// A pattern over non-promoted keys prunes nothing and costs one `starts_with` per root
 /// child. Correctness never rests on this: `select` re-checks every leaf that survives.
+/// The plan does rest on it: `select` keeps some leaves this drops, and their rows fail
+/// the scan (see `chosen`, which asks the same question through `refuses`).
 fn keeps(label: &str, query: &Query) -> bool {
     query.matches.iter().all(|m| match &m.value {
         MatchValue::Exact(v) => {
@@ -800,33 +984,6 @@ fn select(path: &[String], columns: &BTreeSet<&str>, query: &Query) -> Option<Ve
         }
     }
     Some(residual)
-}
-
-/// The `key=value` tokens on this path, split back into pairs.
-///
-/// A promoted token has a bare `=` and a plain key's token has none
-/// (`flatten::split_token`), so the label tells the two apart without consulting the
-/// promotion rules, and the key it reads back is the column's name, unescaped.
-fn promoted_of<'a>(
-    path: &'a [String],
-    columns: &BTreeSet<&str>,
-) -> BTreeMap<Cow<'a, str>, &'a str> {
-    let mut out = BTreeMap::new();
-    for label in path {
-        // A leaf made before `=` was escaped can hold a column named as one of its own
-        // labels reads: the literal key `event=login` and the promoted `event=login` were
-        // one edge then, and one leaf took the rows of both. The label does not speak
-        // for every row of such a leaf, so the term is left to the scan.
-        if columns.contains(label.as_str()) {
-            continue;
-        }
-        if let Some((key, value)) = split_token(label) {
-            if columns.contains(key.as_ref()) {
-                out.insert(key, value);
-            }
-        }
-    }
-    out
 }
 
 // ── Result order ───────────────────────────────────────────────────────────────────
@@ -1400,7 +1557,7 @@ impl Visitor for Grouped<'_> {
 /// `QueryMode::Exists` is two questions wearing one name, and which one was asked is
 /// decided by the time clause:
 ///
-/// - **No time clause** - "does this template exist at all?". Answered by the walk, and it
+/// - **No time clause** - "does this template exist at all?". Answered by the plan, and it
 ///   reads no data: `leaves_opened` and `rows_scanned` both stay 0, which is the mode's
 ///   whole claim.
 /// - **With a time clause** - "is this firing *now*?". `--exists --since 5m` is a cheap
@@ -1490,9 +1647,9 @@ fn answer(
 
     for leaf in &plan.leaves {
         let terms: Vec<Term> = leaf.residual.iter().map(term).collect();
-        let ts = leaf.time_column.as_str();
-        opts.ts_column = Some(leaf.time_column.clone());
-        opts.text_columns = leaf.text_columns.clone();
+        let ts = leaf.template.time_column.as_str();
+        opts.ts_column = Some(leaf.template.time_column.clone());
+        opts.text_columns = leaf.template.text_columns.clone();
 
         // **Column pruning**: every term the scan is handed was made from a `Match` of
         // `leaf.residual`, and a term's key is the column it reads. Those keys, the group
@@ -1529,7 +1686,7 @@ fn answer(
             QueryMode::Fetch => {
                 let mut fetch = Fetch {
                     keep: &mut newest,
-                    key: leaf_key(&leaf.path),
+                    key: leaf_key(&leaf.template.path),
                     ts,
                     after: query.cursor.map(|c| c.rank),
                 };
@@ -1682,6 +1839,8 @@ mod tests {
     use crate::db;
     use crate::rng::Rng;
     use crate::store::nanos_of;
+    use crate::types::ColumnType;
+    use std::collections::BTreeMap;
     use std::time::UNIX_EPOCH;
 
     /// 2024-01-15T00:00:00Z, and the corpus runs a day forward from it.
@@ -2860,7 +3019,7 @@ mod tests {
         );
         let planned = plan(&disk.trie, &q);
         assert_eq!(planned.leaves.len(), 1);
-        let text = &planned.leaves[0].text_columns;
+        let text = &planned.leaves[0].template.text_columns;
         assert!(
             text.iter().any(|c| c == "when") && !text.iter().any(|c| c == "ts"),
             "{text:?}"
@@ -3512,8 +3671,14 @@ mod tests {
         let leaves = planned(vec![any("v")]);
         assert_eq!(leaves.len(), 2);
         let (tied, other) = (&leaves[0], &leaves[1]);
-        assert!(tied.text_columns.iter().any(|c| c == "ts"), "{tied:?}");
-        assert!(other.path.iter().any(|token| token == "u"), "{other:?}");
+        assert!(
+            tied.template.text_columns.iter().any(|c| c == "ts"),
+            "{tied:?}"
+        );
+        assert!(
+            other.template.path.iter().any(|token| token == "u"),
+            "{other:?}"
+        );
         assert!(!tied.residual.is_empty() && !other.residual.is_empty());
 
         // By hand, into the first template: a row stored under the day of its instant,
@@ -3570,14 +3735,14 @@ mod tests {
             let mut newest = Newest::new(Some(2));
             let mut seen = Vec::new();
             for leaf in [tied, other] {
-                opts.ts_column = Some(leaf.time_column.clone());
-                opts.text_columns = leaf.text_columns.clone();
+                opts.ts_column = Some(leaf.template.time_column.clone());
+                opts.text_columns = leaf.template.text_columns.clone();
                 let terms: Vec<Term> = leaf.residual.iter().map(term).collect();
                 let mut watched = Watched {
                     fetch: Fetch {
                         keep: &mut newest,
-                        key: leaf_key(&leaf.path),
-                        ts: leaf.time_column.as_str(),
+                        key: leaf_key(&leaf.template.path),
+                        ts: leaf.template.time_column.as_str(),
                         after: None,
                     },
                     asked: Vec::new(),
@@ -3764,7 +3929,7 @@ mod tests {
         }
         for leaf in plan(&trie, &asking(&[], QueryMode::Count, (None, None))).leaves {
             stores
-                .open_existing(leaf.template_id, &leaf.time_column)
+                .open_existing(leaf.template_id, &leaf.template.time_column)
                 .expect("opened");
         }
         for (at, line) in in_memory.iter().enumerate() {
@@ -3853,7 +4018,10 @@ mod tests {
             )
             .leaves;
             assert_eq!(tied.len(), 1);
-            assert!(tied[0].text_columns.iter().any(|c| c == "ts"), "{tied:?}");
+            assert!(
+                tied[0].template.text_columns.iter().any(|c| c == "ts"),
+                "{tied:?}"
+            );
             adrift(&written.stores, tied[0].template_id);
             let done = written.stores.flush_all(FlushKind::Final);
             assert_eq!((done.failed, written.stores.buffered()), (0, 0));
@@ -4053,8 +4221,8 @@ mod tests {
         .leaves;
         let tied = &leaves[0];
         let opts = ScanOptions {
-            ts_column: Some(tied.time_column.clone()),
-            text_columns: tied.text_columns.clone(),
+            ts_column: Some(tied.template.time_column.clone()),
+            text_columns: tied.template.text_columns.clone(),
             ..ScanOptions::default()
         };
         let terms: Vec<Term> = tied.residual.iter().map(term).collect();
@@ -4063,8 +4231,8 @@ mod tests {
         let mut watched = Watched {
             fetch: Fetch {
                 keep: &mut newest,
-                key: leaf_key(&tied.path),
-                ts: tied.time_column.as_str(),
+                key: leaf_key(&tied.template.path),
+                ts: tied.template.time_column.as_str(),
                 after: None,
             },
             asked: Vec::new(),
@@ -4088,5 +4256,812 @@ mod tests {
         out_of_its_day.sort_unstable();
         let twice: Vec<(Option<i64>, u64)> = (0..5).flat_map(|seq| [(None, seq); 2]).collect();
         assert_eq!(out_of_its_day, twice);
+    }
+
+    // ── The plan read from the key index, held to the walk ────────────────────────────
+
+    fn wants(key: &str, value: &str) -> Match {
+        Match {
+            key: key.to_string(),
+            value: MatchValue::Exact(value.to_string()),
+        }
+    }
+
+    fn has(key: &str) -> Match {
+        Match {
+            key: key.to_string(),
+            value: MatchValue::Any,
+        }
+    }
+
+    fn counting(terms: &[Match]) -> Query {
+        asking(terms, QueryMode::Count, (None, None))
+    }
+
+    fn ids_of(plan: &Plan) -> Vec<u64> {
+        plan.leaves.iter().map(|leaf| leaf.template_id).collect()
+    }
+
+    /// One line into a trie: the id of the template it went to, and whether it made it.
+    fn taken(trie: &Trie, text: &str) -> Result<(u64, bool), crate::trie::TrieError> {
+        let parsed = crate::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
+        let (leaf, is_new) = trie.ingest(&parsed, chrono::Utc::now())?;
+        let id = leaf
+            .leaf_meta
+            .read()
+            .expect("meta")
+            .as_ref()
+            .expect("a template")
+            .template_id;
+        Ok((id, is_new))
+    }
+
+    /// One pattern planned from the index and by the walk, and the two held equal: the
+    /// same leaves in the same order, each the same template with the same terms left to
+    /// the scan, and the same count of skipped root subtrees. The index's plan is handed
+    /// back.
+    fn both(trie: &Trie, terms: &[Match]) -> Plan {
+        let q = counting(terms);
+        let indexed = plan(trie, &q);
+        let walked = plan_by_walk(trie, &q);
+        assert_eq!(indexed.leaves, walked.leaves, "leaves of {:?}", q.tokens());
+        assert_eq!(
+            indexed.skipped,
+            walked.skipped,
+            "skipped of {:?}",
+            q.tokens()
+        );
+        indexed
+    }
+
+    fn template_record(id: u64, tokens: Vec<crate::catalog::Token>) -> crate::catalog::Record {
+        crate::catalog::Record::Template {
+            id,
+            created_at: chrono::DateTime::from_timestamp(EPOCH, 0).expect("a valid timestamp"),
+            tokens,
+        }
+    }
+
+    fn column_record(id: u64, name: &str, col_type: Option<ColumnType>) -> crate::catalog::Record {
+        crate::catalog::Record::Column {
+            template_id: id,
+            name: name.to_string(),
+            col_type,
+            widened_from: None,
+            at: None,
+        }
+    }
+
+    fn promoted_token_of(key: &str, value: &str) -> crate::catalog::Token {
+        crate::catalog::Token::Promoted {
+            promoted: key.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    fn replayed(records: &[crate::catalog::Record]) -> Trie {
+        Trie::from_catalog("data", records, &mut |_| {}).expect("the records replay")
+    }
+
+    /// A line holding `event` and the literal key its promoted token is spelled as: the
+    /// label `event=login` is then one of the leaf's own columns, so the path settles
+    /// nothing and a term on `event` is the scan's. The leaf's own filter would keep it
+    /// for any value of `event`; the root filter never opens it for another value, and
+    /// neither does the plan. Asked for its own value or for any, it is planned with the
+    /// term left to the scan.
+    #[test]
+    fn a_template_under_a_root_edge_of_another_value_is_not_planned() {
+        let trie = Trie::new();
+        taken(&trie, r#"{"event":"login","event=login":1}"#).expect("a new template");
+
+        let other = both(&trie, &[wants("event", "logout")]);
+        assert!(other.leaves.is_empty(), "{other:?}");
+        assert_eq!(other.skipped, 1);
+
+        for term in [wants("event", "login"), has("event")] {
+            let planned = both(&trie, std::slice::from_ref(&term));
+            assert_eq!(ids_of(&planned), [101]);
+            assert_eq!(planned.leaves[0].residual, [term]);
+            assert_eq!(planned.skipped, 0);
+        }
+
+        // Beside a template that does hold the other value: that one and no more.
+        taken(&trie, r#"{"event":"logout","user":7}"#).expect("a new template");
+        let planned = both(&trie, &[wants("event", "logout")]);
+        assert_eq!(ids_of(&planned), [102]);
+        assert!(planned.leaves[0].residual.is_empty());
+        assert_eq!(planned.skipped, 1);
+    }
+
+    /// The same leaf as a build from before `=` was escaped in a key's token left it, and
+    /// as a replay brings it back: one label, `event=login`, and the columns `event` and
+    /// `event=login`.
+    #[test]
+    fn a_replayed_leaf_whose_label_is_its_column_is_not_planned_for_another_value() {
+        let trie = replayed(&[
+            template_record(101, vec![promoted_token_of("event", "login")]),
+            column_record(101, "event", Some(ColumnType::String)),
+            column_record(101, "event=login", Some(ColumnType::Int64)),
+        ]);
+
+        let other = both(&trie, &[wants("event", "logout")]);
+        assert!(other.leaves.is_empty(), "{other:?}");
+        assert_eq!(other.skipped, 1);
+
+        let term = wants("event", "login");
+        let planned = both(&trie, std::slice::from_ref(&term));
+        assert_eq!(ids_of(&planned), [101]);
+        assert_eq!(planned.leaves[0].residual, [term]);
+    }
+
+    /// A path no build writes and a replay accepts: two promoted tokens of one key. The
+    /// path's last token speaks for the key, and the root's edge is the first, so an
+    /// exact term plans the template for neither value - for the second the root edge is
+    /// another value's, for the first the leaf holds the second. Odd, and the walk's
+    /// answer; a plan read from the index gives it too.
+    #[test]
+    fn a_replayed_path_with_two_values_of_one_key_is_planned_for_neither() {
+        let trie = replayed(&[
+            template_record(
+                101,
+                vec![
+                    promoted_token_of("event", "a"),
+                    promoted_token_of("event", "b"),
+                ],
+            ),
+            column_record(101, "event", Some(ColumnType::String)),
+        ]);
+
+        let second = both(&trie, &[wants("event", "b")]);
+        assert!(second.leaves.is_empty(), "{second:?}");
+        assert_eq!(second.skipped, 1);
+
+        let first = both(&trie, &[wants("event", "a")]);
+        assert!(first.leaves.is_empty(), "{first:?}");
+        assert_eq!(first.skipped, 0);
+
+        let any = both(&trie, &[has("event")]);
+        assert_eq!(ids_of(&any), [101]);
+        assert!(any.leaves[0].residual.is_empty());
+    }
+
+    /// A line refused after its nodes were made leaves a root edge with no template under
+    /// it. A walk counts that edge among the subtrees it skips, so the plan does: the
+    /// count is read at the root, and the index, which never heard of the line, could not
+    /// give it.
+    #[test]
+    fn a_refused_lines_root_edge_is_counted_as_skipped() {
+        let trie = Trie::new();
+        taken(&trie, r#"{"event":"login","user":7}"#).expect("a new template");
+        let before = both(&trie, &[wants("event", "login")]);
+        assert_eq!((ids_of(&before), before.skipped), (vec![101], 0));
+        let edits = trie.keys().edits();
+
+        // Every id spent: the next new template has its path made and is then refused.
+        trie.reserve_template_ids_through(crate::trie::LAST_TEMPLATE_ID);
+        let refused = taken(&trie, r#"{"event":"logout","user":7}"#);
+        assert!(
+            matches!(refused, Err(crate::trie::TrieError::TemplateIdsSpent)),
+            "{refused:?}"
+        );
+        assert_eq!(
+            trie.keys().edits(),
+            edits,
+            "a refused line reached the index"
+        );
+
+        let after = both(&trie, &[wants("event", "login")]);
+        assert_eq!((ids_of(&after), after.skipped), (vec![101], 1));
+        assert!(both(&trie, &[wants("event", "logout")]).leaves.is_empty());
+        assert_eq!(trie.keys_agree(), Ok(()));
+    }
+
+    /// A column that widens to text is text in the next plan, and a plan made before goes
+    /// on reading the template as it was when it was made.
+    #[test]
+    fn a_widened_column_is_text_in_the_next_plan_and_not_in_one_already_made() {
+        let trie = Trie::new();
+        taken(&trie, r#"{"event":"login","user":7}"#).expect("a new template");
+        let before = both(&trie, &[]);
+        assert_eq!(before.leaves[0].template.text_columns, ["event"]);
+
+        // Int64 ⊔ String.
+        let (id, is_new) = taken(&trie, r#"{"event":"login","user":"u1"}"#).expect("a widening");
+        assert_eq!((id, is_new), (101, false));
+        let after = both(&trie, &[]);
+        assert_eq!(after.leaves[0].template.text_columns, ["event", "user"]);
+        assert_eq!(before.leaves[0].template.text_columns, ["event"]);
+    }
+
+    /// A column added to a leaf that exists is a key its template is planned by from then
+    /// on. The leaf is one from before `=` was escaped: its label reads as a promoted
+    /// `event` and its one column is the literal key, until a line with `event` reaches it.
+    #[test]
+    fn a_column_added_to_a_leaf_is_a_key_its_template_is_planned_by() {
+        let trie = replayed(&[
+            template_record(101, vec![promoted_token_of("event", "login")]),
+            column_record(101, "event=login", Some(ColumnType::Int64)),
+        ]);
+        assert!(both(&trie, &[has("event")]).leaves.is_empty());
+        assert_eq!(ids_of(&both(&trie, &[has("event=login")])), [101]);
+
+        let (id, is_new) = taken(&trie, r#"{"event":"login"}"#).expect("a line of that leaf");
+        assert_eq!((id, is_new), (101, false));
+        let term = has("event");
+        let planned = both(&trie, std::slice::from_ref(&term));
+        assert_eq!(ids_of(&planned), [101]);
+        assert_eq!(planned.leaves[0].residual, [term]);
+        assert_eq!(trie.keys_agree(), Ok(()));
+    }
+
+    /// A column added to a leaf can be the key its path holds a value for, and the path
+    /// then settles that key where it settled nothing before: a template whose record
+    /// reached the catalog without that key's column record, and then a line of it. The
+    /// template is made again whole, so a term on the key is answered by the path from
+    /// then on and is not left to the scan.
+    #[test]
+    fn a_column_added_to_a_leaf_can_be_one_its_path_settles() {
+        let trie = replayed(&[
+            template_record(101, vec![promoted_token_of("event", "ghost")]),
+            column_record(101, "other", Some(ColumnType::Int64)),
+        ]);
+        assert!(both(&trie, &[wants("event", "ghost")]).leaves.is_empty());
+        let before = both(&trie, &[]);
+        assert_eq!(ids_of(&before), [101]);
+        assert_eq!(before.leaves[0].template.promoted("event"), None);
+
+        let (id, is_new) = taken(&trie, r#"{"event":"ghost"}"#).expect("a line of that leaf");
+        assert_eq!((id, is_new), (101, false));
+        assert_eq!(trie.keys_agree(), Ok(()));
+        for term in [wants("event", "ghost"), has("event")] {
+            let planned = both(&trie, std::slice::from_ref(&term));
+            assert_eq!(ids_of(&planned), [101]);
+            assert!(planned.leaves[0].residual.is_empty(), "{planned:?}");
+            assert_eq!(planned.leaves[0].template.promoted("event"), Some("ghost"));
+        }
+        let other = both(&trie, &[wants("event", "login")]);
+        assert!(other.leaves.is_empty(), "{other:?}");
+        assert_eq!(other.skipped, 1);
+        // A plan made before the line goes on reading the template as it was.
+        assert_eq!(before.leaves[0].template.promoted("event"), None);
+    }
+
+    /// A line with no keys makes the root a leaf. It has no key to be found by, so the
+    /// empty pattern plans it and no term does.
+    #[test]
+    fn the_root_as_a_leaf_is_planned_by_the_empty_pattern_and_by_no_term() {
+        let trie = Trie::new();
+        taken(&trie, "{}").expect("the root as a leaf");
+        taken(&trie, r#"{"user":7}"#).expect("a new template");
+
+        let all = both(&trie, &[]);
+        assert_eq!(ids_of(&all), [101, 102]);
+        assert!(all.leaves[0].template.path.is_empty());
+        assert_eq!(ids_of(&both(&trie, &[has("user")])), [102]);
+        assert_eq!(ids_of(&both(&trie, &[wants("user", "7")])), [102]);
+        assert!(both(&trie, &[has("")]).leaves.is_empty());
+        // An exact term refuses no root edge it could hang under: it has none.
+        assert!(both(&trie, &[wants("event", "login")]).leaves.is_empty());
+    }
+
+    /// The shapes a pattern takes, on one small trie: several terms, one key twice, a
+    /// wildcard, a key no template has alone and beside a key some have, and a promoted
+    /// key asked for a value no template holds.
+    #[test]
+    fn the_shapes_of_a_pattern_plan_as_the_walk_plans_them() {
+        let trie = Trie::new();
+        for text in [
+            r#"{"event":"login","level":"error","user":7}"#,
+            r#"{"event":"login","user":7}"#,
+            r#"{"event":"logout","level":"warn"}"#,
+            r#"{"level":"error","host":"a"}"#,
+            r#"{"event":"an event too long to be promoted into a path","level":"error"}"#,
+        ] {
+            taken(&trie, text).expect("a new template");
+        }
+
+        // The shorter list is read and the other merged against it. The path of the
+        // first settles `event`; the last holds its `event` in its rows, so both terms
+        // are the scan's there.
+        let terms = [wants("level", "error"), wants("event", "login")];
+        let planned = both(&trie, &terms);
+        assert_eq!(ids_of(&planned), [101, 105]);
+        assert_eq!(planned.leaves[0].residual, [wants("level", "error")]);
+        assert_eq!(planned.leaves[1].residual, terms);
+        assert_eq!(planned.skipped, 1);
+
+        // Unpromoted, so every template with the key and the term for the scan.
+        let level = both(&trie, &[wants("level", "error")]);
+        assert_eq!(ids_of(&level), [101, 103, 104, 105]);
+        assert!(level.leaves.iter().all(|leaf| leaf.residual.len() == 1));
+        assert_eq!(level.skipped, 0);
+
+        // One key twice: both terms left, in the order written.
+        let twice = [wants("level", "error"), wants("level", "warn")];
+        let planned = both(&trie, &twice);
+        assert_eq!(ids_of(&planned), [101, 103, 104, 105]);
+        assert_eq!(planned.leaves[0].residual, twice);
+
+        // A wildcard on a promoted key: settled by a path that holds it, the scan's where
+        // the value was too long to promote.
+        let any = both(&trie, &[has("event")]);
+        assert_eq!(ids_of(&any), [101, 102, 103, 105]);
+        assert!(any.leaves[..3].iter().all(|leaf| leaf.residual.is_empty()));
+        assert_eq!(any.leaves[3].residual, [has("event")]);
+
+        assert!(both(&trie, &[wants("nosuch", "1")]).leaves.is_empty());
+        assert!(both(&trie, &[wants("level", "error"), has("nosuch")])
+            .leaves
+            .is_empty());
+
+        // A promoted key and a value no path holds: only the template whose value is in
+        // its rows and not in its path is left to be scanned.
+        let none = both(&trie, &[wants("event", "no_such")]);
+        assert_eq!(ids_of(&none), [105]);
+        assert_eq!(none.skipped, 2);
+    }
+
+    /// What `event` is given in a generated line, as JSON: words that are promoted into
+    /// the path, and values that are not - a number, a word with a space, forty-one
+    /// bytes, the empty string, null.
+    const EVENT_VALUES: [&str; 9] = [
+        r#""login""#,
+        r#""logout""#,
+        r#""x""#,
+        r#""pay""#,
+        "5",
+        r#""has space""#,
+        r#""0123456789012345678901234567890123456789X""#,
+        r#""""#,
+        "null",
+    ];
+
+    /// One generated line, and the values its `event`s took added to `seen`.
+    ///
+    /// Member names from a small alphabet, so that key sets overlap from line to line,
+    /// with the spellings a key index could get wrong in it: `a` and `x` hold a nested
+    /// `event`, which is promoted as `event` is; `a=b`, `event=x`, `event=login` and
+    /// `event=` read as promoted tokens and are keys; `a.b` and `k\` are escaped when
+    /// rendered; and the empty name. The other values widen a column from line to line:
+    /// a number then a word, a null then a value.
+    ///
+    /// **And the line the walk's two filters differ on, made on purpose**: for a share of
+    /// the lines with an `event`, whatever value it took, the line also holds the literal
+    /// key `event=<that value>`. Its promoted label is then one of its own columns.
+    fn generated_line(rng: &mut Rng, seen: &mut Vec<String>) -> String {
+        const NAMES: [&str; 14] = [
+            "event",
+            "event",
+            "event",
+            "a",
+            "x",
+            "lvl",
+            "ts",
+            "a=b",
+            "event=x",
+            "event=login",
+            "event=",
+            "a.b",
+            r"k\\",
+            "",
+        ];
+        const VALUES: [&str; 5] = ["7", r#""word""#, "null", "2.5", r#""2024-01-15T12:00:00Z""#];
+        if rng.chance(4) {
+            return "{}".to_string();
+        }
+        let mut used: Vec<String> = Vec::new();
+        let mut members: Vec<String> = Vec::new();
+        for _ in 0..1 + rng.below(4) {
+            let name = *rng.pick(&NAMES);
+            if used.iter().any(|have| have == name) {
+                continue;
+            }
+            used.push(name.to_string());
+            match name {
+                "event" => {
+                    let value = *rng.pick(&EVENT_VALUES);
+                    members.push(format!(r#""event":{value}"#));
+                    let bare = value.trim_matches('"');
+                    seen.push(bare.to_string());
+                    let literal = format!("event={bare}");
+                    if rng.chance(30) && !used.contains(&literal) {
+                        members.push(format!(r#""{literal}":1"#));
+                        used.push(literal);
+                    }
+                }
+                "a" | "x" => {
+                    let value = *rng.pick(&EVENT_VALUES);
+                    members.push(format!(r#""{name}":{{"event":{value}}}"#));
+                    seen.push(value.trim_matches('"').to_string());
+                }
+                _ => members.push(format!(r#""{name}":{}"#, rng.pick(&VALUES))),
+            }
+        }
+        format!("{{{}}}", members.join(","))
+    }
+
+    /// Catalog records for one to four templates, including what `ingest` never writes
+    /// and a replay accepts: a label that is also a column, two promoted tokens of one
+    /// key on one path, tokens out of walk order, a column that is not on the path, a
+    /// template with no column record, a second record under one id, and a second
+    /// template on one path (two templates of no tokens are both the root).
+    fn generated_records(rng: &mut Rng) -> Vec<crate::catalog::Record> {
+        use crate::catalog::Token;
+        const KEYS: [&str; 10] = [
+            "event",
+            "a.event",
+            "lvl",
+            "ts",
+            "a=b",
+            "event=x",
+            "event=login",
+            "k\\",
+            "",
+            "x",
+        ];
+        const VALUES: [&str; 6] = ["x", "login", "logout", "", "a=b", "b"];
+        const TYPES: [Option<ColumnType>; 3] =
+            [Some(ColumnType::String), Some(ColumnType::Int64), None];
+        let mut out = Vec::new();
+        for n in 0..1 + rng.below(4) {
+            let id = if n > 0 && rng.chance(10) {
+                100 + n
+            } else {
+                101 + n
+            };
+            let mut tokens = Vec::new();
+            for _ in 0..rng.below(4) {
+                if rng.chance(50) {
+                    tokens.push(promoted_token_of(rng.pick(&KEYS), rng.pick(&VALUES)));
+                } else {
+                    tokens.push(Token::Key {
+                        key: rng.pick(&KEYS).to_string(),
+                    });
+                }
+            }
+            let labels: Vec<String> = tokens.iter().map(Token::label).collect();
+            out.push(template_record(id, tokens.clone()));
+            for token in &tokens {
+                // Mostly the column a line of this template would have; sometimes none.
+                if !rng.chance(20) {
+                    let name = match token {
+                        Token::Promoted { promoted, .. } => promoted,
+                        Token::Key { key } => key,
+                    };
+                    out.push(column_record(id, name, *rng.pick(&TYPES)));
+                }
+            }
+            if rng.chance(33) && !labels.is_empty() {
+                out.push(column_record(
+                    id,
+                    rng.pick(&labels),
+                    Some(ColumnType::Int64),
+                ));
+            }
+            if rng.chance(25) {
+                out.push(column_record(id, rng.pick(&KEYS), Some(ColumnType::String)));
+            }
+        }
+        out
+    }
+
+    /// A pattern of no term to three, and now and then one key twice. Half the keys are
+    /// columns the trie holds, so that most patterns reach a template; the rest are from
+    /// a list as a query spells a column, most of them `event`'s, with some no line
+    /// renders and one no template has. A term asks for any value, for a value some
+    /// line's `event` took - some *other* line's, as often as not, which is what finds a
+    /// template under a root edge of another value - or for a value from a list no path
+    /// need hold.
+    fn generated_pattern(rng: &mut Rng, held: &[String], seen: &[String]) -> Vec<Match> {
+        const KEYS: [&str; 18] = [
+            "event",
+            "event",
+            "event",
+            "event",
+            "a.event",
+            "x.event",
+            "lvl",
+            "ts",
+            "a=b",
+            "event=x",
+            "event=login",
+            "event=",
+            "a\\.b",
+            "k\\\\",
+            "k\\",
+            "",
+            "nosuch",
+            "a",
+        ];
+        const VALUES: [&str; 8] = [
+            "x",
+            "login",
+            "logout",
+            "",
+            "a=b",
+            "b",
+            "7",
+            "no-path-holds-this",
+        ];
+        let mut terms = Vec::new();
+        for _ in 0..rng.below(4) {
+            let key = if !held.is_empty() && rng.chance(50) {
+                rng.pick(held).as_str()
+            } else {
+                *rng.pick(&KEYS)
+            };
+            terms.push(match rng.below(4) {
+                0 => has(key),
+                1 | 2 if !seen.is_empty() => wants(key, rng.pick(seen)),
+                _ => wants(key, rng.pick(&VALUES)),
+            });
+            if rng.chance(10) {
+                terms.push(wants(key, rng.pick(&VALUES)));
+            }
+        }
+        terms
+    }
+
+    /// Generated tries, built every way a trie is built, with four generated patterns put
+    /// to each after every line and every record: `ask` is handed the trie and the
+    /// pattern.
+    ///
+    /// Lines through `Trie::ingest`; that trie replayed from its own catalog records; on
+    /// one seed in four, that trie saved and read back as a `trie.json`, which is the
+    /// only way to `Trie::restored` (each save is two fsyncs, so not on every seed); and
+    /// generated records through `Trie::from_catalog`, replayed again from the start for
+    /// each record added.
+    fn over_generated_tries(name: &str, seeds: u64, mut ask: impl FnMut(&Trie, &Query)) {
+        let now = chrono::Utc::now();
+        let dir =
+            std::env::temp_dir().join(format!("kibbr-engine-plans-{}-{name}", std::process::id()));
+        let mut put = |trie: &Trie, rng: &mut Rng, seen: &[String]| {
+            let mut held: Vec<String> = Vec::new();
+            for leaf in trie.all_leaves() {
+                let slot = leaf.leaf_meta.read().expect("meta");
+                let columns = slot.iter().flat_map(|meta| &meta.columns);
+                held.extend(columns.map(|column| column.name.clone()));
+            }
+            held.sort();
+            held.dedup();
+            for _ in 0..4 {
+                ask(trie, &counting(&generated_pattern(rng, &held, seen)));
+            }
+        };
+        for seed in 0..seeds {
+            let mut rng = Rng::new(seed);
+            let mut seen = Vec::new();
+
+            let trie = Trie::new();
+            for _ in 0..1 + rng.below(8) {
+                let text = generated_line(&mut rng, &mut seen);
+                let Ok(parsed) = crate::flatten::parse_line(text.as_bytes(), 1) else {
+                    continue;
+                };
+                if trie.ingest(&parsed, now).is_err() {
+                    continue;
+                }
+                put(&trie, &mut rng, &seen);
+            }
+            put(&replayed(&trie.catalog_records()), &mut rng, &seen);
+            if seed % 4 == 0 {
+                let path = dir.join("trie.json");
+                crate::triefile::save(&trie, &path).expect("the trie saves");
+                let (loaded, error) = crate::triefile::load_reporting(&path, "data");
+                assert!(error.is_none(), "{error:?}");
+                put(&loaded, &mut rng, &seen);
+            }
+
+            let records = generated_records(&mut rng);
+            for upto in 1..=records.len() {
+                put(&replayed(&records[..upto]), &mut rng, &seen);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **The plan read from the key index is the plan the walk makes**: the same leaves
+    /// in the same order - each the same template, path, time column and text columns,
+    /// with the same terms left to the scan - and the same count of skipped root
+    /// subtrees. On generated tries after every line and record, with the index itself
+    /// held to the nodes at each.
+    #[test]
+    fn the_plan_read_from_the_index_is_the_walks_plan_on_generated_tries() {
+        let (mut asked, mut chose, mut skipped, mut scanned) = (0u64, 0u64, 0u64, 0u64);
+        over_generated_tries("same", 300, |trie, q| {
+            assert_eq!(trie.keys_agree(), Ok(()));
+            let indexed = plan(trie, q);
+            let walked = plan_by_walk(trie, q);
+            assert_eq!(indexed.leaves, walked.leaves, "leaves of {:?}", q.tokens());
+            assert_eq!(
+                indexed.skipped,
+                walked.skipped,
+                "skipped of {:?}",
+                q.tokens()
+            );
+            asked += 1;
+            chose += u64::from(!indexed.leaves.is_empty() && !q.matches.is_empty());
+            skipped += u64::from(indexed.skipped > 0);
+            scanned += u64::from(indexed.leaves.iter().any(|leaf| !leaf.residual.is_empty()));
+        });
+        // A generator whose patterns all miss compares empty plans and holds nothing.
+        assert!(
+            asked > 10_000 && chose > asked / 8 && skipped > asked / 16 && scanned > asked / 8,
+            "{asked} plans: {chose} chose a template by a term, {skipped} skipped a root \
+             subtree, {scanned} left a term to the scan"
+        );
+    }
+
+    /// The generator above is what holds the root filter in the plan, and it holds it
+    /// only while it goes on making the tries the walk's two filters differ on. So the
+    /// same tries and patterns are put to the choice with the root filter left out, and
+    /// that has to differ from the walk somewhere - by planning templates the walk never
+    /// opens. If a change to the generator loses those tries, this is the test that fails.
+    #[test]
+    fn the_generated_tries_tell_a_plan_without_the_root_filter_from_the_walk() {
+        let (mut asked, mut differs) = (0u64, 0u64);
+        over_generated_tries("bites", 300, |trie, q| {
+            let walked = plan_by_walk(trie, q).leaves;
+            let unfiltered = chosen(&trie.keys(), q, &[]);
+            asked += 1;
+            if unfiltered != walked {
+                differs += 1;
+                // Never fewer templates and never another order: only more.
+                let mut walked = walked.iter().peekable();
+                for leaf in &unfiltered {
+                    if walked.peek().is_some_and(|w| **w == *leaf) {
+                        walked.next();
+                    }
+                }
+                assert!(walked.next().is_none(), "{:?}", q.tokens());
+            }
+        });
+        assert!(
+            differs > 0,
+            "{asked} plans and none tells the plan without the root filter from the walk"
+        );
+    }
+
+    /// One thread ingests - new templates, widenings, and new values of `event`, each a
+    /// new root edge - while two plan beside it, each plan made from the index and by the
+    /// walk.
+    ///
+    /// The two are compared only on what the writer did not move in between, and each
+    /// half by what moves it: the leaves when the index took no `put` from before the
+    /// first plan to after the second, the count of skipped root subtrees when the root
+    /// has the edges it had. Both comparisons have to have been made, so the test cannot
+    /// pass by never comparing. And always: a plan's ids ascend, the empty pattern never
+    /// loses a template it planned before, and the writer finds each template it has just
+    /// made in the next plan it asks for.
+    #[test]
+    fn plans_made_beside_inserts_are_the_walks_plans() {
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+
+        /// Tells the readers to stop when the writer is done, however it ends: a writer
+        /// that panicked would otherwise leave them planning for ever.
+        struct Done<'a>(&'a AtomicBool);
+        impl Drop for Done<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let trie = Trie::new();
+        let done = AtomicBool::new(false);
+        let (leaves_compared, skipped_compared) = (AtomicU64::new(0), AtomicU64::new(0));
+        let root_edges = |trie: &Trie| trie.root().children.read().map_or(0, |edges| edges.len());
+        let patterns = [vec![], vec![has("lvl")], vec![wants("event", "e0")]];
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _done = Done(&done);
+                let mut rng = Rng::new(21);
+                for n in 0..600u64 {
+                    // More values of `event` as it goes, so new root edges keep coming; a
+                    // field from a small set, so new templates come under old edges too;
+                    // and `n` a number in most lines and a word in some, so a template
+                    // made with the number widens on the word.
+                    let event = rng.below(1 + n / 8);
+                    let field = rng.below(6);
+                    let number = if rng.chance(20) { r#""word""# } else { "7" };
+                    let lvl = if rng.chance(50) {
+                        r#","lvl":"warn""#
+                    } else {
+                        ""
+                    };
+                    let text = format!(r#"{{"event":"e{event}","f{field}":1,"n":{number}{lvl}}}"#);
+                    let parsed =
+                        crate::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
+                    let (leaf, is_new) = trie
+                        .ingest(&parsed, chrono::Utc::now())
+                        .expect("the line is taken");
+                    if is_new {
+                        let id = leaf
+                            .leaf_meta
+                            .read()
+                            .expect("meta")
+                            .as_ref()
+                            .expect("a template")
+                            .template_id;
+                        let mut asks = vec![Vec::new()];
+                        asks.extend(parsed.keys.iter().map(|key| vec![has(key)]));
+                        for terms in asks {
+                            let planned = plan(&trie, &counting(&terms));
+                            assert!(
+                                ids_of(&planned).contains(&id),
+                                "template {id} is not in the plan of {terms:?} made after \
+                                 the line that made it"
+                            );
+                        }
+                    }
+                    if n % 32 == 31 {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            });
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    let mut all: Vec<u64> = Vec::new();
+                    loop {
+                        // Read before the pass, so the last pass is made with the writer
+                        // gone and compares everything.
+                        let finished = done.load(Ordering::Acquire);
+                        for terms in &patterns {
+                            let q = counting(terms);
+                            // Two statements, the root first: the index's guard lives to
+                            // the end of the statement that took it, and no node's lock is
+                            // waited for while it is held.
+                            let edges = root_edges(&trie);
+                            let edits = trie.keys().edits();
+                            let indexed = plan(&trie, &q);
+                            let walked = plan_by_walk(&trie, &q);
+                            if trie.keys().edits() == edits {
+                                assert_eq!(indexed.leaves, walked.leaves, "{:?}", q.tokens());
+                                leaves_compared.fetch_add(1, Ordering::Relaxed);
+                            }
+                            if root_edges(&trie) == edges {
+                                assert_eq!(indexed.skipped, walked.skipped, "{:?}", q.tokens());
+                                skipped_compared.fetch_add(1, Ordering::Relaxed);
+                            }
+                            let ids = ids_of(&indexed);
+                            assert!(
+                                ids.windows(2).all(|pair| pair[0] < pair[1]),
+                                "the ids of a plan do not ascend: {ids:?}"
+                            );
+                            if terms.is_empty() {
+                                assert!(
+                                    all.iter().all(|id| ids.binary_search(id).is_ok()),
+                                    "a template planned before is not planned now"
+                                );
+                                all = ids;
+                            }
+                        }
+                        if finished {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        assert!(leaves_compared.load(Ordering::Relaxed) > 0);
+        assert!(skipped_compared.load(Ordering::Relaxed) > 0);
+        assert_eq!(trie.keys_agree(), Ok(()));
+        for terms in &patterns {
+            both(&trie, terms);
+        }
+        let all = both(&trie, &[]);
+        assert!(all.leaves.len() > 100, "{} templates", all.leaves.len());
+        // The writer's exact term skips every root edge but its own.
+        let exact = both(&trie, &[wants("event", "e0")]);
+        assert_eq!(exact.skipped, root_edges(&trie) - 1);
+        let mut rng = Rng::new(22);
+        for _ in 0..200 {
+            let terms = [
+                wants("event", &format!("e{}", rng.below(80))),
+                has(&format!("f{}", rng.below(7))),
+            ];
+            both(&trie, &terms[..1 + rng.below(2) as usize]);
+        }
     }
 }
