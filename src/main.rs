@@ -1,8 +1,7 @@
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-use kibbr::{
-    bench, compact, config, demo, error, farm, gen, infer, load, parse, query, serve, speed,
-};
+use kibbr::{bench, compact, config, demo, error, farm, gen, load, parse, query, serve, speed};
+use kibbr_core::infer;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -618,7 +617,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => serve::run(
             &host,
             port,
-            config::Limits::load(max_rows, max_buckets, max_groups)?,
+            config::limits(max_rows, max_buckets, max_groups)?,
             config::ApiLimits::load(max_body_bytes, max_decompressed_bytes, ingest_concurrency)?
                 .with_ingest_wait(ingest_wait_ms)?,
             config::Storage::load(
@@ -634,7 +633,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             .with_compact_interval(compact_interval_ms)?
             .with_wal(wal_segment_bytes, batch_size, wal_queue_bytes)?
             .with_scan(scan_threads, scan_fan_rows)?,
-            config::Schema::load(time_columns),
+            config::schema(time_columns),
         ),
         Command::Load {
             inputs,
@@ -660,7 +659,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 segment_max_bytes,
                 None,
             )?;
-            let schema = config::Schema::load(time_columns.clone());
+            let schema = config::schema(time_columns.clone());
             let args = load::Args {
                 inputs,
                 replace_day,
@@ -702,7 +701,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 segment_max_bytes,
                 json,
             };
-            let schema = config::Schema::load(None);
+            let schema = config::schema(None);
             compact::command(args, day_number, storage, schema, &mut out).map_err(CliError::from)
         }
         Command::BenchStorage {
@@ -718,7 +717,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 scratch,
                 keep,
             },
-            config::Schema::load(time_columns),
+            config::schema(time_columns),
             &mut out,
         ),
         Command::Bench {
@@ -771,7 +770,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => query::describe(
             &mut out,
             &query,
-            config::Limits::load(max_rows, max_buckets, max_groups)?,
+            config::limits(max_rows, max_buckets, max_groups)?,
         ),
         Command::Query {
             input,
@@ -793,7 +792,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_groups,
             time_columns,
         } => {
-            let limits = config::Limits::load(max_rows, max_buckets, max_groups)?;
+            let limits = config::limits(max_rows, max_buckets, max_groups)?;
             let reader = open(&input)?;
             let args = query::Args {
                 trieql,
@@ -933,6 +932,7 @@ fn is_broken_pipe(e: &CliError) -> bool {
     let io_error = match e {
         CliError::Write(inner) => Some(inner),
         CliError::Read { source, .. } => Some(source),
+        CliError::Input(kibbr_storage::db::ReadError::Read { source, .. }) => Some(source),
         CliError::Gen(error::GenError::Write(inner)) => Some(inner),
         _ => None,
     };

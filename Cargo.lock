@@ -522,6 +522,9 @@ dependencies = [
  "crc32c",
  "flate2",
  "http-body",
+ "kibbr-core",
+ "kibbr-engine",
+ "kibbr-storage",
  "libc",
  "mimalloc",
  "rayon",
@@ -530,6 +533,43 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "zstd",
+]
+
+[[package]]
+name = "kibbr-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "kibbr-engine"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "kibbr-core",
+ "kibbr-storage",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "kibbr-storage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crc32c",
+ "kibbr-core",
+ "libc",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror",
  "zstd",
 ]
 

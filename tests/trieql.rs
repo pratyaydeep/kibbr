@@ -220,7 +220,7 @@ fn errors_report_a_position_inside_the_query() {
 /// the exit code of a Rust panic, and it is the only outcome this rejects.
 ///
 /// A NUL byte cannot be passed through `argv` at all, so the one input this surface
-/// cannot carry is checked against the parser directly, in `src/trieql.rs`.
+/// cannot carry is checked against the parser directly, in `crates/kibbr-engine/src/trieql.rs`.
 #[test]
 fn no_input_panics() {
     let mut hostile: Vec<String> = vec![

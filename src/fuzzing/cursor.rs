@@ -76,13 +76,13 @@ use std::sync::OnceLock;
 use chrono::{DateTime, Utc};
 
 use crate::config::{Limits, Schema};
-use crate::db::{self, Db};
-use crate::engine::{self, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
 use crate::error::{self, CliError};
-use crate::flatten;
 use crate::query::{self, Args, Format};
-use crate::trieql::Kind;
-use crate::types::ColValue;
+use kibbr_core::flatten;
+use kibbr_core::types::ColValue;
+use kibbr_engine::engine::{self, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
+use kibbr_engine::trieql::Kind;
+use kibbr_storage::db::{self, Db};
 
 /// 2024-01-16T00:00:00Z: the instant every query is built against, and the arrival time
 /// of every fixture line. The day after the lines' own timestamps, so `SINCE 1d` is a
@@ -674,7 +674,7 @@ impl Fixture {
 }
 
 /// The lines an answer's rows are, by the `n` each was written with.
-fn numbers(rows: &[crate::store::Row]) -> Vec<i64> {
+fn numbers(rows: &[kibbr_storage::store::Row]) -> Vec<i64> {
     rows.iter()
         .map(|row| match row.get("n") {
             Some(ColValue::Int64(n)) => *n,

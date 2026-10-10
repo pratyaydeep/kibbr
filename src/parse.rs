@@ -5,10 +5,12 @@ use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
 use crate::error::{CliError, DetectorError, DetectorErrorKind};
-use crate::flatten::parse_line;
-use crate::fmt::rfc3339;
-use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
-use crate::types::{ColValue, ColumnType};
+use kibbr_core::flatten::parse_line;
+use kibbr_core::fmt::rfc3339;
+use kibbr_core::lines::{
+    read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
+};
+use kibbr_core::types::{ColValue, ColumnType};
 
 /// Width of the widest fixed label, so `fingerprint` and the keys line up.
 const MIN_KEY_WIDTH: usize = 11;
@@ -146,7 +148,10 @@ pub fn run<R: BufRead, W: Write>(
 /// `ParsedLog` stores its maps as `HashMap`, whose iteration order is not stable between
 /// runs, so every map here is emitted in `keys` order instead: two runs over the same
 /// input produce the same bytes, and a diff means a real change.
-fn render_json<W: Write>(parsed: &crate::flatten::ParsedLog, out: &mut W) -> Result<(), CliError> {
+fn render_json<W: Write>(
+    parsed: &kibbr_core::flatten::ParsedLog,
+    out: &mut W,
+) -> Result<(), CliError> {
     let mut values = serde_json::Map::new();
     let mut typed_values = serde_json::Map::new();
     let mut types = serde_json::Map::new();
@@ -180,7 +185,7 @@ fn render_json<W: Write>(parsed: &crate::flatten::ParsedLog, out: &mut W) -> Res
 /// Numbering by how many records had been printed would put two different schemes in one
 /// stream as soon as a line is skipped or rejected.
 fn render<W: Write>(
-    parsed: &crate::flatten::ParsedLog,
+    parsed: &kibbr_core::flatten::ParsedLog,
     line_no: usize,
     out: &mut W,
 ) -> Result<(), CliError> {

@@ -26,10 +26,11 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 
 use crate::config::Limits;
-use crate::engine::{self, Query};
-use crate::fmt::commas;
-use crate::trie::Trie;
-use crate::{error, flatten, gen, query};
+use crate::{error, gen, query};
+use kibbr_core::flatten;
+use kibbr_core::fmt::commas;
+use kibbr_engine::engine::{self, Query};
+use kibbr_storage::trie::Trie;
 
 use super::phases::percentile;
 use super::report::{PlanRun, PlanShape, QueryText, Shapes};

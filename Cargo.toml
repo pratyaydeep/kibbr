@@ -1,11 +1,28 @@
-[package]
-name = "kibbr"
+[workspace]
+# Four crates, each allowed to name only the ones under it:
+#
+#   kibbr (this one: the commands, the HTTP server, the settings)
+#     -> kibbr-engine   (plan and execute a query; TrieQL)
+#     -> kibbr-storage  (the trie and its catalog, the day files, the write-ahead log,
+#                        and the write path that puts a line into them)
+#     -> kibbr-core     (a line into keys, types and a fingerprint)
+#
+# fuzz/ is a workspace of its own, so `cargo build` here never builds a fuzzer.
+members = ["crates/kibbr-core", "crates/kibbr-storage", "crates/kibbr-engine"]
+exclude = ["fuzz", "lab-rs"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "kibbr - log store"
 repository = "https://github.com/pratyaydeep/kibbr"
 
-[dependencies]
+# One version of each dependency for the whole workspace, and one place that says why it
+# is here; a crate takes what it calls with `workspace = true`.
+[workspace.dependencies]
+kibbr-core = { path = "crates/kibbr-core" }
+kibbr-storage = { path = "crates/kibbr-storage" }
+kibbr-engine = { path = "crates/kibbr-engine" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -33,7 +50,7 @@ libc = "0.2"
 http-body = "1"
 # The threads a query chooses a day's rows on beside its own: one small pool, owned by
 # the disk store of a server and started by the first query that has a use for it
-# (src/store/fan.rs, the only file that names this crate). A scope on that pool and
+# (crates/kibbr-storage/src/store/fan.rs, the only file that names this crate). A scope on that pool and
 # nothing else of rayon's - not its global pool, which is made on first use and shared
 # with whatever calls it next, and not `par_iter`, whose caller sleeps while the pool
 # works: here the thread that asked takes row groups too, so a pool that is given no
@@ -52,7 +69,37 @@ tokio-util = "0.7.19"
 # miniz_oxide; this decodes an operator's own files, and the format's own bytes.
 zstd = { version = "0.13", default-features = false }
 
+[package]
+name = "kibbr"
+description = "kibbr - log store"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+kibbr-core.workspace = true
+kibbr-storage.workspace = true
+kibbr-engine.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+crc32c.workspace = true
+flate2.workspace = true
+mimalloc.workspace = true
+libc.workspace = true
+http-body.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+zstd.workspace = true
+
 [dev-dependencies]
+# The samples and the failure hooks the storage crate's own tests are built on, for the
+# tests here that hold a server to the same ones.
+kibbr-storage = { workspace = true, features = ["test-support"] }
 # The `/ingest` tests build the gzip bodies they post, including the bomb. Shelling out to
 # `gzip(1)` would make the corpus depend on whichever one is on the machine.
-flate2 = "1.1"
+flate2.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "kibbr-core"
+description = "kibbr - a log line into keys, types and a fingerprint"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

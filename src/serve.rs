@@ -51,20 +51,20 @@ use tokio_util::sync::CancellationToken;
 
 use std::path::Path;
 
-use crate::catalog::{Catalog, CatalogError};
 use crate::compact;
 use crate::config::{ApiLimits, Limits, Schema, Storage};
-use crate::db;
-use crate::engine;
 use crate::error::{self, CliError, DetectorError, DetectorErrorKind, IngestError, ServeError};
-use crate::fmt::{commas, rfc3339_at};
 use crate::load;
 use crate::query;
-use crate::store::disk::CompactOptions;
-use crate::store::fan::Fan;
-use crate::store::{FlushKind, StoreError, StoreManager};
-use crate::trie::{Trie, TrieError};
-use crate::wal::{self, Wal};
+use kibbr_core::fmt::{commas, rfc3339_at};
+use kibbr_engine::engine;
+use kibbr_storage::catalog::{Catalog, CatalogError};
+use kibbr_storage::db;
+use kibbr_storage::store::disk::CompactOptions;
+use kibbr_storage::store::fan::Fan;
+use kibbr_storage::store::{FlushKind, StoreError, StoreManager};
+use kibbr_storage::trie::{Trie, TrieError};
+use kibbr_storage::wal::{self, Wal};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
@@ -207,7 +207,7 @@ pub struct Server {
     ingest_bodies: Arc<Semaphore>,
     /// Whether the last flush tick could write. Shared with the registry and read without
     /// its lock, because `/health` must not queue behind a flush.
-    write_health: Arc<crate::store::WriteHealth>,
+    write_health: Arc<kibbr_storage::store::WriteHealth>,
     /// The bulk loads this server has been asked to run: at most one at a time, on a
     /// thread of its own with its own pool, never on the runtime or the blocking pool the
     /// live door's bodies use.
@@ -656,7 +656,7 @@ fn replay(
         let mut highest_template = 0u64;
         let scanned = wal.replay(&mut warn, &mut |record| {
             highest_template = highest_template.max(record.template_id);
-            let day = crate::store::v3::day_of(record.time);
+            let day = kibbr_storage::store::v3::day_of(record.time);
             if replaced
                 .get(&day)
                 .is_none_or(|through| record.seq > *through)
@@ -709,7 +709,7 @@ fn replay(
     let mut flush_failed = false;
     let scanned = wal.replay(&mut warn, &mut |record| {
         highest_template = highest_template.max(record.template_id);
-        let day = crate::store::v3::day_of(record.time);
+        let day = kibbr_storage::store::v3::day_of(record.time);
         // A day a load replaced: the lines the log held of it then were in the files the
         // replace retired, and no row group covers them any more.
         if replaced
@@ -766,7 +766,7 @@ fn replay(
                 return Ok(());
             }
         };
-        let time = crate::store::effective_ts(&row, time_column).unwrap_or(0);
+        let time = kibbr_storage::store::effective_ts(&row, time_column).unwrap_or(0);
         if time != record.time {
             moved.get_or_insert((record.seq, record.time, time));
             held.set_aside(record.template_id, record.seq);
@@ -856,7 +856,7 @@ fn replay(
 
 /// An instant as replay's warnings print it.
 fn rfc3339_nanos(ns: i64) -> String {
-    crate::fmt::rfc3339(ns)
+    kibbr_core::fmt::rfc3339(ns)
 }
 
 /// Rows the store would not take from the write-ahead log, and what that holds back.
@@ -976,10 +976,10 @@ impl Held {
 fn storage_fatal(e: StoreError) -> ServeError {
     match e {
         StoreError::LegacyLayout { path } => ServeError::LegacyLayout { path },
-        StoreError::Format(crate::store::v3::FormatError::Version { path, found }) => {
+        StoreError::Format(kibbr_storage::store::v3::FormatError::Version { path, found }) => {
             ServeError::SegmentVersion { path, found }
         }
-        StoreError::Format(crate::store::v3::FormatError::PreRename { path }) => {
+        StoreError::Format(kibbr_storage::store::v3::FormatError::PreRename { path }) => {
             ServeError::PreRename { path }
         }
         e => ServeError::Storage {
@@ -1007,7 +1007,7 @@ fn open_catalog(
     data_dir: &str,
     schema: &Schema,
 ) -> Result<Trie, ServeError> {
-    let path = crate::catalog::path_in(base);
+    let path = kibbr_storage::catalog::path_in(base);
     let existed = path.exists();
     let mut warn = |message: String| log(&format!("WARN catalog.log - {message}"));
     fn storage_error(e: &(dyn std::error::Error + 'static)) -> ServeError {
@@ -1022,7 +1022,8 @@ fn open_catalog(
     if !existed {
         match trie_file {
             Some(snapshot) if snapshot.exists() => {
-                let (from_snapshot, failure) = crate::triefile::load_reporting(snapshot, data_dir);
+                let (from_snapshot, failure) =
+                    kibbr_storage::triefile::load_reporting(snapshot, data_dir);
                 match failure {
                     Some(e) => {
                         log(&format!("WARN trie.json - {}", error::chain(&e)));
@@ -1365,7 +1366,8 @@ fn ingest(
                     raw: parsed.raw_line,
                     // The time the row is filed under, as the store reads it: what the
                     // log writes down beside the line, for replay to hold it to.
-                    time: crate::store::effective_ts(&placed.row, &placed.time_column).unwrap_or(0),
+                    time: kibbr_storage::store::effective_ts(&placed.row, &placed.time_column)
+                        .unwrap_or(0),
                     placed,
                 });
                 continue;
@@ -2438,7 +2440,7 @@ fn load_options(request: LoadRequest) -> Result<load::Options, String> {
     let replace_day = match request.replace_day.as_deref() {
         None => None,
         Some(text) => Some(
-            crate::store::disk::day_of_name(text)
+            kibbr_storage::store::disk::day_of_name(text)
                 .ok_or_else(|| format!("replace_day `{text}` is not a YYYY-MM-DD day"))?,
         ),
     };
@@ -2535,7 +2537,7 @@ async fn post_load(State(server): State<Arc<Server>>, headers: HeaderMap, body: 
                 options.inputs.len(),
                 options
                     .replace_day
-                    .map(|d| format!(", replacing {}", crate::store::disk::day_name(d)))
+                    .map(|d| format!(", replacing {}", kibbr_storage::store::disk::day_name(d)))
                     .unwrap_or_default()
             ));
             // A panic is a failed job and not a job running for ever: left `running`, it
@@ -2692,7 +2694,7 @@ async fn post_compact(
     }
     let day = match request.day.as_deref() {
         None => None,
-        Some(text) => match crate::store::disk::day_of_name(text) {
+        Some(text) => match kibbr_storage::store::disk::day_of_name(text) {
             Some(day) => Some(day),
             None => {
                 return fail(
@@ -2829,7 +2831,7 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
     log(&format!(
         "compaction job {id} - {}",
         match day {
-            Some(day) => crate::store::disk::day_name(day),
+            Some(day) => kibbr_storage::store::disk::day_name(day),
             None => format!("{} day(s) due", days.len()),
         }
     ));
@@ -2886,7 +2888,7 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
             // otherwise walk into the same panic every interval.
             if let Some(planned) = days.get(noted) {
                 let failed = Err(StoreError::CompactFailed {
-                    day: crate::store::disk::day_name(planned.0),
+                    day: kibbr_storage::store::disk::day_name(planned.0),
                     source: Box::new(StoreError::Io {
                         template_id: 0,
                         source: std::io::Error::other(why),
@@ -3494,7 +3496,7 @@ async fn serve(
     // when the process exits over it. Everything that writes - catalog recovery, segment
     // recovery - waits for the directory's LOCK below.
     if let Some(base) = storage.base_path.as_deref() {
-        crate::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
+        kibbr_storage::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
     }
     // Taken before anything is written and before the port: two servers on one directory
     // - on two ports, or both on `--port 0` - would each append to the catalog and the
@@ -3522,8 +3524,8 @@ async fn serve(
     // Written to `LOCK` beside the address: a `/load` shows it or is refused. See lock.rs.
     let load_token = match &lock {
         Some(_) => Some(
-            crate::store::v3::file::new_file_id()
-                .map(|id| crate::store::manifest::hex(&id))
+            kibbr_storage::store::v3::file::new_file_id()
+                .map(|id| kibbr_storage::store::manifest::hex(&id))
                 .map_err(|e| ServeError::Storage {
                     detail: format!("drawing the load token: {e}"),
                 })?,
@@ -3860,7 +3862,7 @@ fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
     }
 
     match server.storage.trie_file.as_deref() {
-        Some(path) => match crate::triefile::save(&server.trie, path) {
+        Some(path) => match kibbr_storage::triefile::save(&server.trie, path) {
             Ok(bytes) => log(&format!(
                 "trie.json - {} {} byte(s), {} template(s)",
                 path.display(),
@@ -4213,7 +4215,7 @@ mod tests {
             None,
         );
         let server = Arc::new(server.expect("a server on disk"));
-        let data = dir.join(crate::store::disk::DATA_DIR);
+        let data = dir.join(kibbr_storage::store::disk::DATA_DIR);
         let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
         mode(0o555).expect("chmod -w");
         if std::fs::create_dir(data.join("probe")).is_ok() {
@@ -4267,19 +4269,19 @@ mod tests {
     /// does today, and what the log's applier has to survive if a store ever does.
     struct Refusing(Arc<AtomicBool>);
 
-    impl crate::store::Store for Refusing {
+    impl kibbr_storage::store::Store for Refusing {
         fn open(
             &self,
             template_id: u64,
             time_column: &str,
-        ) -> Result<Arc<dyn crate::store::LeafStore>, StoreError> {
+        ) -> Result<Arc<dyn kibbr_storage::store::LeafStore>, StoreError> {
             if self.0.load(Ordering::Relaxed) {
                 return Err(StoreError::Io {
                     template_id,
                     source: std::io::Error::other("the leaf will not open"),
                 });
             }
-            crate::store::MemoryStore::new().open(template_id, time_column)
+            kibbr_storage::store::MemoryStore::new().open(template_id, time_column)
         }
 
         fn kind(&self) -> &'static str {
@@ -4304,7 +4306,7 @@ mod tests {
         let placed = |template_id| db::Placed {
             template_id,
             time_column: "ts".to_string(),
-            row: crate::store::Row::new(),
+            row: kibbr_storage::store::Row::new(),
         };
         assert_eq!(held.from(), None);
 
@@ -4635,10 +4637,14 @@ mod tests {
             .expect("a runtime");
         // Each server's settings, and the threads and the rows it must then say.
         let cases = [
-            (in_memory, 1, crate::store::DEFAULT_FAN_ROWS),
+            (in_memory, 1, kibbr_storage::store::DEFAULT_FAN_ROWS),
             (on_disk("none", 0, 7), 1, 7),
             (on_disk("one", 1, 7), 1, 7),
-            (on_disk("two", 2, crate::store::DEFAULT_FAN_ROWS), 2, 32_768),
+            (
+                on_disk("two", 2, kibbr_storage::store::DEFAULT_FAN_ROWS),
+                2,
+                32_768,
+            ),
             (on_disk("four", 4, 0), 4, 0),
         ];
         for (storage, threads, fan_rows) in cases {
@@ -5500,7 +5506,7 @@ mod tests {
     }
 
     /// Flush as the tick does, and say so to whoever is waiting at the door for it.
-    fn tick(at: &Listening) -> crate::store::FlushSummary {
+    fn tick(at: &Listening) -> kibbr_storage::store::FlushSummary {
         let summary = at.server.stores.flush_all(FlushKind::Tick);
         at.server.flushed.notify_waiters();
         summary
@@ -5543,7 +5549,7 @@ mod tests {
         // not take one.
         assert_eq!(tick(&at).failed, 0);
         let data = at.server.storage.base_path.as_ref().expect("on disk");
-        let data = data.join(crate::store::disk::DATA_DIR);
+        let data = data.join(kibbr_storage::store::disk::DATA_DIR);
         let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
         mode(0o555).expect("chmod -w");
         let third = at.post(lines_at(1_705_401_000, 2)).join().expect("a sender");
@@ -5837,7 +5843,7 @@ mod tests {
         // day with no file yet, and a directory that will not take one.
         assert_eq!(at.server.stores.flush_all(FlushKind::Tick).failed, 0);
         let data = at.server.storage.base_path.as_ref().expect("on disk");
-        let data = data.join(crate::store::disk::DATA_DIR);
+        let data = data.join(kibbr_storage::store::disk::DATA_DIR);
         let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
         mode(0o555).expect("chmod -w");
         let second = at

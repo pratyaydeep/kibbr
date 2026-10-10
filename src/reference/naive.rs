@@ -24,14 +24,14 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::db::row_of;
-use crate::engine::{
+use kibbr_core::flatten::ParsedLog;
+use kibbr_core::types::{ColValue, ColumnType};
+use kibbr_engine::engine::{
     group_values, leaf_key, split_keys, value_matches, ExecError, Group, MatchValue, Query,
     QueryMeta, QueryMode, QueryResult,
 };
-use crate::flatten::ParsedLog;
-use crate::store::Row;
-use crate::types::{ColValue, ColumnType};
+use kibbr_storage::db::row_of;
+use kibbr_storage::store::Row;
 
 /// The system column, spelled out here rather than imported: a backslash and an
 /// underscore.
@@ -105,7 +105,7 @@ pub fn run(
             let slot = col_types
                 .entry((line.template_id, key.clone()))
                 .or_insert(None);
-            *slot = crate::types::join(*slot, incoming);
+            *slot = kibbr_core::types::join(*slot, incoming);
         }
     }
 

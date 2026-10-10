@@ -26,8 +26,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use kibbr::store::v3::file::{open_sealed, Reader};
-use kibbr::store::v3::FormatError;
+use kibbr_storage::store::v3::file::{open_sealed, Reader};
+use kibbr_storage::store::v3::FormatError;
 use serde_json::Value;
 
 /// Farm lines for most tests: one day, every line carrying its own time.

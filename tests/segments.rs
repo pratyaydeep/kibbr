@@ -1,7 +1,7 @@
 //! What the storage format is observable as, from outside the process.
 //!
-//! The bytes are checked where they are written - `src/store/v3/` - and what the store
-//! does with them in `src/store/disk.rs`. This file asks only what a client can ask: is a
+//! The bytes are checked where they are written - `crates/kibbr-storage/src/store/v3/` - and what the store
+//! does with them in `crates/kibbr-storage/src/store/disk.rs`. This file asks only what a client can ask: is a
 //! row in the answer before it is on disk, does a schema change cost anything, does a
 //! query say what it pruned, and does a data directory from an earlier layout stop the
 //! server rather than being half-read.

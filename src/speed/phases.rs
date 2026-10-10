@@ -50,7 +50,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::fmt::commas;
+use kibbr_core::fmt::commas;
 
 use super::corpus::{self, Corpus, LiveStream};
 use super::host::{self, Cpu};

@@ -1,0 +1,17 @@
+[package]
+name = "kibbr-engine"
+description = "kibbr - plan and execute a query; TrieQL"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+kibbr-core.workspace = true
+kibbr-storage.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+kibbr-storage = { workspace = true, features = ["test-support"] }

@@ -33,12 +33,12 @@
 use chrono::{DateTime, Utc};
 
 use crate::config::Limits;
-use crate::engine::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
 use crate::error::{self, CliError, QueryError};
 use crate::query;
-use crate::trieql::{self, Kind, ParseError, Parsed};
+use kibbr_engine::engine::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
+use kibbr_engine::trieql::{self, Kind, ParseError, Parsed};
 
-/// The instant `SINCE` is counted back from. Fixed, and the one `src/trieql.rs` tests
+/// The instant `SINCE` is counted back from. Fixed, and the one `crates/kibbr-engine/src/trieql.rs` tests
 /// against, so a seed taken from a test parses to the window the test saw.
 const NOW_SECS: i64 = 1_700_000_000;
 

@@ -54,11 +54,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::catalog::{self, Token};
-use crate::frame::{self, Next, Opened, HEADER};
-use crate::store::manifest::{self, Decoded, FileRecord, WalMark};
-use crate::trie::Trie;
-use crate::types::{ColumnType, TimeSource};
+use kibbr_core::types::{ColumnType, TimeSource};
+use kibbr_storage::catalog::{self, Token};
+use kibbr_storage::frame::{self, Next, Opened, HEADER};
+use kibbr_storage::store::manifest::{self, Decoded, FileRecord, WalMark};
+use kibbr_storage::trie::Trie;
 
 /// The kinds the catalog has, written out here and not borrowed from the reader: a
 /// kind dropped from the reader's own list would otherwise be dropped from the check too.

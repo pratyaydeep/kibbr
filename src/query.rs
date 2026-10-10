@@ -19,14 +19,15 @@ use clap::ValueEnum;
 use serde_json::{Map, Value};
 
 use crate::config::Limits;
-use crate::db;
-use crate::engine::{
+use crate::error::{CliError, QueryError};
+use kibbr_core::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
+use kibbr_engine::engine::{
     self, Cursor, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
     QueryResult, TimeRange, BUCKET_COLUMN,
 };
-use crate::error::{CliError, QueryError};
-use crate::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
-use crate::trieql;
+use kibbr_engine::trieql::{self, ago};
+use kibbr_storage::db;
+use kibbr_storage::store::system_time;
 
 /// Blank columns between two cells of a rendered table.
 const GUTTER: usize = 2;
@@ -77,7 +78,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     // relative to it, and a row on arrival time sits at it. The engine and the oracle
     // read the same `now`, which is what lets `scripts/agree.sh` compare their rows.
     let now = Utc::now();
-    let schema = crate::config::Schema::load(args.time_columns.clone());
+    let schema = crate::config::schema(args.time_columns.clone());
     let query = build(args, now)?;
 
     // `--explain` executes nothing, so it never asks for rows. The load is still O(lines)
@@ -340,25 +341,6 @@ fn parse_datetime(text: &str) -> Result<DateTime<Utc>, QueryError> {
         .map_err(|_| QueryError::BadDatetime {
             arg: text.to_string(),
         })
-}
-
-/// `now - d`, or no lower bound at all when the subtraction leaves the representable
-/// range: `SystemTime - Duration` panics on overflow, and `1000000000000d` is a duration
-/// a user is entitled to write on either surface. A window reaching further back than
-/// time can be expressed is an open one, which is what `None` already means.
-pub(crate) fn ago(now: SystemTime, d: Duration) -> Option<SystemTime> {
-    now.checked_sub(d)
-}
-
-/// Pre-1970 lands on the far side of the epoch rather than saturating at it.
-pub(crate) fn system_time(dt: DateTime<Utc>) -> SystemTime {
-    let secs = dt.timestamp();
-    let nanos = dt.timestamp_subsec_nanos();
-    if secs >= 0 {
-        UNIX_EPOCH + Duration::new(secs as u64, nanos)
-    } else {
-        UNIX_EPOCH - Duration::new(secs.unsigned_abs(), 0) + Duration::from_nanos(nanos.into())
-    }
 }
 
 /// A window edge as RFC 3339 - the inverse of `system_time`, and fallible where that one
@@ -753,9 +735,9 @@ pub fn result_json(query: &Query, result: &QueryResult) -> Value {
 /// spelling wherever the stored value would print another - `"0045000012"`, `1705312200`,
 /// `"2024-01-15T16:00:00+05:30"` - and the value's canonical print everywhere else. The
 /// system column was not ingested, and prints as RFC 3339.
-fn row_json(row: &crate::store::Row) -> Value {
+fn row_json(row: &kibbr_storage::store::Row) -> Value {
     let mut obj = Map::new();
-    for (name, key) in crate::store::present(row) {
+    for (name, key) in kibbr_storage::store::present(row) {
         obj.insert(name, row.json(key).unwrap_or(Value::Null));
     }
     Value::Object(obj)
@@ -844,7 +826,7 @@ fn line<W: Write>(out: &mut W, value: &Value) -> Result<(), CliError> {
 /// newest first, so re-sorting here would throw away the ordering the limit depends on and
 /// hand back the alphabetically-first rows instead of the newest. Both sides produce the
 /// same sequence, so the differential still compares them exactly.
-fn canonical(result: &QueryResult) -> Vec<&crate::store::Row> {
+fn canonical(result: &QueryResult) -> Vec<&kibbr_storage::store::Row> {
     result.rows.iter().collect()
 }
 
@@ -916,7 +898,7 @@ fn bucket_json(key: &GroupKey, group: &Group, cell: String) -> Value {
     }
 }
 
-fn render_rows<W: Write>(out: &mut W, rows: &[&crate::store::Row]) -> Result<(), CliError> {
+fn render_rows<W: Write>(out: &mut W, rows: &[&kibbr_storage::store::Row]) -> Result<(), CliError> {
     if rows.is_empty() {
         return Ok(());
     }
@@ -924,7 +906,7 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&crate::store::Row]) -> Result<(),
     let shown: Vec<BTreeMap<String, String>> = rows
         .iter()
         .map(|row| {
-            crate::store::present(row)
+            kibbr_storage::store::present(row)
                 .into_iter()
                 .map(|(name, key)| (name, cell_text(row, key)))
                 .collect()
@@ -950,7 +932,7 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&crate::store::Row]) -> Result<(),
 
 /// A value as the table shows it: as the line wrote it where the row records that, and
 /// through `col_text` otherwise.
-fn cell_text(row: &crate::store::Row, key: &str) -> String {
+fn cell_text(row: &kibbr_storage::store::Row, key: &str) -> String {
     match row.written(key) {
         Some(Value::String(text)) => text.clone(),
         Some(other) => other.to_string(),

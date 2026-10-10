@@ -39,13 +39,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::{Schema, Storage};
-use crate::db::{self, SinkError};
 use crate::error::{CliError, DetectorErrorKind};
-use crate::fmt::commas;
 use crate::load::{self, LoadError};
-use crate::store::disk::{self, CompactOptions};
-use crate::store::v3::{HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN};
-use crate::store::{FlushKind, FlushSummary};
+use kibbr_core::fmt::commas;
+use kibbr_storage::db::{self, ReadError, SinkError};
+use kibbr_storage::store::disk::{self, CompactOptions};
+use kibbr_storage::store::v3::{HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN};
+use kibbr_storage::store::{FlushKind, FlushSummary};
 
 pub struct Args {
     pub input: PathBuf,
@@ -115,8 +115,8 @@ fn parts_of(path: &Path) -> Result<Parts, LoadError> {
     };
     let mut at = HEADER_LEN;
     loop {
-        match crate::frame::read(&bytes, at, u32::MAX) {
-            crate::frame::Next::Frame { payload, end } => {
+        match kibbr_storage::frame::read(&bytes, at, u32::MAX) {
+            kibbr_storage::frame::Next::Frame { payload, end } => {
                 let frame = (end - at) as u64;
                 match payload[0] {
                     KIND_SCHEMA => parts.schemas += frame,
@@ -176,8 +176,8 @@ fn held(data: &Path, block: u64) -> Result<Held, LoadError> {
         parts.file_headers += p.file_headers;
         parts.other += p.other;
     }
-    let catalog_path = crate::catalog::path_in(data);
-    let manifest_path = crate::store::manifest::path_in(data);
+    let catalog_path = kibbr_storage::catalog::path_in(data);
+    let manifest_path = kibbr_storage::store::manifest::path_in(data);
     let catalog = size_of(&catalog_path, block).map_err(io_at(&catalog_path))?;
     let manifest = size_of(&manifest_path, block).map_err(io_at(&manifest_path))?;
     let mut total = files;
@@ -233,7 +233,7 @@ struct Counts {
 fn counts_of(data: &Path) -> Result<Counts, LoadError> {
     let mut counts = Counts::default();
     for path in disk::data_files(data) {
-        let index = crate::store::v3::file::open_sealed(&path)?.ok_or_else(|| {
+        let index = kibbr_storage::store::v3::file::open_sealed(&path)?.ok_or_else(|| {
             LoadError::Input(format!("{}: not a sealed data file", path.display()))
         })?;
         counts.files += 1;
@@ -631,7 +631,7 @@ fn live_day(
                 behind = due;
                 flushes += 1;
                 written(stores.flush_all(FlushKind::Tick))
-                    .map_err(|e| SinkError::Fatal(e.into()))?;
+                    .map_err(|e| SinkError::Fatal(ReadError::Sink(Box::new(e))))?;
             }
             Ok(())
         },
@@ -645,7 +645,8 @@ fn live_day(
                 crate::error::report(&e);
             }
         },
-    )?;
+    )
+    .map_err(CliError::from)?;
     written(stores.flush_all(FlushKind::Final))?;
     let ingested_in = started.elapsed().as_secs_f64();
     drop(stores);
@@ -762,7 +763,7 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
                 path: input.to_path_buf(),
                 source,
             })?;
-            let line = crate::lines::strip_eol(&line);
+            let line = kibbr_core::lines::strip_eol(&line);
             if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }

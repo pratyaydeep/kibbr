@@ -68,20 +68,22 @@ use flate2::read::MultiGzDecoder;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::db::{self, Prepared, SinkError};
 use crate::error::{DetectorError, DetectorErrorKind};
-use crate::flatten::{parse_line, ParsedLog};
-use crate::lines::{read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES};
-use crate::store::disk::{day_name, Committed, LoadCommit, StagedFile};
-use crate::store::v3::build::{self, schema_of, Level};
-use crate::store::v3::file::Writer;
-use crate::store::v3::{day_of, Source};
-use crate::store::{
+use kibbr_core::flatten::{parse_line, ParsedLog};
+use kibbr_core::lines::{
+    read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
+};
+use kibbr_core::types::TimeSource;
+use kibbr_storage::db::{self, Prepared, SinkError};
+use kibbr_storage::store::disk::{day_name, Committed, LoadCommit, StagedFile};
+use kibbr_storage::store::v3::build::{self, schema_of, Level};
+use kibbr_storage::store::v3::file::Writer;
+use kibbr_storage::store::v3::{day_of, Source};
+use kibbr_storage::store::{
     effective_ts, ts_of, value_bytes, DiskStore, Row, RowGroupLimits, StoreError, StoreManager,
     RECEIVED_AT_COLUMN,
 };
-use crate::trie::Trie;
-use crate::types::TimeSource;
+use kibbr_storage::trie::Trie;
 
 /// How much of the input the early arrival-time check reads before anything is staged:
 /// enough rows that a share of 1% is a hundred of them, few enough that it costs nothing
@@ -282,7 +284,7 @@ const MAX_REPORTED_ERRORS: usize = 1_000;
 impl Report {
     /// One line for a terminal.
     pub fn summary(&self) -> String {
-        use crate::fmt::commas;
+        use kibbr_core::fmt::commas;
         let mut out = format!(
             "loaded {} rows from {} lines ({} rejected) as load {}: {} row groups in {} \
              file(s) over {} day(s), {:.1}s",
@@ -354,7 +356,7 @@ pub enum LoadError {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
-    Format(#[from] crate::store::v3::FormatError),
+    Format(#[from] kibbr_storage::store::v3::FormatError),
     /// `counted` says which rows the share is of - the head's, or every row - and `advice`
     /// differs with it: see `Checked`.
     #[error(
@@ -1002,7 +1004,7 @@ impl Tally {
                         match &meta.time_source {
                             TimeSource::Arrival => format!(
                                 "Datetime-typed keys: {}",
-                                crate::trie::datetime_keys(
+                                kibbr_storage::trie::datetime_keys(
                                     meta.columns.iter().map(|c| (c.name.as_str(), c.col_type)),
                                 )
                             ),
@@ -1133,7 +1135,7 @@ fn head_row(
             .or_insert_with(|| {
                 let source =
                     TimeSource::choose(trie.time_columns(), |name| parsed.column_type(name));
-                let keys = crate::trie::datetime_keys(
+                let keys = kibbr_storage::trie::datetime_keys(
                     parsed
                         .keys
                         .iter()
@@ -1214,7 +1216,7 @@ impl Stage<'_> {
             let day_dir = self.dir.join(day_name(day));
             if !day_dir.exists() {
                 fs::create_dir_all(&day_dir).map_err(Self::io(&day_dir))?;
-                crate::frame::sync_dir(self.dir).map_err(Self::io(self.dir))?;
+                kibbr_storage::frame::sync_dir(self.dir).map_err(Self::io(self.dir))?;
             }
             let seq = {
                 let n = self.next.entry(day).or_insert(1);
@@ -1652,9 +1654,9 @@ fn run_inner(
         return Err(StoreError::LoadRepeated { load_id }.into());
     }
     let limit = opts.max_arrival_share;
-    let day = day_name(day_of(crate::store::nanos_of(crate::query::system_time(
-        opts.received_at,
-    ))));
+    let day = day_name(day_of(kibbr_storage::store::nanos_of(
+        kibbr_storage::store::system_time(opts.received_at),
+    )));
     let head = arrival_head(trie, &inputs, &unpaced, &Rounds::of(opts))?;
     if !opts.proceed && head.share() > limit {
         return Err(head.refusal(Checked::Head, trie, &day, limit));
@@ -1865,7 +1867,7 @@ fn stage_all(
                         counts.reject(&DetectorError::new(no as usize, kind), on_error);
                         continue;
                     }
-                    Err(SinkError::Fatal(e)) => return Err(e.into()),
+                    Err(SinkError::Fatal(e)) => return Err(crate::error::CliError::from(e).into()),
                 };
                 // The day the live door would file it under: its effective time's.
                 let time = effective_ts(&placed.row, &placed.time_column).unwrap_or(0);
@@ -1957,9 +1959,11 @@ pub fn command(
         .ok_or_else(|| LoadError::Input("no data directory".to_string()))?;
     let replace_day = match args.replace_day.as_deref() {
         None => None,
-        Some(text) => Some(crate::store::disk::day_of_name(text).ok_or_else(|| {
-            LoadError::Input(format!("--replace-day {text}: not a YYYY-MM-DD day"))
-        })?),
+        Some(text) => Some(
+            kibbr_storage::store::disk::day_of_name(text).ok_or_else(|| {
+                LoadError::Input(format!("--replace-day {text}: not a YYYY-MM-DD day"))
+            })?,
+        ),
     };
     let received_at = match args.received_at.as_deref() {
         None => Utc::now(),
@@ -2047,12 +2051,12 @@ fn alone(
 ) -> Result<(), LoadError> {
     let base = storage.base_path.clone().unwrap_or_default();
     let _ = lock.announce(&crate::lock::Holder::load());
-    crate::store::disk::refuse_other_versions(&base)?;
+    kibbr_storage::store::disk::refuse_other_versions(&base)?;
     let (trie, stores) =
         crate::serve::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
     // Standard input is spooled inside `staging/`, which the next start deletes: a load
     // that dies leaves nothing behind that anything names.
-    let staging = base.join(crate::store::disk::STAGING_DIR);
+    let staging = base.join(kibbr_storage::store::disk::STAGING_DIR);
     let spool = staging.join(format!("stdin-{}.spool", std::process::id()));
     if args.inputs.iter().any(|a| a.as_os_str() == "-") {
         fs::create_dir_all(&staging).map_err(|source| LoadError::Read {
@@ -2092,7 +2096,7 @@ fn client(
     // Spooled inside the data directory's `staging/`, which the server can read because it
     // owns it - a temporary directory of the client's may be one the server cannot see - and
     // which the server's next start clears if this client is killed before it removes it.
-    let staging = base.join(crate::store::disk::STAGING_DIR);
+    let staging = base.join(kibbr_storage::store::disk::STAGING_DIR);
     let spool = staging.join(format!(
         "stdin-{}-{}.spool",
         std::process::id(),
@@ -2387,7 +2391,7 @@ mod tests {
                     continue;
                 };
                 let scan = store
-                    .scan(&crate::store::ScanOptions::default(), &[])
+                    .scan(&kibbr_storage::store::ScanOptions::default(), &[])
                     .expect("scan");
                 out.extend(scan.rows.into_iter().map(|row| (id, row)));
             }
@@ -2458,7 +2462,7 @@ mod tests {
         let mut seen = vec![false; LINES];
         let mut last: HashMap<(u64, i64), i64> = HashMap::new();
         for (template, row) in store.rows() {
-            let Some(crate::types::ColValue::Int64(n)) = row.get("n") else {
+            let Some(kibbr_core::types::ColValue::Int64(n)) = row.get("n") else {
                 panic!("a row with no n: {row:?}");
             };
             let day = day_of(effective_ts(&row, "ts").expect("a time"));
@@ -2660,7 +2664,7 @@ mod tests {
         let staging = scratch
             .0
             .join("store")
-            .join(crate::store::disk::STAGING_DIR);
+            .join(kibbr_storage::store::disk::STAGING_DIR);
         let left: Vec<_> = fs::read_dir(&staging)
             .map(|d| d.flatten().map(|e| e.path()).collect())
             .unwrap_or_default();

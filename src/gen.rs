@@ -21,7 +21,7 @@ use std::io::Write;
 use serde_json::{Map, Value};
 
 use crate::error::GenError;
-use crate::rng::Rng;
+use kibbr_core::rng::Rng;
 
 const LEVELS: &[&str] = &["debug", "info", "warn", "error", "fatal"];
 const EVENTS: &[&str] = &[

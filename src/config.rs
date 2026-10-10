@@ -20,25 +20,13 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use crate::infer::EpochWindow;
+use kibbr_core::infer::EpochWindow;
 
-/// Default page size for an unlimited `MATCH`.
-pub const DEFAULT_MAX_ROWS: usize = 10_000;
-
-/// Default ceiling on the buckets a `GROUP BY time(...)` may emit.
-///
-/// `SINCE 30d GROUP BY time(1s)` is 2.6M buckets. The query is refused rather than
-/// truncated: a chart missing its tail looks like data, where a refusal looks like a
-/// refusal.
-pub const DEFAULT_MAX_BUCKETS: usize = 10_000;
-
-/// Default ceiling on the groups a bucketed `GROUP BY` may emit.
-///
-/// A second key multiplies the bucket count by the number of distinct labels it has, so
-/// the bucket cap alone does not bound the answer: 10,000 buckets against 800 hosts is
-/// 8,000,000 groups. Only bucketed grouping is measured against this - a plain
-/// `GROUP BY user_id` emits one row per user and always did.
-pub const DEFAULT_MAX_GROUPS: usize = 100_000;
+// The two groups of settings the crates below this one read: the query limits ride on
+// every `Query`, and the time columns are the trie's. They are declared where they are
+// read; this module is still where they are loaded and what the commands name them by.
+pub use kibbr_engine::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
+pub use kibbr_storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
 
 /// The largest `/ingest` body accepted off the wire, 10 MiB.
 ///
@@ -61,7 +49,7 @@ pub const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 /// note has the equality: a body cannot exceed the body cap, so a line inside one cannot
 /// exceed `MAX_LINE_BYTES`, so `LineTooLong` is unreachable over HTTP. A larger cap breaks
 /// that, which is why `ApiLimits::load` refuses one rather than quietly accepting it.
-pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = crate::lines::MAX_LINE_BYTES;
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = kibbr_core::lines::MAX_LINE_BYTES;
 
 /// How many `/ingest` bodies may be in the parse-and-walk at once: one per core.
 ///
@@ -141,19 +129,6 @@ const WAL_QUEUE_BYTES_ENV: &str = "KIBBR__STORAGE__WAL_QUEUE_BYTES";
 const BATCH_SIZE_ENV: &str = "KIBBR__INGESTOR__BATCH_SIZE";
 const TIME_COLUMNS_ENV: &str = "KIBBR__SCHEMA__TIME_COLUMNS";
 const EPOCH_WINDOW_ENV: &str = "KIBBR__SCHEMA__EPOCH_WINDOW";
-
-/// The names a template's time column is chosen from, first match wins.
-pub const DEFAULT_TIME_COLUMNS: &[&str] = &[
-    "@timestamp",
-    "timestamp",
-    "time",
-    "ts",
-    "ts_ms",
-    "ts_unix",
-    "datetime",
-    "event_time",
-    "created_at",
-];
 
 /// How often the thresholds that close a row group are checked.
 ///
@@ -268,45 +243,24 @@ pub enum ConfigError {
     },
 }
 
-/// What the type ladder and the trie are told about the data: for now, which key names
-/// may carry a template's time.
-///
-/// Carried by the CLI as well as the server - `kibbr query <file>` builds its trie in
-/// the process, and a template created there chooses its time source by the same rule.
-#[derive(Debug, Clone)]
-pub struct Schema {
-    /// Ordered. A template's time source is the first of these that is one of its keys
-    /// and whose value on the creating line inferred as `Datetime`.
-    pub time_columns: Vec<String>,
-}
-
-impl Default for Schema {
-    fn default() -> Self {
-        Self {
-            time_columns: DEFAULT_TIME_COLUMNS.iter().map(|s| s.to_string()).collect(),
-        }
+/// Which key names may carry a template's time: flag > environment > default. The
+/// variable is comma-separated; blanks are dropped so a trailing comma is not an empty
+/// column name.
+pub fn schema(time_columns: Option<Vec<String>>) -> Schema {
+    let from_env = || {
+        std::env::var(TIME_COLUMNS_ENV).ok().map(|text| {
+            text.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<String>>()
+        })
+    };
+    let mut schema = Schema::default();
+    if let Some(list) = time_columns.or_else(from_env) {
+        schema.time_columns = list;
     }
-}
-
-impl Schema {
-    /// Flag > environment > default. The variable is comma-separated; blanks are dropped
-    /// so a trailing comma is not an empty column name.
-    pub fn load(time_columns: Option<Vec<String>>) -> Self {
-        let from_env = || {
-            std::env::var(TIME_COLUMNS_ENV).ok().map(|text| {
-                text.split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<String>>()
-            })
-        };
-        let mut schema = Self::default();
-        if let Some(list) = time_columns.or_else(from_env) {
-            schema.time_columns = list;
-        }
-        schema
-    }
+    schema
 }
 
 /// The window ten or thirteen digits must name a moment inside to be read as a timestamp:
@@ -398,15 +352,15 @@ impl Default for Storage {
             trie_file: None,
             flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
             row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
-            max_open_segments: crate::store::DEFAULT_MAX_OPEN_SEGMENTS,
-            segment_max_bytes: crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
-            max_buffer_bytes: crate::store::DEFAULT_MAX_BUFFER_BYTES,
+            max_open_segments: kibbr_storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
+            segment_max_bytes: kibbr_storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            max_buffer_bytes: kibbr_storage::store::DEFAULT_MAX_BUFFER_BYTES,
             compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
-            wal_segment_bytes: crate::wal::DEFAULT_SEGMENT_BYTES,
-            wal_batch_lines: crate::wal::DEFAULT_BATCH_LINES,
-            wal_queue_bytes: crate::wal::DEFAULT_QUEUE_BYTES,
+            wal_segment_bytes: kibbr_storage::wal::DEFAULT_SEGMENT_BYTES,
+            wal_batch_lines: kibbr_storage::wal::DEFAULT_BATCH_LINES,
+            wal_queue_bytes: kibbr_storage::wal::DEFAULT_QUEUE_BYTES,
             scan_threads: 0,
-            scan_fan_rows: crate::store::DEFAULT_FAN_ROWS,
+            scan_fan_rows: kibbr_storage::store::DEFAULT_FAN_ROWS,
         }
     }
 }
@@ -447,7 +401,7 @@ impl Storage {
         let max_open_segments = resolve(
             max_open_segments,
             MAX_OPEN_SEGMENTS_ENV,
-            crate::store::DEFAULT_MAX_OPEN_SEGMENTS,
+            kibbr_storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
         )?;
         if max_open_segments == 0 {
             return Err(ConfigError::NoOpenSegments);
@@ -459,13 +413,13 @@ impl Storage {
         let segment_max_bytes = bytes(
             segment_max_bytes,
             SEGMENT_MAX_BYTES_ENV,
-            crate::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            kibbr_storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
             "segment max bytes",
         )?;
         let max_buffer_bytes = bytes(
             max_buffer_bytes,
             MAX_BUFFER_BYTES_ENV,
-            crate::store::DEFAULT_MAX_BUFFER_BYTES,
+            kibbr_storage::store::DEFAULT_MAX_BUFFER_BYTES,
             "max buffer bytes",
         )?;
         // The default here, and the variable not read: only `serve` looks for days that
@@ -476,15 +430,15 @@ impl Storage {
 
         // The defaults here too, for the reason the compaction interval's is: only `serve`
         // writes a log, and it resolves its flags over the variables in `with_wal`.
-        let wal_segment_bytes = crate::wal::DEFAULT_SEGMENT_BYTES;
-        let wal_batch_lines = crate::wal::DEFAULT_BATCH_LINES;
-        let wal_queue_bytes = crate::wal::DEFAULT_QUEUE_BYTES;
+        let wal_segment_bytes = kibbr_storage::wal::DEFAULT_SEGMENT_BYTES;
+        let wal_batch_lines = kibbr_storage::wal::DEFAULT_BATCH_LINES;
+        let wal_queue_bytes = kibbr_storage::wal::DEFAULT_QUEUE_BYTES;
 
         // No scan threads here, for the same reason again: only `serve` answers a query
         // from a disk store, and it asks for its threads in `with_scan`. A load and a
         // compaction start none.
         let scan_threads = 0;
-        let scan_fan_rows = crate::store::DEFAULT_FAN_ROWS;
+        let scan_fan_rows = kibbr_storage::store::DEFAULT_FAN_ROWS;
 
         if !durable {
             return Ok(Self {
@@ -567,7 +521,7 @@ impl Storage {
         self.wal_segment_bytes = match resolve(
             segment_bytes,
             WAL_SEGMENT_BYTES_ENV,
-            crate::wal::DEFAULT_SEGMENT_BYTES as usize,
+            kibbr_storage::wal::DEFAULT_SEGMENT_BYTES as usize,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -576,15 +530,18 @@ impl Storage {
             }
             n => n as u64,
         };
-        self.wal_batch_lines =
-            match resolve(batch_lines, BATCH_SIZE_ENV, crate::wal::DEFAULT_BATCH_LINES)? {
-                0 => return Err(ConfigError::NoBatch),
-                n => n,
-            };
+        self.wal_batch_lines = match resolve(
+            batch_lines,
+            BATCH_SIZE_ENV,
+            kibbr_storage::wal::DEFAULT_BATCH_LINES,
+        )? {
+            0 => return Err(ConfigError::NoBatch),
+            n => n,
+        };
         self.wal_queue_bytes = match resolve(
             queue_bytes,
             WAL_QUEUE_BYTES_ENV,
-            crate::wal::DEFAULT_QUEUE_BYTES,
+            kibbr_storage::wal::DEFAULT_QUEUE_BYTES,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -616,14 +573,14 @@ impl Storage {
         self.scan_fan_rows = resolve(
             fan_rows,
             SCAN_FAN_ROWS_ENV,
-            crate::store::DEFAULT_FAN_ROWS as usize,
+            kibbr_storage::store::DEFAULT_FAN_ROWS as usize,
         )? as u64;
         Ok(self)
     }
 
     /// What the write-ahead log is written with.
-    pub fn wal_options(&self) -> crate::wal::Options {
-        crate::wal::Options {
+    pub fn wal_options(&self) -> kibbr_storage::wal::Options {
+        kibbr_storage::wal::Options {
             segment_bytes: self.wal_segment_bytes,
             batch_lines: self.wal_batch_lines,
             queue_bytes: self.wal_queue_bytes,
@@ -636,16 +593,16 @@ impl Storage {
 
     /// The row group thresholds these settings imply. Only the timeout is configurable;
     /// the two size thresholds are not worth a knob.
-    pub fn row_group_limits(&self) -> crate::store::RowGroupLimits {
-        crate::store::RowGroupLimits {
+    pub fn row_group_limits(&self) -> kibbr_storage::store::RowGroupLimits {
+        kibbr_storage::store::RowGroupLimits {
             age: self.row_group_timeout,
-            ..crate::store::RowGroupLimits::default()
+            ..kibbr_storage::store::RowGroupLimits::default()
         }
     }
 
     /// What the disk store is held to.
-    pub fn disk_options(&self) -> crate::store::DiskOptions {
-        crate::store::DiskOptions {
+    pub fn disk_options(&self) -> kibbr_storage::store::DiskOptions {
+        kibbr_storage::store::DiskOptions {
             row_groups: self.row_group_limits(),
             max_open_files: self.max_open_segments,
             segment_max_bytes: self.segment_max_bytes,
@@ -659,7 +616,7 @@ impl Storage {
     /// rather than authority - see `trie::DEFAULT_DATA_DIR`.
     pub fn data_dir(&self) -> String {
         self.base_path.as_ref().map_or_else(
-            || crate::trie::DEFAULT_DATA_DIR.to_string(),
+            || kibbr_storage::trie::DEFAULT_DATA_DIR.to_string(),
             |path| path.display().to_string(),
         )
     }
@@ -697,41 +654,17 @@ impl Default for ApiLimits {
     }
 }
 
-/// What a query may not exceed, carried on the `Query` itself so the engine reads the
-/// same numbers the CLI and the server were configured with.
-#[derive(Debug, Clone, Copy)]
-pub struct Limits {
-    /// The backstop, in rows. `0` = none.
-    pub max_rows: usize,
-    /// The ceiling on buckets emitted by `GROUP BY time(...)`. `0` = none.
-    pub max_buckets: usize,
-    /// The ceiling on groups emitted by a bucketed `GROUP BY`. `0` = none.
-    pub max_groups: usize,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            max_rows: DEFAULT_MAX_ROWS,
-            max_buckets: DEFAULT_MAX_BUCKETS,
-            max_groups: DEFAULT_MAX_GROUPS,
-        }
-    }
-}
-
-impl Limits {
-    /// Load the query limits: flag > environment > default, one rule for each.
-    pub fn load(
-        max_rows: Option<usize>,
-        max_buckets: Option<usize>,
-        max_groups: Option<usize>,
-    ) -> Result<Self, ConfigError> {
-        Ok(Self {
-            max_rows: resolve(max_rows, MAX_ROWS_ENV, DEFAULT_MAX_ROWS)?,
-            max_buckets: resolve(max_buckets, MAX_BUCKETS_ENV, DEFAULT_MAX_BUCKETS)?,
-            max_groups: resolve(max_groups, MAX_GROUPS_ENV, DEFAULT_MAX_GROUPS)?,
-        })
-    }
+/// The query limits: flag > environment > default, one rule for each.
+pub fn limits(
+    max_rows: Option<usize>,
+    max_buckets: Option<usize>,
+    max_groups: Option<usize>,
+) -> Result<Limits, ConfigError> {
+    Ok(Limits {
+        max_rows: resolve(max_rows, MAX_ROWS_ENV, DEFAULT_MAX_ROWS)?,
+        max_buckets: resolve(max_buckets, MAX_BUCKETS_ENV, DEFAULT_MAX_BUCKETS)?,
+        max_groups: resolve(max_groups, MAX_GROUPS_ENV, DEFAULT_MAX_GROUPS)?,
+    })
 }
 
 impl ApiLimits {
@@ -746,10 +679,10 @@ impl ApiLimits {
             MAX_DECOMPRESSED_BYTES_ENV,
             DEFAULT_MAX_DECOMPRESSED_BYTES,
         )?;
-        if max_decompressed_bytes > crate::lines::MAX_LINE_BYTES {
+        if max_decompressed_bytes > kibbr_core::lines::MAX_LINE_BYTES {
             return Err(ConfigError::DecompressedAboveLineCap {
                 asked: max_decompressed_bytes,
-                limit: crate::lines::MAX_LINE_BYTES,
+                limit: kibbr_core::lines::MAX_LINE_BYTES,
             });
         }
 
@@ -855,7 +788,7 @@ mod tests {
         let untouched = Storage::default();
         assert_eq!(
             (untouched.scan_threads, untouched.scan_fan_rows),
-            (0, crate::store::DEFAULT_FAN_ROWS)
+            (0, kibbr_storage::store::DEFAULT_FAN_ROWS)
         );
         assert_eq!(untouched.disk_options().scan_threads, 0);
 
@@ -868,7 +801,7 @@ mod tests {
         assert_eq!(default, (cores / 2).clamp(1, 4));
         assert_eq!(
             scan(None, None).expect("the defaults"),
-            (default, crate::store::DEFAULT_FAN_ROWS)
+            (default, kibbr_storage::store::DEFAULT_FAN_ROWS)
         );
 
         // The variable over the default, and the flag over the variable.
@@ -1010,7 +943,7 @@ mod tests {
                 .with_wal(None, None, flag)
                 .map(|storage| (storage.wal_queue_bytes, storage.wal_options().queue_bytes))
         };
-        let default = crate::wal::DEFAULT_QUEUE_BYTES;
+        let default = kibbr_storage::wal::DEFAULT_QUEUE_BYTES;
         assert_eq!(default, 256 * 1024 * 1024);
         assert_eq!(Storage::default().wal_queue_bytes, default);
         assert_eq!(bound(None).expect("the default"), (default, default));

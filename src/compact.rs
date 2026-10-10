@@ -27,9 +27,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::fmt::commas;
-use crate::store::disk::{self, CompactOptions, Compacted, DiskStore, Due};
-use crate::store::StoreError;
+use kibbr_core::fmt::commas;
+use kibbr_storage::store::disk::{self, CompactOptions, Compacted, DiskStore, Due};
+use kibbr_storage::store::StoreError;
 
 // ── What a run did ─────────────────────────────────────────────────────────────────
 
@@ -207,7 +207,7 @@ pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactEr
             })?),
         };
     disk::refuse_other_versions(base)?;
-    if !crate::store::manifest::path_in(base).is_file() {
+    if !kibbr_storage::store::manifest::path_in(base).is_file() {
         return Err(CompactError::Input(format!(
             "{}: not a kibbr data directory (no manifest.log); nothing was compacted",
             base.display()

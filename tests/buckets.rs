@@ -1,6 +1,6 @@
 //! `GROUP BY time(...)`: the answer an operator actually sees.
 //!
-//! The arithmetic is checked in `src/engine.rs`, where a property test can run hundreds of
+//! The arithmetic is checked in `crates/kibbr-engine/src/engine.rs`, where a property test can run hundreds of
 //! ranges against one in-process database. What is checked here is everything the engine
 //! cannot see about itself: that an empty hour reaches the terminal as zeros, that a
 //! refusal is a refusal and not a short chart, and that the two surfaces and the three

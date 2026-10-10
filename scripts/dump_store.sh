@@ -2,7 +2,7 @@
 # Materialise on disk what `kibbr query` builds in memory: the templates, and one file
 # per template holding that template's rows.
 #
-# Nothing persists yet (src/db.rs) - every query rebuilds the trie and the leaf stores
+# Nothing persists yet (crates/kibbr-storage/src/db.rs) - every query rebuilds the trie and the leaf stores
 # from the file and throws them away. This writes that state down so it can be read:
 #
 #   <out>/templates.json          one entry per template: id, fingerprint, keys, types, rows

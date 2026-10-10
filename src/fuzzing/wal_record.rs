@@ -43,8 +43,8 @@
 
 use std::path::Path;
 
-use crate::frame;
-use crate::wal::{self, Record, Scanned, WalError};
+use kibbr_storage::frame;
+use kibbr_storage::wal::{self, Record, Scanned, WalError};
 
 /// The most one frame may claim to decompress to and still be read here. The reader
 /// allocates the claim, and then up to six times it for the records, so this keeps one

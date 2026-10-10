@@ -1,0 +1,23 @@
+[package]
+name = "kibbr-storage"
+description = "kibbr - the trie, the day files and the write-ahead log"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+kibbr-core.workspace = true
+chrono.workspace = true
+crc32c.workspace = true
+libc.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zstd.workspace = true
+
+[features]
+# What this crate's own tests build their rows and files from, for the tests of the
+# crates above it: they are held to the same samples, and a `#[cfg(test)]` item is not
+# there for another crate's tests. Named only under `[dev-dependencies]`.
+test-support = []

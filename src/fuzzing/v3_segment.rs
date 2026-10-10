@@ -69,17 +69,17 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::mem::size_of;
 use std::path::Path;
 
-use crate::frame::{self, Next};
-use crate::store::v3::build::RowGroup;
-use crate::store::v3::column::{Column, Memo};
-use crate::store::v3::file::{self, Entry, Index, Reader};
-use crate::store::v3::read::{self, Cell, ChunkDir, Header, PieceDir};
-use crate::store::v3::{
+use kibbr_core::types::ColValue;
+use kibbr_storage::frame::{self, Next};
+use kibbr_storage::store::v3::build::RowGroup;
+use kibbr_storage::store::v3::column::{Column, Memo};
+use kibbr_storage::store::v3::file::{self, Entry, Index, Reader};
+use kibbr_storage::store::v3::read::{self, Cell, ChunkDir, Header, PieceDir};
+use kibbr_storage::store::v3::{
     type_byte, Bad, Bytes, Form, FormatError, JsonKind, Source, DAY_NS, HEADER_LEN, KIND_FOOTER,
     KIND_ROW_GROUP, KIND_SCHEMA, MAGIC, MAX_BODY, MAX_ROWS, NO_COMPRESSION, OPTIONAL,
     PRE_RENAME_MAGIC, TRAILER_LEN, VERSION, ZSTD,
 };
-use crate::types::ColValue;
 
 /// The first byte of an input that is instructions and not a file.
 pub const BUILT: u8 = 0xfb;
@@ -1546,12 +1546,12 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::db::row_of;
-    use crate::flatten::parse_line;
-    use crate::store::v3::build::{build as build_group, schema_of, Level};
-    use crate::store::v3::file::Writer;
-    use crate::store::v3::{put_varint, zigzag};
-    use crate::store::{effective_ts, Row};
+    use kibbr_core::flatten::parse_line;
+    use kibbr_storage::db::row_of;
+    use kibbr_storage::store::v3::build::{build as build_group, schema_of, Level};
+    use kibbr_storage::store::v3::file::Writer;
+    use kibbr_storage::store::v3::{put_varint, zigzag};
+    use kibbr_storage::store::{effective_ts, Row};
 
     fn vector(name: &str) -> Vec<u8> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))

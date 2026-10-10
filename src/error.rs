@@ -1,165 +1,8 @@
-use std::io::{self, Write};
-
 use thiserror::Error;
 
-/// What was wrong with one line, with no claim about where it was.
-///
-/// Split from the line number because the ingest endpoint reports failures as
-/// `{"line":400,"msg":"..."}` - the message and the position are two fields there,
-/// so they are two things here.
-#[derive(Debug, Error)]
-pub enum DetectorErrorKind {
-    #[error("nesting deeper than {limit} levels at key `{key}`")]
-    NestingTooDeep { key: String, limit: usize },
-
-    /// The line parsed, and the template or widening it needed could not be made durable
-    /// before it counts. Not the line's fault, but it is the line that did not land, and
-    /// `{"line":N,"msg":"..."}` is the one place a client hears that. The next line that
-    /// needs no new record still goes in, which is why this is per line and not the body.
-    /// A body of nothing but these has no next line: where each was a write that failed,
-    /// `/ingest` answers it `503`, with the same errors by line, so its sender keeps it
-    /// and sends it again. A record that would not encode, or a template whose lock is
-    /// poisoned, is not such a write, and a body of those is still a `200`.
-    #[error("not ingested: {detail}")]
-    NotDurable { detail: String },
-
-    /// The line parsed and its template exists, and the store could not take the row - a
-    /// leaf whose directory would not open. **Only where there is no write-ahead log**:
-    /// the CLI, the bench, a bulk load. There the row is nowhere, so the line is refused
-    /// rather than counted. `/ingest` never builds one: its line is durable in the log
-    /// before the store is asked, and a store that fails then delays the row and is not
-    /// an error (`IngestError`).
-    #[error("not ingested: store: {detail}")]
-    NotStored { detail: String },
-
-    /// Two flattened keys rendered to the same text.
-    ///
-    /// Not a fact about the line: distinct JSON paths cannot render alike, because key
-    /// escaping is reversible. Reaching this means it has stopped being reversible, and
-    /// the fingerprint, the merge index's set arithmetic and the trie's edge labels are
-    /// all downstream of that - so this line is refused rather than filed under a
-    /// template that is not its shape. It was a debug assertion, which is to say it was
-    /// nothing in the build that ships.
-    #[error(
-        "flattened key `{key}` appears twice; distinct paths cannot render alike, so key \
-         escaping has stopped being reversible"
-    )]
-    DuplicateKey { key: String },
-
-    /// Arrays are stored whole, so the object depth limit does not apply inside one - but
-    /// a ceiling still has to, since the array is materialised recursively before it can
-    /// be stored as text. This is the one that fires there, counting containers of either
-    /// kind from the outermost `[`.
-    #[error("nesting deeper than {limit} levels inside the array at `{key}`")]
-    ArrayNestingTooDeep { key: String, limit: usize },
-
-    #[error("top-level JSON value is {found}, expected an object")]
-    NotAnObject { found: &'static str },
-
-    /// The line ran past the byte cap before any newline arrived.
-    ///
-    /// A rejection like the others rather than an `io::Error` that would end the run: the
-    /// reader steps to the next newline and carries on, so an over-long line costs its own
-    /// line and nothing after it. Distinct from every other kind here in that nothing
-    /// looked at the content - the fault is in the framing, not the JSON.
-    ///
-    /// No byte count, deliberately. The length is only knowable once the line ends, and
-    /// this is reported before the reader goes looking for that end - on the input that
-    /// most needs the diagnostic, the end never comes. A message that always prints beats
-    /// a better one that sometimes does not.
-    #[error("line longer than the {limit} byte limit; skipped to the next line")]
-    LineTooLong { limit: usize },
-
-    /// The line is not UTF-8, so it is not text and cannot be a JSON document.
-    ///
-    /// Split from `InvalidJson` because the remedy differs: an encoding fault in whatever
-    /// produced the line, not a syntax fault in the document. No `#[source]` -
-    /// `serde_json`'s complaint about these bytes names whatever they happened to break
-    /// (`invalid unicode code point` inside a string, `expected value` outside one),
-    /// which is the symptom and sometimes a misleading one.
-    #[error("invalid UTF-8: {bad}")]
-    InvalidUtf8 { bad: BadByte },
-
-    /// `serde_json`'s complaint, carried as text rather than as a `#[source]`.
-    ///
-    /// Interpolating it and keeping it as a source would print it twice, since the CLI
-    /// walks the chain. Text wins because the position is rewritten on the way through:
-    /// `serde_json` reports a line number of its own, and it is always 1.
-    #[error("invalid JSON{}: {message}{}", at_offset(.offset), utf8_note(.also_bad_bytes))]
-    InvalidJson {
-        /// The byte offset into the line, or `None` when `serde_json` had no position
-        /// to give - then the message stands alone rather than claiming a false 0.
-        offset: Option<usize>,
-        message: String,
-        /// Set when the line holds a syntax error *and* fails to decode further along.
-        /// Both are true and independent, so both are reported - dropping either costs
-        /// the operator a second run to discover it.
-        also_bad_bytes: Option<BadByte>,
-    },
-}
-
-/// Where a line stopped being UTF-8: the offset of the first bad byte, and the byte.
-///
-/// The byte value is most of the diagnosis: `0xff`/`0xfe` is UTF-16, `0x80`-`0x9f` is
-/// cp1252, a lone lead byte is a write cut mid-character. The offset is 0-based and
-/// relative to the line, so it indexes straight into the `raw_line` that `/ingest`
-/// echoes back.
-#[derive(Debug, Clone, Copy)]
-pub struct BadByte {
-    pub offset: usize,
-    pub byte: u8,
-}
-
-impl std::fmt::Display for BadByte {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "byte {:#04x} at offset {}", self.byte, self.offset)
-    }
-}
-
-/// The trailing clause on an `InvalidJson` whose line also failed to decode. Empty in
-/// the ordinary case, so the common message reads as one uninterrupted sentence.
-fn utf8_note(bad: &Option<BadByte>) -> String {
-    bad.map_or(String::new(), |bad| {
-        format!(" (line also contains invalid UTF-8: {bad})")
-    })
-}
-
-/// The position clause, omitted entirely when there is no position rather than printed
-/// as a 0 that would read like the first byte.
-fn at_offset(offset: &Option<usize>) -> String {
-    offset.map_or(String::new(), |offset| format!(" at offset {offset}"))
-}
-
-/// A rejected line: what was wrong, and which physical line it was.
-///
-/// Every rejection carries its line, because the parse loop reports and continues
-/// rather than aborting - without the number the operator cannot find the line.
-#[derive(Debug)]
-pub struct DetectorError {
-    pub line: usize,
-    pub kind: DetectorErrorKind,
-}
-
-impl DetectorError {
-    pub fn new(line: usize, kind: DetectorErrorKind) -> Self {
-        Self { line, kind }
-    }
-}
-
-impl std::fmt::Display for DetectorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "line {}: {}", self.line, self.kind)
-    }
-}
-
-// Hand-written rather than derived: `source` skips past `kind` to whatever caused it.
-// Deriving would put `kind` in the chain and `report` would print it twice - once
-// interpolated above, once as a `caused by` line.
-impl std::error::Error for DetectorError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        std::error::Error::source(&self.kind)
-    }
-}
+// What is wrong with one line is the flattener's to say, and it is two crates down; here
+// under the names every command already uses.
+pub use kibbr_core::error::{chain, report, BadByte, DetectorError, DetectorErrorKind};
 
 /// Errors from the log generator.
 #[derive(Debug, Error)]
@@ -259,7 +102,7 @@ pub enum IngestError {
     /// is abandoned rather than answered with 500 copies of one message. A catalog append
     /// that fails is not this - it costs its line, reported by number.
     #[error(transparent)]
-    Trie(#[from] crate::trie::TrieError),
+    Trie(#[from] kibbr_storage::trie::TrieError),
 
     /// The write-ahead log could not take the body. **The refusal that is about
     /// durability**, and the only error here by which a body whose lines parsed is
@@ -312,10 +155,10 @@ macro_rules! never_from {
 }
 
 // A `#[from] StoreError` on a variant, or `?` on a store call inside the ingest path.
-never_from!(IngestError, crate::store::StoreError);
+never_from!(IngestError, kibbr_storage::store::StoreError);
 // And the two errors that can hold one, which `?` would carry it in by.
 never_from!(IngestError, CliError);
-never_from!(IngestError, crate::db::SinkError);
+never_from!(IngestError, kibbr_storage::db::SinkError);
 
 /// What stops `kibbr serve` from starting, or from finishing cleanly.
 ///
@@ -373,7 +216,7 @@ pub enum ServeError {
         "{path}: segment format version {found}; this build reads version {} only and \
          does not guess at the rest. Nothing was served. Start the build that wrote it, or \
          move that file out of the data directory.",
-        crate::store::v3::VERSION
+        kibbr_storage::store::v3::VERSION
     )]
     SegmentVersion { path: std::path::PathBuf, found: u8 },
 
@@ -391,7 +234,7 @@ pub enum ServeError {
     /// with, and one that guessed at a log it could not read would store lines twice or
     /// not at all.
     #[error(transparent)]
-    Wal(#[from] crate::wal::WalError),
+    Wal(#[from] kibbr_storage::wal::WalError),
 
     /// Another process owns the data directory. Taken before anything is written and
     /// before the port - only the read-only version check comes first: a second writer of
@@ -438,6 +281,11 @@ pub enum CliError {
         limit: usize,
     },
 
+    /// What ended a read of lines below any command: the read loop's own error
+    /// (`db::ReadError`), printed as the sentence it wrote.
+    #[error(transparent)]
+    Input(#[from] kibbr_storage::db::ReadError),
+
     #[error(transparent)]
     Gen(#[from] GenError),
 
@@ -445,7 +293,7 @@ pub enum CliError {
     Config(#[from] crate::config::ConfigError),
 
     #[error(transparent)]
-    Trie(#[from] crate::trie::TrieError),
+    Trie(#[from] kibbr_storage::trie::TrieError),
 
     #[error(transparent)]
     Query(#[from] QueryError),
@@ -453,22 +301,22 @@ pub enum CliError {
     // Transparent, not wrapped: `ParseError` says where it was and `report` walks the
     // source chain, so a wrapper would print the same sentence twice.
     #[error(transparent)]
-    Trieql(#[from] crate::trieql::ParseError),
+    Trieql(#[from] kibbr_engine::trieql::ParseError),
 
     // Transparent for the reason `Trieql` is: `report` walks the source chain, so a
     // wrapper prints the same sentence twice. No `--after:` prefix either - the flag
     // surface and `AFTER` both land here, and naming one of them would be wrong half the
     // time. `CursorError`'s own messages say what is wrong with the cursor.
     #[error(transparent)]
-    Cursor(#[from] crate::engine::CursorError),
+    Cursor(#[from] kibbr_engine::engine::CursorError),
 
     #[error(transparent)]
-    Store(#[from] crate::store::StoreError),
+    Store(#[from] kibbr_storage::store::StoreError),
 
     // Transparent for the reason `Trieql` is - `BucketError`'s own sentence names the
     // requested and permitted counts, and a wrapper would print a vaguer one above it.
     #[error(transparent)]
-    Exec(#[from] crate::engine::ExecError),
+    Exec(#[from] kibbr_engine::engine::ExecError),
 
     #[error(transparent)]
     Serve(#[from] ServeError),
@@ -478,35 +326,4 @@ pub enum CliError {
     Compact(#[from] crate::compact::CompactError),
     #[error(transparent)]
     Speed(#[from] crate::speed::SpeedError),
-}
-
-/// The error and every cause below it on one line.
-///
-/// `report` prints the same chain on stderr as indented `caused by:` lines. An HTTP
-/// response body has one `error` field and no second line to put them on, and dropping
-/// the chain there would lose the part that says *where* in a TrieQL string the parse
-/// failed - which is the only part the client can act on.
-pub fn chain(e: &(dyn std::error::Error + 'static)) -> String {
-    let mut out = e.to_string();
-    let mut source = e.source();
-    while let Some(cause) = source {
-        out.push_str(": ");
-        out.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    out
-}
-
-/// Print the error and every cause below it, so a `#[source]` chain is not lost.
-///
-/// Takes `dyn Error` so the fatal path and the per-line path render identically: a
-/// rejected line should not look different from a failed run.
-pub fn report(e: &(dyn std::error::Error + 'static)) {
-    let mut stderr = io::stderr().lock();
-    let _ = writeln!(stderr, "kibbr: {e}");
-    let mut source = e.source();
-    while let Some(cause) = source {
-        let _ = writeln!(stderr, "  caused by: {cause}");
-        source = cause.source();
-    }
 }

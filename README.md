@@ -440,7 +440,7 @@ A consequence worth knowing before you count bars: the range emits every bucket 
 `time(5m)` gives 72 buckets if `now` happens to be on a five-minute boundary and 73
 otherwise - the first and last are partial, and both are real observations. Six
 hours from 10:03:17 covers 10:00 through 16:00, which is 73 five-minute slots. The
-comment above `bucket_of` in `src/engine.rs` draws it.
+comment above `bucket_of` in `crates/kibbr-engine/src/engine.rs` draws it.
 
 A bucketed query returns aggregates rather than rows, so `max_rows` does not reach
 it. `max_buckets` (10,000) and `max_groups` (100,000) do, and going over is a
@@ -635,7 +635,7 @@ persistence of any kind.
 ## Run the tests
 
 ```
-cargo test
+cargo test --workspace
 ```
 
 ```
@@ -661,39 +661,60 @@ crate and there are no mocks. The one that matters is
 Lints have to be clean:
 
 ```
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ## Layout
 
+A workspace of four crates, each naming only the ones under it, and `fuzz/` beside them.
+
 ```
-src/main.rs       CLI, error reporting
-src/gen.rs        the generator - templates, value kinds
-src/rng.rs        xoshiro256**, written out so the seed is ours, not a dependency's
-src/flatten.rs    flattening, fingerprints, the parsed row
-src/infer.rs      the type ladder - one rung per rule, in order
-src/parse.rs      the `parse` output
-src/types.rs      ColumnType, ColValue
-src/error.rs      thiserror enums
-src/trie.rs       the trie - nodes, edges, leaf metadata
-src/store.rs      in-memory leaf stores and the scan interface
-src/db.rs         lines to a trie and its stores - the write path
-src/engine.rs     the walk, the scan, the result
-src/trieql.rs     the query grammar
-src/query.rs      the `query` command, and the result JSON both surfaces answer with
-src/serve.rs      the HTTP surface, the banner, the shutdown sequence
-src/wal.rs        the write-ahead log: group commit, the one applier, replay, the checkpoint
-src/load.rs       `kibbr load` - the bulk door: staging, the load id, the commit
-src/compact.rs    `kibbr compact` - the command, and a server's compaction jobs
-src/lock.rs       the LOCK file: one process owns a data directory
-src/bench.rs      `kibbr bench-storage`
-src/http.rs       the small HTTP client `load`, `compact` and `bench-storage --es` speak
-src/viewer.html   the log viewer served at `/` - one file, compiled into the binary
-tests/fixture.rs  outer-surface tests
-tests/serve.rs    the HTTP contract, over a bare TcpStream
+Cargo.toml                the workspace, and the `kibbr` crate: the binary and its commands
+src/main.rs               CLI, error reporting
+src/config.rs             the settings: defaults, then the flags and `KIBBR__` variables
+src/error.rs              thiserror enums of the commands and the server
+src/gen.rs, src/farm.rs   the generators - `hostile` and the log farm
+src/parse.rs              the `parse` output
+src/demo.rs               the `demo` tree
+src/query.rs              the `query` command, and the result JSON both surfaces answer with
+src/reference/            the brute-force oracle behind `query --reference`
+src/serve.rs              the HTTP surface, the banner, the shutdown sequence
+src/load.rs               `kibbr load` - the bulk door: staging, the load id, the commit
+src/compact.rs            `kibbr compact` - the command, and a server's compaction jobs
+src/lock.rs               the LOCK file: one process owns a data directory
+src/bench.rs              `kibbr bench-storage`
+src/speed/                `kibbr bench`
+src/http.rs               the small HTTP client `load`, `compact` and `bench-storage --es` speak
+src/fuzzing/              what each fuzz target holds its subject to
+src/viewer.html           the log viewer served at `/` - one file, compiled into the binary
+tests/fixture.rs          outer-surface tests
+tests/serve.rs            the HTTP contract, over a bare TcpStream
+
+crates/kibbr-engine/      a query: needs kibbr-storage and kibbr-core
+  src/engine.rs           the plan, the scan, the result
+  src/trieql.rs           the query grammar
+  src/limits.rs           what a query may not exceed
+
+crates/kibbr-storage/     where templates and rows are kept: needs kibbr-core
+  src/trie.rs             the trie - nodes, edges, leaf metadata, the key index
+  src/catalog.rs          the template catalog that makes the trie durable
+  src/triefile.rs         trie.json
+  src/store/              the leaf stores - memory, and format v3's day files - and the scan
+  src/wal.rs              the write-ahead log: group commit, the one applier, replay, the checkpoint
+  src/frame.rs            the framing the catalog, the manifest, the day files and the log share
+  src/db.rs               lines to a trie and its stores - the write path
+
+crates/kibbr-core/        a line, before anything stores it: needs no other crate
+  src/flatten.rs          flattening, fingerprints, the parsed row
+  src/infer.rs            the type ladder - one rung per rule, in order
+  src/types.rs            ColumnType, ColValue
+  src/lines.rs            reading lines under a byte cap
+  src/fmt.rs              how a value, a count and an instant are printed
+  src/rng.rs              xoshiro256**, written out so the seed is ours, not a dependency's
+  src/error.rs            what is wrong with one line, and how an error chain is printed
 ```
 
-One crate, no workspace. No traits - there is one implementation of everything so
+No traits - there is one implementation of everything so
 far, and an interface with a single caller is a guess. That includes the ingest
 path: a future `Ingestor` would sit between the API and the trie, and it is a plain
 function until something gives it a second caller to answer to.
