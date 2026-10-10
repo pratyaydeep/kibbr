@@ -1,4 +1,5 @@
-//! What an operator reaches for: the settings file, and the deadline on a stop.
+//! What an operator reaches for: the settings file, the two commands that ask a running
+//! server about itself, and the deadline on a stop.
 //!
 //! All of it from outside, as the other files here: the binary's flags, its stdout and
 //! stderr, its exit code, and HTTP over a bare `TcpStream`. The arithmetic of where a
@@ -116,6 +117,10 @@ impl Server {
             port,
             stderr,
         }
+    }
+
+    fn address(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
     }
 
     fn get(&self, path: &str) -> (u16, String) {
@@ -251,6 +256,8 @@ fn every_command_takes_config_and_a_file_it_cannot_use_stops_it() {
         vec!["compact", "--data-dir", &data],
         vec!["bench-storage", &input],
         vec!["bench", "--plan-only", "--samples", "1"],
+        vec!["templates", "--addr", "127.0.0.1:1"],
+        vec!["stats", "--addr", "127.0.0.1:1"],
         vec!["serve", "--port", "0", "--storage", "memory"],
     ];
     for command in &commands {
@@ -405,6 +412,96 @@ fn query_takes_its_limits_and_time_columns_from_the_file() {
     let plain = fetch(&[]);
     assert_eq!(plain["rows"].as_array().map(Vec::len), Some(5));
     assert_eq!(plain["meta"]["truncated"], false);
+}
+
+// ── templates and stats ────────────────────────────────────────────────────────────
+
+/// **`kibbr templates` and `kibbr stats` print what the server holding a directory
+/// answers `/templates` and `/stats` with** - found by the directory, by `--addr`, or by
+/// the address in the settings - as a table and a line a number, or with `--json` as the
+/// server sent it; and with no server there they say so and print nothing.
+#[test]
+fn templates_and_stats_ask_the_running_server() {
+    let scratch = Scratch::new("ask");
+    let data = scratch.path("data");
+    let server = Server::start(&[], &["--data-dir", &data], &[]);
+    let lines = "{\"ts\":\"2024-01-15T10:00:00Z\",\"event\":\"login\",\"user\":7}\n\
+                 {\"ts\":\"2024-01-15T10:00:01Z\",\"event\":\"login\",\"user\":8}\n\
+                 {\"level\":\"info\",\"msg\":\"up\"}\n";
+    assert_eq!(server.post("/ingest", lines.as_bytes()).0, 200);
+
+    // By the directory: the server's LOCK says where it listens.
+    let out = run(&["templates", "--data-dir", &data]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    let table = text(&out.stdout);
+    let rows: Vec<&str> = table.lines().collect();
+    assert_eq!(rows.len(), 4, "{table}");
+    assert_eq!(
+        rows[0].split_whitespace().collect::<Vec<_>>(),
+        ["ID", "ROWS", "TIME", "PATH"]
+    );
+    assert!(
+        table.lines().any(|row| {
+            let cells: Vec<&str> = row.split_whitespace().collect();
+            cells.len() >= 5
+                && cells[1] == "2"
+                && cells[2] == "column:ts"
+                && row.ends_with("event=login, ts, user")
+        }),
+        "{table}"
+    );
+    assert!(table.lines().any(|row| row.contains("arrival")), "{table}");
+    assert_eq!(rows[3], "2 templates");
+
+    // With --json, the server's own answer.
+    let out = run(&["templates", "--data-dir", &data, "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(json(&text(&out.stdout)), json(&server.get("/templates").1));
+
+    // stats, by --addr: a line a number, each under the path it has in the JSON.
+    let address = server.address();
+    let out = run(&["stats", "--addr", &address]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let said = text(&out.stdout);
+    let value = |name: &str| {
+        said.lines()
+            .find_map(|line| line.strip_prefix(name).map(str::trim))
+            .unwrap_or_else(|| panic!("no {name} in:\n{said}"))
+            .to_string()
+    };
+    assert_eq!(value("trie.templates "), "2");
+    assert_eq!(value("ingest.lines_ingested "), "3");
+    assert_eq!(value("ingest.shutdown_deadline_ms "), "25000");
+    let out = run(&["stats", "--addr", &address, "--json"]);
+    let sent = json(&text(&out.stdout));
+    assert_eq!(sent["trie"]["templates"], 2);
+    assert_eq!(sent["ingest"]["lines_ingested"], 3);
+
+    // By the settings: a directory no server holds, and the file's address.
+    let empty = scratch.path("empty");
+    let config = scratch.file(
+        "kibbr.toml",
+        &format!("[storage]\nbase_path = \"{empty}\"\n\n[api]\nnative_addr = \"{address}\"\n"),
+    );
+    let out = run(&["stats", "--config", &config, "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(json(&text(&out.stdout))["trie"]["templates"], 2);
+    assert!(!Path::new(&empty).exists(), "asking made a directory");
+
+    // No server: an error that says where it looked, and nothing on stdout.
+    let (code, said) = server.stop(Duration::from_secs(20));
+    assert_eq!(code, Some(0), "{said}");
+    for command in ["templates", "stats"] {
+        let out = run(&[command, "--addr", &address]);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(out.stdout.is_empty());
+        let said = text(&out.stderr);
+        assert!(
+            said.starts_with(&format!("kibbr: no server answered at {address} (--addr)")),
+            "{said}"
+        );
+    }
 }
 
 // ── The shutdown deadline ──────────────────────────────────────────────────────────

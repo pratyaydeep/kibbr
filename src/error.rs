@@ -326,4 +326,6 @@ pub enum CliError {
     Compact(#[from] crate::compact::CompactError),
     #[error(transparent)]
     Speed(#[from] crate::speed::SpeedError),
+    #[error(transparent)]
+    Ask(#[from] crate::ask::AskError),
 }

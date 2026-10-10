@@ -4,6 +4,7 @@
 //! is a stable interface. What a line is, where it is kept and how it is asked for are
 //! the three crates under `crates/`.
 
+pub mod ask;
 pub mod bench;
 pub mod compact;
 pub mod config;

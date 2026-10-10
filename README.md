@@ -703,6 +703,34 @@ follow, so the process exits 0 inside whatever grace it was given (Kubernetes: 3
 seconds) and the next start has nothing to replay. `"0s"` waits for every request,
 however long it takes.
 
+## Ask a running server
+
+`kibbr templates` and `kibbr stats` are `GET /templates` and `GET /stats`, asked for
+you. The server is the one holding `--data-dir` (its `LOCK` file says where it
+listens), or `--addr host:port`; `--json` prints the answer as the server sent it.
+
+```
+$ kibbr templates --config kibbr.toml
+ ID  ROWS  TIME            PATH
+204    63  column:ts_unix  err.cause.code, err.cause.detail, err.code, err.trace_id, level, msg, service, ts_unix
+163    35  column:ts_unix  err.cause.code, err.code, err.trace_id, level, msg, service, ts_unix
+...
+473 templates
+
+$ kibbr stats --config kibbr.toml
+uptime_seconds                        4.048999209
+started_at                            2026-10-10T14:56:15.555577Z
+storage.kind                          disk
+storage.durable                       true
+...
+trie.templates                        473
+ingest.lines_ingested                 2000
+ingest.ingest_wait_ms                 100
+ingest.shutdown_deadline_ms           25000
+```
+
+A name on the left is the path to the same value in the JSON.
+
 ## Run the tests
 
 ```
@@ -753,6 +781,7 @@ src/serve.rs              the HTTP surface, the banner, the shutdown sequence
 src/load.rs               `kibbr load` - the bulk door: staging, the load id, the commit
 src/compact.rs            `kibbr compact` - the command, and a server's compaction jobs
 src/lock.rs               the LOCK file: one process owns a data directory
+src/ask.rs                `kibbr templates` and `kibbr stats`
 src/bench.rs              `kibbr bench-storage`
 src/speed/                `kibbr bench`
 src/http.rs               the small HTTP client `load`, `compact` and `bench-storage --es` speak

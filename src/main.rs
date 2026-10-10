@@ -1,6 +1,8 @@
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-use kibbr::{bench, compact, config, demo, error, farm, gen, load, parse, query, serve, speed};
+use kibbr::{
+    ask, bench, compact, config, demo, error, farm, gen, load, parse, query, serve, speed,
+};
 use kibbr_core::infer;
 
 use std::fs::File;
@@ -449,6 +451,39 @@ enum Command {
         )]
         plan_only: bool,
     },
+    /// List every template a running server holds: its id, its rows, where its time
+    /// comes from, and its path. What `GET /templates` answers, asked for you.
+    Templates {
+        /// The server to ask, `host:port`. [default: the server holding --data-dir, by
+        /// its LOCK file; with none, `KIBBR__API__NATIVE_ADDR`, `[api] native_addr`,
+        /// 127.0.0.1:7700]
+        #[arg(long, value_name = "HOST:PORT")]
+        addr: Option<String>,
+        /// The data directory whose server is asked.
+        /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+        #[arg(long, value_name = "PATH")]
+        data_dir: Option<PathBuf>,
+        /// Print the server's answer as it sent it, one JSON object, instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print what a running server says of itself: uptime, storage, the trie, ingest,
+    /// the write-ahead log. What `GET /stats` answers, asked for you - a line a number.
+    Stats {
+        /// The server to ask, `host:port`. [default: the server holding --data-dir, by
+        /// its LOCK file; with none, `KIBBR__API__NATIVE_ADDR`, `[api] native_addr`,
+        /// 127.0.0.1:7700]
+        #[arg(long, value_name = "HOST:PORT")]
+        addr: Option<String>,
+        /// The data directory whose server is asked.
+        /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+        #[arg(long, value_name = "PATH")]
+        data_dir: Option<PathBuf>,
+        /// Print the server's answer as it sent it, one JSON object, instead of a line a
+        /// number.
+        #[arg(long)]
+        json: bool,
+    },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
     Explain {
@@ -809,6 +844,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
             &query,
             config::limits(file, max_rows, max_buckets, max_groups)?,
         ),
+        Command::Templates {
+            addr,
+            data_dir,
+            json,
+        } => ask::templates(&mut out, &ask::server(file, addr, data_dir)?, json),
+        Command::Stats {
+            addr,
+            data_dir,
+            json,
+        } => ask::stats(&mut out, &ask::server(file, addr, data_dir)?, json),
         Command::Query {
             input,
             query: trieql,
