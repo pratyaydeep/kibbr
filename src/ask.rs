@@ -1,5 +1,8 @@
-//! `kibbr templates` and `kibbr stats`: what a running server answers `GET /templates`
-//! and `GET /stats` with, asked for and printed.
+//! `kibbr templates`, `kibbr stats` and `kibbr health`: what a running server answers
+//! `GET /templates`, `GET /stats` and `GET /health` with, asked for and printed.
+//!
+//! `health` is the one a machine runs: the image's `HEALTHCHECK`, which has no curl to
+//! ask with. It prints a word and exits 0 while the server answers `"ok":true`.
 //!
 //! Both were HTTP only. They stay the server's to answer - the row counts and the
 //! counters are in its memory, and a second process opening the directory would be
@@ -22,13 +25,19 @@ use kibbr_core::fmt::commas;
 /// How long a server is given to answer. Both answers are built from memory.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long `health` gives it: under the five seconds the image's `HEALTHCHECK` waits
+/// before it calls the check itself failed, so that a server that does not answer is
+/// said by this command, with its reason, and not by a kill.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
+
 #[derive(Debug, Error)]
 pub enum AskError {
     /// Nothing answered. Says where the address came from, since the remedy differs: a
     /// stale `LOCK` is a server that is gone, and the default is one never started here.
     #[error(
-        "no server answered at {address} ({found}): {source}. `templates` and `stats` ask a \
-         running `kibbr serve`; --addr names one, or --data-dir the directory it holds"
+        "no server answered at {address} ({found}): {source}. `templates`, `stats` and \
+         `health` ask a running `kibbr serve`; --addr names one, or --data-dir the directory \
+         it holds"
     )]
     Unreachable {
         address: String,
@@ -51,6 +60,11 @@ pub enum AskError {
         path: &'static str,
         detail: String,
     },
+
+    /// `/health` answered 200 and did not say `"ok":true`: not this server, or not one
+    /// that is well.
+    #[error("the server at {address} answered /health without `\"ok\":true`: {body}")]
+    NotOk { address: String, body: String },
 }
 
 /// The server to ask, and how it was found.
@@ -101,7 +115,16 @@ pub fn server(
 
 /// `GET path`, answered 200 with JSON: the body as it was sent, and as it reads.
 fn get(server: &Server, path: &'static str) -> Result<(String, Value), AskError> {
-    let (status, body) = crate::http::request(&server.address, "GET", path, &[], None, TIMEOUT)
+    get_within(server, path, TIMEOUT)
+}
+
+/// `get`, with how long the server is given.
+fn get_within(
+    server: &Server,
+    path: &'static str,
+    timeout: Duration,
+) -> Result<(String, Value), AskError> {
+    let (status, body) = crate::http::request(&server.address, "GET", path, &[], None, timeout)
         .map_err(|source| AskError::Unreachable {
             address: server.address.clone(),
             found: server.found.clone(),
@@ -122,6 +145,37 @@ fn get(server: &Server, path: &'static str) -> Result<(String, Value), AskError>
         detail: e.to_string(),
     })?;
     Ok((text, read))
+}
+
+/// `kibbr health`: `ok`, or `degraded` and why, while the server answers `/health` with
+/// `"ok":true`; an error, and so a non-zero exit, when it does not answer, answers
+/// another status, or answers something else.
+///
+/// **A degraded server is a healthy one here, as it is to `/health`**: it cannot write,
+/// it still answers queries, and restarting it does not empty a disk. What this command
+/// exits on is what an orchestrator should restart for - a process that does not answer.
+pub fn health<W: Write>(out: &mut W, server: &Server, json: bool) -> Result<(), CliError> {
+    let (text, answer) = get_within(server, "/health", HEALTH_TIMEOUT)?;
+    if answer["ok"] != Value::Bool(true) {
+        return Err(AskError::NotOk {
+            address: server.address.clone(),
+            body: text.chars().take(300).collect(),
+        }
+        .into());
+    }
+    if json {
+        return writeln!(out, "{text}").map_err(CliError::Write);
+    }
+    writeln!(out, "{}", health_line(&answer)).map_err(CliError::Write)
+}
+
+/// The answer as a line: its status, and its detail after a colon where it has one.
+fn health_line(answer: &Value) -> String {
+    let status = answer["status"].as_str().unwrap_or("ok");
+    match answer["detail"].as_str() {
+        Some(detail) => format!("{status}: {detail}"),
+        None => status.to_string(),
+    }
 }
 
 /// `kibbr templates`: every template's id, rows, time source and path, in the order the
@@ -280,6 +334,18 @@ mod tests {
              shed.by.0                 3\n\
              shed.by.1                 0\n"
         );
+    }
+
+    /// **Health is the server's status as a word, with what is wrong after it when
+    /// something is.**
+    #[test]
+    fn health_is_a_word_and_then_what_is_wrong() {
+        assert_eq!(health_line(&json!({"ok": true, "status": "ok"})), "ok");
+        assert_eq!(
+            health_line(&json!({"ok": true, "status": "degraded", "detail": "the disk is full"})),
+            "degraded: the disk is full"
+        );
+        assert_eq!(health_line(&json!({"ok": true})), "ok");
     }
 
     /// **`--addr` is the server asked, whatever the directory says; and with no `--addr`

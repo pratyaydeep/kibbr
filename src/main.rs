@@ -501,6 +501,24 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Ask a running server whether it is well: `GET /health`, asked for you. Prints
+    /// `ok`, or `degraded` and why, and exits 0; exits 1 when no server answers or the
+    /// answer is not `"ok":true`. What the image's HEALTHCHECK runs - a degraded server
+    /// cannot write and still answers queries, so it is not one to restart.
+    Health {
+        /// The server to ask, `host:port`. [default: the server holding --data-dir, by
+        /// its LOCK file; with none, `KIBBR__API__NATIVE_ADDR`, `[api] native_addr`,
+        /// 127.0.0.1:7700]
+        #[arg(long, value_name = "HOST:PORT")]
+        addr: Option<String>,
+        /// The data directory whose server is asked.
+        /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+        #[arg(long, value_name = "PATH")]
+        data_dir: Option<PathBuf>,
+        /// Print the server's answer as it sent it, one JSON object, instead of a word.
+        #[arg(long)]
+        json: bool,
+    },
     /// Parse a TrieQL query and print what it means. Opens no file and reads no data;
     /// `query <file> '<trieql>' --explain` is the half that prints the execution plan.
     Explain {
@@ -875,6 +893,11 @@ fn run(cli: Cli) -> Result<(), CliError> {
             data_dir,
             json,
         } => ask::stats(&mut out, &ask::server(file, addr, data_dir)?, json),
+        Command::Health {
+            addr,
+            data_dir,
+            json,
+        } => ask::health(&mut out, &ask::server(file, addr, data_dir)?, json),
         Command::Query {
             input,
             query: trieql,

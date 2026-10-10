@@ -258,6 +258,7 @@ fn every_command_takes_config_and_a_file_it_cannot_use_stops_it() {
         vec!["bench", "--plan-only", "--samples", "1"],
         vec!["templates", "--addr", "127.0.0.1:1"],
         vec!["stats", "--addr", "127.0.0.1:1"],
+        vec!["health", "--addr", "127.0.0.1:1"],
         vec!["serve", "--port", "0", "--storage", "memory"],
     ];
     for command in &commands {
@@ -492,10 +493,25 @@ fn templates_and_stats_ask_the_running_server() {
     assert_eq!(json(&text(&out.stdout))["trie"]["templates"], 2);
     assert!(!Path::new(&empty).exists(), "asking made a directory");
 
+    // health: a word and exit 0 while the server answers, found the three ways the
+    // other two find it - what the image's HEALTHCHECK runs.
+    let out = run(&["health", "--addr", &address]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok\n");
+    let out = run(&["health", "--data-dir", &data]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok\n");
+    let out = run(&["health", "--config", &config, "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        json(&text(&out.stdout)),
+        json(r#"{"ok":true,"status":"ok"}"#)
+    );
+
     // No server: an error that says where it looked, and nothing on stdout.
     let (code, said) = server.stop(Duration::from_secs(20));
     assert_eq!(code, Some(0), "{said}");
-    for command in ["templates", "stats"] {
+    for command in ["templates", "stats", "health"] {
         let out = run(&[command, "--addr", &address]);
         assert_eq!(out.status.code(), Some(1));
         assert!(out.stdout.is_empty());

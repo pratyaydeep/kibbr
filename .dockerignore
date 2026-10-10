@@ -1,0 +1,9 @@
+# What the image is built from is Cargo.toml, Cargo.lock, src/ and crates/. Everything
+# else stays out of the build context: target/ and testdata/ are gigabytes, and a context
+# that changes when a test writes a file rebuilds the image for nothing.
+*
+!Cargo.toml
+!Cargo.lock
+!src
+!crates
+!LICENSE

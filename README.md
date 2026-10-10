@@ -771,6 +771,57 @@ ingest.request_timeout_ms             30000
 
 A name on the left is the path to the same value in the JSON.
 
+`kibbr health` is `GET /health` the same way, for a machine: it prints `ok` - or
+`degraded` and why - and exits 0 while the server answers `"ok":true`, and exits 1 when
+nothing answers. A degraded server cannot write and still answers queries, so it is not
+one to restart, and exits 0.
+
+## Run it in a container
+
+```
+$ docker build -t kibbr .
+$ docker run -d --name kibbr --stop-timeout 30 -p 127.0.0.1:7700:7700 -v kibbr-data:/var/lib/kibbr kibbr serve
+$ curl -s 127.0.0.1:7700/health
+{"ok":true,"status":"ok"}
+```
+
+The image is the one binary, linked statically against musl, on
+`gcr.io/distroless/static-debian12:nonroot`: 13,634,682 bytes, no shell, user 65532.
+Built on this laptop in 2 minutes 30 seconds, the two base images already pulled. Its
+`HEALTHCHECK` is `kibbr health`, since there is no curl in it to ask with. What it sets,
+each a variable a flag still wins over: the data under the volume
+(`/var/lib/kibbr/data`, the trie snapshot beside it), every interface on port 7700 -
+loopback inside a container is reachable from nowhere - and the log as JSON.
+
+**`--stop-timeout 30`.** Docker kills a container ten seconds after it asks it to stop;
+a kibbr with a request in flight gives it 25 (`shutdown_deadline`) before the final
+flush. Killed early, nothing acknowledged is lost and the next start reads the log back.
+
+Ingest, stop, start again on the same volume, same count - 50,000 lines of `gen-logs`,
+every row still in a buffer when the stop came:
+
+```
+$ curl -s -X POST 127.0.0.1:7700/query -H 'Content-Type: application/json' --data '{"q":"COUNT LOG {}"}'
+{"exists":true,"count":50000,...
+$ docker stop kibbr          # 1.07 s, exit code 0
+$ docker logs kibbr 2>&1 | tail -6
+{..."msg":"final flush - 50,000 row(s) into 13,691 row group(s) in 31 file(s), 31 sealed, 8,020,407 byte(s), 0.77s"}
+{..."msg":"WAL checkpoint - position 50,000 of 50,000; 1 segment(s), 4,197,272 byte(s)"}
+{..."msg":"trie.json - /var/lib/kibbr/trie.json 2,316,614 byte(s), 864 template(s)"}
+{..."msg":"close stores - 864 store(s), 50,000 row(s) written"}
+{..."msg":"close WAL - closed"}
+{..."msg":"exit 0"}
+$ docker rm kibbr && docker run -d --name kibbr --stop-timeout 30 -p 127.0.0.1:7700:7700 -v kibbr-data:/var/lib/kibbr kibbr serve
+$ curl -s -X POST 127.0.0.1:7700/query -H 'Content-Type: application/json' --data '{"q":"COUNT LOG {}"}'
+{"exists":true,"count":50000,...
+```
+
+`bench/run.sh` runs `kibbr bench` in a container on the farm day of seed 42 and writes
+`bench/results/<date>.md`: the bench's table with a `shed` column - what was turned away
+while each row was measured. It measures in the Dockerfile's `bench` target, which is
+the same binary on a base that has the `ps` and `df` the bench runs; the script checks
+the two images hold the same bytes. `bench/run.sh --lines 200000` is the laptop's run.
+
 ## Run the tests
 
 ```
@@ -822,7 +873,7 @@ src/serve.rs              the HTTP surface, the banner, the shutdown sequence
 src/load.rs               `kibbr load` - the bulk door: staging, the load id, the commit
 src/compact.rs            `kibbr compact` - the command, and a server's compaction jobs
 src/lock.rs               the LOCK file: one process owns a data directory
-src/ask.rs                `kibbr templates` and `kibbr stats`
+src/ask.rs                `kibbr templates`, `kibbr stats` and `kibbr health`
 src/bench.rs              `kibbr bench-storage`
 src/speed/                `kibbr bench`
 src/http.rs               the small HTTP client `load`, `compact` and `bench-storage --es` speak
@@ -830,6 +881,8 @@ src/fuzzing/              what each fuzz target holds its subject to
 src/viewer.html           the log viewer served at `/` - one file, compiled into the binary
 tests/fixture.rs          outer-surface tests
 tests/serve.rs            the HTTP contract, over a bare TcpStream
+Dockerfile                the image: a static binary on distroless, and the `bench` target
+bench/run.sh              `kibbr bench` in a container; bench/results/ holds what it measured
 
 crates/kibbr-engine/      a query: needs kibbr-storage and kibbr-core
   src/engine.rs           the plan, the scan, the result
