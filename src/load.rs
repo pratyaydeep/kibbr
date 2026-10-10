@@ -2343,6 +2343,7 @@ mod tests {
         fn open(scratch: &Scratch) -> Self {
             let base = scratch.0.join("store");
             let storage = crate::config::Storage::load(
+                &crate::config::File::default(),
                 true,
                 Some(base.clone()),
                 None,

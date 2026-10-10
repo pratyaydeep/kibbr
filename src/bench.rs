@@ -52,6 +52,8 @@ pub struct Args {
     pub es: Option<String>,
     pub scratch: Option<PathBuf>,
     pub keep: bool,
+    /// The settings file, for what a scratch directory's storage is opened with.
+    pub settings: crate::config::File,
 }
 
 /// One file's size, and what it takes on disk.
@@ -327,8 +329,18 @@ fn measure(
     };
 
     // ── kibbr: the file through the bulk door, alone ──
-    let storage = Storage::load(true, Some(data.clone()), None, None, None, None, None, None)
-        .map_err(CliError::from)?;
+    let storage = Storage::load(
+        &args.settings,
+        true,
+        Some(data.clone()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .map_err(CliError::from)?;
     let lock = crate::lock::DataLock::acquire(&data)?;
     let (trie, stores) =
         crate::serve::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
@@ -597,6 +609,7 @@ fn live_day(
         source,
     })?;
     let mut storage = Storage::load(
+        &args.settings,
         true,
         Some(data.to_path_buf()),
         None,

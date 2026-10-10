@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use serde_json::{Map, Value};
 
-use crate::config::Limits;
+use crate::config::{Limits, Schema};
 use crate::error::{CliError, QueryError};
 use kibbr_core::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
 use kibbr_engine::engine::{
@@ -69,8 +69,8 @@ pub struct Args {
     pub after: Option<String>,
     /// The caps, already resolved by `config`.
     pub limits: Limits,
-    /// `--time-columns`, or `None` for the environment and then the default.
-    pub time_columns: Option<Vec<String>>,
+    /// The names a template's time column is chosen from, already resolved by `config`.
+    pub schema: Schema,
 }
 
 pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(), CliError> {
@@ -78,14 +78,14 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     // relative to it, and a row on arrival time sits at it. The engine and the oracle
     // read the same `now`, which is what lets `scripts/agree.sh` compare their rows.
     let now = Utc::now();
-    let schema = crate::config::schema(args.time_columns.clone());
+    let schema = &args.schema;
     let query = build(args, now)?;
 
     // `--explain` executes nothing, so it never asks for rows. The load is still O(lines)
     // because there is no persisted trie yet - what is constant is `Plan::duration`, which
     // is what the plan line reports.
     if args.explain {
-        let db = db::load(input, false, now, &schema)?;
+        let db = db::load(input, false, now, schema)?;
         note(db.stats);
         let plan = engine::plan(&db.trie, &query);
         return explain(out, &query, &plan);
@@ -96,7 +96,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
         note(stats);
         crate::reference::naive::run(&lines, &query, &schema.time_columns)?
     } else {
-        let db = db::load(input, true, now, &schema)?;
+        let db = db::load(input, true, now, schema)?;
         note(db.stats);
         engine::execute(&db.trie, &db.stores, &query)?
     };

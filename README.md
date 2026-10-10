@@ -632,6 +632,67 @@ persistence of any kind.
   whatever is stored, found by asking the engine rather than guessing. Clearing
   both boxes runs the query with no time clause at all.
 
+## Settings: a flag, a variable, a file
+
+Every setting is read the same way: **the flag, or else the variable, or else the
+file, or else the default.** The file is TOML and is whatever `--config` names - any
+command takes it, before its name or after - and with no `--config` no file is read. A
+key's variable is `KIBBR__`, its section and its name in capitals, so the file's keys
+are the names the variables already had:
+
+```toml
+[storage]
+base_path = "/var/lib/kibbr/data"   # --data-dir             KIBBR__STORAGE__BASE_PATH
+trie_file = "/var/lib/kibbr/data/trie.json"                # --trie-file
+max_open_segments = 512             # --max-open-segments
+segment_max_bytes = 536870912       # --segment-max-bytes
+max_buffer_bytes = 536870912        # --max-buffer-bytes
+compact_interval_ms = 60000         # --compact-interval-ms  0 never looks
+wal_segment_bytes = 67108864        # --wal-segment-bytes
+wal_queue_bytes = 268435456         # --wal-queue-bytes
+
+[ingestor]
+flush_interval_ms = 500             # --flush-interval-ms
+row_group_timeout_ms = 300000       # --row-group-timeout-ms
+batch_size = 500                    # --batch-size
+
+[api]
+native_addr = "127.0.0.1:7700"      # --host and --port, each over its half
+max_body_bytes = 10485760           # --max-body-bytes
+max_decompressed_bytes = 67108864   # --max-decompressed-bytes
+ingest_concurrency = 8              # --ingest-concurrency   default: one per core
+ingest_wait_ms = 100                # --ingest-wait-ms
+
+[query]
+max_rows = 10000                    # --max-rows
+max_buckets = 10000                 # --max-buckets
+max_groups = 100000                 # --max-groups
+scan_threads = 4                    # --scan-threads         default: half the cores, at most 4
+scan_fan_rows = 32768               # --scan-fan-rows
+
+[schema]
+time_columns = ["@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix",
+                "datetime", "event_time", "created_at"]    # --time-columns
+epoch_window = ["2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]
+```
+
+Those are the defaults, and every key is optional. A key that is not in that list is
+refused, with its line and the keys its section does have - a setting that was read and
+dropped would be one its writer believes is in force:
+
+```
+$ kibbr gen-logs --lines 1 --config bad.toml
+kibbr: --config bad.toml: TOML parse error at line 2, column 1
+  |
+2 | wal_dir = "/x"
+  | ^^^^^^^
+unknown field `wal_dir`, expected one of `base_path`, `trie_file`, `max_open_segments`, `segment_max_bytes`, `max_buffer_bytes`, `compact_interval_ms`, `wal_segment_bytes`, `wal_queue_bytes`
+```
+
+What stays a flag only: `--storage memory`, and what one run of `load` or `compact`
+is asked to do (`--threads`, `--replace-day`, `--day` and the rest). On `serve`,
+`--threads` is `--scan-threads` under a shorter name.
+
 ## Run the tests
 
 ```
@@ -671,7 +732,7 @@ A workspace of four crates, each naming only the ones under it, and `fuzz/` besi
 ```
 Cargo.toml                the workspace, and the `kibbr` crate: the binary and its commands
 src/main.rs               CLI, error reporting
-src/config.rs             the settings: defaults, then the flags and `KIBBR__` variables
+src/config.rs             the settings: a flag, a `KIBBR__` variable, the `--config` file, a default
 src/error.rs              thiserror enums of the commands and the server
 src/gen.rs, src/farm.rs   the generators - `hostile` and the log farm
 src/parse.rs              the `parse` output

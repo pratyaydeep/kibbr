@@ -837,7 +837,7 @@ fn flags(mode: QueryMode, p: usize, w: usize, limit: Option<usize>, after: &str)
         limit,
         after: Some(after.to_string()),
         limits: LIMITS_CONFIG,
-        time_columns: None,
+        schema: Schema::default(),
     }
 }
 

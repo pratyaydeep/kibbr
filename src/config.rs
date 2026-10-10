@@ -9,15 +9,17 @@
 //! `Storage` is where rows go, which only the server has too - the CLI rebuilds its
 //! database from an input file per invocation and has nothing to keep.
 //!
-//! The flush interval is spelled in **milliseconds as a whole number**, where the
-//! configuration file it will eventually be read from spells it `"500ms"`. Deliberate
-//! while that file does not exist: the one duration reader in the crate is TrieQL's, whose
-//! units are `s/m/h/d`, and teaching it `ms` would add `SINCE 500ms` to the grammar as a
-//! side effect of naming a flush interval. The `ms` spelling arrives with the file.
+//! **Where a setting comes from, for every one of them: flag > environment > file >
+//! default.** The file is the one `--config` names, on any command; with no `--config`
+//! there is no file. A key's variable is `KIBBR__`, its section and its name in capitals -
+//! `[storage] base_path` is `KIBBR__STORAGE__BASE_PATH` - so the file's keys are the
+//! names the variables already had, and a duration that was a whole number of
+//! milliseconds under a name ending `_ms` is one in the file too.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use serde::Deserialize;
 use thiserror::Error;
 
 use kibbr_core::infer::EpochWindow;
@@ -84,6 +86,12 @@ pub const DEFAULT_INGEST_WAIT_MS: usize = 100;
 /// parse, the log's flush and the store.
 pub const MAX_INGEST_WAIT_MS: usize = 30_000;
 
+/// Where `serve` listens when nothing says otherwise. Loopback: an address of every
+/// interface publishes an unauthenticated write endpoint, and that is typed, not
+/// defaulted into.
+pub const DEFAULT_HOST: &str = "127.0.0.1";
+pub use crate::serve::DEFAULT_PORT;
+
 /// The cores this machine reports; one where it reports none.
 fn cores() -> usize {
     std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
@@ -92,6 +100,12 @@ fn cores() -> usize {
 /// Half the cores, and no more than four: what one query may choose rows on. Half
 /// leaves the other half to the runtime and the ingest path. Four is as many fast cores
 /// as the machine this was measured on has; more than four was not measured on this scan.
+///
+/// **The four stays, with the file here to change it.** It is the four performance cores
+/// of the machine this is developed and measured on (eight cores, four of them fast); the
+/// cloud run has eight alike and passes `--threads 8` - `serve`'s `--scan-threads` under
+/// its short name - or sets `[query] scan_threads = 8`. A default that followed the core
+/// count there would be a default nothing here has measured.
 ///
 /// **What four costs, in replays on eight cores, four of them fast; `kibbr bench` has
 /// not yet taken it.** A count over 433,000 rows of one day answers in 2.1 to 2.5 ms
@@ -116,6 +130,7 @@ const MAX_BODY_BYTES_ENV: &str = "KIBBR__API__MAX_BODY_BYTES";
 const MAX_DECOMPRESSED_BYTES_ENV: &str = "KIBBR__API__MAX_DECOMPRESSED_BYTES";
 const INGEST_CONCURRENCY_ENV: &str = "KIBBR__API__INGEST_CONCURRENCY";
 const INGEST_WAIT_ENV: &str = "KIBBR__API__INGEST_WAIT_MS";
+const NATIVE_ADDR_ENV: &str = "KIBBR__API__NATIVE_ADDR";
 const BASE_PATH_ENV: &str = "KIBBR__STORAGE__BASE_PATH";
 const TRIE_FILE_ENV: &str = "KIBBR__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "KIBBR__INGESTOR__FLUSH_INTERVAL_MS";
@@ -241,12 +256,207 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+
+    /// `--config` named a file that could not be read. Never skipped: a server started
+    /// with a file it did not read runs under defaults its operator believes they changed.
+    #[error("--config {path}: {source}")]
+    FileRead {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The file is not TOML, or holds a key this build has no setting for, or a value of
+    /// the wrong kind. The parser's own message, which names the line and the keys the
+    /// section has. A key is refused and not skipped for the reason an unreadable
+    /// variable is: its writer believes it is in force.
+    #[error("--config {path}: {detail}")]
+    FileSyntax { path: String, detail: String },
+
+    /// A setting that is not a whole number - an address - and could not be
+    /// read as what it is. `name` is where it was written: the variable, or the file's
+    /// section and key.
+    #[error("{name} `{value}`: {reason}")]
+    BadSetting {
+        name: String,
+        value: String,
+        reason: String,
+    },
 }
 
-/// Which key names may carry a template's time: flag > environment > default. The
-/// variable is comma-separated; blanks are dropped so a trailing comma is not an empty
-/// column name.
-pub fn schema(time_columns: Option<Vec<String>>) -> Schema {
+// ── The file ───────────────────────────────────────────────────────────────────────
+
+/// What `--config` named, as it was read: every key optional, and every key a setting
+/// this build has.
+///
+/// One struct a section and one field a key, each `None` where the file does not say.
+/// The loaders below read a field only after the flag and the variable have both said
+/// nothing, so a file never overrides either and an absent file is this struct's
+/// default.
+///
+/// **A key that is not below is refused** (`deny_unknown_fields`), with the line it is on
+/// and the keys its section has. The design was written before most of these were
+/// built and names some that never were - `wal_dir`, `request_timeout`, `[cold_tier]`,
+/// the Elasticsearch address, the merge threshold, the promoted keys: a file that sets
+/// one is told so, where a key read and dropped would be a setting its writer believes
+/// is in force.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct File {
+    #[serde(default)]
+    pub storage: StorageKeys,
+    #[serde(default)]
+    pub ingestor: IngestorKeys,
+    #[serde(default)]
+    pub api: ApiKeys,
+    #[serde(default)]
+    pub query: QueryKeys,
+    #[serde(default)]
+    pub schema: SchemaKeys,
+}
+
+/// `[storage]`: where rows go and what the files and the log are held to.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageKeys {
+    /// The data directory: `--data-dir`.
+    pub base_path: Option<PathBuf>,
+    pub trie_file: Option<PathBuf>,
+    pub max_open_segments: Option<usize>,
+    pub segment_max_bytes: Option<usize>,
+    pub max_buffer_bytes: Option<usize>,
+    pub compact_interval_ms: Option<usize>,
+    pub wal_segment_bytes: Option<usize>,
+    pub wal_queue_bytes: Option<usize>,
+}
+
+/// `[ingestor]`: the flush tick, the row group's wait, and one flush of the log.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IngestorKeys {
+    pub flush_interval_ms: Option<usize>,
+    pub row_group_timeout_ms: Option<usize>,
+    pub batch_size: Option<usize>,
+}
+
+/// `[api]`: the listener and what a request is held to.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiKeys {
+    /// `host:port`. `--host` and `--port` each override their half.
+    pub native_addr: Option<String>,
+    pub max_body_bytes: Option<usize>,
+    pub max_decompressed_bytes: Option<usize>,
+    pub ingest_concurrency: Option<usize>,
+    pub ingest_wait_ms: Option<usize>,
+}
+
+/// `[query]`: what a query may not exceed, and the threads it may use.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryKeys {
+    pub max_rows: Option<usize>,
+    pub max_buckets: Option<usize>,
+    pub max_groups: Option<usize>,
+    pub scan_threads: Option<usize>,
+    pub scan_fan_rows: Option<usize>,
+}
+
+/// `[schema]`: what the type ladder and the trie are told about the data.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaKeys {
+    pub time_columns: Option<Vec<String>>,
+    /// Two RFC 3339 instants, start before end.
+    pub epoch_window: Option<Vec<String>>,
+}
+
+impl File {
+    /// The file `--config` named, or - with none named - no file: every key absent.
+    ///
+    /// There is no path this looks at unasked. A `kibbr.toml` picked up from whatever
+    /// directory a command was run in would be a setting nobody typed.
+    pub fn read(path: Option<&Path>) -> Result<Self, ConfigError> {
+        let Some(path) = path else {
+            return Ok(Self::default());
+        };
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::FileRead {
+            path: path.display().to_string(),
+            source,
+        })?;
+        Self::parse(&text).map_err(|detail| ConfigError::FileSyntax {
+            path: path.display().to_string(),
+            detail,
+        })
+    }
+
+    /// The file's text, read. The error is the parser's own message.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        toml::from_str(text).map_err(|e| e.to_string().trim_end().to_string())
+    }
+}
+
+/// A setting that is text: flag > environment > file, each with the name it was written
+/// under, for the error that quotes it.
+fn text_setting(
+    flag: Option<String>,
+    var: &'static str,
+    file: Option<&String>,
+    key: &'static str,
+) -> Option<(String, String)> {
+    if let Some(value) = flag {
+        return Some((key.to_string(), value));
+    }
+    if let Ok(value) = std::env::var(var) {
+        return Some((var.to_string(), value));
+    }
+    file.map(|value| (key.to_string(), value.clone()))
+}
+
+/// Where `serve` listens: `--host` and `--port`, each over its half of the address in
+/// `KIBBR__API__NATIVE_ADDR`, over `[api] native_addr`, over loopback and 7700.
+pub fn listen(
+    file: &File,
+    host: Option<String>,
+    port: Option<u16>,
+) -> Result<(String, u16), ConfigError> {
+    let named = text_setting(
+        None,
+        NATIVE_ADDR_ENV,
+        file.api.native_addr.as_ref(),
+        "[api] native_addr",
+    );
+    let (addr_host, addr_port) = match named {
+        None => (None, None),
+        Some((name, value)) => {
+            let bad = |reason: &str| ConfigError::BadSetting {
+                name: name.clone(),
+                value: value.clone(),
+                reason: reason.to_string(),
+            };
+            let (host, port) = value
+                .rsplit_once(':')
+                .ok_or_else(|| bad("expected host:port, as in `0.0.0.0:7700`"))?;
+            let port: u16 = port
+                .parse()
+                .map_err(|_| bad("the port is not a number from 0 to 65535"))?;
+            if host.is_empty() {
+                return Err(bad("the host is empty"));
+            }
+            (Some(host.to_string()), Some(port))
+        }
+    };
+    Ok((
+        host.or(addr_host)
+            .unwrap_or_else(|| DEFAULT_HOST.to_string()),
+        port.or(addr_port).unwrap_or(DEFAULT_PORT),
+    ))
+}
+
+/// Which key names may carry a template's time: flag > environment > file > default.
+/// The variable is comma-separated; blanks are dropped so a trailing comma is not an
+/// empty column name.
+pub fn schema(file: &File, time_columns: Option<Vec<String>>) -> Schema {
     let from_env = || {
         std::env::var(TIME_COLUMNS_ENV).ok().map(|text| {
             text.split(',')
@@ -256,39 +466,51 @@ pub fn schema(time_columns: Option<Vec<String>>) -> Schema {
                 .collect::<Vec<String>>()
         })
     };
+    let from_file = || file.schema.time_columns.clone();
     let mut schema = Schema::default();
-    if let Some(list) = time_columns.or_else(from_env) {
+    if let Some(list) = time_columns.or_else(from_env).or_else(from_file) {
         schema.time_columns = list;
     }
     schema
 }
 
 /// The window ten or thirteen digits must name a moment inside to be read as a timestamp:
-/// environment > default. The variable is two RFC 3339 instants, comma-separated -
-/// neither contains a comma - and the window runs from the first up to but not including
-/// the second.
+/// environment > file > default. The variable is two RFC 3339 instants, comma-separated -
+/// neither contains a comma - and the file's key is a list of the two; the window runs
+/// from the first up to but not including the second.
 ///
 /// Not a field of `Schema`, because the ladder cannot be handed one: it is a free function
 /// the flattener, the store and the engine all call. `main` installs this once for the
 /// process instead, before any command types a value.
-pub fn epoch_window() -> Result<EpochWindow, ConfigError> {
-    let Some(raw) = std::env::var_os(EPOCH_WINDOW_ENV) else {
-        return Ok(EpochWindow::default());
-    };
-    // Unset is absence; anything else is a window an operator believes is in force, so a
-    // value that is not even UTF-8 is an error rather than a silent fall back to the
-    // default.
-    let text = raw.to_string_lossy().into_owned();
+pub fn epoch_window(file: &File) -> Result<EpochWindow, ConfigError> {
+    let (var, text, ends): (&'static str, String, Vec<String>) =
+        match std::env::var_os(EPOCH_WINDOW_ENV) {
+            // Unset is absence; anything else is a window an operator believes is in
+            // force, so a value that is not even UTF-8 is an error rather than a silent
+            // fall back to the file or the default.
+            Some(raw) => {
+                let text = raw.to_string_lossy().into_owned();
+                if raw.to_str().is_none() {
+                    return Err(ConfigError::BadEpochWindow {
+                        var: EPOCH_WINDOW_ENV,
+                        value: text,
+                        reason: "the value is not UTF-8".into(),
+                    });
+                }
+                let ends = text.split(',').map(|s| s.trim().to_string()).collect();
+                (EPOCH_WINDOW_ENV, text, ends)
+            }
+            None => match &file.schema.epoch_window {
+                Some(ends) => ("[schema] epoch_window", ends.join(","), ends.clone()),
+                None => return Ok(EpochWindow::default()),
+            },
+        };
     let bad = |reason: String| ConfigError::BadEpochWindow {
-        var: EPOCH_WINDOW_ENV,
+        var,
         value: text.clone(),
         reason,
     };
-    if raw.to_str().is_none() {
-        return Err(bad("the value is not UTF-8".into()));
-    }
-    let ends: Vec<&str> = text.split(',').map(str::trim).collect();
-    let [start, end] = ends[..] else {
+    let [start, end] = &ends[..] else {
         return Err(bad(format!("{} comma-separated values, not 2", ends.len())));
     };
     let instant = |s: &str| {
@@ -366,13 +588,14 @@ impl Default for Storage {
 }
 
 impl Storage {
-    /// The same three rules as the other two, over the storage settings.
+    /// The same four rules as the other two, over the storage settings.
     ///
     /// `durable` is the `--storage` choice rather than a path being present, so that
     /// `--storage memory --data-dir /x` is a clear instruction and not a contradiction
     /// resolved by whichever flag the code happened to read first.
     #[allow(clippy::too_many_arguments)]
     pub fn load(
+        file: &File,
         durable: bool,
         data_dir: Option<PathBuf>,
         trie_file: Option<PathBuf>,
@@ -382,7 +605,12 @@ impl Storage {
         segment_max_bytes: Option<usize>,
         max_buffer_bytes: Option<usize>,
     ) -> Result<Self, ConfigError> {
-        let flush_ms = resolve(flush_ms, FLUSH_INTERVAL_ENV, DEFAULT_FLUSH_INTERVAL_MS)?;
+        let flush_ms = resolve(
+            flush_ms,
+            FLUSH_INTERVAL_ENV,
+            file.ingestor.flush_interval_ms,
+            DEFAULT_FLUSH_INTERVAL_MS,
+        )?;
         if flush_ms == 0 {
             return Err(ConfigError::NoFlushInterval);
         }
@@ -393,6 +621,7 @@ impl Storage {
         let row_group_ms = resolve(
             row_group_ms,
             ROW_GROUP_TIMEOUT_ENV,
+            file.ingestor.row_group_timeout_ms,
             DEFAULT_ROW_GROUP_TIMEOUT_MS,
         )?
         .max(flush_ms);
@@ -401,24 +630,32 @@ impl Storage {
         let max_open_segments = resolve(
             max_open_segments,
             MAX_OPEN_SEGMENTS_ENV,
+            file.storage.max_open_segments,
             kibbr_storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
         )?;
         if max_open_segments == 0 {
             return Err(ConfigError::NoOpenSegments);
         }
-        let bytes = |flag, var, default: u64, what| match resolve(flag, var, default as usize)? {
+        let bytes = |flag, var, in_file, default: u64, what| match resolve(
+            flag,
+            var,
+            in_file,
+            default as usize,
+        )? {
             0 => Err(ConfigError::NoBytes { what }),
             n => Ok(n as u64),
         };
         let segment_max_bytes = bytes(
             segment_max_bytes,
             SEGMENT_MAX_BYTES_ENV,
+            file.storage.segment_max_bytes,
             kibbr_storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
             "segment max bytes",
         )?;
         let max_buffer_bytes = bytes(
             max_buffer_bytes,
             MAX_BUFFER_BYTES_ENV,
+            file.storage.max_buffer_bytes,
             kibbr_storage::store::DEFAULT_MAX_BUFFER_BYTES,
             "max buffer bytes",
         )?;
@@ -458,7 +695,7 @@ impl Storage {
             });
         }
 
-        let base = Self::base_named(data_dir);
+        let base = Self::base_named(file, data_dir);
         // Created and canonicalised now, before a line is accepted: an unwritable data
         // directory should stop the process at startup, where an operator is watching,
         // rather than at the first flush tick half a minute later. Absolute afterwards, so
@@ -469,8 +706,8 @@ impl Storage {
         })?;
         let base = std::fs::canonicalize(&base).unwrap_or(base);
 
-        let trie_file =
-            resolve_path(trie_file, TRIE_FILE_ENV).unwrap_or_else(|| base.join(TRIE_FILE_NAME));
+        let trie_file = resolve_path(trie_file, TRIE_FILE_ENV, file.storage.trie_file.as_ref())
+            .unwrap_or_else(|| base.join(TRIE_FILE_NAME));
 
         Ok(Self {
             base_path: Some(base),
@@ -489,12 +726,13 @@ impl Storage {
         })
     }
 
-    /// The data directory a command was pointed at - flag > environment > default - as it
+    /// The data directory a command was pointed at - flag > environment > file > default - as it
     /// was named, and **without creating it**. `load` creates what this names, which is
     /// right for a command that fills a directory; one that only works on a directory
     /// already there asks this first, so a mistyped path is refused and not made.
-    pub fn base_named(data_dir: Option<PathBuf>) -> PathBuf {
-        resolve_path(data_dir, BASE_PATH_ENV).unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR))
+    pub fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf {
+        resolve_path(data_dir, BASE_PATH_ENV, file.storage.base_path.as_ref())
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR))
     }
 
     /// How often `serve` looks for a day that is due: `--compact-interval-ms` >
@@ -502,8 +740,17 @@ impl Storage {
     /// only `serve` looks: a ninth positional `None` at every other caller would say
     /// nothing, and the variable is read here so that the flag, when given, is never
     /// refused for a variable it overrides.
-    pub fn with_compact_interval(mut self, flag_ms: Option<usize>) -> Result<Self, ConfigError> {
-        let ms = resolve(flag_ms, COMPACT_INTERVAL_ENV, DEFAULT_COMPACT_INTERVAL_MS)?;
+    pub fn with_compact_interval(
+        mut self,
+        file: &File,
+        flag_ms: Option<usize>,
+    ) -> Result<Self, ConfigError> {
+        let ms = resolve(
+            flag_ms,
+            COMPACT_INTERVAL_ENV,
+            file.storage.compact_interval_ms,
+            DEFAULT_COMPACT_INTERVAL_MS,
+        )?;
         self.compact_interval = Duration::from_millis(ms as u64);
         Ok(self)
     }
@@ -514,6 +761,7 @@ impl Storage {
     /// `serve` writes one.
     pub fn with_wal(
         mut self,
+        file: &File,
         segment_bytes: Option<usize>,
         batch_lines: Option<usize>,
         queue_bytes: Option<usize>,
@@ -521,6 +769,7 @@ impl Storage {
         self.wal_segment_bytes = match resolve(
             segment_bytes,
             WAL_SEGMENT_BYTES_ENV,
+            file.storage.wal_segment_bytes,
             kibbr_storage::wal::DEFAULT_SEGMENT_BYTES as usize,
         )? {
             0 => {
@@ -533,6 +782,7 @@ impl Storage {
         self.wal_batch_lines = match resolve(
             batch_lines,
             BATCH_SIZE_ENV,
+            file.ingestor.batch_size,
             kibbr_storage::wal::DEFAULT_BATCH_LINES,
         )? {
             0 => return Err(ConfigError::NoBatch),
@@ -541,6 +791,7 @@ impl Storage {
         self.wal_queue_bytes = match resolve(
             queue_bytes,
             WAL_QUEUE_BYTES_ENV,
+            file.storage.wal_queue_bytes,
             kibbr_storage::wal::DEFAULT_QUEUE_BYTES,
         )? {
             0 => {
@@ -560,11 +811,17 @@ impl Storage {
     /// cores are refused; 0 and 1 are both "the query's own thread and no other".
     pub fn with_scan(
         mut self,
+        file: &File,
         threads: Option<usize>,
         fan_rows: Option<usize>,
     ) -> Result<Self, ConfigError> {
         let cores = cores();
-        self.scan_threads = match resolve(threads, SCAN_THREADS_ENV, default_scan_threads())? {
+        self.scan_threads = match resolve(
+            threads,
+            SCAN_THREADS_ENV,
+            file.query.scan_threads,
+            default_scan_threads(),
+        )? {
             asked if asked > cores => {
                 return Err(ConfigError::ScanThreadsAboveCores { asked, cores })
             }
@@ -573,6 +830,7 @@ impl Storage {
         self.scan_fan_rows = resolve(
             fan_rows,
             SCAN_FAN_ROWS_ENV,
+            file.query.scan_fan_rows,
             kibbr_storage::store::DEFAULT_FAN_ROWS as usize,
         )? as u64;
         Ok(self)
@@ -622,9 +880,14 @@ impl Storage {
     }
 }
 
-/// Flag > environment > absent. The same rule as `resolve`, over a path.
-fn resolve_path(flag: Option<PathBuf>, var: &'static str) -> Option<PathBuf> {
+/// Flag > environment > file > absent. The same rule as `resolve`, over a path.
+fn resolve_path(
+    flag: Option<PathBuf>,
+    var: &'static str,
+    file: Option<&PathBuf>,
+) -> Option<PathBuf> {
     flag.or_else(|| std::env::var_os(var).map(PathBuf::from))
+        .or_else(|| file.cloned())
 }
 
 /// What a *request* may not exceed. Server-only: a file has no wire, no encoding and no
@@ -654,22 +917,39 @@ impl Default for ApiLimits {
     }
 }
 
-/// The query limits: flag > environment > default, one rule for each.
+/// The query limits: flag > environment > file > default, one rule for each.
 pub fn limits(
+    file: &File,
     max_rows: Option<usize>,
     max_buckets: Option<usize>,
     max_groups: Option<usize>,
 ) -> Result<Limits, ConfigError> {
     Ok(Limits {
-        max_rows: resolve(max_rows, MAX_ROWS_ENV, DEFAULT_MAX_ROWS)?,
-        max_buckets: resolve(max_buckets, MAX_BUCKETS_ENV, DEFAULT_MAX_BUCKETS)?,
-        max_groups: resolve(max_groups, MAX_GROUPS_ENV, DEFAULT_MAX_GROUPS)?,
+        max_rows: resolve(
+            max_rows,
+            MAX_ROWS_ENV,
+            file.query.max_rows,
+            DEFAULT_MAX_ROWS,
+        )?,
+        max_buckets: resolve(
+            max_buckets,
+            MAX_BUCKETS_ENV,
+            file.query.max_buckets,
+            DEFAULT_MAX_BUCKETS,
+        )?,
+        max_groups: resolve(
+            max_groups,
+            MAX_GROUPS_ENV,
+            file.query.max_groups,
+            DEFAULT_MAX_GROUPS,
+        )?,
     })
 }
 
 impl ApiLimits {
-    /// The same three rules, over the request limits.
+    /// The same four rules, over the request limits.
     pub fn load(
+        file: &File,
         max_body_bytes: Option<usize>,
         max_decompressed_bytes: Option<usize>,
         ingest_concurrency: Option<usize>,
@@ -677,6 +957,7 @@ impl ApiLimits {
         let max_decompressed_bytes = resolve(
             max_decompressed_bytes,
             MAX_DECOMPRESSED_BYTES_ENV,
+            file.api.max_decompressed_bytes,
             DEFAULT_MAX_DECOMPRESSED_BYTES,
         )?;
         if max_decompressed_bytes > kibbr_core::lines::MAX_LINE_BYTES {
@@ -689,6 +970,7 @@ impl ApiLimits {
         let ingest_concurrency = resolve(
             ingest_concurrency,
             INGEST_CONCURRENCY_ENV,
+            file.api.ingest_concurrency,
             default_ingest_concurrency(),
         )?;
         if ingest_concurrency == 0 {
@@ -696,7 +978,12 @@ impl ApiLimits {
         }
 
         Ok(Self {
-            max_body_bytes: resolve(max_body_bytes, MAX_BODY_BYTES_ENV, DEFAULT_MAX_BODY_BYTES)?,
+            max_body_bytes: resolve(
+                max_body_bytes,
+                MAX_BODY_BYTES_ENV,
+                file.api.max_body_bytes,
+                DEFAULT_MAX_BODY_BYTES,
+            )?,
             max_decompressed_bytes,
             ingest_concurrency,
             // The default, and the variable not read: see `with_ingest_wait`.
@@ -708,8 +995,17 @@ impl ApiLimits {
     /// environment > default. Apart from `load` for the reason `Storage::with_wal` is:
     /// only `serve` has the flag. Zero is taken - wait for nothing, shed at once - and
     /// more than `MAX_INGEST_WAIT_MS` is refused.
-    pub fn with_ingest_wait(mut self, flag_ms: Option<usize>) -> Result<Self, ConfigError> {
-        let ms = resolve(flag_ms, INGEST_WAIT_ENV, DEFAULT_INGEST_WAIT_MS)?;
+    pub fn with_ingest_wait(
+        mut self,
+        file: &File,
+        flag_ms: Option<usize>,
+    ) -> Result<Self, ConfigError> {
+        let ms = resolve(
+            flag_ms,
+            INGEST_WAIT_ENV,
+            file.api.ingest_wait_ms,
+            DEFAULT_INGEST_WAIT_MS,
+        )?;
         if ms > MAX_INGEST_WAIT_MS {
             return Err(ConfigError::IngestWaitTooLong {
                 asked: ms,
@@ -721,10 +1017,16 @@ impl ApiLimits {
     }
 }
 
-fn resolve(flag: Option<usize>, var: &'static str, default: usize) -> Result<usize, ConfigError> {
+/// Flag > environment > file > default: the one rule, over a whole number.
+fn resolve(
+    flag: Option<usize>,
+    var: &'static str,
+    file: Option<usize>,
+    default: usize,
+) -> Result<usize, ConfigError> {
     match flag {
         Some(n) => Ok(n),
-        None => Ok(env_usize(var)?.unwrap_or(default)),
+        None => Ok(env_usize(var)?.or(file).unwrap_or(default)),
     }
 }
 
@@ -745,16 +1047,28 @@ mod tests {
     use super::*;
 
     /// Variables as a test found them, cleared for it and put back when it ends.
-    struct Cleared(Vec<(&'static str, Option<String>)>);
+    ///
+    /// **And one such test at a time.** The variables are the process's, and a test that
+    /// reads every key of a file with none set cannot run beside one that sets a
+    /// variable to see it win; each holds this for as long as it has them cleared.
+    struct Cleared(
+        Vec<(&'static str, Option<String>)>,
+        #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
+    );
+
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     impl Cleared {
         fn of(vars: &[&'static str]) -> Self {
+            // Through a poisoning: a test that failed holding it has put its variables
+            // back in `drop`, and the next one clears its own.
+            let turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
             let kept = vars.iter().map(|var| (*var, std::env::var(var).ok()));
             let kept: Vec<_> = kept.collect();
             for (var, _) in &kept {
                 std::env::remove_var(var);
             }
-            Self(kept)
+            Self(kept, turn)
         }
     }
 
@@ -780,7 +1094,7 @@ mod tests {
         let cores = cores();
         let scan = |threads: Option<usize>, fan_rows: Option<usize>| {
             Storage::default()
-                .with_scan(threads, fan_rows)
+                .with_scan(&File::default(), threads, fan_rows)
                 .map(|storage| (storage.scan_threads, storage.scan_fan_rows))
         };
 
@@ -860,7 +1174,7 @@ mod tests {
 
         // What a server opens its disk store with is what was resolved.
         let options = Storage::default()
-            .with_scan(Some(1), Some(12))
+            .with_scan(&File::default(), Some(1), Some(12))
             .expect("taken")
             .disk_options();
         assert_eq!((options.scan_threads, options.fan_rows), (1, 12));
@@ -889,14 +1203,14 @@ mod tests {
         ]);
         let wait = |flag: Option<usize>| {
             ApiLimits::default()
-                .with_ingest_wait(flag)
+                .with_ingest_wait(&File::default(), flag)
                 .map(|api| api.ingest_wait)
         };
         let ms = |ms: usize| Duration::from_millis(ms as u64);
 
         // Nobody but `with_ingest_wait` reads the variable: `load` gives the default.
         std::env::set_var(INGEST_WAIT_ENV, "7");
-        let loaded = ApiLimits::load(None, None, None).expect("the defaults");
+        let loaded = ApiLimits::load(&File::default(), None, None, None).expect("the defaults");
         assert_eq!(loaded.ingest_wait, ms(DEFAULT_INGEST_WAIT_MS));
         assert_eq!(ApiLimits::default().ingest_wait, ms(100));
         std::env::remove_var(INGEST_WAIT_ENV);
@@ -940,7 +1254,7 @@ mod tests {
         // The log's bound.
         let bound = |flag: Option<usize>| {
             Storage::default()
-                .with_wal(None, None, flag)
+                .with_wal(&File::default(), None, None, flag)
                 .map(|storage| (storage.wal_queue_bytes, storage.wal_options().queue_bytes))
         };
         let default = kibbr_storage::wal::DEFAULT_QUEUE_BYTES;
@@ -964,5 +1278,245 @@ mod tests {
         std::env::set_var(WAL_QUEUE_BYTES_ENV, "0");
         no_bytes(bound(None));
         assert_eq!(bound(Some(2)).expect("the flag"), (2, 2));
+    }
+
+    /// Every variable a key of the file has, so a test of the file is not answered by
+    /// whatever the machine it runs on has set.
+    const FILE_VARS: &[&str] = &[
+        BASE_PATH_ENV,
+        TRIE_FILE_ENV,
+        MAX_OPEN_SEGMENTS_ENV,
+        SEGMENT_MAX_BYTES_ENV,
+        MAX_BUFFER_BYTES_ENV,
+        COMPACT_INTERVAL_ENV,
+        WAL_SEGMENT_BYTES_ENV,
+        WAL_QUEUE_BYTES_ENV,
+        FLUSH_INTERVAL_ENV,
+        ROW_GROUP_TIMEOUT_ENV,
+        BATCH_SIZE_ENV,
+        NATIVE_ADDR_ENV,
+        MAX_BODY_BYTES_ENV,
+        MAX_DECOMPRESSED_BYTES_ENV,
+        INGEST_CONCURRENCY_ENV,
+        INGEST_WAIT_ENV,
+        SCAN_THREADS_ENV,
+        SCAN_FAN_ROWS_ENV,
+        TIME_COLUMNS_ENV,
+        EPOCH_WINDOW_ENV,
+    ];
+
+    /// **A setting is the flag, or else the variable, or else the file, or else the
+    /// default** - the file under both of the others, and over nothing but the default.
+    ///
+    /// On the query limits, whose three variables no other test of this crate sets.
+    #[test]
+    fn a_setting_is_the_flag_then_the_variable_then_the_file_then_the_default() {
+        let _cleared = Cleared::of(&[MAX_ROWS_ENV, MAX_BUCKETS_ENV, MAX_GROUPS_ENV]);
+        let file = File::parse("[query]\nmax_rows = 11\nmax_buckets = 12\n").expect("a file");
+
+        // The file over the default, key by key: `max_groups` is not in it.
+        let read = limits(&file, None, None, None).expect("the file");
+        assert_eq!(
+            (read.max_rows, read.max_buckets, read.max_groups),
+            (11, 12, DEFAULT_MAX_GROUPS)
+        );
+
+        // The variable over the file.
+        std::env::set_var(MAX_ROWS_ENV, "21");
+        let read = limits(&file, None, None, None).expect("the variable");
+        assert_eq!((read.max_rows, read.max_buckets), (21, 12));
+
+        // The flag over both.
+        let read = limits(&file, Some(31), Some(32), None).expect("the flag");
+        assert_eq!((read.max_rows, read.max_buckets), (31, 32));
+
+        // And a variable that cannot be read is an error with a file there to fall back
+        // on, as it is with none: its writer believes it is in force.
+        std::env::set_var(MAX_ROWS_ENV, "many");
+        assert!(matches!(
+            limits(&file, None, None, None),
+            Err(ConfigError::BadEnv { var, .. }) if var == MAX_ROWS_ENV
+        ));
+
+        // No file is every key absent.
+        std::env::remove_var(MAX_ROWS_ENV);
+        let none = File::read(None).expect("no file");
+        assert_eq!(
+            limits(&none, None, None, None).expect("defaults").max_rows,
+            DEFAULT_MAX_ROWS
+        );
+    }
+
+    /// **Every key of the file reaches the setting it names.** One file holding all of
+    /// them, each at a value that is not its default, read with no flag and no variable.
+    #[test]
+    fn every_key_of_the_file_reaches_its_setting() {
+        let _cleared = Cleared::of(FILE_VARS);
+        let dir = std::env::temp_dir().join(format!("kibbr-config-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = format!(
+            r#"
+[storage]
+base_path = "{base}"
+trie_file = "{base}/elsewhere.json"
+max_open_segments = 7
+segment_max_bytes = 1048576
+max_buffer_bytes = 2097152
+compact_interval_ms = 0
+wal_segment_bytes = 131072
+wal_queue_bytes = 4194304
+
+[ingestor]
+flush_interval_ms = 20
+row_group_timeout_ms = 60
+batch_size = 250
+
+[api]
+native_addr = "0.0.0.0:7811"
+max_body_bytes = 1024
+max_decompressed_bytes = 2048
+ingest_concurrency = 3
+ingest_wait_ms = 250
+
+[query]
+scan_threads = 1
+scan_fan_rows = 99
+
+[schema]
+time_columns = ["when", "ts"]
+epoch_window = ["2001-01-01T00:00:00Z", "2002-01-01T00:00:00Z"]
+
+"#,
+            base = dir.display()
+        );
+        let file = File::parse(&text).expect("every key is a setting");
+
+        let storage = Storage::load(&file, true, None, None, None, None, None, None, None)
+            .and_then(|storage| storage.with_compact_interval(&file, None))
+            .and_then(|storage| storage.with_wal(&file, None, None, None))
+            .and_then(|storage| storage.with_scan(&file, None, None))
+            .expect("the storage settings");
+        let base = std::fs::canonicalize(&dir).expect("the directory was made");
+        assert_eq!(storage.base_path.as_deref(), Some(base.as_path()));
+        assert_eq!(storage.trie_file, Some(dir.join("elsewhere.json")));
+        assert_eq!(storage.max_open_segments, 7);
+        assert_eq!(storage.segment_max_bytes, 1_048_576);
+        assert_eq!(storage.max_buffer_bytes, 2_097_152);
+        assert_eq!(storage.compact_interval, Duration::ZERO);
+        assert_eq!(storage.wal_segment_bytes, 131_072);
+        assert_eq!(storage.wal_queue_bytes, 4_194_304);
+        assert_eq!(storage.flush_interval, Duration::from_millis(20));
+        assert_eq!(storage.row_group_timeout, Duration::from_millis(60));
+        assert_eq!(storage.wal_batch_lines, 250);
+        assert_eq!((storage.scan_threads, storage.scan_fan_rows), (1, 99));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let api = ApiLimits::load(&file, None, None, None)
+            .and_then(|api| api.with_ingest_wait(&file, None))
+            .expect("the request settings");
+        assert_eq!(api.max_body_bytes, 1024);
+        assert_eq!(api.max_decompressed_bytes, 2048);
+        assert_eq!(api.ingest_concurrency, 3);
+        assert_eq!(api.ingest_wait, Duration::from_millis(250));
+
+        assert_eq!(
+            listen(&file, None, None).expect("an address"),
+            ("0.0.0.0".to_string(), 7811)
+        );
+        // Each flag overrides its half of the address and leaves the other.
+        assert_eq!(
+            listen(&file, Some("127.0.0.1".to_string()), None).expect("a host"),
+            ("127.0.0.1".to_string(), 7811)
+        );
+        assert_eq!(
+            listen(&file, None, Some(0)).expect("a port"),
+            ("0.0.0.0".to_string(), 0)
+        );
+
+        assert_eq!(schema(&file, None).time_columns, ["when", "ts"]);
+        let window = epoch_window(&file).expect("a window");
+        assert!(format!("{window:?}") != format!("{:?}", EpochWindow::default()));
+    }
+
+    /// **A key this build has no setting for is refused, by name and by line** - a key
+    /// the design names and nothing implements among them - and so is a section, and a
+    /// value of the wrong kind. Read and dropped, each would be a setting its writer
+    /// believes is in force.
+    #[test]
+    fn a_key_with_no_setting_behind_it_is_refused() {
+        for (text, says) in [
+            ("[storage]\nwal_dir = \"/var/lib/kibbr/wal\"\n", "wal_dir"),
+            ("[api]\nrequest_timeout = \"30s\"\n", "request_timeout"),
+            (
+                "[api]\nes_compat_addr = \"0.0.0.0:9200\"\n",
+                "es_compat_addr",
+            ),
+            (
+                "[schema]\nmerge_threshold_pct = 80\n",
+                "merge_threshold_pct",
+            ),
+            ("[schema]\npromoted_keys = [\"event\"]\n", "promoted_keys"),
+            ("[cold_tier]\nenabled = false\n", "cold_tier"),
+            ("[ingestor]\nflush_interval = \"500ms\"\n", "flush_interval"),
+            ("[query]\nmax_rows = \"many\"\n", "max_rows"),
+            ("[query]\nmax_rows = -1\n", "max_rows"),
+            ("max_rows = 5\n", "max_rows"),
+        ] {
+            let Err(detail) = File::parse(text) else {
+                panic!("read: {text}");
+            };
+            assert!(detail.contains(says), "{text}: {detail}");
+            assert!(detail.contains("line "), "{text}: {detail}");
+        }
+        // What is not TOML at all is refused by the same road.
+        assert!(File::parse("[storage\n").is_err());
+        // And a file of nothing, or of comments, is every key absent.
+        assert!(File::parse("# nothing yet\n").is_ok());
+
+        // A file that is named and is not there is an error, never "no file".
+        let gone = std::env::temp_dir().join(format!("kibbr-no-such-{}.toml", std::process::id()));
+        assert!(matches!(
+            File::read(Some(&gone)),
+            Err(ConfigError::FileRead { .. })
+        ));
+    }
+
+    /// **An address that cannot be read is an error that names where it was written and
+    /// what it may be.**
+    #[test]
+    fn an_address_that_cannot_be_read_says_where_it_was_written() {
+        let _cleared = Cleared::of(&[NATIVE_ADDR_ENV]);
+        let none = File::default();
+        assert_eq!(
+            listen(&none, None, None).expect("defaults"),
+            ("127.0.0.1".to_string(), DEFAULT_PORT)
+        );
+
+        for text in [
+            "localhost",
+            "localhost:",
+            "localhost:http",
+            ":7700",
+            "localhost:70000",
+        ] {
+            let file = File {
+                api: ApiKeys {
+                    native_addr: Some(text.to_string()),
+                    ..ApiKeys::default()
+                },
+                ..File::default()
+            };
+            let Err(e) = listen(&file, None, None) else {
+                panic!("{text} was read");
+            };
+            assert!(e.to_string().starts_with("[api] native_addr `"), "{e}");
+        }
+        // An address with colons of its own keeps them: the port is after the last.
+        std::env::set_var(NATIVE_ADDR_ENV, "[::1]:7800");
+        assert_eq!(
+            listen(&none, None, None).expect("an IPv6 address"),
+            ("[::1]".to_string(), 7800)
+        );
+        std::env::remove_var(NATIVE_ADDR_ENV);
     }
 }

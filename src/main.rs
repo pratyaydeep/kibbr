@@ -22,6 +22,13 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[derive(Parser)]
 #[command(name = "kibbr", version, about = "kibbr - log store", long_about = None)]
 struct Cli {
+    /// A TOML file of settings, read by every command: `[storage]`, `[ingestor]`,
+    /// `[api]`, `[query]` and `[schema]`, each key named as its variable is -
+    /// `[storage] base_path` is `KIBBR__STORAGE__BASE_PATH`. A flag wins over its
+    /// variable and the variable over the file; a key this build has no setting for is
+    /// refused. With no --config no file is read.
+    #[arg(long, global = true, value_name = "FILE")]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -86,11 +93,14 @@ enum Command {
     Serve {
         /// Loopback by default. A container needs `--host 0.0.0.0`, and that is a
         /// decision to publish an unauthenticated write endpoint - so it is typed, not
-        /// defaulted into.
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        #[arg(long, default_value_t = serve::DEFAULT_PORT)]
-        port: u16,
+        /// defaulted into. Overrides the host of `KIBBR__API__NATIVE_ADDR` and of
+        /// `[api] native_addr`. [default: 127.0.0.1]
+        #[arg(long)]
+        host: Option<String>,
+        /// Overrides the port of `KIBBR__API__NATIVE_ADDR` and of `[api] native_addr`.
+        /// [default: 7700]
+        #[arg(long)]
+        port: Option<u16>,
         /// Rows a query that names no `LIMIT` is cut at.
         /// `0` disables it. Overrides `KIBBR__QUERY__MAX_ROWS`.
         #[arg(long, value_name = "ROWS")]
@@ -201,7 +211,7 @@ enum Command {
         /// rows to share, and are left alone while any `/ingest` body is between the door
         /// and its answer, the wait for the log's flush included.
         /// Overrides `KIBBR__QUERY__SCAN_THREADS`.
-        #[arg(long, value_name = "N")]
+        #[arg(long, visible_alias = "threads", value_name = "N")]
         scan_threads: Option<usize>,
         /// A run of a day's row groups holding fewer rows than this is never shared
         /// between those threads: waking them costs more than they would save.
@@ -559,9 +569,14 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
+    // The file first, and for every command alike: one that cannot be read, or holds a
+    // key this build has no setting for, stops the process before anything is done under
+    // settings its writer did not ask for.
+    let file = config::File::read(cli.config.as_deref())?;
+    let file = &file;
     // Before any command types a value, and for every command alike: a bad window stops
     // the process here rather than after it has typed lines under the default.
-    infer::set_epoch_window(config::epoch_window()?);
+    infer::set_epoch_window(config::epoch_window(file)?);
 
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
@@ -614,27 +629,36 @@ fn run(cli: Cli) -> Result<(), CliError> {
             scan_threads,
             scan_fan_rows,
             time_columns,
-        } => serve::run(
-            &host,
-            port,
-            config::limits(max_rows, max_buckets, max_groups)?,
-            config::ApiLimits::load(max_body_bytes, max_decompressed_bytes, ingest_concurrency)?
-                .with_ingest_wait(ingest_wait_ms)?,
-            config::Storage::load(
-                storage == StorageKind::Disk,
-                data_dir,
-                trie_file,
-                flush_interval_ms,
-                row_group_timeout_ms,
-                max_open_segments,
-                segment_max_bytes,
-                max_buffer_bytes,
-            )?
-            .with_compact_interval(compact_interval_ms)?
-            .with_wal(wal_segment_bytes, batch_size, wal_queue_bytes)?
-            .with_scan(scan_threads, scan_fan_rows)?,
-            config::schema(time_columns),
-        ),
+        } => {
+            let (host, port) = config::listen(file, host, port)?;
+            serve::run(
+                &host,
+                port,
+                config::limits(file, max_rows, max_buckets, max_groups)?,
+                config::ApiLimits::load(
+                    file,
+                    max_body_bytes,
+                    max_decompressed_bytes,
+                    ingest_concurrency,
+                )?
+                .with_ingest_wait(file, ingest_wait_ms)?,
+                config::Storage::load(
+                    file,
+                    storage == StorageKind::Disk,
+                    data_dir,
+                    trie_file,
+                    flush_interval_ms,
+                    row_group_timeout_ms,
+                    max_open_segments,
+                    segment_max_bytes,
+                    max_buffer_bytes,
+                )?
+                .with_compact_interval(file, compact_interval_ms)?
+                .with_wal(file, wal_segment_bytes, batch_size, wal_queue_bytes)?
+                .with_scan(file, scan_threads, scan_fan_rows)?,
+                config::schema(file, time_columns),
+            )
+        }
         Command::Load {
             inputs,
             data_dir,
@@ -650,6 +674,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             json,
         } => {
             let storage = config::Storage::load(
+                file,
                 true,
                 data_dir,
                 None,
@@ -659,7 +684,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 segment_max_bytes,
                 None,
             )?;
-            let schema = config::schema(time_columns.clone());
+            let schema = config::schema(file, time_columns.clone());
             let args = load::Args {
                 inputs,
                 replace_day,
@@ -683,9 +708,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             // Before the settings are loaded, which creates the directory they name: a
             // compaction of a path that is not a data directory makes nothing there.
-            let base = config::Storage::base_named(data_dir.clone());
+            let base = config::Storage::base_named(file, data_dir.clone());
             let day_number = compact::precheck(day.as_deref(), &base)?;
             let storage = config::Storage::load(
+                file,
                 true,
                 data_dir,
                 None,
@@ -701,7 +727,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 segment_max_bytes,
                 json,
             };
-            let schema = config::schema(None);
+            let schema = config::schema(file, None);
             compact::command(args, day_number, storage, schema, &mut out).map_err(CliError::from)
         }
         Command::BenchStorage {
@@ -716,8 +742,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 es,
                 scratch,
                 keep,
+                settings: file.clone(),
             },
-            config::schema(time_columns),
+            config::schema(file, time_columns),
             &mut out,
         ),
         Command::Bench {
@@ -770,7 +797,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => query::describe(
             &mut out,
             &query,
-            config::limits(max_rows, max_buckets, max_groups)?,
+            config::limits(file, max_rows, max_buckets, max_groups)?,
         ),
         Command::Query {
             input,
@@ -792,7 +819,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_groups,
             time_columns,
         } => {
-            let limits = config::limits(max_rows, max_buckets, max_groups)?;
+            let limits = config::limits(file, max_rows, max_buckets, max_groups)?;
             let reader = open(&input)?;
             let args = query::Args {
                 trieql,
@@ -809,7 +836,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 limit,
                 after,
                 limits,
-                time_columns,
+                schema: config::schema(file, time_columns),
             };
             query::run(reader, &mut out, &args)
         }
