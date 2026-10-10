@@ -777,6 +777,9 @@ fn day_by(
     // Each row group of the window: where it is in the day, and its first row's position.
     let mut window: Vec<(usize, u64)> = Vec::new();
     loop {
+        // Asked before a window is looked at, and below before each row group of one
+        // taken in turn: a scan told to stop reads no row group more.
+        ask.opts.stop.check()?;
         window.clear();
         let (mut rows, mut bytes) = (0u64, 0u64);
         while next < stored.len() && window.len() < most {
@@ -811,6 +814,7 @@ fn day_by(
             continue;
         }
         for (at, here) in &window {
+            ask.opts.stop.check()?;
             let s = &stored[*at];
             out.row_groups_read += 1;
             if !matches!(&shaped, Some((schema, _)) if Arc::ptr_eq(schema, &s.schema)) {
@@ -834,6 +838,7 @@ fn day_by(
             }
         }
     }
+    ask.opts.stop.check()?;
     Ok(tail(view, ask, base, v, out))
 }
 
@@ -886,6 +891,9 @@ fn together(
     // Whether the last batch was closed by its bytes: only then may the window have more.
     let mut cut = true;
     while cut {
+        // A scan told to stop reads no batch more: the batches before this one were
+        // handed over whole, and nothing of this one has been read.
+        ask.opts.stop.check()?;
         cut = false;
         let mut slots: Vec<Mutex<Slot<'_>>> = Vec::new();
         let mut held = 0u64;
@@ -2359,6 +2367,55 @@ mod tests {
         }
         let leaf = Arc::clone(&s.leaves.read().expect("leaves")[&7]);
         (s, leaf)
+    }
+
+    /// **A scan told to stop reads no row group more.** A day of eight row groups, and
+    /// a visitor that says stop when it is handed its first row: the row group that row
+    /// is in is handed over whole, the second is never read, and the scan ends with
+    /// `Stopped` and not with a count. Told before it begins, a scan reads nothing; and
+    /// a stop nobody sets changes nothing.
+    #[test]
+    fn a_scan_told_to_stop_reads_no_row_group_more() {
+        use crate::store::Stop;
+
+        struct Until<'s> {
+            stop: &'s Stop,
+            rows: usize,
+        }
+        impl Visitor for Until<'_> {
+            fn row(&mut self, _: &Row, _: u64) {
+                self.rows += 1;
+                self.stop.set();
+            }
+        }
+
+        let scratch = Scratch::new("scan-stops");
+        let (_s, leaf) = two_files(&scratch);
+        let asked = |stop: &Stop| ScanOptions {
+            ts_column: Some("ts".into()),
+            stop: stop.clone(),
+            ..ScanOptions::default()
+        };
+
+        let never = Stop::new();
+        let whole = leaf.scan(&asked(&never), &[]).expect("a scan");
+        assert_eq!((whole.matched, whole.row_groups_read), (8 * UNIT as u64, 8));
+
+        let stop = Stop::new();
+        let mut v = Until {
+            stop: &stop,
+            rows: 0,
+        };
+        let told = leaf.visit(&asked(&stop), &[], &mut v);
+        assert!(matches!(told, Err(StoreError::Stopped)), "{told:?}");
+        assert_eq!(v.rows, UNIT, "the row group the stop was said in, and no other");
+
+        // Told already: not a row.
+        v.rows = 0;
+        let told = leaf.visit(&asked(&stop), &[], &mut v);
+        assert!(matches!(told, Err(StoreError::Stopped)), "{told:?}");
+        assert_eq!(v.rows, 0);
+
     }
 
     /// **A scan that fails ends on the first error in storage order, shared out or not.**

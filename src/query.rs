@@ -27,7 +27,7 @@ use kibbr_engine::engine::{
 };
 use kibbr_engine::trieql::{self, ago};
 use kibbr_storage::db;
-use kibbr_storage::store::system_time;
+use kibbr_storage::store::{system_time, Stop, STOP_EVERY_ROWS};
 
 /// Blank columns between two cells of a rendered table.
 const GUTTER: usize = 2;
@@ -685,6 +685,28 @@ fn json<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<()
 /// other end: the shape is consumed unchanged, so it is built in one place.
 pub fn result_json(query: &Query, result: &QueryResult) -> Value {
     let rows: Vec<Value> = canonical(result).into_iter().map(row_json).collect();
+    shaped(query, result, rows)
+}
+
+/// `result_json`, for a caller that may stop wanting the answer: `None` once `stop` is
+/// set, asked every `STOP_EVERY_ROWS` rows.
+///
+/// A row is put into JSON at about a third of what it cost to fetch, so a fetch of every
+/// row that was stopped only while it scanned would run on for half as long again after
+/// it was told - and for a query that had just finished its scan, for all of that.
+pub fn result_json_until(query: &Query, result: &QueryResult, stop: &Stop) -> Option<Value> {
+    let mut rows = Vec::with_capacity(result.rows.len());
+    for (n, row) in canonical(result).into_iter().enumerate() {
+        if n % STOP_EVERY_ROWS == 0 && stop.check().is_err() {
+            return None;
+        }
+        rows.push(row_json(row));
+    }
+    Some(shaped(query, result, rows))
+}
+
+/// The answer around its rows: what `result_json` and `result_json_until` share.
+fn shaped(query: &Query, result: &QueryResult, rows: Vec<Value>) -> Value {
     let keys = group_keys_of(query);
     let groups: Vec<Value> = result
         .groups

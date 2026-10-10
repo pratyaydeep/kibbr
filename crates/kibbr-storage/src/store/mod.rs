@@ -46,7 +46,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -370,6 +370,96 @@ pub struct ScanOptions {
     /// Columns whose type is now `String`. A value stored as a `Datetime` in one of them
     /// is compared as the text it arrived as, before anything reads the row.
     pub text_columns: Vec<String>,
+    /// What tells the scan its answer is no longer wanted: see `Stop`. The default is
+    /// never told.
+    pub stop: Stop,
+}
+
+/// What whoever asked for a scan tells it when the answer is no longer wanted: the
+/// request timed out, its client left, or the server is stopping.
+///
+/// **A scan asks, and nobody interrupts it.** A disk scan looks before each row group it
+/// reads and before each batch it shares out, the memory store every `STOP_EVERY_ROWS`
+/// rows, and the engine between two templates; a scan that finds it set ends with
+/// `StoreError::Stopped` and nothing of an answer. So a stop costs at most what one row
+/// group, or one batch of them, costs to read and hand over - and a scan left running
+/// costs a core, the rows a fetch has kept so far, and a thread the process waits for
+/// before it can exit.
+///
+/// **Whoever made it can be told the moment a scan finds it set** (`Stop::watched`),
+/// once. That is when the scan stopped, and it is not when the query returns: a fetch
+/// that had kept a million rows gives them back first, which is seconds, and a process
+/// that is stopping may be gone before then.
+///
+/// One flag behind an `Arc`, so every clone is the same stop. The default holds no flag
+/// and is never set: a scan by a command, a test or a compaction asks an `Option` and
+/// goes on.
+#[derive(Default, Clone)]
+pub struct Stop(Option<Arc<Told>>);
+
+struct Told {
+    set: AtomicBool,
+    /// Whether a scan has found it set: `seen` is called by the first that does.
+    found: AtomicBool,
+    seen: Option<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl std::fmt::Debug for Stop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            None => f.write_str("Stop(never)"),
+            Some(_) => write!(f, "Stop({})", self.is_set()),
+        }
+    }
+}
+
+/// How many rows the memory store reads between two looks at its `Stop`.
+pub const STOP_EVERY_ROWS: usize = 4096;
+
+impl Stop {
+    /// A stop that can be set.
+    pub fn new() -> Self {
+        Self(Some(Arc::new(Told {
+            set: AtomicBool::new(false),
+            found: AtomicBool::new(false),
+            seen: None,
+        })))
+    }
+
+    /// A stop that can be set, and calls `seen` when a scan first finds it so - on the
+    /// scan's thread, between two row groups: it should be quick.
+    pub fn watched(seen: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(Some(Arc::new(Told {
+            set: AtomicBool::new(false),
+            found: AtomicBool::new(false),
+            seen: Some(Box::new(seen)),
+        })))
+    }
+
+    pub fn set(&self) {
+        if let Some(told) = &self.0 {
+            told.set.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|told| told.set.load(Ordering::Relaxed))
+    }
+
+    /// `Err(StoreError::Stopped)` once set: what a scan asks between two pieces of work.
+    pub fn check(&self) -> Result<(), StoreError> {
+        let Some(told) = self.0.as_ref().filter(|told| told.set.load(Ordering::Relaxed)) else {
+            return Ok(());
+        };
+        if let Some(seen) = &told.seen {
+            if !told.found.swap(true, Ordering::Relaxed) {
+                seen();
+            }
+        }
+        Err(StoreError::Stopped)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -508,6 +598,10 @@ pub enum StoreError {
          the day. The rebuilt files were removed and the day is as the load left it"
     )]
     InputsChanged { day: String, path: String },
+    /// A scan told to stop by whoever asked for it (`Stop`). Not a failure of the store:
+    /// nothing was wrong with what it read.
+    #[error("the scan was stopped: its answer was no longer wanted")]
+    Stopped,
     /// Stopped by its caller before the record. Not a failure.
     #[error(
         "compact {day}: cancelled. The rebuilt files were removed and the day's files are as \

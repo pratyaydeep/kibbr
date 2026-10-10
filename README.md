@@ -266,6 +266,10 @@ kibbr serve
   max rows    10000 - a MATCH with no LIMIT is answered a page at a time,
               truncated with a next_cursor to continue from
 
+  requests    answered within 30s or timed out: 408 for a body that has not
+              arrived, 504 for a query, whose scan is stopped. Not an
+              /ingest body read whole (--request-timeout).
+
   shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first; one
               still in flight 25s later is answered 503 and let go.
 ```
@@ -665,6 +669,7 @@ max_decompressed_bytes = 67108864   # --max-decompressed-bytes
 ingest_concurrency = 8              # --ingest-concurrency   default: one per core
 ingest_wait_ms = 100                # --ingest-wait-ms
 shutdown_deadline = "25s"           # --shutdown-deadline    ms, s, m or h; "0s" is none
+request_timeout = "30s"             # --request-timeout      ms, s, m or h; "0s" is none
 
 [query]
 max_rows = 10000                    # --max-rows
@@ -705,7 +710,22 @@ One still in flight then - a sender that stopped halfway through a body - is ans
 `503` where it stands, and the final flush, the checkpoint and the trie snapshot
 follow, so the process exits 0 inside whatever grace it was given (Kubernetes: 30
 seconds) and the next start has nothing to replay. `"0s"` waits for every request,
-however long it takes.
+however long it takes. A query cut off there stops scanning; it used to run on, and the
+process waited for it. `scripts/shutdown_deadline.sh` holds a stop to the thirty
+seconds, five times: 2,500,000 rows stored and 100,000 more in buffers, one client that
+sent half an `/ingest` body, one idle socket, and `MATCH LOG {}` with `--max-rows 0`
+running when the signal arrives. The process was gone 27.1 to 27.6 seconds after it,
+exit 0, and a restart read nothing back from the log and counted 2,600,000. The build
+before was gone at 49.5.
+
+**`request_timeout`** is how long one request may take, from its headers to its
+answer. A body that has not arrived by then is answered `408` and its connection
+closed. A query still running is answered `504` and its scan is told to stop - at its
+next row group it does, and the server says `query stopped` in its log and counts it
+in `/stats` as `queries.stopped`; the same happens to a query whose client hangs up.
+An `/ingest` body that was read whole is not timed out: its waits are
+`ingest_wait_ms`'s, and a `504` for lines the write-ahead log has taken would have
+their shipper send them twice. `"0s"` is no timeout.
 
 **The log** is the server's lifecycle lines, warnings and errors, on stderr. As
 `text` they are the lines this README shows - `kibbr: ` and a sentence, `WARN` or
@@ -714,7 +734,7 @@ whatever collects a container's stderr, and at `debug` every request is a line t
 
 ```
 $ kibbr --log-format json serve --storage memory
-{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr::serve","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"scan_threads":4}
+{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr::serve","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"request_timeout_ms":30000,"scan_threads":4}
 {"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr::serve","msg":"storage is in memory: everything ingested is lost when this process exits"}
 {"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr::serve","msg":"SIGTERM received - shutting down"}
 ```
@@ -746,6 +766,7 @@ trie.templates                        473
 ingest.lines_ingested                 2000
 ingest.ingest_wait_ms                 100
 ingest.shutdown_deadline_ms           25000
+ingest.request_timeout_ms             30000
 ```
 
 A name on the left is the path to the same value in the JSON.

@@ -322,7 +322,8 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
         "kibbr.toml",
         &format!(
             "[storage]\nbase_path = \"{data}\"\n\n\
-             [api]\ningest_wait_ms = 250\nshutdown_deadline = \"3s\"\n\n\
+             [api]\ningest_wait_ms = 250\nshutdown_deadline = \"3s\"\n\
+             request_timeout = \"40s\"\n\n\
              [query]\nmax_rows = 2\n"
         ),
     );
@@ -337,6 +338,7 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
     // The file alone.
     let server = Server::start(&[], &["--config", &config], &[]);
     assert_eq!(waits(&server), (Some(250), Some(3000)));
+    assert_eq!(server.stats()["ingest"]["request_timeout_ms"], 40_000);
     assert!(Path::new(&data).join("catalog.log").is_file());
     // `[query] max_rows` is the page an unlimited MATCH is cut at.
     let lines: String = (0..5)
@@ -473,6 +475,7 @@ fn templates_and_stats_ask_the_running_server() {
     assert_eq!(value("trie.templates "), "2");
     assert_eq!(value("ingest.lines_ingested "), "3");
     assert_eq!(value("ingest.shutdown_deadline_ms "), "25000");
+    assert_eq!(value("ingest.request_timeout_ms "), "30000");
     let out = run(&["stats", "--addr", &address, "--json"]);
     let sent = json(&text(&out.stdout));
     assert_eq!(sent["trie"]["templates"], 2);
@@ -799,4 +802,99 @@ fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
         said.contains("kibbr: in-flight requests complete"),
         "{said}"
     );
+}
+
+// ── The request timeout ────────────────────────────────────────────────────────────
+
+/// **A request whose body does not arrive is answered 408 when its time runs out**, by
+/// the binary as it is run: the flag, and a sender that stops halfway through a body. It
+/// used to keep its handler for as long as it kept its socket.
+#[test]
+fn a_body_that_does_not_arrive_is_answered_408_at_the_request_timeout() {
+    let server = Server::start(
+        &[],
+        &["--storage", "memory", "--request-timeout", "300ms"],
+        &[],
+    );
+    let asked = Instant::now();
+    let mut stalled = stalled_body(server.port);
+    let (status, body) = answer(&mut stalled);
+    assert_eq!(status, 408, "{body}");
+    assert!(asked.elapsed() >= Duration::from_millis(300));
+    assert!(body.contains("--request-timeout"), "{body}");
+    let ingest = &server.stats()["ingest"];
+    assert_eq!(ingest["request_timeout_ms"], 300, "{ingest}");
+    assert_eq!(ingest["requests_timed_out"], 1, "{ingest}");
+
+    let (code, said) = server.stop(Duration::from_secs(15));
+    assert_eq!(code, Some(0), "{said}");
+    assert!(
+        said.contains("kibbr: in-flight requests complete"),
+        "{said}"
+    );
+}
+
+/// **A query still running when its request's time runs out is answered 504, and its
+/// scan stops**: it is not left running. `MATCH LOG {}` with the row backstop off is
+/// every row of the store built and kept, which on these rows is many times the quarter
+/// of a second the request is given; the server says the scan stopped and counts it, and
+/// counts no query as served.
+#[test]
+fn a_query_past_the_request_timeout_is_answered_504_and_its_scan_stops() {
+    const ROWS: usize = 40_000;
+    let scratch = Scratch::new("timeout-query");
+    let data = scratch.path("data");
+    // The rows, through a server whose requests have the time they always had.
+    let server = Server::start(&[], &["--data-dir", &data], &[]);
+    let mut lines = String::new();
+    for n in 0..ROWS {
+        lines.push_str(&format!(
+            "{{\"ts\":\"2024-01-15T{:02}:{:02}:{:02}Z\",\"n\":{n},\"msg\":\"request {n} served\"}}\n",
+            10 + n / 3600,
+            (n / 60) % 60,
+            n % 60
+        ));
+    }
+    let (status, body) = server.post("/ingest", lines.as_bytes());
+    assert_eq!(status, 200, "{body}");
+    let (code, said) = server.stop(Duration::from_secs(60));
+    assert_eq!(code, Some(0), "{said}");
+
+    let server = Server::start(
+        &[],
+        &[
+            "--data-dir",
+            &data,
+            "--max-rows",
+            "0",
+            "--request-timeout",
+            "250ms",
+        ],
+        &[],
+    );
+    let asked = Instant::now();
+    let (status, body) = server.post("/query", br#"{"q":"MATCH LOG {}"}"#);
+    assert_eq!(status, 504, "{}", &body[..body.len().min(300)]);
+    assert!(asked.elapsed() >= Duration::from_millis(250));
+    assert!(body.contains("--request-timeout"), "{body}");
+    let seen = Instant::now();
+    let stats = loop {
+        let stats = server.stats();
+        if stats["queries"]["stopped"] == 1 {
+            break stats;
+        }
+        assert!(
+            seen.elapsed() < Duration::from_secs(20),
+            "the scan never stopped: {}",
+            stats["queries"]
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(stats["queries"]["served"], 0, "{}", stats["queries"]);
+    assert_eq!(stats["ingest"]["requests_timed_out"], 1);
+
+    let (code, said) = server.stop(Duration::from_secs(30));
+    assert_eq!(code, Some(0), "{said}");
+    assert!(said.contains("kibbr: WARN query stopped - "), "{said}");
+    assert!(said.contains(": MATCH LOG {}"), "{said}");
 }

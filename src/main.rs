@@ -157,6 +157,14 @@ enum Command {
         /// Overrides `KIBBR__API__SHUTDOWN_DEADLINE`. [default: 25s]
         #[arg(long, value_name = "DURATION", value_parser = config::parse_duration)]
         shutdown_deadline: Option<std::time::Duration>,
+        /// How long one request may take from its first line to its answer: a number and
+        /// ms, s, m or h. A request whose body has not arrived by then is answered `408`;
+        /// a query still running is answered `504` and its scan stops. An `/ingest` body
+        /// that has been read whole is not timed out - its waits are --ingest-wait-ms's.
+        /// `0s` is no timeout.
+        /// Overrides `KIBBR__API__REQUEST_TIMEOUT`. [default: 30s]
+        #[arg(long, value_name = "DURATION", value_parser = config::parse_duration)]
+        request_timeout: Option<std::time::Duration>,
         /// Where rows go. `disk` writes day-partitioned column files and snapshots the
         /// trie on a clean shutdown; `memory` writes nothing, and is what the
         /// memory-versus-disk differential runs against.
@@ -669,6 +677,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             ingest_concurrency,
             ingest_wait_ms,
             shutdown_deadline,
+            request_timeout,
             storage,
             data_dir,
             trie_file,
@@ -697,7 +706,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     ingest_concurrency,
                 )?
                 .with_ingest_wait(file, ingest_wait_ms)?
-                .with_shutdown_deadline(file, shutdown_deadline)?,
+                .with_shutdown_deadline(file, shutdown_deadline)?
+                .with_request_timeout(file, request_timeout)?,
                 config::Storage::load(
                     file,
                     storage == StorageKind::Disk,

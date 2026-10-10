@@ -18,8 +18,8 @@ use kibbr_core::fmt::{col_text, commas, duration_text};
 use kibbr_core::infer::infer;
 use kibbr_core::types::ColValue;
 use kibbr_storage::store::{
-    effective_ts, nanos_of, Counted, Row, ScanOptions, StoreError, StoreManager, Term, Visitor,
-    Wants, RECEIVED_AT_COLUMN,
+    effective_ts, nanos_of, Counted, Row, ScanOptions, Stop, StoreError, StoreManager, Term,
+    Visitor, Wants, RECEIVED_AT_COLUMN,
 };
 use kibbr_storage::trie::{KeyIndex, Node, Posting, Template, Trie};
 
@@ -303,6 +303,8 @@ impl Query {
             until: self.time.until,
             ts_column: None,
             text_columns: Vec::new(),
+            // Whoever executes the query says: see `execute_until`.
+            stop: Stop::default(),
         }
     }
 
@@ -1586,7 +1588,22 @@ pub fn execute(
     stores: &StoreManager,
     query: &Query,
 ) -> Result<QueryResult, ExecError> {
-    answer(trie, stores, query, Newest::new(query.limit))
+    execute_until(trie, stores, query, &Stop::default())
+}
+
+/// `execute`, for a caller that may stop wanting the answer: a server, whose request
+/// can time out, lose its client, or be cut off by a shutdown.
+///
+/// Once `stop` is set the query ends with `StoreError::Stopped` at the next row group
+/// its scan would have read, or the next template (`store::Stop`), and whatever it had
+/// counted or kept goes with it: a stopped query has no partial answer.
+pub fn execute_until(
+    trie: &Trie,
+    stores: &StoreManager,
+    query: &Query,
+    stop: &Stop,
+) -> Result<QueryResult, ExecError> {
+    answer(trie, stores, query, Newest::new(query.limit), stop)
 }
 
 /// `execute`, handed the heap a fetch keeps its rows in. There is one such heap for a
@@ -1597,9 +1614,11 @@ fn answer(
     stores: &StoreManager,
     query: &Query,
     mut newest: Newest,
+    stop: &Stop,
 ) -> Result<QueryResult, ExecError> {
     let exists_only = query.mode == QueryMode::Exists;
     let mut opts = query.scan_options();
+    opts.stop = stop.clone();
     let started = Instant::now();
     // **One snapshot of every planned template**, and nothing read outside it: see
     // `Snapshot`. Planned again if a load published between the plan and the snapshot - its
@@ -1646,6 +1665,9 @@ fn answer(
     let mut tally = Tally::new();
 
     for leaf in &plan.leaves {
+        // Between two templates, as each scan asks between two row groups: ten thousand
+        // templates of a few rows each are ten thousand scans that never get to ask.
+        stop.check()?;
         let terms: Vec<Term> = leaf.residual.iter().map(term).collect();
         let ts = leaf.template.time_column.as_str();
         opts.ts_column = Some(leaf.template.time_column.clone());
@@ -1917,6 +1939,34 @@ mod tests {
                 max_groups: 0,
             },
         )
+    }
+
+    /// **A query told to stop has no answer, in any mode; one never told has the answer
+    /// it always had.** The stop is asked before the first template is read, so a query
+    /// told before it began reads nothing.
+    #[test]
+    fn a_query_told_to_stop_ends_with_no_answer() {
+        let db = db();
+        for mode in [
+            QueryMode::Count,
+            QueryMode::Fetch,
+            QueryMode::GroupBy(vec![GroupKey::Column("level".to_string())]),
+        ] {
+            let q = query(mode, None, None);
+            let stop = Stop::new();
+            let whole = execute(&db.trie, &db.stores, &q).expect("an answer");
+            let untold = execute_until(&db.trie, &db.stores, &q, &stop).expect("an answer");
+            assert_eq!(untold.count, whole.count);
+            assert_eq!(untold.rows.len(), whole.rows.len());
+            assert!(whole.count > 0);
+
+            stop.set();
+            let told = execute_until(&db.trie, &db.stores, &q, &stop);
+            assert!(
+                matches!(told, Err(ExecError::Store(StoreError::Stopped))),
+                "{told:?}"
+            );
+        }
     }
 
     /// A load that publishes between a query's plan and its snapshot can have added a
@@ -3709,7 +3759,13 @@ mod tests {
         }
 
         let every_row = |db: &db::Db, q: &Query| {
-            answer(&db.trie, &db.stores, q, Newest::offered_every_row(q.limit))
+            answer(
+                &db.trie,
+                &db.stores,
+                q,
+                Newest::offered_every_row(q.limit),
+                &Stop::default(),
+            )
                 .expect("the query answers")
         };
         let check = |state: &str| {

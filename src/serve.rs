@@ -63,7 +63,7 @@ use kibbr_storage::catalog::{Catalog, CatalogError};
 use kibbr_storage::db;
 use kibbr_storage::store::disk::CompactOptions;
 use kibbr_storage::store::fan::Fan;
-use kibbr_storage::store::{FlushKind, StoreError, StoreManager};
+use kibbr_storage::store::{FlushKind, Stop, StoreError, StoreManager};
 use kibbr_storage::trie::{Trie, TrieError};
 use kibbr_storage::wal::{self, Wal};
 
@@ -179,6 +179,11 @@ pub struct Server {
     lines_ingested: AtomicU64,
     lines_rejected: AtomicU64,
     queries: AtomicU64,
+    /// Queries whose scan was told to stop and did: the request timed out, its client
+    /// left, or a shutdown cut it off. None of them is in `queries`.
+    queries_stopped: AtomicU64,
+    /// Requests answered `408` or `504` because `api.request_timeout` passed first.
+    timed_out: AtomicU64,
     /// Requests currently in a handler. Read at shutdown, to say what is being waited on.
     in_flight: AtomicU64,
     /// What the door has made wait, and the bodies shed, each under its cause: refused
@@ -465,6 +470,8 @@ impl Server {
             lines_ingested: AtomicU64::new(0),
             lines_rejected: AtomicU64::new(0),
             queries: AtomicU64::new(0),
+            queries_stopped: AtomicU64::new(0),
+            timed_out: AtomicU64::new(0),
             in_flight: AtomicU64::new(0),
             door: Door::default(),
             limits,
@@ -2366,16 +2373,54 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
         Err(e) => return fail(StatusCode::BAD_REQUEST, &error::chain(&e)),
     };
 
+    // What tells the scan to stop, and what sets it: this future dropped before the task
+    // below has returned. Three things drop it - the request's timeout and a shutdown's
+    // deadline, both in `track`, and a connection that closes - and after any of them the
+    // answer has nobody to go to.
+    //
+    // Said, and counted, when the scan finds it set and not when the task returns: a
+    // fetch of every row gives back what it had kept first, and a server that is
+    // stopping does not wait for that.
+    let stop = {
+        let (server, began, asked) = (Arc::clone(&server), Instant::now(), shortened(&request.q));
+        Stop::watched(move || {
+            server.queries_stopped.fetch_add(1, Ordering::Relaxed);
+            log_warn(&format!(
+                "query stopped - {:.2}s after it began, its answer no longer wanted (a \
+                 request timeout, a client that left or a shutdown): {asked}",
+                began.elapsed().as_secs_f64()
+            ));
+        })
+    };
+    let mut unwanted = Unwanted {
+        stop: &stop,
+        armed: true,
+    };
     let held = Arc::clone(&server);
+    let told = stop.clone();
     let done = tokio::task::spawn_blocking(move || {
-        let result = engine::execute(&held.trie, &held.stores, &query)?;
+        // The scan, and then the answer put into JSON, which is half as long again for a
+        // fetch of every row: both ask the stop as they go.
+        let body = engine::execute_until(&held.trie, &held.stores, &query, &told).and_then(
+            |result| {
+                query::result_json_until(&query, &result, &told)
+                    .ok_or(engine::ExecError::Store(StoreError::Stopped))
+            },
+        )?;
         held.queries.fetch_add(1, Ordering::Relaxed);
-        Ok::<Value, engine::ExecError>(query::result_json(&query, &result))
+        Ok::<Value, engine::ExecError>(body)
     })
     .await;
+    // The task has returned: there is no scan left to tell.
+    unwanted.armed = false;
 
     match done {
         Ok(Ok(body)) => (StatusCode::OK, Json(body)).into_response(),
+        // Read by nobody, as a rule: what set the stop also dropped this future or has
+        // answered in its place. Said all the same, for a caller that is not `track`.
+        Ok(Err(e @ engine::ExecError::Store(StoreError::Stopped))) => {
+            fail(StatusCode::SERVICE_UNAVAILABLE, &error::chain(&e))
+        }
         // A bucket count over the cap is the client's to fix - a narrower range or a wider
         // bucket - so it is a 400 beside the parse errors above, not a 500. A storage
         // failure is the server's and stays one.
@@ -2388,6 +2433,35 @@ async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response 
             &format!("query task failed: {join}"),
         ),
     }
+}
+
+/// Tells a query's scan to stop when the handler's future is dropped before its task
+/// has returned: see `post_query`. What `Leaving` is to an `/ingest` body.
+struct Unwanted<'a> {
+    stop: &'a Stop,
+    /// Cleared once the task has returned: there is then nothing to tell.
+    armed: bool,
+}
+
+impl Drop for Unwanted<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.stop.set();
+        }
+    }
+}
+
+/// A query's text for a line of the log: its first 120 characters, on one line.
+fn shortened(q: &str) -> String {
+    let mut out: String = q
+        .chars()
+        .take(120)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if q.chars().nth(120).is_some() {
+        out.push_str("...");
+    }
+    out
 }
 
 /// `POST /load`: what `kibbr load` sends when this server holds the data directory.
@@ -3215,6 +3289,13 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
                 .api
                 .shutdown_deadline
                 .map_or(0, |deadline| deadline.as_millis() as u64),
+            // How long one request is given; 0 is for as long as it takes. And how many
+            // were answered 408 or 504 because it passed.
+            "request_timeout_ms": server
+                .api
+                .request_timeout
+                .map_or(0, |timeout| timeout.as_millis() as u64),
+            "requests_timed_out": server.timed_out.load(Ordering::Relaxed),
             "ingest_concurrency": server.api.ingest_concurrency,
             "ingest_bodies": ingest_bodies(&server.api),
             // Permits for the parse in use, and places between the door and an answer in
@@ -3240,6 +3321,9 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
         },
         "queries": {
             "served": queries,
+            // Scans told to stop, which did: a request that timed out, a client that
+            // left, a shutdown. Not in `served`.
+            "stopped": server.queries_stopped.load(Ordering::Relaxed),
             "per_second": rate(queries, uptime),
             // Runs of a day's row groups whose rows were chosen on more threads than the
             // query's own, over the life of the process. Zero on a server with one scan
@@ -3329,15 +3413,28 @@ fn fail(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "ok": false, "error": message }))).into_response()
 }
 
-/// Counts a request as in flight until it is answered - and answers it here, 503, if
-/// the shutdown deadline passes first.
+/// Counts a request as in flight until it is answered - and answers it here if the
+/// shutdown deadline passes first, 503, or the request's own timeout, 408 or 504.
 ///
-/// **What the cut drops is the handler, wherever it had got to.** A body still being
-/// read is let go unread, and nothing of it was taken. A query is abandoned. An
-/// `/ingest` body already handed to the write-ahead log is not undone by this - its
-/// task is off this future and is waited for by the wind-down - so its sender is told
-/// 503 for lines that are stored, and sending them again stores them twice: what any
-/// answer lost on the way has always cost, and why the deadline is long.
+/// **What either drops is the handler, wherever it had got to.** A body still being
+/// read is let go unread, and nothing of it was taken. A query's scan is told to stop
+/// (`post_query`), and stops at its next row group. An `/ingest` body already handed to
+/// the write-ahead log is not undone by the shutdown's cut - its task is off this future
+/// and is waited for by the wind-down - so its sender is told 503 for lines that are
+/// stored, and sending them again stores them twice: what any answer lost on the way has
+/// always cost, and why the deadline is long.
+///
+/// **The timeout is `api.request_timeout`, from here - the request's headers read - to
+/// its answer, and which of two answers depends on whose time it was.** A body that has
+/// not been read to its end is the client's: `408`, and `say_close` closes the
+/// connection, half a request being all it holds. A request read whole and not answered
+/// is this server's: `504`. **But not an `/ingest` body read whole.** Its handler is
+/// past the door and its waits are the ingest wait's; what is left is the log's flush,
+/// and a `504` for lines the log has taken would have their shipper send them twice in
+/// ordinary running, not only at a stop. That one is waited for as it always was.
+///
+/// A request that never finishes its *headers* does not reach this layer and is not
+/// timed out by it; at a stop its connection is the one `serve` leaves open.
 ///
 /// At `debug` each request is a line of the log when it is answered: its method, its
 /// path, the status and how long it took. Asked for before the request is handed on,
@@ -3351,13 +3448,35 @@ async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) 
             Instant::now(),
         )
     });
-    let answer = tokio::select! {
-        answer = next.run(request) => answer,
-        () = server.cut_off.cancelled() => fail(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the server is stopping, and its shutdown deadline passed before this request \
-             was answered",
-        ),
+    let arrived = request.extensions().get::<Arrived>().cloned();
+    let ingest = request.uri().path() == "/ingest";
+    let timeout = server.api.request_timeout;
+    let mut handled = std::pin::pin!(next.run(request));
+    // One timer a request, made when this is first polled; with no timeout, none.
+    let mut clock = std::pin::pin!(async {
+        match timeout {
+            Some(timeout) => tokio::time::sleep(timeout).await,
+            None => std::future::pending().await,
+        }
+    });
+    // Cleared when the time runs out on a request it does not end.
+    let mut timed = true;
+    let answer = loop {
+        tokio::select! {
+            answer = &mut handled => break answer,
+            () = server.cut_off.cancelled() => break cut_off(),
+            () = &mut clock, if timed => {
+                let whole = arrived
+                    .as_ref()
+                    .is_none_or(|body| body.0.load(Ordering::Relaxed));
+                if whole && ingest {
+                    timed = false;
+                    continue;
+                }
+                server.timed_out.fetch_add(1, Ordering::Relaxed);
+                break timed_out(whole, timeout.unwrap_or_default());
+            }
+        }
     };
     if let Some((method, path, since)) = noted {
         let status = answer.status().as_u16();
@@ -3370,6 +3489,39 @@ async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) 
         );
     }
     answer
+}
+
+/// The answer of a request still in flight when the shutdown deadline passed.
+fn cut_off() -> Response {
+    fail(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the server is stopping, and its shutdown deadline passed before this request \
+         was answered",
+    )
+}
+
+/// The answer of a request `api.request_timeout` ran out on: `whole` is whether its body
+/// had been read to its end. See `track`.
+fn timed_out(whole: bool, timeout: Duration) -> Response {
+    let given = crate::config::duration_words(timeout);
+    if whole {
+        fail(
+            StatusCode::GATEWAY_TIMEOUT,
+            &format!(
+                "not answered within {given} (--request-timeout): a query's scan was \
+                 stopped and nothing of its answer was kept. Ask for less - a narrower \
+                 time range, more of the pattern, a LIMIT - or give requests longer"
+            ),
+        )
+    } else {
+        fail(
+            StatusCode::REQUEST_TIMEOUT,
+            &format!(
+                "the request's body had not arrived {given} after its headers \
+                 (--request-timeout); nothing of it was taken"
+            ),
+        )
+    }
 }
 
 /// `Connection: close` on every answer after which this server closes the connection
@@ -3403,12 +3555,14 @@ async fn say_close(request: Request, next: Next) -> Response {
     }
     let version = request.version();
     let ended = Arc::new(AtomicBool::new(false));
-    let request = request.map(|inner| {
+    let mut request = request.map(|inner| {
         Body::new(Watched {
             inner,
             ended: Arc::clone(&ended),
         })
     });
+    // For `track`, which asks the same question when a request's time runs out.
+    request.extensions_mut().insert(Arrived(Arc::clone(&ended)));
     let mut response = next.run(request).await;
     if !ended.load(Ordering::Relaxed) {
         // `insert`, so an answer that came with a `Connection` header leaves with this one
@@ -3424,6 +3578,11 @@ async fn say_close(request: Request, next: Next) -> Response {
     }
     response
 }
+
+/// Whether a request's body has been read to its end, as `Watched` records it: put on
+/// the request by `say_close`, and absent from one that came with no body.
+#[derive(Clone)]
+struct Arrived(Arc<AtomicBool>);
 
 /// A request body that records whether it was read to its end: see `say_close`.
 struct Watched {
@@ -3530,7 +3689,17 @@ pub fn run(
         .max_blocking_threads(ingest_bodies(&api) + OTHER_BLOCKING_THREADS)
         .build()
         .map_err(ServeError::Runtime)?;
-    runtime.block_on(serve(host, port, limits, api, storage, schema, &scan))?;
+    let cut = runtime.block_on(serve(host, port, limits, api, storage, schema, &scan))?;
+    // Dropping a runtime waits for every thread of its blocking pool, for as long as
+    // each takes. After a stop that cut requests off, one may be a query's: its scan
+    // has been told to stop and does, at its next row group - but a thread that is
+    // putting two million rows into JSON, or is in a read a failing disk never
+    // answers, is not asked again. The wind-down is done and the directory's lock let
+    // go by now, and a query writes nothing, so such a thread is given a moment and
+    // then left for the exit.
+    if cut {
+        runtime.shutdown_timeout(CUT_OFF_GRACE);
+    }
     Ok(())
 }
 
@@ -3542,7 +3711,7 @@ async fn serve(
     storage: Storage,
     schema: Schema,
     scan: &OnceLock<Arc<Fan>>,
-) -> Result<(), ServeError> {
+) -> Result<bool, ServeError> {
     // Read-only, so it runs before the lock and the port: a data directory holding a
     // segment from another format version is not served at all, and nothing is listening
     // when the process exits over it. Everything that writes - catalog recovery, segment
@@ -3715,7 +3884,8 @@ async fn serve(
     let _ = compactor.await;
     let result = shutdown_sequence(&server, cut);
     drop(lock);
-    result
+    // Whether requests were cut off: `run` then does not wait on their threads.
+    result.map(|()| cut)
 }
 
 /// Ask every store whether a row group is due, every interval, until the token is
@@ -4094,6 +4264,8 @@ fn banner(addr: SocketAddr, server: &Server) {
             ingest_wait_ms = server.api.ingest_wait.as_millis() as u64,
             shutdown_deadline_ms =
                 server.api.shutdown_deadline.map_or(0, |d| d.as_millis() as u64),
+            request_timeout_ms =
+                server.api.request_timeout.map_or(0, |d| d.as_millis() as u64),
             scan_threads = server.storage.scan_threads,
             "listening on http://{addr}"
         );
@@ -4200,6 +4372,16 @@ fn banner(addr: SocketAddr, server: &Server) {
          \x20             and adding one later changes every shipper config in the\n\
          \x20             fleet. Deliberate; revisit with the deployment work."
             .to_string(),
+        match server.api.request_timeout {
+            Some(timeout) => format!(
+                "  requests    answered within {} or timed out: 408 for a body that has not\n\
+                 \x20             arrived, 504 for a query, whose scan is stopped. Not an\n\
+                 \x20             /ingest body read whole (--request-timeout).",
+                crate::config::duration_words(timeout)
+            ),
+            None => "  requests    given as long as they take (--request-timeout 0s)."
+                .to_string(),
+        },
         String::new(),
         match server.api.shutdown_deadline {
             Some(deadline) => format!(
@@ -5022,12 +5204,17 @@ mod tests {
         /// and `storage` over the defaults. No flush task and no signal: a test flushes
         /// by hand and stops by `begin_stop`.
         fn start(tag: &str, permits: usize, wait: Duration, storage: Storage) -> Self {
-            let scratch = Scratch::new(tag);
             let api = ApiLimits {
                 ingest_concurrency: permits,
                 ingest_wait: wait,
                 ..ApiLimits::default()
             };
+            Self::start_with(tag, api, storage)
+        }
+
+        /// The same, with every limit on a request said by the test.
+        fn start_with(tag: &str, api: ApiLimits, storage: Storage) -> Self {
+            let scratch = Scratch::new(tag);
             let server = server_on(&scratch, api, storage);
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -5421,6 +5608,97 @@ mod tests {
             ..Storage::default()
         };
         Listening::start(tag, 1, wait, storage)
+    }
+
+    /// **A request's timeout ends a body that does not arrive, and not an `/ingest` body
+    /// that was read whole.** One body in the log, held at the applier for as long as
+    /// the test likes: its handler has all of it and is waiting on the store. A second
+    /// sender sends half of its body and stops. The second is answered `408` on a
+    /// connection that closes, having held a permit for the length of the timeout and no
+    /// longer; the first, whose time ran out sooner, is still waited for, and is
+    /// answered `200` when the applier is let go - a `504` would have been for lines the
+    /// log had taken.
+    #[test]
+    fn a_body_that_does_not_arrive_is_timed_out_and_one_read_whole_is_not() {
+        const TIMEOUT: Duration = Duration::from_millis(200);
+        let api = ApiLimits {
+            ingest_concurrency: 1,
+            ingest_wait: LONG_WAIT,
+            request_timeout: Some(TIMEOUT),
+            ..ApiLimits::default()
+        };
+        let at = Listening::start_with("timeout-body", api, Storage::default());
+        let still = at.still();
+        let whole = at.post(lines(0));
+        until("the first body to be in the log", || {
+            at.wal().unapplied_bytes == one_body() && at.parsing() == 0
+        });
+
+        let body = lines(1);
+        let mut half = Client::connect(at.addr);
+        let began = Instant::now();
+        half.head("POST", "/ingest", body.len());
+        half.write(&body[..body.len() / 2]);
+        let answer = half.answer();
+        assert_eq!(answer.status, 408, "{answer:?}");
+        assert!(began.elapsed() >= TIMEOUT, "{:?}", began.elapsed());
+        assert!(answer.closes(), "{answer:?}");
+        assert!(answer.error().contains("had not arrived 200ms"), "{answer:?}");
+
+        // The first body's time ran out before the second's, and it is where it was.
+        until("the permit of the body that never arrived to come back", || {
+            at.parsing() == 0 && at.inside() == 1
+        });
+        assert!(!whole.is_finished());
+        let ingest = stats_of(&at.server)["ingest"].clone();
+        assert_eq!(ingest["request_timeout_ms"], 200, "{ingest}");
+        assert_eq!(ingest["requests_timed_out"], 1, "{ingest}");
+        assert_eq!(at.wal().last_seq, PER_BODY as u64);
+
+        drop(still);
+        let answer = whole.join().expect("a sender");
+        assert_eq!(answer.status, 200, "{answer:?}");
+        assert_eq!(at.count(), PER_BODY as u64);
+        assert_eq!(at.server.timed_out.load(Ordering::Relaxed), 1);
+    }
+
+    /// **A query whose handler is dropped before its task has returned is told to stop;
+    /// one whose task returned is not.** And whoever made the stop hears of it once,
+    /// when a scan first finds it set - however many times it is asked after.
+    #[test]
+    fn a_query_nobody_waits_for_is_told_to_stop_and_says_so_once() {
+        let heard = Arc::new(AtomicU64::new(0));
+        let stop = {
+            let heard = Arc::clone(&heard);
+            Stop::watched(move || {
+                heard.fetch_add(1, Ordering::Relaxed);
+            })
+        };
+        drop(Unwanted {
+            stop: &stop,
+            armed: false,
+        });
+        assert!(!stop.is_set());
+        assert!(stop.check().is_ok());
+        assert_eq!(heard.load(Ordering::Relaxed), 0);
+
+        drop(Unwanted {
+            stop: &stop,
+            armed: true,
+        });
+        assert!(stop.is_set());
+        assert_eq!(heard.load(Ordering::Relaxed), 0, "set is not found");
+        for _ in 0..3 {
+            assert!(matches!(stop.clone().check(), Err(StoreError::Stopped)));
+        }
+        assert_eq!(heard.load(Ordering::Relaxed), 1);
+
+        assert_eq!(shortened("COUNT LOG {}"), "COUNT LOG {}");
+        let long = format!("MATCH LOG {{\"msg\":\"{}\"}}\nLIMIT 5", "x".repeat(200));
+        let short = shortened(&long);
+        assert_eq!(short.chars().count(), 123, "{short}");
+        assert!(short.ends_with("xxx..."), "{short}");
+        assert_eq!(shortened("A\nB"), "A B");
     }
 
     /// **A sender that hangs up at the door holds nothing.** It has no permit and no

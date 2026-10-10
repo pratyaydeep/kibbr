@@ -100,6 +100,21 @@ pub const MAX_INGEST_WAIT_MS: usize = 30_000;
 /// that finishes leaves nothing to replay.
 pub const DEFAULT_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(25);
 
+/// How long a request may take from its first line to its answer: 30 seconds.
+///
+/// Two things were unbounded without it. A client that sends a request's headers and
+/// then no body, or half of one, kept its handler waiting for as long as it kept its
+/// socket; and a query kept its thread, its core and every row it had fetched until it
+/// had read the last row group it was asked about, whether or not anyone was still
+/// waiting for the answer - `MATCH LOG {}` with `--max-rows 0` on 1,800,000 rows was two
+/// minutes of that. Now the first is answered `408` and the second `504`, and the
+/// query's scan is told to stop (`store::Stop`): it is not left running.
+///
+/// **An `/ingest` body that has been read whole is not timed out.** Its waits are
+/// `--ingest-wait-ms`'s, and the one after them is the log's flush: a `504` then would
+/// be for lines the log may have taken, and a shipper told so sends them again.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Where `serve` listens when nothing says otherwise. Loopback: an address of every
 /// interface publishes an unauthenticated write endpoint, and that is typed, not
 /// defaulted into.
@@ -146,6 +161,7 @@ const INGEST_CONCURRENCY_ENV: &str = "KIBBR__API__INGEST_CONCURRENCY";
 const INGEST_WAIT_ENV: &str = "KIBBR__API__INGEST_WAIT_MS";
 const NATIVE_ADDR_ENV: &str = "KIBBR__API__NATIVE_ADDR";
 const SHUTDOWN_DEADLINE_ENV: &str = "KIBBR__API__SHUTDOWN_DEADLINE";
+const REQUEST_TIMEOUT_ENV: &str = "KIBBR__API__REQUEST_TIMEOUT";
 const LOG_LEVEL_ENV: &str = "KIBBR__LOG__LEVEL";
 const LOG_FORMAT_ENV: &str = "KIBBR__LOG__FORMAT";
 const BASE_PATH_ENV: &str = "KIBBR__STORAGE__BASE_PATH";
@@ -313,7 +329,7 @@ pub enum ConfigError {
 ///
 /// **A key that is not below is refused** (`deny_unknown_fields`), with the line it is on
 /// and the keys its section has. The design was written before most of these were
-/// built and names some that never were - `wal_dir`, `request_timeout`, `[cold_tier]`,
+/// built and names some that never were - `wal_dir`, `[cold_tier]`,
 /// the Elasticsearch address, the merge threshold, the promoted keys: a file that sets
 /// one is told so, where a key read and dropped would be a setting its writer believes
 /// is in force.
@@ -370,6 +386,8 @@ pub struct ApiKeys {
     pub ingest_wait_ms: Option<usize>,
     /// A duration: `"25s"`. `"0s"` is no deadline.
     pub shutdown_deadline: Option<String>,
+    /// A duration: `"30s"`. `"0s"` is no timeout.
+    pub request_timeout: Option<String>,
 }
 
 /// `[query]`: what a query may not exceed, and the threads it may use.
@@ -1050,6 +1068,9 @@ pub struct ApiLimits {
     /// off and the wind-down begins: see `DEFAULT_SHUTDOWN_DEADLINE`. `None` waits for
     /// every one of them, however long it takes.
     pub shutdown_deadline: Option<Duration>,
+    /// How long a request may take from its first line to its answer: see
+    /// `DEFAULT_REQUEST_TIMEOUT`. `None` is for as long as it takes.
+    pub request_timeout: Option<Duration>,
 }
 
 impl Default for ApiLimits {
@@ -1060,6 +1081,7 @@ impl Default for ApiLimits {
             ingest_concurrency: default_ingest_concurrency(),
             ingest_wait: Duration::from_millis(DEFAULT_INGEST_WAIT_MS as u64),
             shutdown_deadline: Some(DEFAULT_SHUTDOWN_DEADLINE),
+            request_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
         }
     }
 }
@@ -1133,10 +1155,11 @@ impl ApiLimits {
             )?,
             max_decompressed_bytes,
             ingest_concurrency,
-            // The defaults, and the variables not read: see `with_ingest_wait` and
-            // `with_shutdown_deadline`.
+            // The defaults, and the variables not read: see `with_ingest_wait`,
+            // `with_shutdown_deadline` and `with_request_timeout`.
             ingest_wait: Duration::from_millis(DEFAULT_INGEST_WAIT_MS as u64),
             shutdown_deadline: Some(DEFAULT_SHUTDOWN_DEADLINE),
+            request_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
         })
     }
 
@@ -1174,29 +1197,56 @@ impl ApiLimits {
         file: &File,
         flag: Option<Duration>,
     ) -> Result<Self, ConfigError> {
-        let deadline = match flag {
-            Some(deadline) => deadline,
-            None => {
-                let named = text_setting(
-                    None,
-                    SHUTDOWN_DEADLINE_ENV,
-                    file.api.shutdown_deadline.as_ref(),
-                    "[api] shutdown_deadline",
-                );
-                match named {
-                    None => DEFAULT_SHUTDOWN_DEADLINE,
-                    Some((name, value)) => {
-                        parse_duration(&value).map_err(|reason| ConfigError::BadSetting {
-                            name,
-                            value,
-                            reason,
-                        })?
-                    }
-                }
-            }
-        };
+        let deadline = duration_setting(
+            flag,
+            SHUTDOWN_DEADLINE_ENV,
+            file.api.shutdown_deadline.as_ref(),
+            "[api] shutdown_deadline",
+            DEFAULT_SHUTDOWN_DEADLINE,
+        )?;
         self.shutdown_deadline = (!deadline.is_zero()).then_some(deadline);
         Ok(self)
+    }
+
+    /// How long `serve` gives one request: `--request-timeout` > environment > `[api]
+    /// request_timeout` > 30 seconds. Apart from `load` for the reason `with_ingest_wait`
+    /// is. A duration of zero, in any unit, is no timeout, as it was before there was one.
+    pub fn with_request_timeout(
+        mut self,
+        file: &File,
+        flag: Option<Duration>,
+    ) -> Result<Self, ConfigError> {
+        let timeout = duration_setting(
+            flag,
+            REQUEST_TIMEOUT_ENV,
+            file.api.request_timeout.as_ref(),
+            "[api] request_timeout",
+            DEFAULT_REQUEST_TIMEOUT,
+        )?;
+        self.request_timeout = (!timeout.is_zero()).then_some(timeout);
+        Ok(self)
+    }
+}
+
+/// Flag > environment > file > default, over a duration: the flag already one - clap
+/// read it with `parse_duration` - and the variable and the file still its text.
+fn duration_setting(
+    flag: Option<Duration>,
+    var: &'static str,
+    file: Option<&String>,
+    key: &'static str,
+    default: Duration,
+) -> Result<Duration, ConfigError> {
+    if let Some(flag) = flag {
+        return Ok(flag);
+    }
+    match text_setting(None, var, file, key) {
+        None => Ok(default),
+        Some((name, value)) => parse_duration(&value).map_err(|reason| ConfigError::BadSetting {
+            name,
+            value,
+            reason,
+        }),
     }
 }
 
@@ -1483,6 +1533,7 @@ mod tests {
         INGEST_CONCURRENCY_ENV,
         INGEST_WAIT_ENV,
         SHUTDOWN_DEADLINE_ENV,
+        REQUEST_TIMEOUT_ENV,
         SCAN_THREADS_ENV,
         SCAN_FAN_ROWS_ENV,
         TIME_COLUMNS_ENV,
@@ -1564,6 +1615,7 @@ max_decompressed_bytes = 2048
 ingest_concurrency = 3
 ingest_wait_ms = 250
 shutdown_deadline = "1500ms"
+request_timeout = "45s"
 
 [query]
 scan_threads = 1
@@ -1604,12 +1656,14 @@ format = "json"
         let api = ApiLimits::load(&file, None, None, None)
             .and_then(|api| api.with_ingest_wait(&file, None))
             .and_then(|api| api.with_shutdown_deadline(&file, None))
+            .and_then(|api| api.with_request_timeout(&file, None))
             .expect("the request settings");
         assert_eq!(api.max_body_bytes, 1024);
         assert_eq!(api.max_decompressed_bytes, 2048);
         assert_eq!(api.ingest_concurrency, 3);
         assert_eq!(api.ingest_wait, Duration::from_millis(250));
         assert_eq!(api.shutdown_deadline, Some(Duration::from_millis(1500)));
+        assert_eq!(api.request_timeout, Some(Duration::from_secs(45)));
 
         assert_eq!(
             listen(&file, None, None).expect("an address"),
@@ -1653,7 +1707,6 @@ format = "json"
     fn a_key_with_no_setting_behind_it_is_refused() {
         for (text, says) in [
             ("[storage]\nwal_dir = \"/var/lib/kibbr/wal\"\n", "wal_dir"),
-            ("[api]\nrequest_timeout = \"30s\"\n", "request_timeout"),
             (
                 "[api]\nes_compat_addr = \"0.0.0.0:9200\"\n",
                 "es_compat_addr",
@@ -1779,6 +1832,64 @@ format = "json"
         assert!(
             e.to_string()
                 .starts_with("[api] shutdown_deadline `soon`: "),
+            "{e}"
+        );
+    }
+
+    /// **A request is given 30 seconds unless something says otherwise; zero is no
+    /// timeout; flag > variable > file; and one that cannot be read is an error that says
+    /// where it was written.**
+    #[test]
+    fn the_request_timeout_is_30s_by_default_and_none_at_zero() {
+        let _cleared = Cleared::of(&[REQUEST_TIMEOUT_ENV]);
+        let timeout = |file: &File, flag: Option<Duration>| {
+            ApiLimits::default()
+                .with_request_timeout(file, flag)
+                .map(|api| api.request_timeout)
+        };
+        let none = File::default();
+        assert_eq!(
+            ApiLimits::default().request_timeout,
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            timeout(&none, None).expect("default"),
+            Some(Duration::from_secs(30))
+        );
+
+        let file = File::parse("[api]\nrequest_timeout = \"2m\"\n").expect("a file");
+        assert_eq!(
+            timeout(&file, None).expect("file"),
+            Some(Duration::from_secs(120))
+        );
+        std::env::set_var(REQUEST_TIMEOUT_ENV, "750ms");
+        assert_eq!(
+            timeout(&file, None).expect("variable"),
+            Some(Duration::from_millis(750))
+        );
+        let flag = Some(Duration::from_secs(5));
+        assert_eq!(timeout(&file, flag).expect("flag"), flag);
+
+        assert_eq!(timeout(&file, Some(Duration::ZERO)).expect("flag 0"), None);
+        std::env::set_var(REQUEST_TIMEOUT_ENV, "0s");
+        assert_eq!(timeout(&file, None).expect("variable 0"), None);
+
+        std::env::set_var(REQUEST_TIMEOUT_ENV, "30");
+        let Err(e) = timeout(&file, None) else {
+            panic!("a bare number was read");
+        };
+        assert_eq!(
+            e.to_string(),
+            "KIBBR__API__REQUEST_TIMEOUT `30`: expected a whole number and a unit - ms, s, \
+             m or h - as in `25s`"
+        );
+        std::env::remove_var(REQUEST_TIMEOUT_ENV);
+        let file = File::parse("[api]\nrequest_timeout = \"never\"\n").expect("a file");
+        let Err(e) = timeout(&file, None) else {
+            panic!("`never` was read");
+        };
+        assert!(
+            e.to_string().starts_with("[api] request_timeout `never`: "),
             "{e}"
         );
     }

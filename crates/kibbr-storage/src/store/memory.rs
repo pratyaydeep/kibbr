@@ -108,6 +108,9 @@ impl LeafStore for MemoryLeaf {
 
         let mut out = Scan::default();
         for (seq, stored) in self.rows().iter().enumerate() {
+            if seq % super::STOP_EVERY_ROWS == 0 {
+                opts.stop.check()?;
+            }
             out.scanned += 1;
             // A column that has widened to text since this row arrived: its `Datetime`
             // is compared as the text it was ingested as, before the terms see it,
