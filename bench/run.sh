@@ -103,7 +103,8 @@ same_binary() {
   dir=$(mktemp -d) || return 1
   a=$(docker create "$IMAGE") && docker cp "$a:/usr/local/bin/kibbr" "$dir/deployed" >/dev/null
   b=$(docker create "$BENCH_IMAGE") && docker cp "$b:/usr/local/bin/kibbr" "$dir/bench" >/dev/null
-  docker rm "$a" "$b" >/dev/null 2>&1
+  # `-v`: each image declares a volume, and a container made from it has an unnamed one.
+  docker rm -v "$a" "$b" >/dev/null 2>&1
   cmp -s "$dir/deployed" "$dir/bench"
   local same=$?
   rm -rf "$dir"
@@ -142,7 +143,7 @@ INSIDE=/var/lib/kibbr/bench/results/$(date -u +%Y%m%dT%H%M%SZ)-$$
 ARGS+=(--out "$INSIDE.json" --label "docker $NAME")
 
 CONTAINER=kibbr-bench-$$
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1; }
+cleanup() { docker rm -f -v "$CONTAINER" >/dev/null 2>&1; }
 trap cleanup EXIT
 
 # `--stop-timeout 30` for the reason the Dockerfile gives; `--init` is not used - the
