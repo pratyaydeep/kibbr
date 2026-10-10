@@ -138,6 +138,14 @@ enum Command {
         /// Overrides `KIBBR__API__INGEST_WAIT_MS`. [default: 100]
         #[arg(long, value_name = "MS")]
         ingest_wait_ms: Option<usize>,
+        /// How long after SIGTERM or SIGINT the requests in flight are given to finish:
+        /// a number and ms, s, m or h. What is still in flight then is cut off, and the
+        /// final flush, the checkpoint and the trie snapshot follow - so keep it a few
+        /// seconds under whatever kills the process next (Kubernetes: 30s). `0s` waits
+        /// for every request, however long it takes.
+        /// Overrides `KIBBR__API__SHUTDOWN_DEADLINE`. [default: 25s]
+        #[arg(long, value_name = "DURATION", value_parser = config::parse_duration)]
+        shutdown_deadline: Option<std::time::Duration>,
         /// Where rows go. `disk` writes day-partitioned column files and snapshots the
         /// trie on a clean shutdown; `memory` writes nothing, and is what the
         /// memory-versus-disk differential runs against.
@@ -614,6 +622,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_decompressed_bytes,
             ingest_concurrency,
             ingest_wait_ms,
+            shutdown_deadline,
             storage,
             data_dir,
             trie_file,
@@ -641,7 +650,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     max_decompressed_bytes,
                     ingest_concurrency,
                 )?
-                .with_ingest_wait(file, ingest_wait_ms)?,
+                .with_ingest_wait(file, ingest_wait_ms)?
+                .with_shutdown_deadline(file, shutdown_deadline)?,
                 config::Storage::load(
                     file,
                     storage == StorageKind::Disk,

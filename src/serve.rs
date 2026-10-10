@@ -25,6 +25,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
+use std::future::IntoFuture;
 use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -68,6 +69,10 @@ use kibbr_storage::wal::{self, Wal};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
+
+/// How long, once the shutdown deadline has cut the requests in flight off, their
+/// connections are given to take the 503 each was answered with.
+const CUT_OFF_GRACE: Duration = Duration::from_secs(1);
 
 /// How many `/ingest` bodies may be between the door and their answer at once: being
 /// parsed, waiting for room in the write-ahead log, or waiting on its flush.
@@ -165,6 +170,9 @@ pub struct Server {
     flushed: Notify,
     /// Cancelled when shutdown begins: whoever is waiting at the door is refused at once.
     stopping: CancellationToken,
+    /// Cancelled when the shutdown deadline passes with requests still in flight: each
+    /// is answered 503 where it stands and let go (`track`).
+    cut_off: CancellationToken,
     started: Instant,
     started_at: DateTime<Utc>,
     lines_read: AtomicU64,
@@ -450,6 +458,7 @@ impl Server {
             flush_now: Notify::new(),
             flushed: Notify::new(),
             stopping: CancellationToken::new(),
+            cut_off: CancellationToken::new(),
             started: Instant::now(),
             started_at: now,
             lines_read: AtomicU64::new(0),
@@ -3201,6 +3210,11 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "requests_shed": server.door.shed.total(),
             // How long a body may be kept waiting before it is shed.
             "ingest_wait_ms": server.api.ingest_wait.as_millis() as u64,
+            // How long a stop gives the requests in flight; 0 is for as long as they take.
+            "shutdown_deadline_ms": server
+                .api
+                .shutdown_deadline
+                .map_or(0, |deadline| deadline.as_millis() as u64),
             "ingest_concurrency": server.api.ingest_concurrency,
             "ingest_bodies": ingest_bodies(&server.api),
             // Permits for the parse in use, and places between the door and an answer in
@@ -3315,9 +3329,25 @@ fn fail(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "ok": false, "error": message }))).into_response()
 }
 
+/// Counts a request as in flight until it is answered - and answers it here, 503, if
+/// the shutdown deadline passes first.
+///
+/// **What the cut drops is the handler, wherever it had got to.** A body still being
+/// read is let go unread, and nothing of it was taken. A query is abandoned. An
+/// `/ingest` body already handed to the write-ahead log is not undone by this - its
+/// task is off this future and is waited for by the wind-down - so its sender is told
+/// 503 for lines that are stored, and sending them again stores them twice: what any
+/// answer lost on the way has always cost, and why the deadline is long.
 async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {
     let _guard = InFlight::enter(&server);
-    next.run(request).await
+    tokio::select! {
+        answer = next.run(request) => answer,
+        () = server.cut_off.cancelled() => fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the server is stopping, and its shutdown deadline passed before this request \
+             was answered",
+        ),
+    }
 }
 
 /// `Connection: close` on every answer after which this server closes the connection
@@ -3595,10 +3625,48 @@ async fn serve(
         }
     };
 
-    axum::serve(listener, router(Arc::clone(&server)))
+    let mut serving = std::pin::pin!(axum::serve(listener, router(Arc::clone(&server)))
         .with_graceful_shutdown(shutdown)
-        .await
-        .map_err(ServeError::Serve)?;
+        .into_future());
+    // The deadline's clock starts at the signal, and with no deadline it never runs out.
+    let past_deadline = {
+        let token = token.clone();
+        let deadline = server.api.shutdown_deadline;
+        async move {
+            token.cancelled().await;
+            match deadline {
+                Some(deadline) => tokio::time::sleep(deadline).await,
+                None => std::future::pending().await,
+            }
+        }
+    };
+    let left = tokio::select! {
+        served = &mut serving => {
+            served.map_err(ServeError::Serve)?;
+            None
+        }
+        () = past_deadline => Some(server.in_flight.load(Ordering::Relaxed)),
+    };
+    // Past the deadline with requests still in flight: each is answered 503 where it
+    // stands (`track`), and the wind-down below runs in the time that is left before
+    // whatever sent the signal sends the next one. Their answers are a few bytes each;
+    // a connection that will not take even that within the grace is left behind, open,
+    // for the process's exit to close.
+    let cut = left.is_some();
+    if let Some(left) = left {
+        log(&format!(
+            "WARN shutdown deadline - {left} request(s) still in flight after {}; each is \
+             answered 503 and let go",
+            crate::config::duration_words(server.api.shutdown_deadline.unwrap_or_default())
+        ));
+        server.cut_off.cancel();
+        match tokio::time::timeout(CUT_OFF_GRACE, &mut serving).await {
+            Ok(served) => served.map_err(ServeError::Serve)?,
+            Err(_) => {
+                log("WARN shutdown deadline - a connection did not take its answer; left open")
+            }
+        }
+    }
 
     // `axum::serve` returns once every connection it accepted has finished, so reaching
     // this line *is* "in-flight requests complete first" - but for a body whose client
@@ -3623,7 +3691,7 @@ async fn serve(
     // No look starts a compaction from here on; the one running, if any, has been told to
     // stop and is waited for inside the sequence, behind the final flush.
     let _ = compactor.await;
-    let result = shutdown_sequence(&server);
+    let result = shutdown_sequence(&server, cut);
     drop(lock);
     result
 }
@@ -3798,8 +3866,12 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
 /// in the write-ahead log, so a final flush that fails - or a `SIGKILL` that lands halfway
 /// through - costs the next start a replay and nothing else. The flush is still done: a
 /// clean stop then leaves every row in a sealed file and nothing to read back.
-fn shutdown_sequence(server: &Server) -> Result<(), ServeError> {
-    log("in-flight requests complete");
+fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), ServeError> {
+    log(if cut {
+        "in-flight requests cut off at the shutdown deadline"
+    } else {
+        "in-flight requests complete"
+    });
 
     if server.storage.is_durable() {
         let summary = server.stores.flush_all(FlushKind::Final);
@@ -4082,7 +4154,16 @@ fn banner(addr: SocketAddr, server: &Server) {
          \x20             fleet. Deliberate; revisit with the deployment work."
             .to_string(),
         String::new(),
-        "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first.".to_string(),
+        match server.api.shutdown_deadline {
+            Some(deadline) => format!(
+                "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first; one\n\
+                 \x20             still in flight {} later is answered 503 and let go.",
+                crate::config::duration_words(deadline)
+            ),
+            None => "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first,\n\
+                     \x20             however long they take (--shutdown-deadline 0s)."
+                .to_string(),
+        },
         String::new(),
     ];
     eprintln!("{}", lines.join("\n"));

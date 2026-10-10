@@ -266,7 +266,8 @@ kibbr serve
   max rows    10000 - a MATCH with no LIMIT is answered a page at a time,
               truncated with a next_cursor to continue from
 
-  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first.
+  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first; one
+              still in flight 25s later is answered 503 and let go.
 ```
 
 The banner is on stderr, so redirecting stdout does not silence the part about
@@ -471,7 +472,8 @@ duplicates nothing. Line numbers count every physical line, blanks included, so 
 indexes into the body you sent.
 
 **Ctrl-C finishes what it started.** SIGINT and SIGTERM both cancel one
-`CancellationToken`; the listener stops accepting, requests already running finish,
+`CancellationToken`; the listener stops accepting, requests already running finish -
+or are answered `503` once the shutdown deadline passes, 25 seconds by default -
 and the shutdown walks a fixed order naming the steps a memory server skips.
 With `--storage memory`:
 
@@ -662,6 +664,7 @@ max_body_bytes = 10485760           # --max-body-bytes
 max_decompressed_bytes = 67108864   # --max-decompressed-bytes
 ingest_concurrency = 8              # --ingest-concurrency   default: one per core
 ingest_wait_ms = 100                # --ingest-wait-ms
+shutdown_deadline = "25s"           # --shutdown-deadline    ms, s, m or h; "0s" is none
 
 [query]
 max_rows = 10000                    # --max-rows
@@ -692,6 +695,13 @@ unknown field `wal_dir`, expected one of `base_path`, `trie_file`, `max_open_seg
 What stays a flag only: `--storage memory`, and what one run of `load` or `compact`
 is asked to do (`--threads`, `--replace-day`, `--day` and the rest). On `serve`,
 `--threads` is `--scan-threads` under a shorter name.
+
+**`shutdown_deadline`** is how long a stopping server gives the requests in flight.
+One still in flight then - a sender that stopped halfway through a body - is answered
+`503` where it stands, and the final flush, the checkpoint and the trie snapshot
+follow, so the process exits 0 inside whatever grace it was given (Kubernetes: 30
+seconds) and the next start has nothing to replay. `"0s"` waits for every request,
+however long it takes.
 
 ## Run the tests
 

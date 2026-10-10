@@ -14,7 +14,8 @@
 //! there is no file. A key's variable is `KIBBR__`, its section and its name in capitals -
 //! `[storage] base_path` is `KIBBR__STORAGE__BASE_PATH` - so the file's keys are the
 //! names the variables already had, and a duration that was a whole number of
-//! milliseconds under a name ending `_ms` is one in the file too.
+//! milliseconds under a name ending `_ms` is one in the file too. The one duration that
+//! arrived with the file, `[api] shutdown_deadline`, is spelled `"25s"`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -86,6 +87,19 @@ pub const DEFAULT_INGEST_WAIT_MS: usize = 100;
 /// parse, the log's flush and the store.
 pub const MAX_INGEST_WAIT_MS: usize = 30_000;
 
+/// How long after SIGTERM or SIGINT the requests in flight are given to finish: 25
+/// seconds.
+///
+/// Kubernetes sends SIGKILL thirty seconds after its SIGTERM. A stop used to wait for
+/// every connection for as long as it took, so one slow sender - or one that sent half a
+/// body and nothing more - held the final flush, the checkpoint and `trie.json` until
+/// the kill arrived and none of them ran. With the deadline, what is still in flight
+/// then is cut off and the wind-down follows, inside the five seconds that are left:
+/// 200,000 buffered rows stop in a second and a half (`scripts/shutdown_time.sh`).
+/// Nothing acknowledged is lost either way - it is in the write-ahead log - but a stop
+/// that finishes leaves nothing to replay.
+pub const DEFAULT_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(25);
+
 /// Where `serve` listens when nothing says otherwise. Loopback: an address of every
 /// interface publishes an unauthenticated write endpoint, and that is typed, not
 /// defaulted into.
@@ -131,6 +145,7 @@ const MAX_DECOMPRESSED_BYTES_ENV: &str = "KIBBR__API__MAX_DECOMPRESSED_BYTES";
 const INGEST_CONCURRENCY_ENV: &str = "KIBBR__API__INGEST_CONCURRENCY";
 const INGEST_WAIT_ENV: &str = "KIBBR__API__INGEST_WAIT_MS";
 const NATIVE_ADDR_ENV: &str = "KIBBR__API__NATIVE_ADDR";
+const SHUTDOWN_DEADLINE_ENV: &str = "KIBBR__API__SHUTDOWN_DEADLINE";
 const BASE_PATH_ENV: &str = "KIBBR__STORAGE__BASE_PATH";
 const TRIE_FILE_ENV: &str = "KIBBR__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "KIBBR__INGESTOR__FLUSH_INTERVAL_MS";
@@ -273,7 +288,7 @@ pub enum ConfigError {
     #[error("--config {path}: {detail}")]
     FileSyntax { path: String, detail: String },
 
-    /// A setting that is not a whole number - an address - and could not be
+    /// A setting that is not a whole number - an address, a duration - and could not be
     /// read as what it is. `name` is where it was written: the variable, or the file's
     /// section and key.
     #[error("{name} `{value}`: {reason}")]
@@ -349,6 +364,8 @@ pub struct ApiKeys {
     pub max_decompressed_bytes: Option<usize>,
     pub ingest_concurrency: Option<usize>,
     pub ingest_wait_ms: Option<usize>,
+    /// A duration: `"25s"`. `"0s"` is no deadline.
+    pub shutdown_deadline: Option<String>,
 }
 
 /// `[query]`: what a query may not exceed, and the threads it may use.
@@ -393,6 +410,36 @@ impl File {
     /// The file's text, read. The error is the parser's own message.
     pub fn parse(text: &str) -> Result<Self, String> {
         toml::from_str(text).map_err(|e| e.to_string().trim_end().to_string())
+    }
+}
+
+/// A duration as the file and its variable spell one: a whole number and `ms`, `s`, `m`
+/// or `h`, with nothing between - `"25s"`, `"500ms"`. The unit is not optional: a bare
+/// `25` would be seconds to one reader and milliseconds to the next.
+pub fn parse_duration(text: &str) -> Result<Duration, String> {
+    let text = text.trim();
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+    let (number, unit) = text.split_at(digits);
+    let expected = "expected a whole number and a unit - ms, s, m or h - as in `25s`";
+    let number: u64 = number.parse().map_err(|_| expected.to_string())?;
+    let millis = match unit {
+        "ms" => Some(number),
+        "s" => number.checked_mul(1_000),
+        "m" => number.checked_mul(60_000),
+        "h" => number.checked_mul(3_600_000),
+        _ => return Err(expected.to_string()),
+    };
+    millis
+        .map(Duration::from_millis)
+        .ok_or_else(|| "longer than a duration can hold".to_string())
+}
+
+/// A duration as `parse_duration` reads one back: whole seconds as `25s`, and anything
+/// finer in milliseconds.
+pub fn duration_words(d: Duration) -> String {
+    match d.as_millis() {
+        ms if ms % 1000 == 0 => format!("{}s", ms / 1000),
+        ms => format!("{ms}ms"),
     }
 }
 
@@ -904,6 +951,10 @@ pub struct ApiLimits {
     /// How long an `/ingest` body may be kept waiting before it is shed: see
     /// `DEFAULT_INGEST_WAIT_MS`. Zero waits for nothing.
     pub ingest_wait: Duration,
+    /// How long after the signal the requests in flight are given before they are cut
+    /// off and the wind-down begins: see `DEFAULT_SHUTDOWN_DEADLINE`. `None` waits for
+    /// every one of them, however long it takes.
+    pub shutdown_deadline: Option<Duration>,
 }
 
 impl Default for ApiLimits {
@@ -913,6 +964,7 @@ impl Default for ApiLimits {
             max_decompressed_bytes: DEFAULT_MAX_DECOMPRESSED_BYTES,
             ingest_concurrency: default_ingest_concurrency(),
             ingest_wait: Duration::from_millis(DEFAULT_INGEST_WAIT_MS as u64),
+            shutdown_deadline: Some(DEFAULT_SHUTDOWN_DEADLINE),
         }
     }
 }
@@ -986,8 +1038,10 @@ impl ApiLimits {
             )?,
             max_decompressed_bytes,
             ingest_concurrency,
-            // The default, and the variable not read: see `with_ingest_wait`.
+            // The defaults, and the variables not read: see `with_ingest_wait` and
+            // `with_shutdown_deadline`.
             ingest_wait: Duration::from_millis(DEFAULT_INGEST_WAIT_MS as u64),
+            shutdown_deadline: Some(DEFAULT_SHUTDOWN_DEADLINE),
         })
     }
 
@@ -1013,6 +1067,40 @@ impl ApiLimits {
             });
         }
         self.ingest_wait = Duration::from_millis(ms as u64);
+        Ok(self)
+    }
+
+    /// How long a stopping `serve` gives the requests in flight: `--shutdown-deadline` >
+    /// environment > `[api] shutdown_deadline` > 25 seconds. Apart from `load` for the
+    /// reason `with_ingest_wait` is. A duration of zero, in any unit, is no deadline:
+    /// every request is waited for, as it was before there was one.
+    pub fn with_shutdown_deadline(
+        mut self,
+        file: &File,
+        flag: Option<Duration>,
+    ) -> Result<Self, ConfigError> {
+        let deadline = match flag {
+            Some(deadline) => deadline,
+            None => {
+                let named = text_setting(
+                    None,
+                    SHUTDOWN_DEADLINE_ENV,
+                    file.api.shutdown_deadline.as_ref(),
+                    "[api] shutdown_deadline",
+                );
+                match named {
+                    None => DEFAULT_SHUTDOWN_DEADLINE,
+                    Some((name, value)) => {
+                        parse_duration(&value).map_err(|reason| ConfigError::BadSetting {
+                            name,
+                            value,
+                            reason,
+                        })?
+                    }
+                }
+            }
+        };
+        self.shutdown_deadline = (!deadline.is_zero()).then_some(deadline);
         Ok(self)
     }
 }
@@ -1299,6 +1387,7 @@ mod tests {
         MAX_DECOMPRESSED_BYTES_ENV,
         INGEST_CONCURRENCY_ENV,
         INGEST_WAIT_ENV,
+        SHUTDOWN_DEADLINE_ENV,
         SCAN_THREADS_ENV,
         SCAN_FAN_ROWS_ENV,
         TIME_COLUMNS_ENV,
@@ -1377,6 +1466,7 @@ max_body_bytes = 1024
 max_decompressed_bytes = 2048
 ingest_concurrency = 3
 ingest_wait_ms = 250
+shutdown_deadline = "1500ms"
 
 [query]
 scan_threads = 1
@@ -1413,11 +1503,13 @@ epoch_window = ["2001-01-01T00:00:00Z", "2002-01-01T00:00:00Z"]
 
         let api = ApiLimits::load(&file, None, None, None)
             .and_then(|api| api.with_ingest_wait(&file, None))
+            .and_then(|api| api.with_shutdown_deadline(&file, None))
             .expect("the request settings");
         assert_eq!(api.max_body_bytes, 1024);
         assert_eq!(api.max_decompressed_bytes, 2048);
         assert_eq!(api.ingest_concurrency, 3);
         assert_eq!(api.ingest_wait, Duration::from_millis(250));
+        assert_eq!(api.shutdown_deadline, Some(Duration::from_millis(1500)));
 
         assert_eq!(
             listen(&file, None, None).expect("an address"),
@@ -1479,6 +1571,101 @@ epoch_window = ["2001-01-01T00:00:00Z", "2002-01-01T00:00:00Z"]
             File::read(Some(&gone)),
             Err(ConfigError::FileRead { .. })
         ));
+    }
+
+    /// **A duration is a whole number and a unit, and reads back as it was written.**
+    #[test]
+    fn a_duration_is_a_whole_number_and_a_unit() {
+        for (text, millis) in [
+            ("25s", 25_000),
+            ("500ms", 500),
+            ("5m", 300_000),
+            ("1h", 3_600_000),
+            ("0s", 0),
+            (" 2s ", 2_000),
+        ] {
+            assert_eq!(
+                parse_duration(text),
+                Ok(Duration::from_millis(millis)),
+                "{text}"
+            );
+        }
+        for text in [
+            "25",
+            "s",
+            "",
+            "2.5s",
+            "-1s",
+            "25 s",
+            "25sec",
+            "1d",
+            "99999999999999999999s",
+        ] {
+            assert!(parse_duration(text).is_err(), "{text}");
+        }
+        assert!(parse_duration("18446744073709551615h").is_err());
+        assert_eq!(duration_words(Duration::from_secs(25)), "25s");
+        assert_eq!(duration_words(Duration::from_millis(1500)), "1500ms");
+        assert_eq!(duration_words(Duration::ZERO), "0s");
+    }
+
+    /// **The shutdown deadline is 25 seconds unless something says otherwise; zero is no
+    /// deadline; and one that cannot be read is an error that says where it was written.**
+    #[test]
+    fn the_shutdown_deadline_is_25s_by_default_and_none_at_zero() {
+        let _cleared = Cleared::of(&[SHUTDOWN_DEADLINE_ENV]);
+        let deadline = |file: &File, flag: Option<Duration>| {
+            ApiLimits::default()
+                .with_shutdown_deadline(file, flag)
+                .map(|api| api.shutdown_deadline)
+        };
+        let none = File::default();
+        assert_eq!(
+            ApiLimits::default().shutdown_deadline,
+            Some(Duration::from_secs(25))
+        );
+        assert_eq!(
+            deadline(&none, None).expect("default"),
+            Some(Duration::from_secs(25))
+        );
+
+        let file = File::parse("[api]\nshutdown_deadline = \"40s\"\n").expect("a file");
+        assert_eq!(
+            deadline(&file, None).expect("file"),
+            Some(Duration::from_secs(40))
+        );
+        std::env::set_var(SHUTDOWN_DEADLINE_ENV, "300ms");
+        assert_eq!(
+            deadline(&file, None).expect("variable"),
+            Some(Duration::from_millis(300))
+        );
+        let flag = Some(Duration::from_secs(2));
+        assert_eq!(deadline(&file, flag).expect("flag"), flag);
+
+        // Zero, in any unit and from anywhere, waits for every request.
+        assert_eq!(deadline(&file, Some(Duration::ZERO)).expect("flag 0"), None);
+        std::env::set_var(SHUTDOWN_DEADLINE_ENV, "0ms");
+        assert_eq!(deadline(&file, None).expect("variable 0"), None);
+
+        std::env::set_var(SHUTDOWN_DEADLINE_ENV, "25");
+        let Err(e) = deadline(&file, None) else {
+            panic!("a bare number was read");
+        };
+        assert_eq!(
+            e.to_string(),
+            "KIBBR__API__SHUTDOWN_DEADLINE `25`: expected a whole number and a unit - ms, s, \
+             m or h - as in `25s`"
+        );
+        std::env::remove_var(SHUTDOWN_DEADLINE_ENV);
+        let file = File::parse("[api]\nshutdown_deadline = \"soon\"\n").expect("a file");
+        let Err(e) = deadline(&file, None) else {
+            panic!("`soon` was read");
+        };
+        assert!(
+            e.to_string()
+                .starts_with("[api] shutdown_deadline `soon`: "),
+            "{e}"
+        );
     }
 
     /// **An address that cannot be read is an error that names where it was written and

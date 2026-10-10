@@ -1,4 +1,4 @@
-//! What an operator reaches for: the settings file.
+//! What an operator reaches for: the settings file, and the deadline on a stop.
 //!
 //! All of it from outside, as the other files here: the binary's flags, its stdout and
 //! stderr, its exit code, and HTTP over a bare `TcpStream`. The arithmetic of where a
@@ -315,15 +315,21 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
         "kibbr.toml",
         &format!(
             "[storage]\nbase_path = \"{data}\"\n\n\
-             [api]\ningest_wait_ms = 250\n\n\
+             [api]\ningest_wait_ms = 250\nshutdown_deadline = \"3s\"\n\n\
              [query]\nmax_rows = 2\n"
         ),
     );
-    let wait = |server: &Server| server.stats()["ingest"]["ingest_wait_ms"].as_u64();
+    let waits = |server: &Server| {
+        let ingest = &server.stats()["ingest"];
+        (
+            ingest["ingest_wait_ms"].as_u64(),
+            ingest["shutdown_deadline_ms"].as_u64(),
+        )
+    };
 
     // The file alone.
     let server = Server::start(&[], &["--config", &config], &[]);
-    assert_eq!(wait(&server), Some(250));
+    assert_eq!(waits(&server), (Some(250), Some(3000)));
     assert!(Path::new(&data).join("catalog.log").is_file());
     // `[query] max_rows` is the page an unlimited MATCH is cut at.
     let lines: String = (0..5)
@@ -338,29 +344,32 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
     let (code, said) = server.stop(Duration::from_secs(20));
     assert_eq!(code, Some(0), "{said}");
 
-    // A variable over the file.
+    // A variable over the file, key by key: the deadline is still the file's.
     let server = Server::start(
         &["--config", &config],
         &[],
         &[("KIBBR__API__INGEST_WAIT_MS", "300")],
     );
-    assert_eq!(wait(&server), Some(300));
+    assert_eq!(waits(&server), (Some(300), Some(3000)));
     let (code, said) = server.stop(Duration::from_secs(20));
     assert_eq!(code, Some(0), "{said}");
 
     // A flag over both.
     let server = Server::start(
         &["--config", &config],
-        &["--ingest-wait-ms", "400"],
-        &[("KIBBR__API__INGEST_WAIT_MS", "300")],
+        &["--ingest-wait-ms", "400", "--shutdown-deadline", "0s"],
+        &[
+            ("KIBBR__API__INGEST_WAIT_MS", "300"),
+            ("KIBBR__API__SHUTDOWN_DEADLINE", "7s"),
+        ],
     );
-    assert_eq!(wait(&server), Some(400));
+    assert_eq!(waits(&server), (Some(400), Some(0)));
     let (code, said) = server.stop(Duration::from_secs(20));
     assert_eq!(code, Some(0), "{said}");
 
-    // With no file, no variable and no flag: 100ms.
+    // With no file, no variable and no flag: 100ms and 25s.
     let server = Server::start(&[], &["--storage", "memory"], &[]);
-    assert_eq!(wait(&server), Some(100));
+    assert_eq!(waits(&server), (Some(100), Some(25_000)));
 }
 
 /// **`query` reads the file too**: its backstop and its time columns are the file's, a
@@ -396,4 +405,152 @@ fn query_takes_its_limits_and_time_columns_from_the_file() {
     let plain = fetch(&[]);
     assert_eq!(plain["rows"].as_array().map(Vec::len), Some(5));
     assert_eq!(plain["meta"]["truncated"], false);
+}
+
+// ── The shutdown deadline ──────────────────────────────────────────────────────────
+
+/// A `POST /ingest` whose sender stops halfway through its body: the head, a
+/// `Content-Length` of a thousand, ten bytes, and then nothing.
+fn stalled_body(port: u16) -> TcpStream {
+    let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
+    let head = format!(
+        "POST /ingest HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 1000\r\n\r\n{{\"a\":1}}\n\n\n"
+    );
+    socket.write_all(head.as_bytes()).expect("the head");
+    socket.flush().expect("flushed");
+    socket
+}
+
+/// **A stop does not wait past its deadline for a request that will not finish.** A
+/// sender that stopped halfway through a body used to hold the server until whatever
+/// sent the SIGTERM sent a SIGKILL; with a deadline the request is answered 503 where it
+/// stands, the wind-down runs, and the exit is 0 - every step of it in the log.
+#[test]
+fn a_stop_cuts_off_what_is_still_in_flight_at_the_deadline() {
+    let scratch = Scratch::new("deadline");
+    let data = scratch.path("data");
+    let server = Server::start(
+        &[],
+        &["--data-dir", &data, "--shutdown-deadline", "400ms"],
+        &[],
+    );
+    let lines = "{\"ts\":\"2024-01-15T10:00:00Z\",\"a\":1}\n";
+    assert_eq!(server.post("/ingest", lines.as_bytes()).0, 200);
+    let mut stalled = stalled_body(server.port);
+    // In flight before the signal, or the stop has nothing to wait for.
+    let seen = Instant::now();
+    while server.stats()["ingest"]["bodies_inside"] != 1 {
+        assert!(
+            seen.elapsed() < Duration::from_secs(10),
+            "the body never arrived"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let asked = Instant::now();
+    let (code, said) = server.stop(Duration::from_secs(15));
+    let took = asked.elapsed();
+    assert_eq!(code, Some(0), "{said}");
+    assert!(
+        took >= Duration::from_millis(400),
+        "stopped in {took:?}, before the deadline"
+    );
+    let logged: Vec<&str> = said.lines().filter(|l| l.starts_with("kibbr: ")).collect();
+    assert!(
+        logged.contains(
+            &"kibbr: WARN shutdown deadline - 1 request(s) still in flight after 400ms; each \
+              is answered 503 and let go"
+        ),
+        "{said}"
+    );
+    let at = |starts: &str| {
+        logged
+            .iter()
+            .position(|line| line.starts_with(starts))
+            .unwrap_or_else(|| panic!("no `{starts}` in:\n{said}"))
+    };
+    // The whole wind-down, in its order, after the cut.
+    let steps = [
+        "kibbr: WARN shutdown deadline - ",
+        "kibbr: in-flight requests cut off at the shutdown deadline",
+        "kibbr: final flush - ",
+        "kibbr: WAL checkpoint - ",
+        "kibbr: trie.json - ",
+        "kibbr: close stores - ",
+        "kibbr: close WAL - ",
+        "kibbr: exit 0",
+    ];
+    let order: Vec<usize> = steps.iter().map(|step| at(step)).collect();
+    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{said}");
+
+    // The sender that stalled was answered, and told why.
+    let (status, body) = answer(&mut stalled);
+    assert_eq!(status, 503, "{body}");
+    assert!(body.contains("shutdown deadline"), "{body}");
+
+    // And what was acknowledged before the stop is there after it, with nothing to replay.
+    let server = Server::start(&[], &["--data-dir", &data], &[]);
+    assert_eq!(server.stats()["ingest"]["lines_ingested"], 0);
+    let (status, body) = server.post("/query", br#"{"q":"COUNT LOG {\"a\": *}"}"#);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(json(&body)["count"], 1, "{body}");
+}
+
+/// **With no deadline a stop waits for every request, as it did** - and with nothing in
+/// flight a deadline is never reached: the stop is as quick as it was.
+#[test]
+fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
+    let server = Server::start(
+        &[],
+        &["--storage", "memory", "--shutdown-deadline", "0s"],
+        &[],
+    );
+    let mut stalled = stalled_body(server.port);
+    let seen = Instant::now();
+    while server.stats()["ingest"]["bodies_inside"] != 1 {
+        assert!(
+            seen.elapsed() < Duration::from_secs(10),
+            "the body never arrived"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    server.signal();
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut server = server;
+    assert!(
+        server.child.try_wait().expect("try_wait").is_none(),
+        "stopped with a request in flight and no deadline"
+    );
+    // The sender finishes its body, and the stop goes on.
+    stalled.write_all(&vec![b'\n'; 990]).expect("the rest");
+    let (status, body) = answer(&mut stalled);
+    assert!(status == 200 || status == 503, "{status}: {body}");
+    let asked = Instant::now();
+    let code = loop {
+        match server.child.try_wait().expect("try_wait") {
+            Some(status) => break status.code(),
+            None if asked.elapsed() > Duration::from_secs(15) => panic!("still running"),
+            None => std::thread::sleep(Duration::from_millis(10)),
+        }
+    };
+    assert_eq!(code, Some(0));
+
+    // Nothing in flight: a long deadline costs a stop nothing.
+    let server = Server::start(
+        &[],
+        &["--storage", "memory", "--shutdown-deadline", "1h"],
+        &[],
+    );
+    let asked = Instant::now();
+    let (code, said) = server.stop(Duration::from_secs(10));
+    assert_eq!(code, Some(0), "{said}");
+    assert!(
+        asked.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert!(
+        said.contains("kibbr: in-flight requests complete"),
+        "{said}"
+    );
 }
