@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use kibbr::store::v3::file::{open_sealed, Reader};
+use kibbr::store::v3::FormatError;
 use serde_json::Value;
 
 /// Farm lines for most tests: one day, every line carrying its own time.
@@ -1007,19 +1009,54 @@ fn a_path_that_is_not_a_data_directory_is_refused_and_nothing_is_made_or_deleted
     assert_eq!(db.compact(&[]).ok(), "");
 }
 
-/// Overwrite a few bytes in the middle of a data file: a row group in it no longer
-/// checks out, and the day cannot be rebuilt.
+/// Every row group of a sealed data file, read as a rebuild reads it: the index through
+/// the footer, then each header frame and every chunk, CRCs checked and chunks decoded.
+fn read_whole(path: &Path) -> Result<(), FormatError> {
+    let index = open_sealed(path)?.unwrap_or_else(|| panic!("{} is not sealed", path.display()));
+    let mut reader = Reader::open(path)?;
+    for entry in &index.entries {
+        let columns = index.schemas[entry.schema_id as usize].len();
+        let header = reader.header(entry, columns)?;
+        let wanted: Vec<usize> = (0..header.chunks.len()).collect();
+        reader.chunks(entry, &header, &wanted)?;
+    }
+    Ok(())
+}
+
+/// Turn over 8 bytes inside the first column chunk of a data file's first row group: the
+/// chunk's CRC no longer holds, and the day cannot be rebuilt. The place is found through
+/// the footer and the row group's header, not by the file's length - the middle of a file
+/// is a schema record on some runs, which nothing reads back.
 fn damage(path: &Path) {
-    let at = fs::metadata(path)
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-        .len()
-        / 2;
+    let said = |e| panic!("{}: {e}", path.display());
+    read_whole(path).unwrap_or_else(|e| panic!("refused before it was damaged: {e}"));
+    let index = open_sealed(path).expect("open").expect("sealed");
+    let entry = index.entries.first().expect("a row group");
+    let columns = index.schemas[entry.schema_id as usize].len();
+    let header = Reader::open(path)
+        .and_then(|mut r| r.header(entry, columns))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let (chunk, start) = header
+        .chunks
+        .iter()
+        .zip(header.chunk_offsets())
+        .find(|(chunk, _)| chunk.stored_len >= 8)
+        .expect("a chunk of 8 bytes");
+    // 16 bytes into the chunk, or as far in as a shorter one has room for.
+    let at = entry.offset
+        + u64::from(entry.frame_len)
+        + start
+        + u64::from(chunk.stored_len - 8).min(16);
     let mut file = File::options()
+        .read(true)
         .write(true)
         .open(path)
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        .unwrap_or_else(said);
+    let mut bytes = [0u8; 8];
     file.seek(SeekFrom::Start(at)).expect("seek");
-    file.write_all(&[0xff; 8]).expect("overwrite");
+    file.read_exact(&mut bytes).expect("read");
+    file.seek(SeekFrom::Start(at)).expect("seek");
+    file.write_all(&bytes.map(|b| !b)).expect("overwrite");
 }
 
 /// With no `--day` and two days due, both are compacted, the older first: a record a
@@ -1066,7 +1103,13 @@ fn a_day_that_fails_does_not_stop_the_days_after_it() {
     let before = [OLDER, DAY].map(|day| db.live_files_of(day));
     let records = db.manifest().len();
     let first = before[0].iter().next().expect("a file");
-    damage(&db.base().join("data").join(first));
+    let damaged = db.base().join("data").join(first);
+    damage(&damaged);
+    assert!(
+        read_whole(&damaged).is_err(),
+        "{} was damaged and still reads whole",
+        damaged.display()
+    );
     db.backdate();
 
     let ran = db.compact(&[]);
