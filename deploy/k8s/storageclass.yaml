@@ -1,0 +1,19 @@
+# gp3 volumes from the EBS CSI driver. **Skip this file if the cluster already has a
+# class named `gp3`** - a StorageClass cannot be changed once made, and applying another
+# definition over one fails.
+#
+# WaitForFirstConsumer: the volume is made in the zone the pod is scheduled to. An EBS
+# volume cannot leave its zone, so made first it would decide where the pod may run.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+  csi.storage.k8s.io/fstype: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+# Retain: deleting the claim must not delete five hundred gigabytes of logs.
+reclaimPolicy: Retain

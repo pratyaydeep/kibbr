@@ -1,0 +1,126 @@
+# kibbr: ONE pod and its volume.
+#
+# **`replicas: 1` is the design and not a starting point.** A data directory has one
+# writer - a second process is refused its LOCK - and nothing copies rows between pods.
+# Two replicas are two databases, each with a volume of its own, each taking half of what
+# Vector sends through the Service and answering a query with half of the logs. While the
+# one pod is down Vector buffers and retries (deploy/vector/kibbr.toml).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kibbr
+  namespace: kibbr
+  labels:
+    app.kubernetes.io/name: kibbr
+spec:
+  replicas: 1
+  serviceName: kibbr
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kibbr
+  # The pod is deleted before its replacement is made: the volume is ReadWriteOnce and
+  # the directory has one writer, so there is never a moment with two.
+  updateStrategy:
+    type: RollingUpdate
+  # The claim outlives the StatefulSet and a scale to zero - Kubernetes' default
+  # (persistentVolumeClaimRetentionPolicy: Retain), left unsaid so that a cluster from
+  # before the field has nothing to refuse. The logs are not the pod's.
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kibbr
+    spec:
+      serviceAccountName: kibbr
+      automountServiceAccountToken: false
+      # SIGKILL follows SIGTERM by this long. kibbr gives the requests in flight 25
+      # seconds ([api] shutdown_deadline) and runs the final flush, the checkpoint and
+      # the trie snapshot in what is left: scripts/shutdown_deadline.sh holds a stop to
+      # thirty. Raise the two together, or neither.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # The volume arrives owned by root. This gives it to the group the server runs
+        # in; OnRootMismatch, so that it is one chown at the first mount and not a walk
+        # of five hundred gigabytes at every start.
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kibbr
+          # REPLACE: the registry the image was pushed to, and a tag or digest that names
+          # one build. Not `latest`: a restart must not be an upgrade.
+          image: 111122223333.dkr.ecr.ap-south-1.amazonaws.com/kibbr:0.1.0
+          imagePullPolicy: IfNotPresent
+          args: ["serve"]
+          # The image sets where the data is (/var/lib/kibbr/data), the address
+          # (0.0.0.0:7700) and the log's format (json). Whatever else is set here is a
+          # `KIBBR__SECTION__KEY` variable; a flag in `args` wins over it.
+          env:
+            - name: KIBBR__API__SHUTDOWN_DEADLINE
+              value: 25s
+            - name: KIBBR__API__REQUEST_TIMEOUT
+              value: 30s
+          ports:
+            - name: http
+              containerPort: 7700
+              protocol: TCP
+          # /health answers 200 with "ok":true once the server listens, and goes on
+          # answering it when the disk is full or the log cannot write ("status":
+          # "degraded"): a restart does not empty a disk, and the rows on it can still be
+          # asked for. So all three probes are whether the process answers at all.
+          #
+          # A start after a kill reads the write-ahead log back before it listens. The
+          # startup probe gives that ten minutes; until it passes the other two do not run.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          # REPLACE with what the cluster's traffic needs: these are not measured.
+          # What is known is what kibbr holds by its own settings - up to 512 MiB of
+          # rows not yet in a row group, up to 256 MiB of the log not yet applied - and
+          # that a query with no LIMIT is cut at 10,000 rows. No CPU limit: a limit
+          # throttles the ingest path in bursts, and a request is what scheduling needs.
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kibbr
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: kibbr
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 500Gi

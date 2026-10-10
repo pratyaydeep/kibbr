@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kibbr
+  labels:
+    app.kubernetes.io/name: kibbr
+    # The pod below passes the `restricted` profile: not root, no privilege escalation,
+    # every capability dropped, the runtime's default seccomp profile.
+    pod-security.kubernetes.io/enforce: restricted

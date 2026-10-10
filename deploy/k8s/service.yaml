@@ -1,0 +1,39 @@
+# What Vector sends to: http://kibbr-svc.kibbr.svc.cluster.local:7700/ingest.
+#
+# One pod is behind it. A second would get half of Vector's traffic and hold half of the
+# logs, and nothing copies rows between pods: see the StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibbr-svc
+  namespace: kibbr
+  labels:
+    app.kubernetes.io/name: kibbr
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kibbr
+  ports:
+    - name: http
+      port: 7700
+      targetPort: http
+      protocol: TCP
+---
+# The StatefulSet's governing Service: headless, and what gives the pod the name
+# kibbr-0.kibbr.kibbr.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibbr
+  namespace: kibbr
+  labels:
+    app.kubernetes.io/name: kibbr
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: kibbr
+  ports:
+    - name: http
+      port: 7700
+      targetPort: http
+      protocol: TCP

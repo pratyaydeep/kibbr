@@ -1,0 +1,55 @@
+# What deploy/vector/kibbr.toml is checked with, since there is no cluster to check it
+# against: a source standing in for the cluster's own, and three tests of the transform.
+# Not part of what is deployed.
+#
+# deploy/README.md has the two commands. (They are not written here: Vector reads a
+# dollar sign and a name as a variable to fill in, in a comment as anywhere else.)
+
+[sources.kubernetes_logs]
+type = "kubernetes_logs"
+
+[[tests]]
+name = "a JSON object line becomes the event"
+[[tests.inputs]]
+insert_at = "kibbr_lines"
+type = "log"
+[tests.inputs.log_fields]
+message = '{"ts":"2024-01-15T10:00:00Z","level":"info","user":{"id":7}}'
+"kubernetes.pod_name" = "api-0"
+[[tests.outputs]]
+extract_from = "kibbr_lines"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(., {"ts":"2024-01-15T10:00:00Z","level":"info","user":{"id":7}})
+'''
+
+[[tests]]
+name = "a line that is not JSON is kept as its text"
+[[tests.inputs]]
+insert_at = "kibbr_lines"
+type = "log"
+[tests.inputs.log_fields]
+message = 'panic: runtime error: index out of range'
+[[tests.outputs]]
+extract_from = "kibbr_lines"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(., {"message":"panic: runtime error: index out of range"})
+'''
+
+[[tests]]
+name = "a line that is JSON and not an object is kept as its text"
+[[tests.inputs]]
+insert_at = "kibbr_lines"
+type = "log"
+[tests.inputs.log_fields]
+message = '[1,2,3]'
+[[tests.outputs]]
+extract_from = "kibbr_lines"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(., {"message":"[1,2,3]"})
+'''

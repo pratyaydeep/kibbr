@@ -1,0 +1,11 @@
+# kubectl apply -k deploy/k8s
+#
+# storageclass.yaml is not in the list: most clusters have a `gp3` class already, and a
+# StorageClass cannot be applied over. Apply it by hand where there is none.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - service.yaml
+  - statefulset.yaml

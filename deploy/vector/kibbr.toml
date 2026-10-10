@@ -1,0 +1,98 @@
+# What is added to the Vector DaemonSet's configuration for kibbr: one transform and two
+# sinks. Written for Vector 0.37.1 from its reference; see deploy/README.md for what was
+# checked and what was not.
+#
+# REPLACE `kubernetes_logs` below if the cluster's source has another name: it is the id
+# of the `kubernetes_logs` source in the configuration this is added to.
+
+# ── The line ───────────────────────────────────────────────────────────────────────
+# A `kubernetes_logs` event is Vector's envelope: the container's line is a string in
+# `.message`, beside the pod's metadata. kibbr's templates are made of a line's own keys,
+# so the envelope sent as it is would be one template with every log in it as text.
+#
+# This puts the application's own JSON object in the event's place, and keeps a line that
+# is not a JSON object as `{"message": "<the line>"}`. **Both sinks read from here**, so
+# what is archived is byte for byte what was sent live - which is what lets `kibbr load`
+# rebuild a day and get the rows the live door stored.
+#
+# Nothing of the envelope is kept: no pod, no namespace, no container. Adding one is a
+# line here (`line.pod = .kubernetes.pod_name`), and it is a key in every template from
+# then on - decide it before the first line is stored, not after.
+[transforms.kibbr_lines]
+type   = "remap"
+inputs = ["kubernetes_logs"]
+source = '''
+parsed, err = parse_json(.message)
+if err == null && is_object(parsed) {
+  . = parsed
+} else {
+  . = { "message": .message }
+}
+'''
+
+# ── Live: every line to /ingest ────────────────────────────────────────────────────
+# The design's sink, with what 0.37.1 calls its settings: there is no `ndjson` codec -
+# the codec is `json` and the newlines come from `framing` - and the body is gzipped,
+# which /ingest reads (scripts/vector_check.sh runs this sink against a server).
+#
+# A 503 from kibbr carries a Retry-After and means "send again": Vector retries it, and
+# its adaptive concurrency sends fewer at once. Nothing here turns retries off.
+[sinks.kibbr]
+type               = "http"
+inputs             = ["kibbr_lines"]
+uri                = "http://kibbr-svc.kibbr.svc.cluster.local:7700/ingest"
+method             = "post"
+encoding.codec     = "json"
+framing.method     = "newline_delimited"
+compression        = "gzip"
+batch.max_events   = 500
+batch.timeout_secs = 1
+# Longer than kibbr's own [api] request_timeout of 30 s, so that it is kibbr that says a
+# request took too long and not Vector that hangs up on one.
+request.timeout_secs = 60
+healthcheck.enabled  = true
+healthcheck.uri      = "http://kibbr-svc.kibbr.svc.cluster.local:7700/health"
+# While kibbr is down - a restart, a node drain - lines wait on the node's disk and not
+# in memory, up to a gigabyte, and then the source is held back rather than lines dropped.
+buffer.type      = "disk"
+buffer.max_size  = 1073741824
+buffer.when_full = "block"
+
+# ── Archive: gzipped NDJSON to S3, an object an hour ───────────────────────────────
+# The same lines, kept as files. A closed day of them is what `kibbr load` reads
+# and the only copy a day can be rebuilt from after a parser fix.
+#
+#   s3://<bucket>/logs/date=2026-10-10/hour=07/1760079600-<uuid>.ndjson.gz
+#
+# **One object for each Vector pod and hour**, or sooner when a pod has collected 100 MB
+# of lines: a batch is one object, and it closes at `timeout_secs` or `max_bytes`,
+# whichever comes first. The date and hour in the key are Vector's reading of the
+# event's time, which is close to the line's own and is not it: a day's prefix can hold
+# a few lines of the day before. `kibbr load` stores each row under its own day.
+#
+# REPLACE the bucket and the region. Vector's own service account needs
+# `s3:PutObject` on `arn:aws:s3:::<bucket>/logs/*` (and `s3:ListBucket` on the bucket
+# for the healthcheck) - through IRSA, as kibbr's does; that role is the DaemonSet's and
+# is not in deploy/iam/.
+[sinks.kibbr_archive]
+type                 = "aws_s3"
+inputs               = ["kibbr_lines"]
+bucket               = "my-kibbr-logs"
+region               = "ap-south-1"
+key_prefix           = "logs/date=%F/hour=%H/"
+filename_time_format = "%s"
+filename_append_uuid = true
+filename_extension   = "ndjson.gz"
+compression          = "gzip"
+encoding.codec       = "json"
+framing.method       = "newline_delimited"
+batch.timeout_secs   = 3600
+batch.max_bytes      = 104857600
+# An hour of lines is held before it is an object. The buffer is on the node's disk: a
+# disk buffer lets go of a line when the sink says it was delivered, which for this sink
+# is when its object is in S3 - so a Vector pod that restarts should send again what it
+# had not yet put there. (`acknowledgements.enabled` is not set: 0.37.1's
+# `kubernetes_logs` source does not take them, and Vector warns that it does not.)
+buffer.type      = "disk"
+buffer.max_size  = 2147483648
+buffer.when_full = "block"

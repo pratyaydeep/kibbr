@@ -822,6 +822,9 @@ while each row was measured. It measures in the Dockerfile's `bench` target, whi
 the same binary on a base that has the `ps` and `df` the bench runs; the script checks
 the two images hold the same bytes. `bench/run.sh --lines 200000` is the laptop's run.
 
+`deploy/` holds the Kubernetes manifests - a StatefulSet of one pod and its volume - and
+the two Vector sinks; `deploy/README.md` says what of them was checked and what was not.
+
 ## Run the tests
 
 ```
@@ -883,6 +886,7 @@ tests/fixture.rs          outer-surface tests
 tests/serve.rs            the HTTP contract, over a bare TcpStream
 Dockerfile                the image: a static binary on distroless, and the `bench` target
 bench/run.sh              `kibbr bench` in a container; bench/results/ holds what it measured
+deploy/                   the Kubernetes manifests and the Vector sinks
 
 crates/kibbr-engine/      a query: needs kibbr-storage and kibbr-core
   src/engine.rs           the plan, the scan, the result
