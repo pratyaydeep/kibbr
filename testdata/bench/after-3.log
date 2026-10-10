@@ -1,0 +1,160 @@
+kibbr bench  farm, 1,000,000 lines; 3 runs of 100 samples; 4 senders, 2,000-line bodies; label: after 3 (map)
+commit       624c714859a2, src clean (git rev-parse HEAD in the working directory when the bench ran; committed 2026-10-10T02:48:48+05:30)
+binary       /Users/pratyaydeep/repo/kibbr/target/release/kibbr  9,530,112 bytes  crc32c 617b091d  built 2026-10-10T02:48:53+05:30  release
+bench code   crc32c 2a1ffc04 over 8 source files, white space left out
+machine      Apple M2; 8 cores (4 performance, 4 efficiency); 8,589,934,592 bytes of memory; macOS 14.3.1; 13.6 GiB free on the volume
+cpu clock    proc_pid_rusage, mach timebase 125/3: this process over a spin by that source, over the same spin by getrusage, 1.000
+swap         swap-outs are read from vm_stat
+server       kibbr serve --host 127.0.0.1 --port 0 --data-dir <copy> --storage disk --max-rows 10000 --max-buckets 10000 --max-groups 100000 --max-body-bytes 10485760 --max-decompressed-bytes 67108864 --ingest-concurrency 8 --flush-interval-ms 500 --row-group-timeout-ms 300000 --wal-segment-bytes 67108864 --batch-size 500 --max-open-segments 512 --segment-max-bytes 536870912 --max-buffer-bytes 536870912 --compact-interval-ms 0 --time-columns @timestamp,timestamp,time,ts,ts_ms,ts_unix,datetime,event_time,created_at
+             no KIBBR__ variable was set; noted: none. A new process on a new copy for every unit below, killed when the unit ends
+loaded       testdata/bench/farm-1000000-seed42  reused: 3 files, 35,989,828 bytes, each file's crc32c as recorded when it was loaded
+             loaded once, 2026-10-08T13:17:05Z, by `kibbr load` from gen-logs --profile farm --lines 1000000 --seed 42 (489,036,605 bytes, crc32c d2840b26): 1,000,000 rows, 870 row groups
+             not part of the loaded bytes, and not copied: LOCK
+live stream  gen-logs --profile farm --lines 1000000 --seed 43: 489,486,504 bytes, crc32c 0c939fc5; 500 bodies of 2,000 lines, built before any server starts
+queries      S1 promoted value   COUNT LOG {"event":"login_ok"}                                 count 11,915
+             S2 unpromoted key   COUNT LOG {"level":"info"}                                     count 28,907
+             S3 one id           MATCH LOG {"job.id":"20834abd-1e3d-462e-b89b-fb1d4643e6bb"}    count 2, 2 rows; no LIMIT: the 10,000-row backstop applies and is not reached
+             S4 newest 500       MATCH LOG {} LIMIT 500                                         count 1,000,000, 500 rows
+             rows holding level  COUNT LOG {"level": *}                                         count 121,207
+             scan block          COUNT LOG {"status":"200"}                                     count 361,392; not one of the four: asked 25 times for the scan rate
+             rows holding status COUNT LOG {"status": *}                                        count 433,103
+preflight    a server on a copy answered /health, /stats, the seven queries and one /ingest body the way this bench reads them
+baseline     testdata/bench/baseline.json  label: baseline; commit 45692ce65a67; measured by the same bench code. The same flags, bytes, texts, answers, server arguments and machine
+what is ms   a query's ms: this process's clock from the request's first byte written to the answer's last byte read, one open connection, one query at a time
+             p50, p99: the 50th and 99th smallest of 100 (nearest rank)
+
+run 1  checks    paused 20 s; no other kibbr process; swapouts 8,302,449 did not move in 2.0 s (swapins 7,611,848); load average 1.68 and 3.2 GiB available (printed, not gates); spin 257.7 ms; flush 54.5 ms; on AC Power with Low Power Mode off
+run 1  checks    spin: 2^27 rounds of arithmetic on one thread, least of 3. flush: 20 writes of 136,000 bytes to a file in the work directory, each followed by sync_all, least of 3. Neither touches kibbr
+run 1  plan      engine::plan on a trie of 10,000 templates, 57,642 nodes, 98,495 tokens, in a process of its own, one thread; p50 of 100 calls after 5 unmeasured (p99; leaves)
+run 1  plan      P1 promoted value 0.0835 (0.0932; 1,360)   P2 unpromoted key 0.18 (0.21; 4,460)   P3 one id 0.0371 (0.0454; 1,005)   P4 newest 500 0.0412 (0.0424; 10,000)
+run 1  ingest    server pid 94631 on a verified copy (35,989,828 bytes, 13.8 ms), ready 0.03 s after spawn; no query is sent to this server
+run 1  ingest    the server's ingest.lines_ingested went 0 -> 1,000,000 while its uptime_seconds went 0.005 -> 6.399: 1,000,000 lines / 6.394 s = 156,398 lines/s
+run 1  ingest    senders: 500 bodies answered 200, their `ingested` fields sum to 1,000,000 (the two counts agree); refused 503 x 0, 429 x 0 (0 of them before the body was all written); attempts with no answer 0; reconnects 0; short bodies 0; unknown outcomes 0; the same window on this process's clock 6.394 s
+run 1  ingest    server at the end: 225,135 rows buffered in 442,217,100 bytes of a 536,870,912-byte limit; forced closes 0 (the limit was not reached); requests shed 0; lines rejected 0; store writes failed 0; log 0 lines ahead of the store; templates 145 -> 151; health ok; cpu 33.2 s (5.20 cores busy); resident 886 MiB
+run 1  ingest    lines acknowledged by the second, this process's clock: 198,000 352,000 512,000 650,000 784,000 942,000 1,000,000
+run 1  idle      server pid 94651 on a verified copy (35,989,828 bytes, 11.9 ms), ready 0.03 s after spawn; no line is sent to this server
+run 1  scan      433,103 rows hold status x 25 asks of COUNT LOG {"status":"200"}, back to back after 3 unmeasured = 10,827,575 rows / 0.118 s of CPU the server process used over them (user 0.11 + system 0.01, read from the OS for pid 94651; the whole process: HTTP, the plan and 2 file opens an ask are in it) = 92,025,894 rows per CPU-second
+run 1  scan      the same block by the wall clock: 0.046 s, 2.53 cores busy, 233,037,756 rows per wall-second; the server says it scanned 10,827,575; in the 100 ms after the block, nothing asked, it used 0.000 s of CPU
+run 1  idle      100 asks of each query after 3 unmeasured; client p50 p99 (min max) | the server's own duration_ms p50 p99 | the answer | CPU the server used over the 100
+run 1  idle S1   0.16  0.19  (0.13  0.21) | 0.0649  0.0757 | count 11,915  scanned 11,915  1 template  10 row groups  unlimited | 0.011 CPU-s in 0.016 s
+run 1  idle S2   0.99  1.39  (0.97  1.40) | 0.91  1.29 | count 28,907  scanned 121,207  66 templates  149 row groups  unlimited | 0.100 CPU-s in 0.105 s
+run 1  idle S3   2.38  2.49  (2.32  2.51) | 2.30  2.40 | count 2, 2 rows  scanned 75,662  38 templates  102 row groups  backstop, not truncated | 0.234 CPU-s in 0.239 s
+run 1  idle S4   40.1  41.2  (39.7  41.5) | 38.1  39.0 | count 1,000,000, 500 rows  scanned 846,012  145 templates  663 row groups  caller | 4.559 CPU-s in 4.038 s
+run 1  idle      beside the scan rate, not in the table: S2's own block, 121,207 rows hold level x 100 asks / 0.100 s of CPU = 120,874,496 rows per CPU-second, held down by 66 file opens an ask; S1 106,098,155; S3 32,361,755; S4 18,556,193 (rows the server says it scanned / CPU-seconds)
+run 1  loaded    100 laps. A lap: a new copy, a new server, S1 S2 S3 once unmeasured, 4 senders flat out from their first body; each query asked once when 20,000 / 30,000 / 70,000 / 140,000 live lines are acknowledged; kill
+run 1  loaded    a query reads one snapshot taken before its scan: `over the loaded answer` is what its count held of the live stream; lines acknowledged while it ran are load beside it, not rows it read
+run 1  loaded    lap 25 of 100
+run 1  loaded    lap 50 of 100
+run 1  loaded    lap 75 of 100
+run 1  loaded    lap 100 of 100
+run 1  loaded S1 0.31  1.54  (0.21  2.11) | 0.16  0.25 | asked at 20,000 to 20,000 lines; counted 189 to 204 over the loaded answer; 0 late
+run 1  loaded S2 2.25  3.40  (2.07  4.40) | 2.12  3.28 | asked at 30,000 to 30,000 lines; counted 908 to 923 over the loaded answer; 0 late
+run 1  loaded S3 4.50  6.66  (4.28  6.96) | 4.32  6.37 | asked at 70,000 to 70,000 lines; counted 0 to 0 over the loaded answer; 0 late
+run 1  loaded S4 67.5  83.1  (65.4  116.1) | 64.8  80.5 | asked at 140,000 to 140,000 lines; counted 140,000 to 140,000 over the loaded answer; 0 late
+run 1  loaded    0 laps ran past the end of the stream; bodies refused 0 times; the buffer limit was reached in 0 of 100 laps (forced closes above 0 when the lap ended); ingest with the queries running 194,680 lines/s (median over laps of the server's lines over its uptime between two /stats reads; not in the table)
+run 1  end       0 units thrown away; spin 264.8 ms; flush 57.7 ms; on AC Power with Low Power Mode off; the binary is the one that started; 2 min 01 s
+
+run 2  checks    paused 20 s; no other kibbr process; swapouts 8,302,449 did not move in 2.0 s (swapins 7,611,848); load average 3.18 and 3.5 GiB available (printed, not gates); spin 264.8 ms; flush 60.3 ms; on AC Power with Low Power Mode off
+run 2  plan      engine::plan on a trie of 10,000 templates, 57,642 nodes, 98,495 tokens, in a process of its own, one thread; p50 of 100 calls after 5 unmeasured (p99; leaves)
+run 2  plan      P1 promoted value 0.0860 (0.0919; 1,360)   P2 unpromoted key 0.18 (0.19; 4,460)   P3 one id 0.0381 (0.0396; 1,005)   P4 newest 500 0.0427 (0.0429; 10,000)
+run 2  ingest    server pid 96725 on a verified copy (35,989,828 bytes, 14.0 ms), ready 0.03 s after spawn; no query is sent to this server
+run 2  ingest    the server's ingest.lines_ingested went 0 -> 1,000,000 while its uptime_seconds went 0.007 -> 6.312: 1,000,000 lines / 6.305 s = 158,610 lines/s
+run 2  ingest    senders: 500 bodies answered 200, their `ingested` fields sum to 1,000,000 (the two counts agree); refused 503 x 0, 429 x 0 (0 of them before the body was all written); attempts with no answer 0; reconnects 0; short bodies 0; unknown outcomes 0; the same window on this process's clock 6.305 s
+run 2  ingest    server at the end: 257,897 rows buffered in 529,851,604 bytes of a 536,870,912-byte limit; forced closes 0 (the limit was not reached); requests shed 0; lines rejected 0; store writes failed 0; log 0 lines ahead of the store; templates 145 -> 151; health ok; cpu 32.4 s (5.14 cores busy); resident 899 MiB
+run 2  ingest    lines acknowledged by the second, this process's clock: 198,000 354,000 514,000 658,000 798,000 956,000 1,000,000
+run 2  idle      server pid 96745 on a verified copy (35,989,828 bytes, 12.1 ms), ready 0.03 s after spawn; no line is sent to this server
+run 2  scan      433,103 rows hold status x 25 asks of COUNT LOG {"status":"200"}, back to back after 3 unmeasured = 10,827,575 rows / 0.118 s of CPU the server process used over them (user 0.11 + system 0.01, read from the OS for pid 96745; the whole process: HTTP, the plan and 2 file opens an ask are in it) = 91,867,132 rows per CPU-second
+run 2  scan      the same block by the wall clock: 0.047 s, 2.52 cores busy, 231,795,945 rows per wall-second; the server says it scanned 10,827,575; in the 100 ms after the block, nothing asked, it used 0.000 s of CPU
+run 2  idle      100 asks of each query after 3 unmeasured; client p50 p99 (min max) | the server's own duration_ms p50 p99 | the answer | CPU the server used over the 100
+run 2  idle S1   0.15  0.18  (0.13  0.20) | 0.0623  0.0751 | count 11,915  scanned 11,915  1 template  10 row groups  unlimited | 0.011 CPU-s in 0.016 s
+run 2  idle S2   1.00  1.38  (1.00  1.40) | 0.92  1.29 | count 28,907  scanned 121,207  66 templates  149 row groups  unlimited | 0.102 CPU-s in 0.107 s
+run 2  idle S3   2.39  2.45  (2.38  2.49) | 2.30  2.36 | count 2, 2 rows  scanned 75,662  38 templates  102 row groups  backstop, not truncated | 0.235 CPU-s in 0.240 s
+run 2  idle S4   41.1  42.9  (40.6  43.4) | 39.1  40.8 | count 1,000,000, 500 rows  scanned 846,012  145 templates  663 row groups  caller | 4.661 CPU-s in 4.140 s
+run 2  idle      beside the scan rate, not in the table: S2's own block, 121,207 rows hold level x 100 asks / 0.102 s of CPU = 119,403,559 rows per CPU-second, held down by 66 file opens an ask; S1 109,048,060; S3 32,162,198; S4 18,151,128 (rows the server says it scanned / CPU-seconds)
+run 2  loaded    100 laps. A lap: a new copy, a new server, S1 S2 S3 once unmeasured, 4 senders flat out from their first body; each query asked once when 20,000 / 30,000 / 70,000 / 140,000 live lines are acknowledged; kill
+run 2  loaded    a query reads one snapshot taken before its scan: `over the loaded answer` is what its count held of the live stream; lines acknowledged while it ran are load beside it, not rows it read
+run 2  loaded    lap 25 of 100
+run 2  loaded    lap 50 of 100
+run 2  loaded    lap 75 of 100
+run 2  loaded    lap 100 of 100
+run 2  loaded S1 0.31  1.02  (0.21  1.41) | 0.14  0.43 | asked at 20,000 to 20,000 lines; counted 195 to 204 over the loaded answer; 0 late
+run 2  loaded S2 2.25  2.89  (2.05  3.02) | 2.09  2.67 | asked at 30,000 to 30,000 lines; counted 916 to 923 over the loaded answer; 0 late
+run 2  loaded S3 4.52  6.23  (4.32  6.99) | 4.36  6.06 | asked at 70,000 to 70,000 lines; counted 0 to 0 over the loaded answer; 0 late
+run 2  loaded S4 68.2  83.7  (65.0  84.5) | 65.4  80.9 | asked at 140,000 to 140,000 lines; counted 140,000 to 140,000 over the loaded answer; 0 late
+run 2  loaded    0 laps ran past the end of the stream; bodies refused 0 times; the buffer limit was reached in 0 of 100 laps (forced closes above 0 when the lap ended); ingest with the queries running 194,385 lines/s (median over laps of the server's lines over its uptime between two /stats reads; not in the table)
+run 2  end       0 units thrown away; spin 264.8 ms; flush 59.1 ms; on AC Power with Low Power Mode off; the binary is the one that started; 2 min 02 s
+
+run 3  checks    paused 20 s; no other kibbr process; swapouts 8,302,449 did not move in 2.0 s (swapins 7,611,880); load average 3.75 and 3.5 GiB available (printed, not gates); spin 264.9 ms; flush 58.1 ms; on AC Power with Low Power Mode off
+run 3  plan      engine::plan on a trie of 10,000 templates, 57,642 nodes, 98,495 tokens, in a process of its own, one thread; p50 of 100 calls after 5 unmeasured (p99; leaves)
+run 3  plan      P1 promoted value 0.0859 (0.0927; 1,360)   P2 unpromoted key 0.18 (0.19; 4,460)   P3 one id 0.0382 (0.0464; 1,005)   P4 newest 500 0.0426 (0.0472; 10,000)
+run 3  ingest    server pid 98814 on a verified copy (35,989,828 bytes, 13.9 ms), ready 0.03 s after spawn; no query is sent to this server
+run 3  ingest    the server's ingest.lines_ingested went 0 -> 1,000,000 while its uptime_seconds went 0.007 -> 6.301: 1,000,000 lines / 6.295 s = 158,865 lines/s
+run 3  ingest    senders: 500 bodies answered 200, their `ingested` fields sum to 1,000,000 (the two counts agree); refused 503 x 0, 429 x 0 (0 of them before the body was all written); attempts with no answer 0; reconnects 0; short bodies 0; unknown outcomes 0; the same window on this process's clock 6.295 s
+run 3  ingest    server at the end: 233,378 rows buffered in 462,503,548 bytes of a 536,870,912-byte limit; forced closes 0 (the limit was not reached); requests shed 0; lines rejected 0; store writes failed 0; log 0 lines ahead of the store; templates 145 -> 151; health ok; cpu 32.9 s (5.23 cores busy); resident 897 MiB
+run 3  ingest    lines acknowledged by the second, this process's clock: 196,000 352,000 518,000 658,000 794,000 952,000 1,000,000
+run 3  idle      server pid 98834 on a verified copy (35,989,828 bytes, 13.6 ms), ready 0.03 s after spawn; no line is sent to this server
+run 3  scan      433,103 rows hold status x 25 asks of COUNT LOG {"status":"200"}, back to back after 3 unmeasured = 10,827,575 rows / 0.118 s of CPU the server process used over them (user 0.11 + system 0.01, read from the OS for pid 98834; the whole process: HTTP, the plan and 2 file opens an ask are in it) = 91,924,327 rows per CPU-second
+run 3  scan      the same block by the wall clock: 0.047 s, 2.52 cores busy, 231,728,354 rows per wall-second; the server says it scanned 10,827,575; in the 100 ms after the block, nothing asked, it used 0.000 s of CPU
+run 3  idle      100 asks of each query after 3 unmeasured; client p50 p99 (min max) | the server's own duration_ms p50 p99 | the answer | CPU the server used over the 100
+run 3  idle S1   0.16  0.20  (0.13  0.20) | 0.0650  0.0778 | count 11,915  scanned 11,915  1 template  10 row groups  unlimited | 0.012 CPU-s in 0.016 s
+run 3  idle S2   1.00  1.38  (0.99  1.40) | 0.92  1.29 | count 28,907  scanned 121,207  66 templates  149 row groups  unlimited | 0.102 CPU-s in 0.107 s
+run 3  idle S3   2.39  2.41  (2.38  2.43) | 2.30  2.32 | count 2, 2 rows  scanned 75,662  38 templates  102 row groups  backstop, not truncated | 0.235 CPU-s in 0.239 s
+run 3  idle S4   41.1  42.5  (40.4  42.8) | 39.1  40.5 | count 1,000,000, 500 rows  scanned 846,012  145 templates  663 row groups  caller | 4.656 CPU-s in 4.136 s
+run 3  idle      beside the scan rate, not in the table: S2's own block, 121,207 rows hold level x 100 asks / 0.102 s of CPU = 118,511,457 rows per CPU-second, held down by 66 file opens an ask; S1 102,799,334; S3 32,245,879; S4 18,168,823 (rows the server says it scanned / CPU-seconds)
+run 3  loaded    100 laps. A lap: a new copy, a new server, S1 S2 S3 once unmeasured, 4 senders flat out from their first body; each query asked once when 20,000 / 30,000 / 70,000 / 140,000 live lines are acknowledged; kill
+run 3  loaded    a query reads one snapshot taken before its scan: `over the loaded answer` is what its count held of the live stream; lines acknowledged while it ran are load beside it, not rows it read
+run 3  loaded    lap 25 of 100
+run 3  loaded    lap 50 of 100
+run 3  loaded    lap 75 of 100
+run 3  loaded    lap 100 of 100
+run 3  loaded S1 0.31  0.68  (0.21  1.02) | 0.18  0.53 | asked at 20,000 to 20,000 lines; counted 195 to 196 over the loaded answer; 0 late
+run 3  loaded S2 2.35  3.01  (2.06  3.17) | 2.16  2.79 | asked at 30,000 to 30,000 lines; counted 923 to 923 over the loaded answer; 0 late
+run 3  loaded S3 4.50  6.38  (4.33  6.42) | 4.33  6.22 | asked at 70,000 to 70,000 lines; counted 0 to 0 over the loaded answer; 0 late
+run 3  loaded S4 68.1  83.8  (64.6  84.1) | 65.4  81.0 | asked at 140,000 to 140,000 lines; counted 140,000 to 140,000 over the loaded answer; 0 late
+run 3  loaded    0 laps ran past the end of the stream; bodies refused 0 times; the buffer limit was reached in 0 of 100 laps (forced closes above 0 when the lap ended); ingest with the queries running 195,223 lines/s (median over laps of the server's lines over its uptime between two /stats reads; not in the table)
+run 3  end       0 units thrown away; spin 264.9 ms; flush 59.4 ms; on AC Power with Low Power Mode off; the binary is the one that started; 2 min 01 s
+
+every run, then the median                     run 1        run 2        run 3       median
+ingest lines/s                               156,398      158,610      158,865      158,610
+idle S1 p50 ms                                  0.16         0.15         0.16         0.16
+idle S1 p99 ms                                  0.19         0.18         0.20         0.19
+idle S2 p50 ms                                  0.99         1.00         1.00         1.00
+idle S2 p99 ms                                  1.39         1.38         1.38         1.38
+idle S3 p50 ms                                  2.38         2.39         2.39         2.39
+idle S3 p99 ms                                  2.49         2.45         2.41         2.45
+idle S4 p50 ms                                  40.1         41.1         41.1         41.1
+idle S4 p99 ms                                  41.2         42.9         42.5         42.5
+loaded S1 p50 ms                                0.31         0.31         0.31         0.31
+loaded S1 p99 ms                                1.54         1.02         0.68         1.02
+loaded S2 p50 ms                                2.25         2.25         2.35         2.25
+loaded S2 p99 ms                                3.40         2.89         3.01         3.01
+loaded S3 p50 ms                                4.50         4.52         4.50         4.50
+loaded S3 p99 ms                                6.66         6.23         6.38         6.38
+loaded S4 p50 ms                                67.5         68.2         68.1         68.1
+loaded S4 p99 ms                                83.1         83.7         83.8         83.7
+scan rows per CPU-second                  92,025,894   91,867,132   91,924,327   91,924,327
+scan rows per wall-second (not a row)    233,037,756  231,795,945  231,728,354  231,795,945
+scan cores busy (not a row)                     2.53         2.52         2.52         2.52
+plan P1 p50 ms                                0.0835       0.0860       0.0859       0.0859
+plan P2 p50 ms                                  0.18         0.18         0.18         0.18
+plan P3 p50 ms                                0.0371       0.0381       0.0382       0.0381
+plan P4 p50 ms                                0.0412       0.0427       0.0426       0.0426
+spin ms, before the run (not a row)            257.7        264.8        264.9        264.8
+flush ms, before the run (not a row)            54.5         60.3         58.1         58.1
+
+saved testdata/bench/after-3.json and testdata/bench/after-3.log
+
+kibbr bench   commit 624c714859a2   baseline on 45692ce65a67   farm 1,000,000 lines, median of 3 runs of 100 samples
+                                               baseline              after 3 (map)
+ingest lines/s                                 156,536               158,610 (1.01x)
+S1 promoted value   p50 / p99                  1.89 / 2.88 ms        0.16 / 0.19 ms (12.2x / 15.3x)
+S2 unpromoted key   p50 / p99                  35.1 / 35.5 ms        1.00 / 1.38 ms (35.1x / 25.7x)
+S3 one id           p50 / p99                  116.7 / 118.6 ms      2.39 / 2.45 ms (48.9x / 48.5x)
+S4 newest 500       p50 / p99                  1,836 / 1,859 ms      41.1 / 42.5 ms (44.7x / 43.7x)
+scan rows/s/core                               1,807,225             91,924,327 (50.9x)
+plan step at 10,000 templates:                 9.22 ms   over 1 ms: yes      0.18 ms (50.4x)   over 1 ms: no
+same four queries under 4-sender ingest, p99:  S1 4.43  S2 49.3  S3 197.5  S4 3,445 ms
+                                               S1 1.02 (4.3x)  S2 3.01 (16.4x)  S3 6.38 (30.9x)  S4 83.7 (41.2x) ms    after 3 (map)
+(Nx) is the speed-up on the baseline: this / baseline for the two rates, baseline / this for every time; above 1 is faster.
+scan rows/s/core is rows holding `status` x 25 asks of COUNT LOG {"status":"200"} / CPU-seconds of the server process. By the wall clock: baseline 1,802,166 rows/s on 1.00 cores; after 3 (map) 231,795,945 on 2.52 (128.6x).
+ingest lines/s: the runs overlap (156,398 to 158,865 against the baseline's 154,979 to 157,957) - not a difference
