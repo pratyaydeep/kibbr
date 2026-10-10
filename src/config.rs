@@ -76,6 +76,26 @@ fn default_ingest_concurrency() -> usize {
     std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
 }
 
+/// How long an `/ingest` body is kept waiting, in milliseconds, before it is shed.
+///
+/// What separates a burst from an overload. Two shippers arriving together on a
+/// four-permit server should queue for the millisecond it takes; twenty arriving together
+/// every second is not a burst, and waiting will not fix it.
+///
+/// A setting, and a short one by default: what an operator tunes first is the permit
+/// count, which is the statement about the machine. A longer wait moves the refusal
+/// closer to the shipper's own timeout, which is the outcome the shed exists to avoid -
+/// so the default stays where it was while it was a constant.
+pub const DEFAULT_INGEST_WAIT_MS: usize = 100;
+
+/// The longest that wait may be set to: thirty seconds.
+///
+/// A body can be kept waiting twice - at the door, and then for room in the write-ahead
+/// log - and each wait is at most the setting. Two of thirty seconds are a minute, which
+/// leaves the other minute of the two after which an ordinary shipper gives up for the
+/// parse, the log's flush and the store.
+pub const MAX_INGEST_WAIT_MS: usize = 30_000;
+
 /// The cores this machine reports; one where it reports none.
 fn cores() -> usize {
     std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
@@ -107,6 +127,7 @@ const SCAN_FAN_ROWS_ENV: &str = "KIBBR__QUERY__SCAN_FAN_ROWS";
 const MAX_BODY_BYTES_ENV: &str = "KIBBR__API__MAX_BODY_BYTES";
 const MAX_DECOMPRESSED_BYTES_ENV: &str = "KIBBR__API__MAX_DECOMPRESSED_BYTES";
 const INGEST_CONCURRENCY_ENV: &str = "KIBBR__API__INGEST_CONCURRENCY";
+const INGEST_WAIT_ENV: &str = "KIBBR__API__INGEST_WAIT_MS";
 const BASE_PATH_ENV: &str = "KIBBR__STORAGE__BASE_PATH";
 const TRIE_FILE_ENV: &str = "KIBBR__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "KIBBR__INGESTOR__FLUSH_INTERVAL_MS";
@@ -116,6 +137,7 @@ const SEGMENT_MAX_BYTES_ENV: &str = "KIBBR__STORAGE__SEGMENT_MAX_BYTES";
 const MAX_BUFFER_BYTES_ENV: &str = "KIBBR__STORAGE__MAX_BUFFER_BYTES";
 const COMPACT_INTERVAL_ENV: &str = "KIBBR__STORAGE__COMPACT_INTERVAL_MS";
 const WAL_SEGMENT_BYTES_ENV: &str = "KIBBR__STORAGE__WAL_SEGMENT_BYTES";
+const WAL_QUEUE_BYTES_ENV: &str = "KIBBR__STORAGE__WAL_QUEUE_BYTES";
 const BATCH_SIZE_ENV: &str = "KIBBR__INGESTOR__BATCH_SIZE";
 const TIME_COLUMNS_ENV: &str = "KIBBR__SCHEMA__TIME_COLUMNS";
 const EPOCH_WINDOW_ENV: &str = "KIBBR__SCHEMA__EPOCH_WINDOW";
@@ -217,6 +239,14 @@ pub enum ConfigError {
          past that would only take turns on the same cores"
     )]
     ScanThreadsAboveCores { asked: usize, cores: usize },
+
+    /// Refused rather than clamped, as `DecompressedAboveLineCap` is: a wait this long
+    /// keeps a body past the point where its sender has given up and sent it again.
+    #[error(
+        "ingest wait ({asked}ms) is above the {limit}ms limit; a body may wait that long \
+         twice, at the door and for the write-ahead log, and a sender kept longer gives up"
+    )]
+    IngestWaitTooLong { asked: usize, limit: usize },
 
     /// Refused rather than defaulted: the window decides what type a value is stored as,
     /// and an operator who set one would believe it was in force.
@@ -350,6 +380,9 @@ pub struct Storage {
     /// this many lines. Not a target and not a wait - a flush takes what has queued - and
     /// not a bound on a body, which goes in whole.
     pub wal_batch_lines: usize,
+    /// The most bytes of lines that may be in the write-ahead log and not yet in the
+    /// store: past it a body waits for room, and is then shed.
+    pub wal_queue_bytes: usize,
     /// Threads one query may choose a day's rows on, its own among them. 0 and 1: its
     /// own alone. Only a server asks for more (`with_scan`).
     pub scan_threads: usize,
@@ -371,6 +404,7 @@ impl Default for Storage {
             compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
             wal_segment_bytes: crate::wal::DEFAULT_SEGMENT_BYTES,
             wal_batch_lines: crate::wal::DEFAULT_BATCH_LINES,
+            wal_queue_bytes: crate::wal::DEFAULT_QUEUE_BYTES,
             scan_threads: 0,
             scan_fan_rows: crate::store::DEFAULT_FAN_ROWS,
         }
@@ -444,6 +478,7 @@ impl Storage {
         // writes a log, and it resolves its flags over the variables in `with_wal`.
         let wal_segment_bytes = crate::wal::DEFAULT_SEGMENT_BYTES;
         let wal_batch_lines = crate::wal::DEFAULT_BATCH_LINES;
+        let wal_queue_bytes = crate::wal::DEFAULT_QUEUE_BYTES;
 
         // No scan threads here, for the same reason again: only `serve` answers a query
         // from a disk store, and it asks for its threads in `with_scan`. A load and a
@@ -463,6 +498,7 @@ impl Storage {
                 compact_interval,
                 wal_segment_bytes,
                 wal_batch_lines,
+                wal_queue_bytes,
                 scan_threads,
                 scan_fan_rows,
             });
@@ -493,6 +529,7 @@ impl Storage {
             compact_interval,
             wal_segment_bytes,
             wal_batch_lines,
+            wal_queue_bytes,
             scan_threads,
             scan_fan_rows,
         })
@@ -517,13 +554,15 @@ impl Storage {
         Ok(self)
     }
 
-    /// How `serve` writes its write-ahead log: `--wal-segment-bytes` and `--batch-size`,
-    /// each over its variable, over the default. Apart from `load` for the reason
-    /// `with_compact_interval` is: only `serve` has the flags, and only `serve` writes one.
+    /// How `serve` writes its write-ahead log: `--wal-segment-bytes`, `--batch-size` and
+    /// `--wal-queue-bytes`, each over its variable, over the default. Apart from `load`
+    /// for the reason `with_compact_interval` is: only `serve` has the flags, and only
+    /// `serve` writes one.
     pub fn with_wal(
         mut self,
         segment_bytes: Option<usize>,
         batch_lines: Option<usize>,
+        queue_bytes: Option<usize>,
     ) -> Result<Self, ConfigError> {
         self.wal_segment_bytes = match resolve(
             segment_bytes,
@@ -542,6 +581,18 @@ impl Storage {
                 0 => return Err(ConfigError::NoBatch),
                 n => n,
             };
+        self.wal_queue_bytes = match resolve(
+            queue_bytes,
+            WAL_QUEUE_BYTES_ENV,
+            crate::wal::DEFAULT_QUEUE_BYTES,
+        )? {
+            0 => {
+                return Err(ConfigError::NoBytes {
+                    what: "wal queue bytes",
+                })
+            }
+            n => n,
+        };
         Ok(self)
     }
 
@@ -575,6 +626,7 @@ impl Storage {
         crate::wal::Options {
             segment_bytes: self.wal_segment_bytes,
             batch_lines: self.wal_batch_lines,
+            queue_bytes: self.wal_queue_bytes,
         }
     }
 
@@ -629,6 +681,9 @@ pub struct ApiLimits {
     /// How many `/ingest` bodies may be in the parse-and-walk at once. Never 0 - `load`
     /// refuses it rather than starting a process that 503s every request.
     pub ingest_concurrency: usize,
+    /// How long an `/ingest` body may be kept waiting before it is shed: see
+    /// `DEFAULT_INGEST_WAIT_MS`. Zero waits for nothing.
+    pub ingest_wait: Duration,
 }
 
 impl Default for ApiLimits {
@@ -637,6 +692,7 @@ impl Default for ApiLimits {
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             max_decompressed_bytes: DEFAULT_MAX_DECOMPRESSED_BYTES,
             ingest_concurrency: default_ingest_concurrency(),
+            ingest_wait: Duration::from_millis(DEFAULT_INGEST_WAIT_MS as u64),
         }
     }
 }
@@ -710,7 +766,25 @@ impl ApiLimits {
             max_body_bytes: resolve(max_body_bytes, MAX_BODY_BYTES_ENV, DEFAULT_MAX_BODY_BYTES)?,
             max_decompressed_bytes,
             ingest_concurrency,
+            // The default, and the variable not read: see `with_ingest_wait`.
+            ingest_wait: Duration::from_millis(DEFAULT_INGEST_WAIT_MS as u64),
         })
+    }
+
+    /// How long `serve` keeps a body waiting before it sheds it: `--ingest-wait-ms` >
+    /// environment > default. Apart from `load` for the reason `Storage::with_wal` is:
+    /// only `serve` has the flag. Zero is taken - wait for nothing, shed at once - and
+    /// more than `MAX_INGEST_WAIT_MS` is refused.
+    pub fn with_ingest_wait(mut self, flag_ms: Option<usize>) -> Result<Self, ConfigError> {
+        let ms = resolve(flag_ms, INGEST_WAIT_ENV, DEFAULT_INGEST_WAIT_MS)?;
+        if ms > MAX_INGEST_WAIT_MS {
+            return Err(ConfigError::IngestWaitTooLong {
+                asked: ms,
+                limit: MAX_INGEST_WAIT_MS,
+            });
+        }
+        self.ingest_wait = Duration::from_millis(ms as u64);
+        Ok(self)
     }
 }
 
@@ -737,13 +811,13 @@ fn env_usize(var: &'static str) -> Result<Option<usize>, ConfigError> {
 mod tests {
     use super::*;
 
-    /// The two scan variables as a test found them, put back when it ends.
-    struct Kept([(&'static str, Option<String>); 2]);
+    /// Variables as a test found them, cleared for it and put back when it ends.
+    struct Cleared(Vec<(&'static str, Option<String>)>);
 
-    impl Kept {
-        fn cleared() -> Self {
-            let kept =
-                [SCAN_THREADS_ENV, SCAN_FAN_ROWS_ENV].map(|var| (var, std::env::var(var).ok()));
+    impl Cleared {
+        fn of(vars: &[&'static str]) -> Self {
+            let kept = vars.iter().map(|var| (*var, std::env::var(var).ok()));
+            let kept: Vec<_> = kept.collect();
             for (var, _) in &kept {
                 std::env::remove_var(var);
             }
@@ -751,7 +825,7 @@ mod tests {
         }
     }
 
-    impl Drop for Kept {
+    impl Drop for Cleared {
         fn drop(&mut self) {
             for (var, was) in &self.0 {
                 match was {
@@ -769,7 +843,7 @@ mod tests {
     /// tests reads these two, and this sets and clears them in turn.
     #[test]
     fn scan_threads_are_the_flag_then_the_variable_then_the_default_and_never_above_the_cores() {
-        let _kept = Kept::cleared();
+        let _cleared = Cleared::of(&[SCAN_THREADS_ENV, SCAN_FAN_ROWS_ENV]);
         let cores = cores();
         let scan = |threads: Option<usize>, fan_rows: Option<usize>| {
             Storage::default()
@@ -857,5 +931,105 @@ mod tests {
             .expect("taken")
             .disk_options();
         assert_eq!((options.scan_threads, options.fan_rows), (1, 12));
+    }
+
+    /// **How long a body may be kept waiting, and how much may wait on the log, are each
+    /// the flag, or else the variable, or else what they were before they could be set.**
+    /// A wait of nothing is taken; one past thirty seconds is refused and not clamped. A
+    /// bound of nothing on the log is refused: every body after the first would be one
+    /// too many.
+    ///
+    /// One test for the two, because the variables are the process's: nothing else in
+    /// this crate's tests reads them, or the five beside them that the functions asked
+    /// here read as well - cleared too, so that a shell with one of those set to
+    /// something unreadable does not fail a test of these two.
+    #[test]
+    fn the_ingest_wait_and_the_logs_bound_are_the_flag_then_the_variable_then_the_default() {
+        let _cleared = Cleared::of(&[
+            INGEST_WAIT_ENV,
+            WAL_QUEUE_BYTES_ENV,
+            WAL_SEGMENT_BYTES_ENV,
+            BATCH_SIZE_ENV,
+            MAX_BODY_BYTES_ENV,
+            MAX_DECOMPRESSED_BYTES_ENV,
+            INGEST_CONCURRENCY_ENV,
+        ]);
+        let wait = |flag: Option<usize>| {
+            ApiLimits::default()
+                .with_ingest_wait(flag)
+                .map(|api| api.ingest_wait)
+        };
+        let ms = |ms: usize| Duration::from_millis(ms as u64);
+
+        // Nobody but `with_ingest_wait` reads the variable: `load` gives the default.
+        std::env::set_var(INGEST_WAIT_ENV, "7");
+        let loaded = ApiLimits::load(None, None, None).expect("the defaults");
+        assert_eq!(loaded.ingest_wait, ms(DEFAULT_INGEST_WAIT_MS));
+        assert_eq!(ApiLimits::default().ingest_wait, ms(100));
+        std::env::remove_var(INGEST_WAIT_ENV);
+
+        assert_eq!(wait(None).expect("the default"), ms(100));
+        std::env::set_var(INGEST_WAIT_ENV, " 250 ");
+        assert_eq!(wait(None).expect("the variable"), ms(250));
+        assert_eq!(wait(Some(5)).expect("the flag"), ms(5));
+        // No wait at all is a setting, by the flag and by the variable.
+        assert_eq!(wait(Some(0)).expect("the flag"), Duration::ZERO);
+        std::env::set_var(INGEST_WAIT_ENV, "0");
+        assert_eq!(wait(None).expect("the variable"), Duration::ZERO);
+
+        // Thirty seconds is taken, and a millisecond more is refused with both numbers.
+        std::env::remove_var(INGEST_WAIT_ENV);
+        assert_eq!(wait(Some(MAX_INGEST_WAIT_MS)).expect("taken"), ms(30_000));
+        let refused = |got: Result<Duration, ConfigError>| match got {
+            Err(e @ ConfigError::IngestWaitTooLong { .. }) => {
+                let said = e.to_string();
+                assert!(
+                    said.contains("ingest wait (30001ms) is above the 30000ms limit"),
+                    "{said}"
+                );
+            }
+            other => panic!("a wait of 30001ms: {other:?}"),
+        };
+        refused(wait(Some(30_001)));
+        std::env::set_var(INGEST_WAIT_ENV, "30001");
+        refused(wait(None));
+        // The flag, when it is in range, is not refused for the variable it overrides,
+        // and an unreadable variable is refused unless the flag is given.
+        assert_eq!(wait(Some(1)).expect("the flag"), ms(1));
+        std::env::set_var(INGEST_WAIT_ENV, "soon");
+        assert!(matches!(
+            wait(None),
+            Err(ConfigError::BadEnv { var, value }) if var == INGEST_WAIT_ENV && value == "soon"
+        ));
+        assert_eq!(wait(Some(1)).expect("the flag"), ms(1));
+        std::env::remove_var(INGEST_WAIT_ENV);
+
+        // The log's bound.
+        let bound = |flag: Option<usize>| {
+            Storage::default()
+                .with_wal(None, None, flag)
+                .map(|storage| (storage.wal_queue_bytes, storage.wal_options().queue_bytes))
+        };
+        let default = crate::wal::DEFAULT_QUEUE_BYTES;
+        assert_eq!(default, 256 * 1024 * 1024);
+        assert_eq!(Storage::default().wal_queue_bytes, default);
+        assert_eq!(bound(None).expect("the default"), (default, default));
+        std::env::set_var(WAL_QUEUE_BYTES_ENV, "4096");
+        assert_eq!(bound(None).expect("the variable"), (4096, 4096));
+        assert_eq!(bound(Some(1)).expect("the flag"), (1, 1));
+        let no_bytes = |got: Result<(usize, usize), ConfigError>| match got {
+            Err(e @ ConfigError::NoBytes { .. }) => {
+                let said = e.to_string();
+                assert!(
+                    said.starts_with("wal queue bytes must be at least 1 byte"),
+                    "{said}"
+                );
+            }
+            other => panic!("a bound of nothing: {other:?}"),
+        };
+        no_bytes(bound(Some(0)));
+        std::env::set_var(WAL_QUEUE_BYTES_ENV, "0");
+        no_bytes(bound(None));
+        assert_eq!(bound(Some(2)).expect("the flag"), (2, 2));
     }
 }

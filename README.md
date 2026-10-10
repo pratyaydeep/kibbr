@@ -310,21 +310,46 @@ the size is checked a second time as it inflates, at `--max-decompressed-bytes`
 (64 MiB, the line limit, which it may not exceed), and the reader stops *at* the
 cap rather than after it. Either one is a `413`.
 
-**Past capacity, `/ingest` says 503 - it does not go quiet.** `--ingest-concurrency`
-bodies are parsed at once, one per core by default. A body that waits longer than
-100ms for a slot is answered `503` with a `Retry-After: 1` rather than left to
-run long, and `/stats` counts it as `ingest.requests_shed`. So is a body that
-arrives while the rows waiting in memory hold more than twice `--max-buffer-bytes`
-(512 MiB by default): past the limit the largest buffers are written early, and
-past twice it the flush is behind what is arriving, so a body taken then would be
-memory the process may not have.
+**Past capacity, `/ingest` waits a moment and then says 503 - it does not go
+quiet.** `--ingest-concurrency` bodies are parsed at once, one per core by
+default. A body that finds no slot waits for one at the door, with its body
+unread, and one that has waited `--ingest-wait-ms` (100 by default,
+`KIBBR__API__INGEST_WAIT_MS`, 30000 at most, `0` for no wait at all) is answered
+`503` with a `Retry-After: 1` rather than left to run long. A body that arrives
+while the rows waiting in memory hold more than twice `--max-buffer-bytes`
+(512 MiB by default) waits there the same way, for the flush that is already on
+its way: past the limit the largest buffers are written early, and past twice it
+the flush is behind what is arriving, so a body taken then would be memory the
+process may not have. A store that cannot write at all empties no buffer, and
+that body is refused at once, with the store's error.
 
-With `--storage disk` the `200` waits for the write-ahead log's flush, so the log
-is the third place a body can be turned away. At most 256 bodies are between the
-door and their answer at once (twice `--ingest-concurrency`, where that is more),
-and at most 256 MiB of lines wait to be written:
-past either the log's disk is behind what is arriving, and the next body is shed
-the same way. And while the log cannot write at all - a full volume - every body is
+With `--storage disk` the `200` waits for the write-ahead log's flush and for the
+store to take the rows, so the log is the third place a body can be held. At most
+256 bodies are between the door and their answer at once (twice
+`--ingest-concurrency`, where that is more), and at most `--wal-queue-bytes` of
+lines (256 MiB by default, `KIBBR__STORAGE__WAL_QUEUE_BYTES`) are in the log and
+not yet in the store. A body that has been parsed and finds the log full waits
+for room, for up to the same `--ingest-wait-ms` again, and keeps its slot while
+it does - so once every slot is held that way the bodies behind wait at the door,
+unread, and a slow disk slows its senders instead of filling memory. A body that
+gets no room in that time is shed with the same `503`; one whose sender hangs up
+while it waits is let go, with nothing of it stored.
+
+`/stats` says which of these is happening. `ingest.requests_shed` counts every
+body told to come back, and `ingest.shed` counts them by what there was none of:
+`permit`, `place`, `line`, `buffers`, `log`, `stopping`. `ingest.door` is the
+bodies waiting at the door now and how long they have waited in all, and
+`storage.wal` has `queue_bytes`, `unapplied_bytes` and `queue_waiting` - what is
+waiting for the log's writer, what it has written that the store does not have
+yet, and the bodies waiting for room. With `--ingest-wait-ms` above 100 no more
+bodies wait at the door than may be inside (`ingest.door.line_max`), and one more
+is shed at once (`line`). A server that is stopping keeps nobody waiting. A body
+waiting at the door is refused at once, unread (`stopping`). A body that has been
+parsed and has no room in the log is refused at once too, whether it was already
+waiting for room or finds none when its parse ends (`log`). A body the log has
+taken is finished and answered `200`.
+
+And while the log cannot write at all - a full volume - every body is
 refused `503` with the write error, before it is read, until a write succeeds.
 A store that cannot write refuses nothing: the line is in the log, and the answer
 is `200`. A body of which no line was taken, because the catalog could not write

@@ -942,6 +942,187 @@ fn past_capacity_ingest_sheds_with_retry_after() {
     assert_eq!(stats["ingest"]["ingest_concurrency"], 1);
 }
 
+/// With no wait at all the shed is the one it was with a hundred milliseconds, and at
+/// once: a body that finds no permit free is answered `503` with a `Retry-After`, every
+/// body is answered one way or the other, and the count of sheds is the count of `503`s.
+#[test]
+fn with_no_wait_a_body_past_capacity_is_shed_at_once() {
+    let server = Server::start_with(&[
+        "--ingest-concurrency",
+        "1",
+        "--ingest-wait-ms",
+        "0",
+        "--max-body-bytes",
+        "67108864",
+    ]);
+    let port = server.port;
+    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+        .args(["gen-logs", "--lines", "20000", "--seed", "11"])
+        .output()
+        .expect("failed to run gen-logs");
+    let body = std::sync::Arc::new(out.stdout);
+
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let body = std::sync::Arc::clone(&body);
+            std::thread::spawn(move || request_early(port, "/ingest", &body))
+        })
+        .collect();
+    let answers: Vec<(u16, String, String)> =
+        threads.into_iter().map(|t| t.join().unwrap()).collect();
+
+    let statuses: Vec<u16> = answers.iter().map(|(status, ..)| *status).collect();
+    let shed: Vec<_> = answers
+        .iter()
+        .filter(|(status, ..)| *status == 503)
+        .collect();
+    assert!(
+        !shed.is_empty(),
+        "no body was shed with one permit, no wait and eight concurrent senders: {statuses:?}"
+    );
+    assert!(
+        statuses.iter().all(|status| [200, 503].contains(status)),
+        "{statuses:?}"
+    );
+    for (_, headers, text) in &shed {
+        assert!(headers.contains("retry-after:"), "{headers}");
+        let report = json(text);
+        assert_eq!(report["ok"], false);
+        assert!(
+            report["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "{report}"
+        );
+    }
+
+    let stats = json(&server.get("/stats").1);
+    let ingest = &stats["ingest"];
+    assert_eq!(ingest["requests_shed"], shed.len() as u64, "{ingest}");
+    assert_eq!(ingest["ingest_wait_ms"], 0, "{ingest}");
+    // Each under its cause, and the causes add up to the total.
+    let causes: u64 = ingest["shed"]
+        .as_object()
+        .expect("the causes")
+        .values()
+        .filter_map(serde_json::Value::as_u64)
+        .sum();
+    assert_eq!(causes, shed.len() as u64, "{ingest}");
+}
+
+/// A wait past thirty seconds would keep a body longer than its sender waits for an
+/// answer, and a log that may hold nothing would refuse every body after the first: the
+/// server says so and does not start, by the flag and by the variable.
+#[test]
+fn a_wait_past_thirty_seconds_and_a_log_bound_of_nothing_are_refused_at_the_start() {
+    let refused = |flag: &[&str], variable: Option<(&str, &str)>, want: &str| {
+        let dir = scratch_dir();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
+        command
+            .args(["serve", "--port", "0"])
+            .args(["--data-dir", &dir.display().to_string()])
+            .args(flag);
+        if let Some((name, value)) = variable {
+            command.env(name, value);
+        }
+        let out = command.output().expect("failed to run kibbr serve");
+        let _ = fs::remove_dir_all(&dir);
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(1), "{said}");
+        assert!(said.contains(want), "{said}");
+        assert!(!said.contains("listening"), "{said}");
+    };
+    let too_long = "ingest wait (30001ms) is above the 30000ms limit";
+    refused(&["--ingest-wait-ms", "30001"], None, too_long);
+    refused(&[], Some(("KIBBR__API__INGEST_WAIT_MS", "30001")), too_long);
+    let nothing = "wal queue bytes must be at least 1 byte";
+    refused(&["--wal-queue-bytes", "0"], None, nothing);
+    refused(&[], Some(("KIBBR__STORAGE__WAL_QUEUE_BYTES", "0")), nothing);
+}
+
+/// What was resolved is said where an operator looks for it: `/stats`, and the banner.
+/// With nothing set, the hundred milliseconds and the 256 MiB a server always had, and no
+/// bound on the line at the door, which never had one; with the wait raised, the bound
+/// that comes with it - as many as may be between the door and their answer.
+#[test]
+fn stats_and_the_banner_say_the_wait_and_the_logs_bound_that_were_resolved() {
+    let server = Server::start();
+    let stats = json(&server.get("/stats").1);
+    assert_eq!(stats["ingest"]["ingest_wait_ms"], 100, "{stats}");
+    assert_eq!(
+        stats["storage"]["wal"]["queue_max_bytes"], 268_435_456,
+        "{stats}"
+    );
+    assert_eq!(
+        stats["ingest"]["door"]["line_max"],
+        serde_json::Value::Null,
+        "{stats}"
+    );
+    assert!(
+        server.banner.contains("100ms") && server.banner.contains("268,435,456 bytes"),
+        "{}",
+        server.banner
+    );
+    assert!(
+        !server.banner.contains("wait at the door"),
+        "{}",
+        server.banner
+    );
+
+    let server = Server::start_with(&["--ingest-wait-ms", "250", "--wal-queue-bytes", "1048576"]);
+    let stats = json(&server.get("/stats").1);
+    assert_eq!(stats["ingest"]["ingest_wait_ms"], 250, "{stats}");
+    assert_eq!(
+        stats["storage"]["wal"]["queue_max_bytes"], 1_048_576,
+        "{stats}"
+    );
+    let places = stats["ingest"]["ingest_bodies"].as_u64().expect("places");
+    assert_eq!(stats["ingest"]["door"]["line_max"], places, "{stats}");
+    assert!(
+        server.banner.contains("250ms") && server.banner.contains("1,048,576 bytes"),
+        "{}",
+        server.banner
+    );
+    assert!(
+        server
+            .banner
+            .contains(&format!("at most {places} wait at the door at once")),
+        "{}",
+        server.banner
+    );
+}
+
+/// Bodies back to back onto buffers that hold next to nothing, with a wait long enough to
+/// ride out any flush: every one is taken, and none is shed.
+///
+/// Each body leaves the buffers past twice their limit, so the one behind it finds them
+/// full at the door. It used to be refused there at once, though the flush that would let
+/// it in was already running; now it waits for that flush, and the flush says when it is
+/// done. Were that never said, a body at the door would wait out its thirty seconds and
+/// be refused, and this would not see fifty `200`s.
+#[test]
+fn bodies_wait_at_the_door_for_the_flush_and_every_one_lands() {
+    const BODIES: usize = 50;
+    const PER_BODY: usize = 20;
+    let server = Server::start_with(&["--max-buffer-bytes", "1024", "--ingest-wait-ms", "30000"]);
+    for nth in 0..BODIES {
+        let body: String = (0..PER_BODY)
+            .map(|n| format!("{{\"ts\": 1705314600, \"n\": {}}}\n", nth * PER_BODY + n))
+            .collect();
+        let (status, text) = server.post("/ingest", body.as_bytes());
+        assert_eq!(status, 200, "body {nth}: {text}");
+    }
+    let stats = json(&server.get("/stats").1);
+    let ingest = &stats["ingest"];
+    assert_eq!(ingest["requests_shed"], 0, "{ingest}");
+    assert_eq!(ingest["lines_ingested"], (BODIES * PER_BODY) as u64);
+    // How many of the fifty had to wait is the flush's speed against the sender's, and
+    // is said and not asserted.
+    eprintln!("the door, after {BODIES} bodies: {}", ingest["door"]);
+    assert_eq!(
+        server.query("COUNT LOG {}")["count"],
+        (BODIES * PER_BODY) as u64
+    );
+}
+
 // ── When the store cannot write ────────────────────────────────────────────────────
 
 /// `/stats` waited on until a predicate holds, or the timeout runs out.

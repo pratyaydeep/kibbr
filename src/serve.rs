@@ -69,27 +69,17 @@ use crate::wal::{self, Wal};
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
 
-/// How long an `/ingest` body waits for a permit before it is shed.
-///
-/// What separates a burst from an overload. Two shippers arriving together on a
-/// four-permit server should queue for the millisecond it takes; twenty arriving together
-/// every second is not a burst, and waiting will not fix it.
-///
-/// A constant, not a flag: what an operator tunes is the permit count, which is the
-/// statement about the machine. A longer wait only moves the refusal closer to the
-/// shipper's own timeout, which is the outcome the shed exists to avoid.
-const INGEST_QUEUE_WAIT: Duration = Duration::from_millis(100);
-
 /// How many `/ingest` bodies may be between the door and their answer at once: being
-/// parsed, or waiting on the write-ahead log's flush.
+/// parsed, waiting for room in the write-ahead log, or waiting on its flush.
 ///
 /// Each is a thread of the blocking pool, parked while it waits, and the wait is as long
-/// as the log's disk makes it. The permits for the parse do not bound it - they go back
-/// before the log is asked, so that one flush can carry more bodies than there are
-/// cores - and with nothing bounding it a log volume that stalled took every thread of
-/// the pool: queries and the flush tick queued behind bodies that could not be answered,
-/// and the server went quiet, which is the one thing the door must never do. Past this
-/// many the door sheds, before it reads the body.
+/// as the log's disk makes it. The permits for the parse do not bound it - they are kept
+/// while a body waits for room and go back once it is in the log's queue, before its
+/// flush, so that one flush can carry more bodies than there are cores - and with
+/// nothing bounding it a log volume that stalled took every thread of the pool: queries
+/// and the flush tick queued behind bodies that could not be answered, and the server
+/// went quiet, which is the one thing the door must never do. Past this many the door
+/// sheds, before it reads the body.
 const INGEST_BODIES: usize = 256;
 
 /// What the blocking pool holds beyond the bodies at the door: for queries and the flush
@@ -170,6 +160,11 @@ pub struct Server {
     /// their memory limit rings it, so the limit is enforced within a body and not within
     /// half a second of bodies.
     flush_now: Notify,
+    /// Rung after every flush: a body waiting at the door for the buffers to come back
+    /// under twice their limit looks again.
+    flushed: Notify,
+    /// Cancelled when shutdown begins: whoever is waiting at the door is refused at once.
+    stopping: CancellationToken,
     started: Instant,
     started_at: DateTime<Utc>,
     lines_read: AtomicU64,
@@ -178,12 +173,14 @@ pub struct Server {
     queries: AtomicU64,
     /// Requests currently in a handler. Read at shutdown, to say what is being waited on.
     in_flight: AtomicU64,
-    /// Bodies shed: refused for want of a permit, while the buffers were past twice their
-    /// limit, or because the write-ahead log had as much waiting as it may hold. The only
-    /// number that says the shed is firing rather than merely present. The first two are
-    /// in no other counter - `lines_read` never saw them; a body the log sheds was read
-    /// and routed first, and its lines are in `lines_read` and `lines_rejected` too.
-    requests_shed: AtomicU64,
+    /// What the door has made wait, and the bodies shed, each under its cause: refused
+    /// for want of a permit or a place, because the buffers stayed past twice their
+    /// limit, because the write-ahead log had no room, with the line at the door full,
+    /// or while the server was stopping. Their sum is the only number that says the shed
+    /// is firing rather than merely present. A body shed at the door is in no other
+    /// counter - `lines_read` never saw it; one the log sheds was read and routed first,
+    /// and its lines are in `lines_read` and `lines_rejected` too.
+    door: Door,
     /// The caps, held on the server and not negotiated per request: all clients get the
     /// same limits, because a client that could override one could sidestep the
     /// protection it is there for.
@@ -195,13 +192,15 @@ pub struct Server {
     /// The backpressure answer for the part that is CPU. Without it every body takes a
     /// blocking-pool slot, the pool queues 512 deep, and a shipper waiting on a request
     /// that will not finish in time gives up and opens another - which is how a slow
-    /// server becomes an unreachable one. No permit within `INGEST_QUEUE_WAIT` is a 503,
+    /// server becomes an unreachable one. No permit within `api.ingest_wait` is a 503,
     /// which Vector's adaptive concurrency reads as "send fewer" rather than "the server
     /// is gone".
     ///
-    /// **Given back before the write-ahead log is asked**, so one flush carries as many
-    /// bodies as have queued and not as many as there are cores. A body waiting on the
-    /// log still holds a blocking-pool thread; what bounds those is `ingest_bodies`.
+    /// **Given back once the body is in the write-ahead log's queue, and not kept across
+    /// the flush**, so one flush carries as many bodies as have queued and not as many as
+    /// there are cores. A body waiting on the log still holds a blocking-pool thread;
+    /// what bounds those is `ingest_bodies`. Kept while a body waits for room in a log
+    /// that is full: see `ingest`.
     ingest_permits: Arc<Semaphore>,
     /// How many bodies may be between the door and their answer: `ingest_bodies`. Taken
     /// at the door with the permit above, and kept until the body's task has returned.
@@ -228,6 +227,63 @@ pub struct Server {
     /// in its task, which keeps a query from sharing its scan out meanwhile, and for
     /// `/stats` to say how many runs of row groups were shared out.
     fan: Option<Arc<Fan>>,
+}
+
+/// The door's own counts: what it has made wait and what it has turned away.
+///
+/// Every one is an atomic, so `/stats` adds them up with no lock and a body pays one
+/// addition for the count it lands in.
+#[derive(Default)]
+struct Door {
+    /// Bodies waiting at the door now, their bodies unread.
+    waiting: AtomicU64,
+    /// Bodies that have had to wait at the door, whatever came of the wait. With no
+    /// wait to give, a body that found something missing is counted here all the same,
+    /// answered at once and with no time against it.
+    waits: AtomicU64,
+    /// How long those waited, all together, in microseconds.
+    waited_micros: AtomicU64,
+    shed: Shed,
+}
+
+/// Bodies answered `503` and told to come back, by what there was none of. A sum of these
+/// says a server is shedding; which of them is rising says what to do about it - more
+/// permits, a faster disk under the log, a faster one under the store.
+#[derive(Default)]
+struct Shed {
+    /// No permit for the parse came free inside the wait.
+    permit: AtomicU64,
+    /// As many bodies as may be were between the door and their answer.
+    place: AtomicU64,
+    /// As many bodies as may be were already waiting at the door.
+    line: AtomicU64,
+    /// The buffers were past twice their limit.
+    buffers: AtomicU64,
+    /// The write-ahead log had no room: for a body already parsed, or at the door while
+    /// the bodies ahead of it waited for that room.
+    log: AtomicU64,
+    /// The server was stopping.
+    stopping: AtomicU64,
+}
+
+impl Shed {
+    /// Every body shed, whatever for: `/stats`'s `ingest.requests_shed`.
+    fn total(&self) -> u64 {
+        self.each().iter().map(|(_, count)| count).sum()
+    }
+
+    /// Each cause with its count, in the order `/stats` lists them.
+    fn each(&self) -> [(&'static str, u64); 6] {
+        [
+            ("permit", &self.permit),
+            ("place", &self.place),
+            ("line", &self.line),
+            ("buffers", &self.buffers),
+            ("log", &self.log),
+            ("stopping", &self.stopping),
+        ]
+        .map(|(cause, count)| (cause, count.load(Ordering::Relaxed)))
+    }
 }
 
 /// The header a `/load` or `/compact` request carries its token in.
@@ -392,6 +448,8 @@ impl Server {
             replayed,
             checkpoint_failing: AtomicBool::new(false),
             flush_now: Notify::new(),
+            flushed: Notify::new(),
+            stopping: CancellationToken::new(),
             started: Instant::now(),
             started_at: now,
             lines_read: AtomicU64::new(0),
@@ -399,7 +457,7 @@ impl Server {
             lines_rejected: AtomicU64::new(0),
             queries: AtomicU64::new(0),
             in_flight: AtomicU64::new(0),
-            requests_shed: AtomicU64::new(0),
+            door: Door::default(),
             limits,
             api,
             storage,
@@ -1256,11 +1314,12 @@ fn ingest(
     now: DateTime<Utc>,
     permit: Permit,
 ) -> Result<IngestReport, IngestError> {
-    // `_inside` is this body's place among those between the door and their answer, kept
-    // until this returns; `permit` is for the parse and the routing.
+    // `place` is this body's place among those between the door and their answer, kept
+    // until this returns, and what says whether its sender is still there; `permit` is
+    // for the parse and the routing.
     let Permit {
         parse: permit,
-        body: _inside,
+        body: place,
     } = permit;
     // A body no write of the log would hold is refused before it is parsed: it would
     // be refused after, and the parse of that many lines is the cost.
@@ -1356,24 +1415,47 @@ fn ingest(
     let ingested = lines.len() as u64;
     match &server.wal {
         Some(wal) => {
-            // The permit is for the parse and the routing, which are what a core is
-            // short of. Held across the flush as well, a flush could never carry more
-            // bodies than there are cores - and it is there to carry whatever has queued.
-            // What bounds the bodies waiting from here is `ingest_bodies`, at the door.
-            drop(permit);
-            if let Err(refused) = wal.commit(lines, db::arrival_nanos(now)) {
+            // A body the log refuses was read and routed, and none of it was taken: its
+            // lines are counted as read and as rejected, whichever refusal it was.
+            let refused = |refused: wal::Refused| {
                 server.lines_read.fetch_add(stats.read, Ordering::Relaxed);
                 server
                     .lines_rejected
                     .fetch_add(rejected + ingested, Ordering::Relaxed);
-                return Err(match refused {
+                match refused {
                     wal::Refused::Cannot(why) => IngestError::Log(why),
                     wal::Refused::Busy => IngestError::Busy,
+                    wal::Refused::Left => IngestError::Left,
                     wal::Refused::TooLarge { bytes, limit } => {
                         IngestError::TooLarge { bytes, limit }
                     }
-                });
-            }
+                }
+            };
+            // A log with no room for the body makes it wait for some, for as long as a
+            // body may be kept waiting, where it used to be shed at once - after it had
+            // been read, inflated, parsed and routed, all of which its sender's retry
+            // paid for again a second later.
+            let wait = wal::Wait {
+                at_most: server.api.ingest_wait,
+                left: &place.left,
+            };
+            let ticket = wal
+                .enqueue(lines, db::arrival_nanos(now), wait)
+                .map_err(&refused)?;
+            // The permit is for the parse and the routing, which are what a core is
+            // short of. Held across the flush as well, a flush could never carry more
+            // bodies than there are cores - and it is there to carry whatever has queued.
+            // What bounds the bodies waiting from here is `ingest_bodies`, at the door.
+            //
+            // **Kept until the body is in the log's queue, and so across a wait for
+            // room.** A body waiting for room is a parsed body held in memory that the
+            // log's bound does not count; with its permit kept there are no more of
+            // those than there are permits, which is the memory the parse already had.
+            // And it is what carries the pressure back: once every permit is held by a
+            // body the log has no room for, the door lets nobody in, and every later
+            // sender waits there with its body unread.
+            drop(permit);
+            ticket.wait().map_err(&refused)?;
         }
         None => {
             for line in lines {
@@ -1601,6 +1683,15 @@ async fn post_ingest(
         .map(str::to_owned);
 
     let held = Arc::clone(&server);
+    // What says the sender has gone, to a body that is waiting for room in the log: set
+    // if this future is dropped before the task below has returned, which is what a
+    // connection that closes does to it.
+    let place = Arc::clone(&permit.body);
+    let mut leaving = Leaving {
+        server: &server,
+        place: &place,
+        armed: true,
+    };
     // The parse and the trie walk are CPU work, and the wait for the log's flush after
     // them blocks, so none of it belongs on a runtime thread that also answers `/health`.
     // Inflating joins them rather than running above: a gzip bomb is seconds of CPU, and
@@ -1618,6 +1709,8 @@ async fn post_ingest(
         ingest(&held, &decoded, now, permit).map_err(IngestFailure::Fatal)
     })
     .await;
+    // The task has returned, and its answer is this future's to give: nobody has left.
+    leaving.armed = false;
 
     match done {
         // The one report that is not a 200: no line was taken, and every one was refused
@@ -1636,9 +1729,13 @@ async fn post_ingest(
         Ok(Err(IngestFailure::Fatal(IngestError::Log(why)))) => cannot_log(&why),
         // And a shed: the log is behind what arrives, and the body waits at its sender.
         Ok(Err(IngestFailure::Fatal(IngestError::Busy))) => {
-            server.requests_shed.fetch_add(1, Ordering::Relaxed);
+            server.door.shed.log.fetch_add(1, Ordering::Relaxed);
             log_busy()
         }
+        // The body was let go because its sender had gone, so nobody reads this: the
+        // future that would have sent it is the one that was dropped. Not counted as a
+        // shed, which is a sender told to come back.
+        Ok(Err(IngestFailure::Fatal(IngestError::Left))) => log_busy(),
         // The sender's to fix, as a body past the wire cap is: no retry of it will fit.
         Ok(Err(IngestFailure::Fatal(e @ IngestError::TooLarge { .. }))) => {
             fail(StatusCode::PAYLOAD_TOO_LARGE, &e.to_string())
@@ -1650,6 +1747,54 @@ async fn post_ingest(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("ingest task failed: {join}"),
         ),
+    }
+}
+
+/// Tells the log when a handler's future is dropped before its task has returned: the
+/// body's sender hung up.
+///
+/// **Only a body waiting for room in the log gives anything up for it.** One that is
+/// being parsed, or is already in the log's queue, goes on and is stored whole, as it
+/// always has: the log looks for room before it looks at this flag, and never looks at
+/// it for a body it has taken. But a body the log has no room for holds a permit for the
+/// parse while it waits, and one whose sender has gone would hold it for the whole wait
+/// with nobody to answer at the end of it - and its sender, having given up, has very
+/// likely sent the body again.
+///
+/// **The flag first, with no lock, and then the wake-up.** A body about to wait reads
+/// the flag under the log's queue lock and keeps that lock until it is parked; the
+/// wake-up takes the same lock after the flag is set. So the body sees the flag, or is
+/// parked when the wake-up comes: it is never left to wait out its time.
+///
+/// What this costs a request whose sender stays is two references and a flag on the
+/// handler's stack. The clone of the server and the task are made only in `drop`, and
+/// only when a sender has in fact left.
+struct Leaving<'a> {
+    server: &'a Arc<Server>,
+    place: &'a Arc<Place>,
+    /// Cleared once the task has returned: there is then nothing to tell.
+    armed: bool,
+}
+
+impl Drop for Leaving<'_> {
+    fn drop(&mut self) {
+        if !self.armed || self.server.wal.is_none() {
+            return;
+        }
+        self.place.left.store(true, Ordering::Release);
+        let server = Arc::clone(self.server);
+        let wake = move || {
+            if let Some(wal) = &server.wal {
+                wal.wake_room();
+            }
+        };
+        // The wake-up takes the queue's lock, which the log's writer can keep for as
+        // long as moving a large body's lines takes: not a runtime worker's to wait on.
+        // With no runtime left to hand it to, this is not a worker either.
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn_blocking(wake)),
+            Err(_) => wake(),
+        }
     }
 }
 
@@ -1705,13 +1850,16 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Admission control for `/ingest`: a 503 while the write-ahead log cannot write, then a
-/// permit or a 503 that says when to come back.
+/// Admission control for `/ingest`: a 503 while the write-ahead log cannot write, then
+/// both permits, at once when they are free and after a bounded wait when they are not,
+/// or a 503 that says when to come back.
 ///
 /// **A layer, not a check inside the handler.** A layer wraps the handler, so it runs
 /// before the extractors - before a byte of the body is pulled off the socket. Shedding in
 /// the handler would buffer `max_body_bytes` first and *then* refuse, spending the memory
-/// the shed exists to protect.
+/// the shed exists to protect. And waiting here is waiting with the body unread: it stays
+/// in the kernel's buffers and at its sender, whose write blocks when those are full,
+/// which is the one place a body can wait at no cost to this process.
 ///
 /// 503 and not 429: 429 claims a per-client quota and there is none here. This server is
 /// saturated, which is what 503 says and what `Retry-After` dates. Either makes Vector back
@@ -1719,8 +1867,8 @@ fn percent_decode(text: &str) -> String {
 ///
 /// What this must never do is take the body and go quiet. A shipper with no answer keeps
 /// the batch, times out, and opens another connection - so a merely slow server gathers
-/// connections until it is unreachable. The immediate refusal is the kinder answer
-/// precisely because a client knows what to do with it.
+/// connections until it is unreachable. Every wait here ends by `api.ingest_wait`, and a
+/// refusal is the kinder answer precisely because a client knows what to do with it.
 ///
 /// **A refusal from here tells the client that the connection closes.** The body is still
 /// unread when it is answered, so the connection cannot carry another request and the
@@ -1744,62 +1892,373 @@ async fn admit(State(server): State<Arc<Server>>, mut request: Request, next: Ne
     if let Some(detail) = server.wal.as_ref().and_then(Wal::refusal) {
         return cannot_log(&detail);
     }
-    // Past twice the buffer limit the flush is falling behind what arrives, even closing
-    // the largest buffers early, and a body taken now is memory the process may not have.
-    // Refused like a shed - a shipper told to come back in a second keeps its batch - and
-    // counted as one. A shed and not a verdict on durability: the log could take the line,
-    // and the row it becomes is memory this process has run out of.
-    if server.stores.buffers_full() {
-        server.requests_shed.fetch_add(1, Ordering::Relaxed);
-        return buffers_full(
-            server.stores.buffer_bytes(),
-            server
-                .write_health
-                .is_degraded()
-                .then(|| server.write_health.last_error())
-                .flatten(),
-        );
-    }
-
-    // One wait for both permits, so the refusal is no later for there being two.
-    let until = tokio::time::Instant::now() + INGEST_QUEUE_WAIT;
-    let permits = Arc::clone(&server.ingest_permits);
-    let parse = match tokio::time::timeout_at(until, permits.acquire_owned()).await {
-        Ok(Ok(permit)) => permit,
-        // The semaphore is never closed, so this is the timeout and nothing else.
-        _ => {
-            server.requests_shed.fetch_add(1, Ordering::Relaxed);
-            return busy(server.api.ingest_concurrency);
-        }
-    };
-    // After the parse's permit, so that running out of these means what the refusal
-    // says: the bodies inside are not being parsed - there is a permit free for that -
-    // they are waiting on the log.
-    let bodies = Arc::clone(&server.ingest_bodies);
-    let body = match tokio::time::timeout_at(until, bodies.acquire_owned()).await {
-        Ok(Ok(permit)) => permit,
-        _ => {
-            server.requests_shed.fetch_add(1, Ordering::Relaxed);
-            return log_busy();
-        }
+    // Nearly every body finds both permits free, and is let in without a clock read or a
+    // timer made for it. Only one that does not goes on to where the waits are.
+    let permit = match server.admit_now() {
+        Some(permit) => permit,
+        None => match server.admit_waiting().await {
+            Ok(permit) => permit,
+            Err(refusal) => return *refusal,
+        },
     };
     // **Handed to the handler, which hands them to its blocking task.** Held only here
     // they went back the moment a client hung up - this future is dropped then - while
     // the task they were meant to cover ran on: a sender that timed out and tried again
     // took the freed permit and queued a second copy of its body beside the first.
-    request.extensions_mut().insert(Permit {
-        parse: Arc::new(parse),
-        body: Arc::new(body),
-    });
+    request.extensions_mut().insert(permit);
     next.run(request).await
 }
 
+impl Server {
+    /// Both permits, when nothing has to be waited for: the buffers under twice their
+    /// limit, a permit for the parse free, and a place.
+    ///
+    /// Taken without waiting, and that does not jump the line at the door: a permit that
+    /// is given back goes to whoever has waited longest for it, and only one that nobody
+    /// is waiting for is there for this to take.
+    fn admit_now(&self) -> Option<Permit> {
+        if self.stores.buffers_full() {
+            return None;
+        }
+        let parse = Arc::clone(&self.ingest_permits)
+            .try_acquire_owned()
+            .ok()?;
+        // A permit got without a place goes straight back, as this returns.
+        let place = Arc::clone(&self.ingest_bodies)
+            .try_acquire_owned()
+            .ok()?;
+        Some(Permit::of(parse, place))
+    }
+
+    /// The most bodies that may wait at the door at once, and `None` for no bound.
+    ///
+    /// **None at the default wait, as there never was one.** Nobody is in the line for
+    /// longer than a hundred milliseconds then, so it bounds itself, and a burst queues
+    /// for the moment it takes with no count held against it. A wait an operator has
+    /// raised is another matter: each waiter is a socket, with up to a receive buffer of
+    /// unread body behind it, kept for as long as the wait - and that needs a number. It
+    /// is the places, so there are never more bodies outside the door than may be inside.
+    fn line_max(&self) -> Option<usize> {
+        let default = Duration::from_millis(crate::config::DEFAULT_INGEST_WAIT_MS as u64);
+        (self.api.ingest_wait > default).then(|| ingest_bodies(&self.api))
+    }
+
+    /// Both permits, with every wait in it, all before one deadline: for the buffers to
+    /// come back under twice their limit, for a permit for the parse, for a place. `Err`
+    /// is the refusal, already counted under its cause.
+    ///
+    /// **The body is unread throughout**, and nothing is held while it waits for the
+    /// buffers or for a permit but its turn. Waiting for a place it holds its permit for
+    /// the parse, which goes back when it is refused or dropped: a sender that goes away
+    /// costs nobody a permit.
+    ///
+    /// **A wait that has run out sheds nobody by itself.** What the body was waiting for
+    /// is looked at once more, after the wait: a flush empties the buffers before it
+    /// says so, and a permit can come back in the same instant. The body is shed only
+    /// for what is still not there, and told what that is. With no wait to give
+    /// (`--ingest-wait-ms 0`) that look is the first one, and nothing is waited for.
+    ///
+    /// **Every wait watches for the stop first.** Once shutdown has begun a waiter is
+    /// refused at once, and one that finds its permit and the stop ready together is
+    /// refused too - let in, it would be read and parsed only to be shed by a log that
+    /// has been told to hurry. So the stop is asked before anything else, every time.
+    ///
+    /// No lock is held across any wait here, and every wait is on a thing of the
+    /// runtime's own - a semaphore, a `Notify`, a timer, a token - so a waiter costs no
+    /// thread. Dropped - the connection went away - it leaves the line as it was.
+    async fn admit_waiting(&self) -> Result<Permit, Box<Response>> {
+        if let Some(max) = self.line_max() {
+            if self.door.waiting.load(Ordering::Relaxed) >= max as u64 {
+                self.door.shed.line.fetch_add(1, Ordering::Relaxed);
+                return Err(Box::new(line_full(max)));
+            }
+        }
+        let waiting = Waiting::begin(&self.door);
+        let until = waiting.since + self.api.ingest_wait;
+        // Whether the wait has run out: from the start, with no wait to give. Nothing
+        // is asked of a timer then. One set for a moment that is already here still
+        // takes a turn of the runtime's clock to say so, which is a wait of a
+        // millisecond for a body that was to have none.
+        let mut spent = self.api.ingest_wait.is_zero();
+        let turned_away = || {
+            self.door.shed.stopping.fetch_add(1, Ordering::Relaxed);
+            Box::new(stopping())
+        };
+        // The flush is rung once for this body. A flush that starts after the ring sees
+        // every row that filled the buffers before it; one that leaves them full has done
+        // what a flush can, and the tick will try again.
+        let mut rung = false;
+        let permit = loop {
+            // The buffers. Past twice their limit the flush is falling behind what
+            // arrives, even closing the largest buffers early, and a body taken now is
+            // memory the process may not have. A flush is on its way: the body waits for
+            // it, where it used to be shed with that flush a few milliseconds from done.
+            // If it is shed in the end, that is a shed and not a verdict on durability:
+            // the log could take the line, and the row it becomes is memory this process
+            // has run out of.
+            loop {
+                // Listening before the look, so a flush that ends between the look and
+                // the wait is not missed.
+                let flushed = self.flushed.notified();
+                tokio::pin!(flushed);
+                flushed.as_mut().enable();
+                if !self.stores.buffers_full() {
+                    break;
+                }
+                if let Some(detail) = self.wal.as_ref().and_then(Wal::refusal) {
+                    return Err(Box::new(cannot_log(&detail)));
+                }
+                // A store that cannot write: nothing leaves the buffers, so a wait would
+                // only be the same refusal later. At once, with the store's error in it.
+                if self.write_health.is_degraded() {
+                    self.door.shed.buffers.fetch_add(1, Ordering::Relaxed);
+                    return Err(Box::new(buffers_full(
+                        self.stores.buffer_bytes(),
+                        self.write_health.last_error(),
+                    )));
+                }
+                if !rung {
+                    self.flush_now.notify_one();
+                    rung = true;
+                }
+                // Out of time, and the looks above were made after it ran out: the
+                // buffers are full now, the log can write and so can the store. Shed,
+                // with what the buffers hold at this moment.
+                if spent {
+                    if self.stopping.is_cancelled() {
+                        return Err(turned_away());
+                    }
+                    self.door.shed.buffers.fetch_add(1, Ordering::Relaxed);
+                    return Err(Box::new(buffers_full(self.stores.buffer_bytes(), None)));
+                }
+                tokio::select! {
+                    biased;
+                    () = self.stopping.cancelled() => return Err(turned_away()),
+                    () = &mut flushed => {}
+                    // Not shed from here. A flush brings the buffers down before it
+                    // rings `flushed`, so a wait can run out beside buffers that
+                    // already have room; and a log or a store that failed while this
+                    // body waited is the reason it is given, here as everywhere. So
+                    // round once more, for the same looks a body makes on arriving.
+                    () = tokio::time::sleep_until(until) => spent = true,
+                }
+            }
+            // The permit for the parse, and then the place: in that order, so that
+            // running out of places means what its refusal says - the bodies inside are
+            // not being parsed, there is a permit free for that, they are waiting on the
+            // log. One deadline for both, so the refusal is no later for there being two.
+            let parse = tokio::select! {
+                biased;
+                () = self.stopping.cancelled() => return Err(turned_away()),
+                got = permit_by(&self.ingest_permits, until, spent) => got,
+            };
+            // `None` is the deadline: the semaphores are never closed.
+            let Some(parse) = parse else {
+                return Err(Box::new(self.out_of_time(Wanted::Permit)));
+            };
+            let place = tokio::select! {
+                biased;
+                () = self.stopping.cancelled() => return Err(turned_away()),
+                got = permit_by(&self.ingest_bodies, until, spent) => got,
+            };
+            let Some(place) = place else {
+                return Err(Box::new(self.out_of_time(Wanted::Place)));
+            };
+            // The buffers again, because a permit may have been waited for, and for as
+            // long as the whole wait: every body that passed the first look could
+            // otherwise be let in onto buffers that filled meanwhile. Full, the permits
+            // go back - a body waiting for a flush holds nothing - and it goes round.
+            if !self.stores.buffers_full() {
+                break Permit::of(parse, place);
+            }
+        };
+        // The log again, because something was waited for.
+        if let Some(detail) = self.wal.as_ref().and_then(Wal::refusal) {
+            return Err(Box::new(cannot_log(&detail)));
+        }
+        Ok(permit)
+    }
+
+    /// The refusal of a body whose wait at the door ran out with no permit, or with no
+    /// place, counted under what there was none of.
+    ///
+    /// **A log that has failed meanwhile is the reason, whatever was waited for.** And
+    /// while bodies inside are waiting for room in the log, that is the reason too: they
+    /// hold the permits, the log's disk or the store is what is behind, and a shipper
+    /// told "at capacity" would be told to send fewer when more permits would not help.
+    fn out_of_time(&self, wanted: Wanted) -> Response {
+        if let Some(detail) = self.wal.as_ref().and_then(Wal::refusal) {
+            return cannot_log(&detail);
+        }
+        let shed = &self.door.shed;
+        if self.wal.as_ref().is_some_and(|wal| wal.waiting_for_room() > 0) {
+            shed.log.fetch_add(1, Ordering::Relaxed);
+            return log_busy();
+        }
+        match wanted {
+            Wanted::Permit => {
+                shed.permit.fetch_add(1, Ordering::Relaxed);
+                busy(self.api.ingest_concurrency)
+            }
+            Wanted::Place => {
+                shed.place.fetch_add(1, Ordering::Relaxed);
+                log_busy()
+            }
+        }
+    }
+}
+
+/// One permit of `from` for a body at the door, waited for until `until` and no longer.
+/// `None` is the wait run out with no permit.
+///
+/// With the wait already `spent` - run out while the body waited for the buffers, or
+/// none to give - nothing is waited for, and a permit is taken only if one is free at
+/// this moment. Asked for and not waited for, rather than raced against a timer that
+/// has already rung: the one that is free is then taken on every run, and the body is
+/// shed only when there is none.
+async fn permit_by(
+    from: &Arc<Semaphore>,
+    until: tokio::time::Instant,
+    spent: bool,
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    if spent {
+        return Arc::clone(from).try_acquire_owned().ok();
+    }
+    tokio::select! {
+        biased;
+        got = Arc::clone(from).acquire_owned() => got.ok(),
+        () = tokio::time::sleep_until(until) => None,
+    }
+}
+
+/// What a body at the door was waiting for when its wait ran out.
+enum Wanted {
+    /// A permit for the parse.
+    Permit,
+    /// A place among the bodies between the door and their answer.
+    Place,
+}
+
+/// One body waiting at the door, counted for as long as this lives: however the wait
+/// ends - let in, refused, or dropped with its connection - the count goes back and the
+/// time it took is added up.
+struct Waiting<'a> {
+    door: &'a Door,
+    since: tokio::time::Instant,
+}
+
+impl<'a> Waiting<'a> {
+    fn begin(door: &'a Door) -> Self {
+        door.waits.fetch_add(1, Ordering::Relaxed);
+        door.waiting.fetch_add(1, Ordering::Relaxed);
+        Self {
+            door,
+            since: tokio::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.door.waiting.fetch_sub(1, Ordering::Relaxed);
+        let waited = self.since.elapsed().as_micros() as u64;
+        self.door.waited_micros.fetch_add(waited, Ordering::Relaxed);
+    }
+}
+
+/// Shutdown has begun: nobody is kept waiting from here on. Every body at the door is
+/// refused at once, and the log is told that no body waits for room - so a body already
+/// in the log is finished, one still being parsed is taken if the log has room when it
+/// gets there and shed (`log_busy`, counted under `shed.log`) if it has none, and a stop
+/// never takes as long as the longest wait.
+///
+/// The log's part takes its queue's lock, which is no runtime worker's to take: it is
+/// handed to the blocking pool.
+fn begin_stop(server: &Arc<Server>) {
+    server.stopping.cancel();
+    // A compaction hears of it now, while the requests in flight finish, and is waited
+    // for after the final flush: see `join_compactions`.
+    cancel_compactions(server);
+    if server.wal.is_none() {
+        return;
+    }
+    let held = Arc::clone(server);
+    let hurry = move || {
+        if let Some(wal) = &held.wal {
+            wal.hurry();
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => drop(runtime.spawn_blocking(hurry)),
+        Err(_) => hurry(),
+    }
+}
+
 /// One `/ingest` body's permits, as the door hands them to the handler: see `admit`.
-/// `parse` goes back once the body is parsed and routed; `body` when its task returns.
+/// `parse` goes back once the body is parsed, routed and in the log's queue; `body` when
+/// its task returns.
 #[derive(Clone)]
 struct Permit {
     parse: Arc<tokio::sync::OwnedSemaphorePermit>,
-    body: Arc<tokio::sync::OwnedSemaphorePermit>,
+    body: Arc<Place>,
+}
+
+impl Permit {
+    fn of(
+        parse: tokio::sync::OwnedSemaphorePermit,
+        place: tokio::sync::OwnedSemaphorePermit,
+    ) -> Self {
+        Self {
+            parse: Arc::new(parse),
+            body: Arc::new(Place {
+                _permit: place,
+                left: AtomicBool::new(false),
+            }),
+        }
+    }
+}
+
+/// A body's place among those between the door and their answer, and whether anybody is
+/// still waiting for that answer.
+struct Place {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    /// The body's sender hung up before its answer was ready. What a body waiting for
+    /// room in the log looks at, to give the wait up.
+    left: AtomicBool,
+}
+
+/// The refusal of a body that arrives while the server is stopping and would have had to
+/// wait: the shed's shape. The body is unread, and whatever takes this server's place
+/// can have it.
+fn stopping() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(json!({
+            "ok": false,
+            "error": format!(
+                "the server is stopping, and nothing of this body was taken; keep it and \
+                 send it again in {RETRY_AFTER_SECONDS}s"
+            ),
+        })),
+    )
+        .into_response()
+}
+
+/// The refusal of a body that found as many waiting at the door as may: the shed's shape.
+fn line_full(max: usize) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
+        Json(json!({
+            "ok": false,
+            "error": format!(
+                "{max} bodies are already waiting for ingest to have room for them, which \
+                 is as many as may; retry in {RETRY_AFTER_SECONDS}s"
+            ),
+        })),
+    )
+        .into_response()
 }
 
 /// The refusal while the buffers are past twice their limit: the shed's shape, with what
@@ -1833,9 +2292,11 @@ fn buffers_full((held, limit): (u64, u64), failing: Option<String>) -> Response 
         .into_response()
 }
 
-/// The shed of a body the write-ahead log had no room for - as many bodies waiting on it
-/// as may, or as many bytes: the disk is behind what arrives. Nothing of the body is in
-/// the log.
+/// The shed of a body the write-ahead log had no room for - as many bodies between the
+/// door and their answer as may, or as many bytes in the log and not yet in the store:
+/// the log's disk or the store is behind what arrives (`/stats`
+/// `storage.wal.queue_bytes` against `unapplied_bytes` says which). Nothing of the body
+/// is in the log.
 fn log_busy() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -1843,8 +2304,9 @@ fn log_busy() -> Response {
         Json(json!({
             "ok": false,
             "error": format!(
-                "the write-ahead log has more waiting to be written than it may hold: its \
-                 disk is behind what is arriving; retry in {RETRY_AFTER_SECONDS}s"
+                "the write-ahead log has more waiting to be written or stored than it may \
+                 hold: its disk or the store is behind what is arriving; retry in \
+                 {RETRY_AFTER_SECONDS}s"
             ),
         })),
     )
@@ -2640,6 +3102,13 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
     let uptime = server.started.elapsed().as_secs_f64();
     let ingested = server.lines_ingested.load(Ordering::Relaxed);
     let queries = server.queries.load(Ordering::Relaxed);
+    let shed: serde_json::Map<String, Value> = server
+        .door
+        .shed
+        .each()
+        .into_iter()
+        .map(|(cause, count)| (cause.to_string(), json!(count)))
+        .collect();
 
     Json(json!({
         "uptime_seconds": uptime,
@@ -2671,33 +3140,7 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // it are gone. `healthy` false is /ingest answering 503. `replay` is what
             // this start read back: `applied` put back in memory, `covered` skipped
             // because a row group already held them, `held` left in the log.
-            "wal": wal.as_ref().map(|wal| json!({
-                "dir": server.wal.as_ref().map(|w| w.dir().display().to_string()),
-                "stream": format!("{:016x}", wal.stream),
-                "segments": wal.segments,
-                "first_segment": wal.first_segment,
-                "bytes": wal.bytes,
-                "last_seq": wal.last_seq,
-                "applied": wal.applied,
-                "checkpoint": wal.checkpoint,
-                "flushes": wal.flushes,
-                "healthy": wal.healthy,
-                "last_error": wal.last_error,
-                "segment_bytes": server.storage.wal_segment_bytes,
-                "batch_size": server.storage.wal_batch_lines,
-                "held_rows": server.held.rows(),
-                "replay": {
-                    "records": server.replayed.records,
-                    "applied": server.replayed.applied,
-                    "covered": server.replayed.covered,
-                    "held": server.replayed.held,
-                    "replaced": server.replayed.replaced,
-                    "behind_checkpoint": server.replayed.behind,
-                    "torn": server.replayed.torn,
-                    "corrupt": server.replayed.corrupt,
-                    "seconds": server.replayed.seconds,
-                },
-            })),
+            "wal": wal.as_ref().map(|wal| wal_stats(&server, wal)),
             "stores_open": stores.open(),
             // Day files held open for writing, and the cap they are held under. Past it the
             // least recently written one is sealed.
@@ -2753,9 +3196,31 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // Nonzero means the server was telling shippers to slow down, which is the
             // design working. A body shed at the door was never read, so it is in none
             // of the line counters above; one the log shed was, and is in two of them.
-            "requests_shed": server.requests_shed.load(Ordering::Relaxed),
+            "requests_shed": server.door.shed.total(),
+            // How long a body may be kept waiting before it is shed.
+            "ingest_wait_ms": server.api.ingest_wait.as_millis() as u64,
             "ingest_concurrency": server.api.ingest_concurrency,
             "ingest_bodies": ingest_bodies(&server.api),
+            // Permits for the parse in use, and places between the door and an answer in
+            // use: the second less the first is the bodies waiting on the log.
+            "parsing": server
+                .api
+                .ingest_concurrency
+                .saturating_sub(server.ingest_permits.available_permits()),
+            "bodies_inside": ingest_bodies(&server.api)
+                .saturating_sub(server.ingest_bodies.available_permits()),
+            // Bodies waiting at the door now, unread; how many ever have; and how long
+            // they waited, all together.
+            // `line_max` is the most that may wait there at once, and null while the
+            // line has no bound: at the default wait, where it never had one.
+            "door": {
+                "waiting": server.door.waiting.load(Ordering::Relaxed),
+                "waits": server.door.waits.load(Ordering::Relaxed),
+                "waited_ms": server.door.waited_micros.load(Ordering::Relaxed) / 1000,
+                "line_max": server.line_max(),
+            },
+            // `requests_shed`, by what there was none of.
+            "shed": shed,
         },
         "queries": {
             "served": queries,
@@ -2775,6 +3240,62 @@ async fn get_stats(State(server): State<Arc<Server>>) -> Response {
         },
     }))
     .into_response()
+}
+
+/// `/stats`'s `storage.wal`: where the log has got to, and what is waiting on it.
+///
+/// Two objects joined, because one `json!` holds only so many keys before the compiler
+/// stops expanding it.
+fn wal_stats(server: &Server, wal: &wal::Stats) -> Value {
+    let mut stats = json!({
+        "dir": server.wal.as_ref().map(|w| w.dir().display().to_string()),
+        "stream": format!("{:016x}", wal.stream),
+        "segments": wal.segments,
+        "first_segment": wal.first_segment,
+        "bytes": wal.bytes,
+        "last_seq": wal.last_seq,
+        "applied": wal.applied,
+        "checkpoint": wal.checkpoint,
+        "flushes": wal.flushes,
+        "healthy": wal.healthy,
+        "last_error": wal.last_error,
+        "segment_bytes": server.storage.wal_segment_bytes,
+        "batch_size": server.storage.wal_batch_lines,
+        "held_rows": server.held.rows(),
+        "replay": {
+            "records": server.replayed.records,
+            "applied": server.replayed.applied,
+            "covered": server.replayed.covered,
+            "held": server.replayed.held,
+            "replaced": server.replayed.replaced,
+            "behind_checkpoint": server.replayed.behind,
+            "torn": server.replayed.torn,
+            "corrupt": server.replayed.corrupt,
+            "seconds": server.replayed.seconds,
+        },
+    });
+    let queue = json!({
+        // The most bytes of lines that may be in the log and not yet in the store;
+        // those waiting for its writer now; those it has written that the store does
+        // not have yet; and the most the two have come to together. The two are each
+        // exact and are not read together, so their sum can miss the one body the
+        // writer is taking at that instant, and never counts one twice.
+        "queue_max_bytes": server.storage.wal_queue_bytes,
+        "queue_bytes": wal.queue_bytes,
+        "unapplied_bytes": wal.unapplied_bytes,
+        "queue_peak_bytes": wal.queue_peak_bytes,
+        // Bodies parsed and waiting for room in the log now, and how many ever have;
+        // those whose wait ran out, which were shed; and those let go because their
+        // sender hung up while they waited.
+        "queue_waiting": wal.queue_waiting,
+        "queue_waits": wal.queue_waits,
+        "queue_sheds": wal.queue_sheds,
+        "queue_left": wal.queue_left,
+    });
+    if let (Value::Object(stats), Value::Object(queue)) = (&mut stats, queue) {
+        stats.extend(queue);
+    }
+    stats
 }
 
 /// Zero for the first instant of uptime, rather than an infinity that serialises to
@@ -3059,9 +3580,10 @@ async fn serve(
         let server = Arc::clone(&server);
         async move {
             token.cancelled().await;
-            // A compaction hears of it now, while the requests below finish, and is
-            // waited for after the final flush: see `join_compactions`.
-            cancel_compactions(&server);
+            // Whoever is waiting - at the door, or for room in the log - is refused now,
+            // and a compaction is told to stop; the requests below then finish or, with
+            // no room in the log, are shed.
+            begin_stop(&server);
             // Shutdown, step one. Everything after this is the wind-down; the log names each
             // step so an operator can see which ones this build actually has.
             log(&format!(
@@ -3148,7 +3670,11 @@ async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
             move_checkpoint(&held);
             summary
         });
-        match flushed.await {
+        let flushed = flushed.await;
+        // Said to whoever is waiting at the door for the buffers, whatever the flush
+        // did: each looks again, and one that finds them still full goes on waiting.
+        server.flushed.notify_waiters();
+        match flushed {
             Ok(summary) => {
                 if summary.failed > 0 {
                     log(&format!(
@@ -3419,6 +3945,36 @@ fn scan_line(server: &Server) -> String {
     }
 }
 
+/// The banner's lines about `/ingest`: the limits on a body, how long one may be kept
+/// waiting and for what, and the bound on the line at the door when it has one.
+fn ingest_line(server: &Server) -> String {
+    let api = server.api;
+    let wait = api.ingest_wait.as_millis();
+    let waits = match &server.wal {
+        Some(_) => format!(
+            "a body waits up to {wait}ms for a slot, for a flush of full buffers or\n\
+             \x20             for room in the log, and is then answered 503 with a Retry-After"
+        ),
+        None => format!(
+            "a body waits up to {wait}ms for a slot, and is then answered 503 with\n\
+             \x20             a Retry-After rather than left to time out"
+        ),
+    };
+    let line = match server.line_max() {
+        Some(max) => format!(
+            "\n\x20             at most {max} wait at the door at once; one more is answered 503"
+        ),
+        None => String::new(),
+    };
+    format!(
+        "  ingest      {} byte body, {} byte decompressed, {} at once\n\
+         \x20             {waits}{line}",
+        commas(api.max_body_bytes as u64),
+        commas(api.max_decompressed_bytes as u64),
+        api.ingest_concurrency,
+    )
+}
+
 /// The startup banner.
 ///
 /// stderr, and not stdout, so that `kibbr serve >/dev/null` still prints the paragraph
@@ -3426,7 +3982,7 @@ fn scan_line(server: &Server) -> String {
 /// by the first person who pipes the process into a log file, and this is something to
 /// say rather than hide.
 fn banner(addr: SocketAddr, server: &Server) {
-    let (limits, api) = (server.limits, server.api);
+    let limits = server.limits;
     let lines = [
         String::new(),
         "kibbr serve".to_string(),
@@ -3458,7 +4014,9 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20                       loads while the catalog exists.\n\
                  \x20             wal       {}/wal - a line is flushed here before /ingest\n\
                  \x20                       acknowledges it. A kill -9 or a power cut loses no\n\
-                 \x20                       acknowledged line: the next start puts each back, once.",
+                 \x20                       acknowledged line: the next start puts each back, once.\n\
+                 \x20                       At most {} bytes of lines are in the log and\n\
+                 \x20                       not yet in the store; a body past that waits for room.",
                 base.display(),
                 trie_file
                     .as_ref()
@@ -3477,6 +4035,7 @@ fn banner(addr: SocketAddr, server: &Server) {
                 },
                 base.display(),
                 base.display(),
+                commas(server.storage.wal_queue_bytes as u64),
             ),
             (None, _) => {
                 "  STORAGE IS IN MEMORY. Everything ingested is lost when this process exits.\n\
@@ -3512,15 +4071,7 @@ fn banner(addr: SocketAddr, server: &Server) {
                  \x20             is refused rather than drawn with its tail missing"
             ),
         },
-        format!(
-            "  ingest      {} byte body, {} byte decompressed, {} at once\n\
-             \x20             a body that waits longer than {}ms for a slot is answered\n\
-             \x20             503 with a Retry-After rather than left to time out",
-            commas(api.max_body_bytes as u64),
-            commas(api.max_decompressed_bytes as u64),
-            api.ingest_concurrency,
-            INGEST_QUEUE_WAIT.as_millis(),
-        ),
+        ingest_line(server),
         scan_line(server),
         // On every start: the cost of learning it later is a fleet of shipper configs that
         // all have to change at once. `post_ingest` has the long form.
@@ -3783,18 +4334,7 @@ mod tests {
             .build()
             .expect("a runtime");
         runtime.block_on(async {
-            let permit = Permit {
-                parse: Arc::new(
-                    Arc::clone(&server.ingest_permits)
-                        .try_acquire_owned()
-                        .expect("a parse permit"),
-                ),
-                body: Arc::new(
-                    Arc::clone(&server.ingest_bodies)
-                        .try_acquire_owned()
-                        .expect("a body permit"),
-                ),
-            };
+            let permit = server.admit_now().expect("both permits");
             let response = post_ingest(
                 State(Arc::clone(server)),
                 axum::Extension(permit),
@@ -4145,5 +4685,1311 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Backpressure ──────────────────────────────────────────────────────────────────
+
+    /// A data directory of one test's own, removed when the test lets it go.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("kibbr-serve-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A server on `scratch`, with these limits on a request and these settings of the
+    /// store over the defaults.
+    fn server_on(scratch: &Scratch, api: ApiLimits, storage: Storage) -> Arc<Server> {
+        let storage = Storage {
+            base_path: Some(scratch.0.clone()),
+            trie_file: Some(scratch.0.join("trie.json")),
+            ..storage
+        };
+        let server = Server::new(
+            Utc::now(),
+            Limits::default(),
+            api,
+            storage,
+            Schema::default(),
+            None,
+        );
+        Arc::new(server.expect("a server on disk"))
+    }
+
+    /// `/stats`, as a client reads it.
+    fn stats_of(server: &Arc<Server>) -> Value {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let response = get_stats(State(Arc::clone(server))).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("the response body");
+            serde_json::from_slice(&bytes).expect("/stats is JSON")
+        })
+    }
+
+    /// **`/stats` says what is queued, what waited and what was shed, and under which
+    /// cause.** `requests_shed` is what it always was - every body told to come back -
+    /// and is the sum of the causes beside it, so a reader of the one number loses
+    /// nothing and a reader of the six can tell a slow disk from too few permits.
+    #[test]
+    fn stats_say_what_is_queued_and_count_every_shed_under_its_cause() {
+        let scratch = Scratch::new("stats-shed");
+        let server = server_on(&scratch, ApiLimits::default(), Storage::default());
+        let stats = stats_of(&server);
+        let ingest = &stats["ingest"];
+        assert_eq!(ingest["requests_shed"], 0, "{ingest}");
+        assert_eq!(ingest["ingest_wait_ms"], 100, "{ingest}");
+        assert_eq!(ingest["parsing"], 0, "{ingest}");
+        assert_eq!(ingest["bodies_inside"], 0, "{ingest}");
+        assert_eq!(
+            ingest["door"],
+            json!({"waiting": 0, "waits": 0, "waited_ms": 0, "line_max": null}),
+            "{ingest}"
+        );
+        assert_eq!(
+            ingest["shed"],
+            json!({"permit": 0, "place": 0, "line": 0, "buffers": 0, "log": 0, "stopping": 0}),
+            "{ingest}"
+        );
+        let wal = &stats["storage"]["wal"];
+        assert_eq!(wal["queue_max_bytes"], 256 * 1024 * 1024, "{wal}");
+        assert_eq!(wal["queue_bytes"], 0, "{wal}");
+        assert_eq!(wal["unapplied_bytes"], 0, "{wal}");
+        assert_eq!(wal["queue_peak_bytes"], 0, "{wal}");
+        assert_eq!(wal["queue_sheds"], 0, "{wal}");
+        assert_eq!(wal["queue_waiting"], 0, "{wal}");
+        assert_eq!(wal["queue_waits"], 0, "{wal}");
+        assert_eq!(wal["queue_left"], 0, "{wal}");
+
+        // A permit and a place in use are said, each under its own name.
+        let parse = Arc::clone(&server.ingest_permits)
+            .try_acquire_owned()
+            .expect("a parse permit");
+        let places = Arc::clone(&server.ingest_bodies)
+            .try_acquire_many_owned(3)
+            .expect("three places");
+        let ingest = stats_of(&server)["ingest"].clone();
+        assert_eq!((&ingest["parsing"], &ingest["bodies_inside"]), (&json!(1), &json!(3)));
+        drop((parse, places));
+
+        // Each cause counted apart, and the total their sum.
+        let shed = &server.door.shed;
+        let causes = [
+            (&shed.permit, "permit", 1u64),
+            (&shed.place, "place", 20),
+            (&shed.line, "line", 300),
+            (&shed.buffers, "buffers", 4_000),
+            (&shed.log, "log", 50_000),
+            (&shed.stopping, "stopping", 600_000),
+        ];
+        for (count, _, by) in &causes {
+            count.fetch_add(*by, Ordering::Relaxed);
+        }
+        let ingest = stats_of(&server)["ingest"].clone();
+        for (_, cause, by) in &causes {
+            assert_eq!(ingest["shed"][cause], *by, "{ingest}");
+        }
+        assert_eq!(ingest["requests_shed"], 654_321, "{ingest}");
+        assert_eq!(ingest["shed"].as_object().map(|causes| causes.len()), Some(6));
+
+        // A server in memory has a door and no log.
+        let in_memory = stats_of(&self::server());
+        assert_eq!(in_memory["storage"]["wal"], Value::Null);
+        assert_eq!(in_memory["ingest"]["requests_shed"], 0);
+        assert_eq!(in_memory["ingest"]["shed"]["log"], 0);
+    }
+
+    // ── The door and the log, with a slow hop held ────────────────────────────────────
+    //
+    // A server on a data directory of the test's own, its router on a port of its own
+    // inside a runtime the test owns, and plain sockets for clients. The slow hop is one
+    // the test holds: the store's applier, kept still as a replace-a-day keeps it, or
+    // the flush, which no task here runs. Nothing sleeps to let a thing happen - a state
+    // is waited for, read from the gauges, and the wait's limit fails the test.
+
+    /// How long a body that a test expects to be let go may wait, and how long the test
+    /// gives it. Far apart, so that being woken is the only way out in time: a waiter
+    /// also looks again when its own wait runs out.
+    const LONG_WAIT: Duration = Duration::from_secs(60);
+    const WOKEN_WITHIN: Duration = Duration::from_secs(10);
+
+    /// The lines in each body these tests send.
+    const PER_BODY: usize = 20;
+
+    /// Body `nth`: lines of one template and one day, each as long as every other, so
+    /// that every body counts the same against the log's bound.
+    fn lines(nth: usize) -> Vec<u8> {
+        lines_at(1_705_314_600, nth)
+    }
+
+    /// The same, of the day `ts` is in.
+    fn lines_at(ts: u64, nth: usize) -> Vec<u8> {
+        (0..PER_BODY)
+            .map(|n| format!("{{\"ts\":{ts},\"n\":{}}}\n", 1_000_000 + nth * PER_BODY + n))
+            .collect::<String>()
+            .into_bytes()
+    }
+
+    /// What one such body counts for against the log's bound.
+    fn one_body() -> usize {
+        wal::counted(&lines(0))
+    }
+
+    /// Wait for a state, looking every few milliseconds. The limit fails the test: it is
+    /// far past what any machine needs, and nothing passes by reaching it.
+    fn until(what: &str, mut reached: impl FnMut() -> bool) {
+        let began = Instant::now();
+        while !reached() {
+            assert!(
+                began.elapsed() < Duration::from_secs(30),
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// A server answering on a port of its own.
+    struct Listening {
+        server: Arc<Server>,
+        addr: SocketAddr,
+        runtime: Option<tokio::runtime::Runtime>,
+        _scratch: Scratch,
+    }
+
+    impl Listening {
+        /// `permits` bodies parsed at once, `wait` at the door and for room in the log,
+        /// and `storage` over the defaults. No flush task and no signal: a test flushes
+        /// by hand and stops by `begin_stop`.
+        fn start(tag: &str, permits: usize, wait: Duration, storage: Storage) -> Self {
+            let scratch = Scratch::new(tag);
+            let api = ApiLimits {
+                ingest_concurrency: permits,
+                ingest_wait: wait,
+                ..ApiLimits::default()
+            };
+            let server = server_on(&scratch, api, storage);
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            let app = router(Arc::clone(&server));
+            let addr = runtime.block_on(async {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("bind");
+                let addr = listener.local_addr().expect("the bound address");
+                tokio::spawn(async move {
+                    let _ = axum::serve(listener, app).await;
+                });
+                addr
+            });
+            Self {
+                server,
+                addr,
+                runtime: Some(runtime),
+                _scratch: scratch,
+            }
+        }
+
+        fn wal(&self) -> wal::Stats {
+            self.server.wal.as_ref().expect("a log").stats()
+        }
+
+        /// Permits for the parse in use.
+        fn parsing(&self) -> usize {
+            self.server.api.ingest_concurrency - self.server.ingest_permits.available_permits()
+        }
+
+        /// Places between the door and an answer in use.
+        fn inside(&self) -> usize {
+            ingest_bodies(&self.server.api) - self.server.ingest_bodies.available_permits()
+        }
+
+        /// Bodies waiting at the door now.
+        fn at_the_door(&self) -> u64 {
+            self.server.door.waiting.load(Ordering::Relaxed)
+        }
+
+        fn shed(&self) -> u64 {
+            self.server.door.shed.total()
+        }
+
+        /// `COUNT LOG {}`: every row a query can see.
+        fn count(&self) -> u64 {
+            let server = &self.server;
+            let query = query::from_trieql("COUNT LOG {}", Utc::now(), server.limits)
+                .expect("a query");
+            let result = engine::execute(&server.trie, &server.stores, &query);
+            result.expect("the query answers").count
+        }
+
+        /// Hold the log's applier still, as a replace-a-day does: bodies are written to
+        /// the log and none is stored - or answered - until the guard is let go. Taken
+        /// after the server and so let go before it, whatever way the test ends.
+        fn still(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
+            let disk = self.server.stores.disk_store().expect("a disk store");
+            disk.still()
+        }
+
+        /// A body sent on a connection and a thread of its own: its answer when joined.
+        fn post(&self, body: Vec<u8>) -> std::thread::JoinHandle<Answer> {
+            let addr = self.addr;
+            std::thread::spawn(move || Client::connect(addr).post(&body))
+        }
+    }
+
+    impl Drop for Listening {
+        fn drop(&mut self) {
+            // Bounded: a test that failed with a body parked must fail, not hang here.
+            if let Some(runtime) = self.runtime.take() {
+                runtime.shutdown_timeout(Duration::from_secs(5));
+            }
+        }
+    }
+
+    /// One answer: its status, its headers in lower case, and its JSON.
+    #[derive(Debug)]
+    struct Answer {
+        status: u16,
+        headers: String,
+        body: Value,
+    }
+
+    impl Answer {
+        /// Whether the answer says the connection closes after it.
+        fn closes(&self) -> bool {
+            self.headers
+                .lines()
+                .filter_map(|line| line.strip_prefix("connection:"))
+                .any(|value| value.split(',').any(|option| option.trim() == "close"))
+        }
+
+        fn retry_after(&self) -> bool {
+            self.headers.lines().any(|line| line.starts_with("retry-after:"))
+        }
+
+        fn error(&self) -> &str {
+            self.body["error"].as_str().unwrap_or_default()
+        }
+    }
+
+    /// What `log_busy` says, and what `busy` says: how a test tells the two refusals.
+    const SAYS_LOG_BUSY: &str = "the write-ahead log has more waiting";
+    const SAYS_BUSY: &str = "ingest is at capacity";
+
+    /// One connection, kept between requests.
+    struct Client(std::net::TcpStream);
+
+    impl Client {
+        fn connect(addr: SocketAddr) -> Self {
+            let socket = std::net::TcpStream::connect(addr).expect("connect");
+            // Past any wait a test stages: a server that never answers fails the test.
+            socket
+                .set_read_timeout(Some(Duration::from_secs(120)))
+                .expect("a read timeout");
+            Self(socket)
+        }
+
+        /// A request's head, saying a body of `length` bytes follows.
+        fn head(&mut self, method: &str, path: &str, length: usize) {
+            let head = format!(
+                "{method} {path} HTTP/1.1\r\nHost: kibbr\r\nContent-Length: {length}\r\n\r\n"
+            );
+            self.0.write_all(head.as_bytes()).expect("the head");
+        }
+
+        /// Bytes of a body. A body the door refuses is never read, so its write may
+        /// break; the answer is what a test reads.
+        fn write(&mut self, bytes: &[u8]) {
+            let _ = self.0.write_all(bytes);
+            let _ = self.0.flush();
+        }
+
+        /// The next answer on the connection, read by its `Content-Length`.
+        ///
+        /// In as few reads as the answer comes in, and not a byte at a time: the door
+        /// answers with the body unread and then closes, and what is left of an answer
+        /// in a socket that has been reset is not always there for a second read.
+        fn answer(&mut self) -> Answer {
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let head = loop {
+                if let Some(at) = raw.windows(4).position(|four| four == b"\r\n\r\n") {
+                    break at + 4;
+                }
+                let read = self.0.read(&mut chunk).expect("the answer's head");
+                assert!(read > 0, "the connection ended before an answer's head did");
+                raw.extend_from_slice(&chunk[..read]);
+            };
+            let headers = String::from_utf8_lossy(&raw[..head]).to_lowercase();
+            let length: usize = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or_else(|| panic!("no Content-Length in the answer:\n{headers}"));
+            while raw.len() < head + length {
+                let read = self.0.read(&mut chunk).expect("the answer's body");
+                assert!(read > 0, "the connection ended before an answer's body did");
+                raw.extend_from_slice(&chunk[..read]);
+            }
+            // One request at a time on a connection, so nothing follows the answer.
+            assert_eq!(raw.len(), head + length, "bytes after the answer");
+            let body = raw[head..].to_vec();
+            let status = headers
+                .split_whitespace()
+                .nth(1)
+                .and_then(|code| code.parse().ok())
+                .unwrap_or_else(|| panic!("no status in the answer:\n{headers}"));
+            let body = serde_json::from_slice(&body).expect("the answer is JSON");
+            Answer {
+                status,
+                headers,
+                body,
+            }
+        }
+
+        fn post(&mut self, body: &[u8]) -> Answer {
+            self.head("POST", "/ingest", body.len());
+            self.write(body);
+            self.answer()
+        }
+
+        fn get(&mut self, path: &str) -> Answer {
+            self.head("GET", path, 0);
+            self.answer()
+        }
+    }
+
+    /// **A wait for room that runs out is a `503` on a connection that is kept.** The
+    /// body was read and parsed before the log was found full, so nothing is left unread
+    /// and the connection carries the next request; the answer says when to come back.
+    ///
+    /// One request at a time, so that nothing here is a race: two bodies are parked in
+    /// the log, which is then exactly full, both permits are back, and then one body is
+    /// sent alone. The fifty milliseconds are how long the test takes - the applier is
+    /// held throughout, so no speed turns the `503` into a `200`.
+    #[test]
+    fn a_wait_for_room_that_runs_out_is_a_503_on_a_kept_connection() {
+        let bound = 2 * one_body();
+        let storage = Storage {
+            wal_queue_bytes: bound,
+            ..Storage::default()
+        };
+        let at = Listening::start("room-503", 2, Duration::from_millis(50), storage);
+        let still = at.still();
+        let parked = [at.post(lines(0)), at.post(lines(1))];
+        // Both written, and neither stored: nothing is waiting for the log's disk here,
+        // and the bound is full all the same.
+        until("two bodies to fill the log", || {
+            let wal = at.wal();
+            (wal.queue_bytes, wal.unapplied_bytes) == (0, bound) && at.parsing() == 0
+        });
+
+        let mut client = Client::connect(at.addr);
+        let answer = client.post(&lines(2));
+        assert_eq!(answer.status, 503, "{answer:?}");
+        assert!(answer.retry_after(), "{answer:?}");
+        assert!(answer.error().contains(SAYS_LOG_BUSY), "{answer:?}");
+        // So the refusal may not put it on the log's disk alone: what is behind here is
+        // the store, and the answer names both places a line can be waiting.
+        assert!(
+            answer.error().contains("to be written or stored")
+                && answer.error().contains("its disk or the store is behind"),
+            "{answer:?}"
+        );
+        let wal = at.wal();
+        assert_eq!((wal.queue_bytes, wal.unapplied_bytes), (0, bound));
+        assert!(!answer.closes(), "the body was read: {answer:?}");
+        let health = client.get("/health");
+        assert_eq!(health.status, 200, "{health:?}");
+
+        let shed = &at.server.door.shed;
+        assert_eq!(shed.log.load(Ordering::Relaxed), 1);
+        assert_eq!(at.shed(), 1);
+        let wal = at.wal();
+        assert_eq!((wal.queue_sheds, wal.queue_waits), (1, 1));
+        // Read and refused: in the two counters a body the log sheds has always been in.
+        let read = at.server.lines_read.load(Ordering::Relaxed);
+        let rejected = at.server.lines_rejected.load(Ordering::Relaxed);
+        assert_eq!((read, rejected), (PER_BODY as u64, PER_BODY as u64));
+
+        drop(still);
+        for body in parked {
+            let answer = body.join().expect("a sender");
+            assert_eq!(answer.status, 200, "{answer:?}");
+        }
+        assert_eq!(at.count(), 2 * PER_BODY as u64);
+        assert_eq!(at.wal().queue_peak_bytes, bound);
+    }
+
+    /// **A slow applier makes senders wait, and none is shed.** Two permits, a log that
+    /// holds two bodies, and eight senders of three bodies each, with the applier held
+    /// still. Two bodies go into the log; the next two are parsed and wait for room,
+    /// holding both permits; the other four wait at the door with their bodies unread.
+    /// That is the one state the eight can settle in, and nothing in it has been refused
+    /// or acknowledged. When the applier is let go every body lands.
+    #[test]
+    fn senders_wait_for_a_slow_applier_and_none_is_shed() {
+        const SENDERS: usize = 8;
+        const BODIES: usize = 3;
+        let bound = 2 * one_body();
+        let storage = Storage {
+            wal_queue_bytes: bound,
+            ..Storage::default()
+        };
+        let at = Listening::start("door-wait", 2, LONG_WAIT, storage);
+        let still = at.still();
+        let senders: Vec<_> = (0..SENDERS)
+            .map(|sender| {
+                let addr = at.addr;
+                std::thread::spawn(move || {
+                    let mut client = Client::connect(addr);
+                    (0..BODIES)
+                        .map(|nth| client.post(&lines(sender * BODIES + nth)).status)
+                        .collect::<Vec<u16>>()
+                })
+            })
+            .collect();
+
+        until("two in the log, two waiting for room, four at the door", || {
+            let wal = at.wal();
+            wal.queue_waiting == 2
+                && at.at_the_door() == 4
+                && wal.last_seq == 2 * PER_BODY as u64
+        });
+        let wal = at.wal();
+        assert_eq!(at.shed(), 0);
+        assert_eq!(at.server.lines_ingested.load(Ordering::Relaxed), 0);
+        assert_eq!(wal.applied, 0);
+        assert!(wal.queue_bytes + wal.unapplied_bytes <= bound, "{wal:?}");
+        assert_eq!((at.parsing(), at.inside()), (2, 4));
+
+        drop(still);
+        for sender in senders {
+            assert_eq!(sender.join().expect("a sender"), [200; BODIES]);
+        }
+        assert_eq!(at.shed(), 0);
+        assert_eq!(at.count(), (SENDERS * BODIES * PER_BODY) as u64);
+        let wal = at.wal();
+        assert!(wal.queue_peak_bytes <= bound, "{wal:?}");
+        assert_eq!((wal.queue_sheds, wal.queue_left), (0, 0));
+        assert_eq!((at.parsing(), at.inside(), at.at_the_door()), (0, 0, 0));
+    }
+
+    /// **Every shed answer is one of two shapes, whichever way the timing fell.** The
+    /// staging above with a wait of fifty milliseconds and one body a sender: two bodies
+    /// get into the log, and the other six cannot while the applier is held. Which of
+    /// the six were parsed first, and under which cause each was counted, is the
+    /// scheduler's to decide and is not asserted. What is: each is a `503` that says when
+    /// to come back, and is either the log's refusal on a connection that is kept - its
+    /// body was read - or a refusal from the door on a connection that is closed; and
+    /// the count of sheds is the count of `503`s, and the sum of its causes.
+    #[test]
+    fn every_shed_answer_is_one_of_two_shapes() {
+        const SENDERS: usize = 8;
+        let bound = 2 * one_body();
+        let storage = Storage {
+            wal_queue_bytes: bound,
+            ..Storage::default()
+        };
+        let at = Listening::start("door-shapes", 2, Duration::from_millis(50), storage);
+        let still = at.still();
+        let (said, answers) = std::sync::mpsc::channel::<Answer>();
+        for sender in 0..SENDERS {
+            let (addr, said) = (at.addr, said.clone());
+            std::thread::spawn(move || {
+                let _ = said.send(Client::connect(addr).post(&lines(sender)));
+            });
+        }
+        drop(said);
+
+        until("six of the eight to be shed", || at.shed() == 6);
+        for _ in 0..6 {
+            let answer = answers
+                .recv_timeout(Duration::from_secs(30))
+                .expect("a shed body was not answered");
+            assert_eq!(answer.status, 503, "{answer:?}");
+            assert!(answer.retry_after(), "{answer:?}");
+            if answer.closes() {
+                let said = answer.error();
+                assert!(
+                    said.contains(SAYS_BUSY) || said.contains(SAYS_LOG_BUSY),
+                    "{answer:?}"
+                );
+            } else {
+                assert!(answer.error().contains(SAYS_LOG_BUSY), "{answer:?}");
+            }
+        }
+        assert_eq!(at.shed(), 6);
+        let causes: u64 = at.server.door.shed.each().iter().map(|(_, n)| n).sum();
+        assert_eq!(causes, 6);
+        assert_eq!(at.server.lines_ingested.load(Ordering::Relaxed), 0);
+
+        drop(still);
+        for _ in 0..2 {
+            let answer = answers
+                .recv_timeout(Duration::from_secs(30))
+                .expect("a body in the log was not answered");
+            assert_eq!(answer.status, 200, "{answer:?}");
+        }
+        assert_eq!(at.count(), 2 * PER_BODY as u64);
+    }
+
+    /// A log that holds one body, with one written and held at the applier, and one
+    /// permit, which a second body holds while it waits for room: what the door looks
+    /// like to whoever comes third. The two senders, in that order.
+    fn one_in_the_log_one_waiting_for_room(
+        at: &Listening,
+    ) -> [std::thread::JoinHandle<Answer>; 2] {
+        let first = at.post(lines(0));
+        until("the first body to be in the log", || {
+            at.wal().unapplied_bytes == one_body() && at.parsing() == 0
+        });
+        let second = at.post(lines(1));
+        until("the second body to wait for room", || {
+            at.wal().queue_waiting == 1
+        });
+        [first, second]
+    }
+
+    /// A server with one permit whose log holds one body.
+    fn one_at_a_time(tag: &str, wait: Duration) -> Listening {
+        let storage = Storage {
+            wal_queue_bytes: one_body(),
+            ..Storage::default()
+        };
+        Listening::start(tag, 1, wait, storage)
+    }
+
+    /// **A sender that hangs up at the door holds nothing.** It has no permit and no
+    /// place while it waits, so its going costs nobody anything. Its turn comes when the
+    /// permit does: reading its body then fails, and the permit goes straight back.
+    #[test]
+    fn a_sender_that_hangs_up_at_the_door_holds_nothing() {
+        let at = one_at_a_time("door-left", LONG_WAIT);
+        let still = at.still();
+        let inside = one_in_the_log_one_waiting_for_room(&at);
+        {
+            let body = lines(2);
+            let mut third = Client::connect(at.addr);
+            third.head("POST", "/ingest", body.len());
+            third.write(&body[..body.len() / 2]);
+            until("the third body to wait at the door", || at.at_the_door() == 1);
+        }
+
+        drop(still);
+        for body in inside {
+            let answer = body.join().expect("a sender");
+            assert_eq!(answer.status, 200, "{answer:?}");
+        }
+        until("the door to be empty", || {
+            at.parsing() == 0
+                && at.inside() == 0
+                && at.at_the_door() == 0
+                && at.server.in_flight.load(Ordering::Relaxed) == 0
+        });
+        assert_eq!(at.count(), 2 * PER_BODY as u64);
+        assert_eq!(at.wal().last_seq, 2 * PER_BODY as u64);
+        assert_eq!(at.shed(), 0);
+    }
+
+    /// **A stop refuses whoever is waiting and finishes whoever is inside.** One body in
+    /// the log, one waiting for room, one at the door, each with a minute to wait. The
+    /// stop answers the last two at once, while the applier is still held: the one that
+    /// was parsed with the log's refusal on its kept connection, the one at the door
+    /// with the door's, unread. The body in the log is finished and answered `200`. A
+    /// body that is neither - still being parsed when the stop is said - has the test
+    /// after this one.
+    ///
+    /// The third body is where the order of the door's waits shows. The second body's
+    /// permit reaches it after the stop was said; a door that looked at its permit
+    /// before the stop would let it in to be read, parsed and shed by the log.
+    #[test]
+    fn shutdown_refuses_whoever_is_waiting_and_finishes_whoever_is_inside() {
+        let at = one_at_a_time("door-stop", LONG_WAIT);
+        let still = at.still();
+        let [first, second] = one_in_the_log_one_waiting_for_room(&at);
+        let third = at.post(lines(2));
+        until("the third body to wait at the door", || at.at_the_door() == 1);
+
+        let began = Instant::now();
+        let runtime = at.runtime.as_ref().expect("the runtime");
+        runtime.block_on(async { begin_stop(&at.server) });
+        let second = second.join().expect("the second sender");
+        let third = third.join().expect("the third sender");
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "a stop waited out a body that was waiting"
+        );
+        assert_eq!(second.status, 503, "{second:?}");
+        assert!(second.error().contains(SAYS_LOG_BUSY), "{second:?}");
+        assert!(second.retry_after() && !second.closes(), "{second:?}");
+        assert_eq!(third.status, 503, "{third:?}");
+        assert!(third.error().contains("the server is stopping"), "{third:?}");
+        assert!(third.retry_after() && third.closes(), "{third:?}");
+        let shed = &at.server.door.shed;
+        assert_eq!(shed.log.load(Ordering::Relaxed), 1);
+        assert_eq!(shed.stopping.load(Ordering::Relaxed), 1);
+        assert_eq!(at.shed(), 2);
+        assert!(!first.is_finished(), "the body in the log was not waited for");
+
+        drop(still);
+        let first = first.join().expect("the first sender");
+        assert_eq!(first.status, 200, "{first:?}");
+        // What the stop waits on before its final flush: every place back.
+        let places = ingest_bodies(&at.server.api) as u32;
+        let all = runtime.block_on(async {
+            tokio::time::timeout(WOKEN_WITHIN, at.server.ingest_bodies.acquire_many(places)).await
+        });
+        assert!(matches!(all, Ok(Ok(_))), "a place was never given back");
+        assert_eq!(at.count(), PER_BODY as u64);
+    }
+
+    /// **A body still being parsed when a stop begins is taken if the log has room for
+    /// it, and shed at once if it has none.** It is neither waiting nor in the log. A
+    /// stop finishes what the log has taken and keeps nobody waiting, so what this body
+    /// is told depends on the room it finds when its parse ends. With none it is the
+    /// log's shed, on its kept connection and counted under `log` - not the door's
+    /// "stopping", which is for a body that was never read.
+    ///
+    /// The second body holds the one permit, half sent, when the stop is said, and the
+    /// rest of it is sent after. Whether the log has been told to hurry by the time the
+    /// body gets there, or is told while it waits, the answer is the same and comes at
+    /// once. The third body arrives whole after the stop and after the log has emptied:
+    /// it has nothing to wait for, and is taken.
+    #[test]
+    fn a_body_being_parsed_at_a_stop_is_shed_if_the_log_has_no_room_for_it() {
+        let at = one_at_a_time("stop-parsing", LONG_WAIT);
+        let still = at.still();
+        let first = at.post(lines(0));
+        until("the first body to be in the log", || {
+            at.wal().unapplied_bytes == one_body() && at.parsing() == 0
+        });
+        let body = lines(1);
+        let mut second = Client::connect(at.addr);
+        second.head("POST", "/ingest", body.len());
+        second.write(&body[..body.len() / 2]);
+        until("the second body to hold the permit", || at.parsing() == 1);
+
+        let runtime = at.runtime.as_ref().expect("the runtime");
+        runtime.block_on(async { begin_stop(&at.server) });
+        let began = Instant::now();
+        second.write(&body[body.len() / 2..]);
+        let answer = second.answer();
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "a stop let a body wait for room"
+        );
+        assert_eq!(answer.status, 503, "{answer:?}");
+        assert!(answer.error().contains(SAYS_LOG_BUSY), "{answer:?}");
+        assert!(answer.retry_after() && !answer.closes(), "{answer:?}");
+        let shed = &at.server.door.shed;
+        assert_eq!(shed.log.load(Ordering::Relaxed), 1);
+        assert_eq!(shed.stopping.load(Ordering::Relaxed), 0);
+        assert_eq!(at.shed(), 1);
+        assert_eq!(at.wal().queue_sheds, 1);
+        assert!(
+            !first.is_finished(),
+            "the body in the log was not waited for"
+        );
+
+        drop(still);
+        let first = first.join().expect("the first sender");
+        assert_eq!(first.status, 200, "{first:?}");
+        let third = at.post(lines(2)).join().expect("the third sender");
+        assert_eq!(third.status, 200, "{third:?}");
+        assert_eq!(at.shed(), 1);
+        assert_eq!(at.count(), 2 * PER_BODY as u64);
+        let rejected = at.server.lines_rejected.load(Ordering::Relaxed);
+        assert_eq!(rejected, PER_BODY as u64);
+    }
+
+    /// **A log that fails answers every waiter with its reason.** One body in the log,
+    /// two parsed and waiting for room, one at the door; the log's directory then takes
+    /// no new file, and the applier is let go. The body in the log is `200`. Each of the
+    /// other three is a `503` that names the write error, inside the time a waiter that
+    /// was never woken would not make.
+    ///
+    /// Nothing is asserted of the fourth body's connection. It is closed if the door
+    /// refused it, and kept if the door let it through in the moment between the log
+    /// being handed a body and that body's flush failing.
+    #[test]
+    #[cfg(unix)]
+    fn a_failed_log_answers_every_waiter_with_its_reason() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let storage = Storage {
+            wal_queue_bytes: one_body(),
+            // A segment a frame long: the flush after the first needs a new file.
+            wal_segment_bytes: 1,
+            ..Storage::default()
+        };
+        let at = Listening::start("door-failed", 2, LONG_WAIT, storage);
+        let still = at.still();
+        let first = at.post(lines(0));
+        until("the first body to be in the log", || {
+            at.wal().unapplied_bytes == one_body() && at.parsing() == 0
+        });
+        let mut waiting = vec![at.post(lines(1)), at.post(lines(2))];
+        until("two bodies to wait for room", || at.wal().queue_waiting == 2);
+        waiting.push(at.post(lines(3)));
+        until("the fourth body to wait at the door", || at.at_the_door() == 1);
+
+        let dir = at.server.wal.as_ref().expect("a log").dir().to_path_buf();
+        let mode = |mode| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode));
+        mode(0o555).expect("chmod -w");
+        let began = Instant::now();
+        drop(still);
+        let first = first.join().expect("the first sender");
+        let refused: Vec<Answer> = waiting
+            .into_iter()
+            .map(|body| body.join().expect("a waiting sender"))
+            .collect();
+        let took = began.elapsed();
+        let degraded = at.server.degraded();
+        mode(0o755).expect("chmod +w");
+
+        assert_eq!(first.status, 200, "{first:?}");
+        let why = at.wal().last_error.expect("the log says why it cannot write");
+        for answer in &refused {
+            assert_eq!(answer.status, 503, "{answer:?}");
+            assert!(answer.retry_after(), "{answer:?}");
+            assert!(answer.error().contains(&why), "{answer:?}\n{why}");
+        }
+        assert!(
+            took < WOKEN_WITHIN,
+            "a waiter was not told that the log had failed"
+        );
+        assert!(degraded.is_some_and(|said| said.contains(&why)));
+        assert_eq!(at.count(), PER_BODY as u64);
+
+        // And the door opens again at the first write that succeeds.
+        until("the log to write again", || {
+            move_checkpoint(&at.server);
+            at.server.wal.as_ref().is_some_and(Wal::is_healthy)
+        });
+        let answer = at.post(lines(4)).join().expect("a sender");
+        assert_eq!(answer.status, 200, "{answer:?}");
+        assert_eq!(at.count(), 2 * PER_BODY as u64);
+    }
+
+    /// A server whose buffers hold next to nothing, so that one body leaves them past
+    /// twice their limit, and which no task flushes: the test does.
+    fn small_buffers(tag: &str, permits: usize) -> Listening {
+        let storage = Storage {
+            max_buffer_bytes: 1024,
+            ..Storage::default()
+        };
+        Listening::start(tag, permits, LONG_WAIT, storage)
+    }
+
+    /// Flush as the tick does, and say so to whoever is waiting at the door for it.
+    fn tick(at: &Listening) -> crate::store::FlushSummary {
+        let summary = at.server.stores.flush_all(FlushKind::Tick);
+        at.server.flushed.notify_waiters();
+        summary
+    }
+
+    /// **A body waits at the door while the buffers are past twice their limit, and is
+    /// let in by the flush that brings them back.** It was shed at once, though the
+    /// flush that would have let it in was a few milliseconds from done.
+    ///
+    /// **And is not made to wait on a store that cannot write.** Nothing leaves the
+    /// buffers then, so the wait could only end in the same refusal, later: it is given
+    /// at once, with the store's error in it.
+    #[test]
+    #[cfg(unix)]
+    fn a_body_waits_at_the_door_while_the_buffers_are_past_twice_their_limit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let at = small_buffers("door-buffers", 2);
+        let first = at.post(lines(0)).join().expect("a sender");
+        assert_eq!(first.status, 200, "{first:?}");
+        assert!(at.server.stores.buffers_full());
+
+        let second = at.post(lines(1));
+        until("the second body to wait at the door", || at.at_the_door() == 1);
+        assert_eq!(at.parsing(), 0, "a body waiting for the flush holds a permit");
+        let began = Instant::now();
+        assert_eq!(tick(&at).failed, 0);
+        assert!(!at.server.stores.buffers_full());
+        let second = second.join().expect("the second sender");
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "the body at the door was not let in by the flush"
+        );
+        assert_eq!(second.status, 200, "{second:?}");
+        let door = &at.server.door;
+        assert_eq!(door.shed.buffers.load(Ordering::Relaxed), 0);
+        assert_eq!(door.waits.load(Ordering::Relaxed), 1);
+
+        // The store stops writing: a day with no file yet, and a directory that will
+        // not take one.
+        assert_eq!(tick(&at).failed, 0);
+        let data = at.server.storage.base_path.as_ref().expect("on disk");
+        let data = data.join(crate::store::disk::DATA_DIR);
+        let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
+        mode(0o555).expect("chmod -w");
+        let third = at.post(lines_at(1_705_401_000, 2)).join().expect("a sender");
+        let failed = tick(&at).failed;
+        let full = at.server.stores.buffers_full() && at.server.write_health.is_degraded();
+        let began = Instant::now();
+        let fourth = at.post(lines(3)).join().expect("a sender");
+        let took = began.elapsed();
+        mode(0o755).expect("chmod +w");
+
+        assert_eq!(third.status, 200, "{third:?}");
+        assert!(failed > 0 && full, "the store wrote to a read-only directory");
+        assert_eq!(fourth.status, 503, "{fourth:?}");
+        assert!(fourth.retry_after() && fourth.closes(), "{fourth:?}");
+        assert!(fourth.error().contains("the store cannot write"), "{fourth:?}");
+        assert!(took < WOKEN_WITHIN, "a refusal that could not change was waited for");
+        assert_eq!(door.shed.buffers.load(Ordering::Relaxed), 1);
+        assert_eq!(at.shed(), 1);
+    }
+
+    /// **A body given its permit onto full buffers goes back to wait.** The door looks at
+    /// the buffers before it waits for a permit, and a permit can be a long wait: without
+    /// a second look, every body that passed the first could be let in onto buffers that
+    /// filled meanwhile.
+    ///
+    /// One permit. The first body is in the log with its rows not yet stored, so the
+    /// buffers are empty; the second holds the permit, half sent; the third waits at the
+    /// door for that permit. Then the first body's rows are stored - the buffers are
+    /// full - and the second finishes. The permit passes to the third with no moment at
+    /// which it is free, so the state waited for here - no permit in use, one body at
+    /// the door - is one only a door that gave the permit back can reach.
+    #[test]
+    fn a_body_given_its_permit_onto_full_buffers_goes_back_to_wait() {
+        let at = small_buffers("door-second-look", 1);
+        let still = at.still();
+        let first = at.post(lines(0));
+        until("the first body to be in the log", || {
+            at.wal().unapplied_bytes == one_body() && at.parsing() == 0
+        });
+        let body = lines(1);
+        let mut second = Client::connect(at.addr);
+        second.head("POST", "/ingest", body.len());
+        second.write(&body[..body.len() / 2]);
+        until("the second body to hold the permit", || at.parsing() == 1);
+        let third = at.post(lines(2));
+        until("the third body to wait at the door", || at.at_the_door() == 1);
+        assert!(!at.server.stores.buffers_full());
+
+        drop(still);
+        let first = first.join().expect("the first sender");
+        assert_eq!(first.status, 200, "{first:?}");
+        assert!(at.server.stores.buffers_full());
+        second.write(&body[body.len() / 2..]);
+        let second = second.answer();
+        assert_eq!(second.status, 200, "{second:?}");
+        until("the third body to give its permit back", || {
+            at.parsing() == 0 && at.at_the_door() == 1
+        });
+        assert!(!third.is_finished());
+
+        let began = Instant::now();
+        assert_eq!(tick(&at).failed, 0);
+        let third = third.join().expect("the third sender");
+        assert!(began.elapsed() < WOKEN_WITHIN);
+        assert_eq!(third.status, 200, "{third:?}");
+        assert_eq!(at.shed(), 0);
+        assert_eq!(at.count(), 3 * PER_BODY as u64);
+    }
+
+    /// **The line at the door has no bound at the default wait, and one above it.** At
+    /// a hundred milliseconds nobody is in the line for longer than that, and a burst
+    /// queues for the moment it takes with no count held against it, as it always has.
+    /// A wait an operator has raised keeps each waiter's socket for as long, and that
+    /// needs a number: the places.
+    #[test]
+    fn the_line_has_no_bound_at_the_default_wait() {
+        let with_wait = |ms: u64| {
+            let api = ApiLimits {
+                ingest_wait: Duration::from_millis(ms),
+                ..ApiLimits::default()
+            };
+            let server = Server::new(
+                Utc::now(),
+                Limits::default(),
+                api,
+                Storage::default(),
+                Schema::default(),
+                None,
+            );
+            Arc::new(server.expect("a server in memory"))
+        };
+        let places = ingest_bodies(&ApiLimits::default());
+        let default = crate::config::DEFAULT_INGEST_WAIT_MS as u64;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+
+        for ms in [0, 1, default] {
+            let server = with_wait(ms);
+            assert_eq!(server.line_max(), None, "{ms}ms");
+            assert_eq!(stats_of(&server)["ingest"]["door"]["line_max"], Value::Null);
+            // As many at the door as there are places, and one more is let wait: here
+            // it has nothing to wait for, and is let in.
+            server.door.waiting.store(places as u64, Ordering::Relaxed);
+            let admitted = runtime.block_on(server.admit_waiting());
+            assert!(admitted.is_ok(), "{ms}ms");
+            assert_eq!(server.door.shed.total(), 0, "{ms}ms");
+        }
+        for ms in [default + 1, 30_000] {
+            let server = with_wait(ms);
+            assert_eq!(server.line_max(), Some(places), "{ms}ms");
+            assert_eq!(stats_of(&server)["ingest"]["door"]["line_max"], places);
+            // One short of the bound waits; at the bound the next is shed at once.
+            server.door.waiting.store(places as u64 - 1, Ordering::Relaxed);
+            assert!(runtime.block_on(server.admit_waiting()).is_ok(), "{ms}ms");
+            server.door.waiting.store(places as u64, Ordering::Relaxed);
+            let refused = runtime.block_on(server.admit_waiting());
+            let refused = refused.err().expect("the line was full");
+            assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert!(refused.headers().get(header::RETRY_AFTER).is_some());
+            assert_eq!(server.door.shed.line.load(Ordering::Relaxed), 1, "{ms}ms");
+            assert_eq!(server.door.shed.total(), 1, "{ms}ms");
+        }
+    }
+
+    /// **The flush task says so when it has flushed, and that is what lets in a body
+    /// waiting at the door.** The buffers are full, a body is waiting at the door, and
+    /// only then is the task started - on a tick an hour long, so the flush it runs is
+    /// the one it was rung for. Without its word to the door the body would wait out its
+    /// minute beside buffers that had long been emptied.
+    #[test]
+    fn the_flush_task_lets_in_a_body_waiting_at_the_door() {
+        let storage = Storage {
+            max_buffer_bytes: 1024,
+            flush_interval: Duration::from_secs(3600),
+            ..Storage::default()
+        };
+        let at = Listening::start("door-flush-task", 2, LONG_WAIT, storage);
+        let first = at.post(lines(0)).join().expect("a sender");
+        assert_eq!(first.status, 200, "{first:?}");
+        assert!(at.server.stores.buffers_full());
+        let second = at.post(lines(1));
+        until("the second body to wait at the door", || at.at_the_door() == 1);
+
+        let runtime = at.runtime.as_ref().expect("the runtime");
+        let token = CancellationToken::new();
+        let began = Instant::now();
+        let flusher = runtime.spawn(flush_loop(Arc::clone(&at.server), token.clone()));
+        let second = second.join().expect("the second sender");
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "the body at the door was not told that the buffers had been flushed"
+        );
+        assert_eq!(second.status, 200, "{second:?}");
+        assert_eq!(at.shed(), 0);
+        assert_eq!(at.count(), 2 * PER_BODY as u64);
+        token.cancel();
+        runtime.block_on(flusher).expect("the flush task");
+    }
+
+    // ── The door's own decision, a look at a time ─────────────────────────────────────
+    //
+    // The tests below ask the door directly and turn it by hand: a body at the door is
+    // a future, looked at only when the test looks at it. What happens between its first
+    // look and its last is then in the test's order on every run, whatever the wait is
+    // and however long the test takes over it - nothing is raced against the deadline.
+
+    /// A runtime for a body at the door that the test turns by hand.
+    fn by_hand() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime")
+    }
+
+    /// One look by a body at the door, and no more: what it had come to by the end of
+    /// it. Nothing wakes it between two of these.
+    fn look<F: std::future::Future>(
+        runtime: &tokio::runtime::Runtime,
+        door: &mut Pin<Box<F>>,
+    ) -> Poll<F::Output> {
+        runtime.block_on(std::future::poll_fn(|cx| {
+            Poll::Ready(door.as_mut().poll(cx))
+        }))
+    }
+
+    /// What a refusal at the door says: its status, whether it carries a `Retry-After`,
+    /// and its error.
+    fn refusal(
+        runtime: &tokio::runtime::Runtime,
+        refused: Result<Permit, Box<Response>>,
+    ) -> (StatusCode, bool, String) {
+        let Err(response) = refused else {
+            panic!("the body was let in");
+        };
+        let status = response.status();
+        let retry = response.headers().get(header::RETRY_AFTER).is_some();
+        let bytes = runtime
+            .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+            .expect("the refusal's body");
+        let body: Value = serde_json::from_slice(&bytes).expect("a refusal is JSON");
+        let error = body["error"].as_str().unwrap_or_default().to_string();
+        (status, retry, error)
+    }
+
+    /// A server whose buffers one body fills past twice their limit, which no task
+    /// flushes, and whose door keeps a body for `wait`. The one body is in it.
+    fn full_buffers(tag: &str, wait: Duration) -> Listening {
+        let storage = Storage {
+            max_buffer_bytes: 1024,
+            ..Storage::default()
+        };
+        let at = Listening::start(tag, 2, wait, storage);
+        let first = at.post(lines(0)).join().expect("a sender");
+        assert_eq!(first.status, 200, "{first:?}");
+        assert!(at.server.stores.buffers_full());
+        at
+    }
+
+    /// **A wait for the buffers that runs out sheds nobody by itself: the buffers are
+    /// looked at once more.** A flush empties the buffers and only then says so to the
+    /// door, so a body's wait can run out between the two - beside buffers that have
+    /// room. It was shed there, and told that the buffers held nothing and were past
+    /// their limit.
+    ///
+    /// The flush here is the test's and says nothing to the door, so the only thing that
+    /// brings the body back is its own deadline, and what it finds then is what the
+    /// test put there: full buffers, and it is shed with what they hold; emptied ones,
+    /// and it is let in. The twenty milliseconds are how long each half takes.
+    #[test]
+    fn a_wait_for_the_buffers_that_runs_out_looks_at_them_once_more() {
+        let at = full_buffers("door-last-look", Duration::from_millis(20));
+        let runtime = by_hand();
+        let door = &at.server.door;
+
+        // Still full when the wait runs out: a shed, and the bytes in it are the ones
+        // that are held.
+        let (held, limit) = at.server.stores.buffer_bytes();
+        assert!(held > 2 * limit, "{held} of {limit}");
+        let mut waiting = Box::pin(at.server.admit_waiting());
+        assert!(look(&runtime, &mut waiting).is_pending());
+        assert_eq!(at.at_the_door(), 1);
+        let (status, retry, error) = refusal(&runtime, runtime.block_on(&mut waiting));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(retry, "{error}");
+        let says = format!(
+            "the buffers hold {} bytes of memory, past twice the {} byte limit: the flush \
+             is behind what is arriving",
+            commas(held),
+            commas(limit)
+        );
+        assert!(error.starts_with(&says), "{error}");
+        assert_eq!(door.shed.buffers.load(Ordering::Relaxed), 1);
+        assert_eq!(at.shed(), 1);
+
+        // Emptied while the body waits, with no word to the door: let in when its wait
+        // runs out, and not shed for buffers that have room.
+        let mut waiting = Box::pin(at.server.admit_waiting());
+        assert!(look(&runtime, &mut waiting).is_pending());
+        let flushed = at.server.stores.flush_all(FlushKind::Tick);
+        assert_eq!(flushed.failed, 0);
+        assert!(!at.server.stores.buffers_full());
+        let admitted = runtime.block_on(&mut waiting);
+        assert!(admitted.is_ok(), "shed beside buffers that had room");
+        assert_eq!(at.shed(), 1, "the one shed is the first half's");
+        assert_eq!(door.waits.load(Ordering::Relaxed), 2);
+        assert_eq!(at.at_the_door(), 0);
+        assert_eq!(
+            (at.parsing(), at.inside()),
+            (1, 1),
+            "the permit it was given"
+        );
+    }
+
+    /// **A store that stops writing while a body waits for the buffers is the reason
+    /// the body is given.** The wait ran out into "the flush is behind what is
+    /// arriving" whatever had happened during it; a store that cannot write is another
+    /// thing to tell a shipper, and the door tells it to a body that arrives then.
+    ///
+    /// The body is parked on healthy, full buffers; then a flush fails, with no word to
+    /// the door; then the body's wait runs out.
+    #[test]
+    #[cfg(unix)]
+    fn a_store_that_fails_during_a_wait_for_the_buffers_is_the_reason_given() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let at = full_buffers("door-last-look-store", Duration::from_millis(20));
+        let runtime = by_hand();
+        // The first body's day gets its file, and the buffers are empty again. Then a
+        // day with no file yet, and a directory that will not take one.
+        assert_eq!(at.server.stores.flush_all(FlushKind::Tick).failed, 0);
+        let data = at.server.storage.base_path.as_ref().expect("on disk");
+        let data = data.join(crate::store::disk::DATA_DIR);
+        let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
+        mode(0o555).expect("chmod -w");
+        let second = at
+            .post(lines_at(1_705_401_000, 1))
+            .join()
+            .expect("a sender");
+        let full = at.server.stores.buffers_full();
+
+        let mut waiting = Box::pin(at.server.admit_waiting());
+        let parked = look(&runtime, &mut waiting).is_pending();
+        let failed = at.server.stores.flush_all(FlushKind::Tick).failed;
+        let still_full = at.server.stores.buffers_full() && at.server.write_health.is_degraded();
+        let answered = runtime.block_on(&mut waiting);
+        mode(0o755).expect("chmod +w");
+
+        assert_eq!(second.status, 200, "{second:?}");
+        assert!(full, "one body did not fill the buffers");
+        assert!(
+            parked,
+            "a body was not kept waiting for a flush that could come"
+        );
+        assert!(
+            failed > 0 && still_full,
+            "the store wrote to a read-only directory"
+        );
+        let (status, retry, error) = refusal(&runtime, answered);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(retry, "{error}");
+        assert!(error.contains("the store cannot write"), "{error}");
+        assert!(!error.contains("the flush is behind"), "{error}");
+        assert_eq!(at.server.door.shed.buffers.load(Ordering::Relaxed), 1);
+        assert_eq!(at.shed(), 1);
+    }
+
+    /// **With no wait to give, a body at the door waits for nothing.** It is let in or
+    /// shed at its first look, whichever of the three it would have waited for is
+    /// missing - not parked on a timer for a moment that has already come, which is a
+    /// millisecond's wait for a body that was to have none.
+    ///
+    /// Each answer here is the one look's: a body still pending after it fails the test.
+    #[test]
+    fn with_no_wait_a_body_at_the_door_is_answered_at_its_first_look() {
+        let at = full_buffers("door-no-wait", Duration::ZERO);
+        let runtime = by_hand();
+        let server = &at.server;
+        let shed = &server.door.shed;
+        let first_look = |what: &str| {
+            let mut asking = Box::pin(server.admit_waiting());
+            match look(&runtime, &mut asking) {
+                Poll::Ready(answer) => answer,
+                Poll::Pending => panic!("{what}: a body with no wait to give was kept waiting"),
+            }
+        };
+
+        // The buffers past twice their limit.
+        let (status, retry, error) = refusal(&runtime, first_look("full buffers"));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(retry && error.starts_with("the buffers hold"), "{error}");
+        assert!(!error.contains("hold 0 bytes"), "{error}");
+        assert_eq!(shed.buffers.load(Ordering::Relaxed), 1);
+        assert_eq!(server.stores.flush_all(FlushKind::Tick).failed, 0);
+        assert!(!server.stores.buffers_full());
+
+        // No permit for the parse.
+        let permits = Arc::clone(&server.ingest_permits)
+            .try_acquire_many_owned(server.api.ingest_concurrency as u32)
+            .expect("every permit");
+        let (status, retry, error) = refusal(&runtime, first_look("no permit"));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(retry && error.contains(SAYS_BUSY), "{error}");
+        assert_eq!(shed.permit.load(Ordering::Relaxed), 1);
+        drop(permits);
+
+        // No place, and the permit that was taken on the way to it goes back.
+        let places = Arc::clone(&server.ingest_bodies)
+            .try_acquire_many_owned(ingest_bodies(&server.api) as u32)
+            .expect("every place");
+        let (status, retry, error) = refusal(&runtime, first_look("no place"));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(retry && error.contains(SAYS_LOG_BUSY), "{error}");
+        assert_eq!(shed.place.load(Ordering::Relaxed), 1);
+        assert_eq!(at.parsing(), 0);
+        drop(places);
+
+        // And with nothing missing it is let in, at that same first look.
+        let admitted = first_look("nothing missing");
+        assert!(admitted.is_ok());
+        assert_eq!((at.parsing(), at.inside()), (1, 1));
+        drop(admitted);
+        assert_eq!((at.parsing(), at.inside()), (0, 0));
+        assert_eq!(at.shed(), 3);
+        assert_eq!(at.at_the_door(), 0);
+    }
+
+    /// **A sender that hangs up while its body waits for room frees its slot.** The body
+    /// is parsed and holds the one permit, and the log has no room for it; its sender
+    /// then closes the connection. The body gives up its wait - it does not sit on the
+    /// permit for the minute it was allowed - nothing of it is in the log, and the next
+    /// body takes the permit.
+    ///
+    /// A body that is being parsed, or is already in the log, is another matter and is
+    /// stored whole: this is only the body that has nowhere to go yet.
+    #[test]
+    fn a_sender_that_hangs_up_while_waiting_for_room_frees_its_slot() {
+        let at = one_at_a_time("room-hangup", LONG_WAIT);
+        let still = at.still();
+        let first = at.post(lines(0));
+        until("the first body to be in the log", || {
+            at.wal().unapplied_bytes == one_body() && at.parsing() == 0
+        });
+        let began = {
+            // Written whole, and the connection closed with no answer read.
+            let body = lines(1);
+            let mut second = Client::connect(at.addr);
+            second.head("POST", "/ingest", body.len());
+            second.write(&body);
+            until("the second body to wait for room", || {
+                at.wal().queue_waiting == 1
+            });
+            Instant::now()
+        };
+        until("the second body to give up its wait", || {
+            at.wal().queue_left == 1 && at.parsing() == 0
+        });
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "a body whose sender had hung up went on holding its permit"
+        );
+        assert_eq!(at.shed(), 0, "a sender that left is not a shed");
+
+        let third = at.post(lines(2));
+        until("the third body to take the permit", || {
+            at.wal().queue_waiting == 1
+        });
+        drop(still);
+        for body in [first, third] {
+            let answer = body.join().expect("a sender");
+            assert_eq!(answer.status, 200, "{answer:?}");
+        }
+        until("every place to come back", || at.inside() == 0);
+        // The first and the third, and no line of the second: not stored, not logged,
+        // and not counted as taken.
+        assert_eq!(at.count(), 2 * PER_BODY as u64);
+        assert_eq!(at.wal().last_seq, 2 * PER_BODY as u64);
+        let server = &at.server;
+        assert_eq!(
+            server.lines_ingested.load(Ordering::Relaxed),
+            2 * PER_BODY as u64
+        );
+        assert_eq!(
+            server.lines_rejected.load(Ordering::Relaxed),
+            PER_BODY as u64
+        );
     }
 }

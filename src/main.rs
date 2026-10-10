@@ -118,10 +118,17 @@ enum Command {
         #[arg(long, value_name = "BYTES")]
         max_decompressed_bytes: Option<usize>,
         /// How many `/ingest` bodies may be parsed at once. Beyond it, a body waits
-        /// briefly and is then answered `503` with a `Retry-After` rather than left to
-        /// time out. Overrides `KIBBR__API__INGEST_CONCURRENCY`.
+        /// for --ingest-wait-ms and is then answered `503` with a `Retry-After` rather
+        /// than left to time out. Overrides `KIBBR__API__INGEST_CONCURRENCY`.
         #[arg(long, value_name = "N")]
         ingest_concurrency: Option<usize>,
+        /// How long an `/ingest` body may be kept waiting, in milliseconds, before it is
+        /// answered `503` with a `Retry-After`: at the door, and then for room in the
+        /// write-ahead log - each wait is at most this long. `0` waits for nothing; more
+        /// than 30000 is refused.
+        /// Overrides `KIBBR__API__INGEST_WAIT_MS`. [default: 100]
+        #[arg(long, value_name = "MS")]
+        ingest_wait_ms: Option<usize>,
         /// Where rows go. `disk` writes day-partitioned column files and snapshots the
         /// trie on a clean shutdown; `memory` writes nothing, and is what the
         /// memory-versus-disk differential runs against.
@@ -157,6 +164,13 @@ enum Command {
         /// Overrides `KIBBR__INGESTOR__BATCH_SIZE`. [default: 500]
         #[arg(long, value_name = "LINES")]
         batch_size: Option<usize>,
+        /// The most bytes of lines that may be in the write-ahead log and not yet in the
+        /// store: what a stalled disk under the log, or a store slow to take rows, may
+        /// cost in memory. A body past it waits for room, up to --ingest-wait-ms, and is
+        /// then answered 503. Counted as records, forty bytes and the line for each.
+        /// Overrides `KIBBR__STORAGE__WAL_QUEUE_BYTES`. [default: 256 MiB]
+        #[arg(long, value_name = "BYTES")]
+        wal_queue_bytes: Option<usize>,
         /// How many segment files may be open for writing at once, across every leaf.
         /// Past it the least recently written one is sealed, which is always safe - the
         /// next row for that partition opens the next segment number. Set it below
@@ -169,9 +183,10 @@ enum Command {
         #[arg(long, value_name = "BYTES")]
         segment_max_bytes: Option<usize>,
         /// Memory every buffer together may hold before the largest are closed early - an
-        /// emergency brake - and at twice which `/ingest` answers 503 until the flush
-        /// catches up. Estimated per row, hash tables and allocations included, which is
-        /// about eight times a row's keys and values.
+        /// emergency brake - and at twice which `/ingest` keeps a body waiting at the door
+        /// for the flush to catch up, and answers 503 if it has not within
+        /// --ingest-wait-ms. Estimated per row, hash tables and allocations included,
+        /// which is about eight times a row's keys and values.
         /// Overrides `KIBBR__STORAGE__MAX_BUFFER_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         max_buffer_bytes: Option<usize>,
@@ -584,6 +599,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_body_bytes,
             max_decompressed_bytes,
             ingest_concurrency,
+            ingest_wait_ms,
             storage,
             data_dir,
             trie_file,
@@ -591,6 +607,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             row_group_timeout_ms,
             wal_segment_bytes,
             batch_size,
+            wal_queue_bytes,
             max_open_segments,
             segment_max_bytes,
             max_buffer_bytes,
@@ -602,7 +619,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
             &host,
             port,
             config::Limits::load(max_rows, max_buckets, max_groups)?,
-            config::ApiLimits::load(max_body_bytes, max_decompressed_bytes, ingest_concurrency)?,
+            config::ApiLimits::load(max_body_bytes, max_decompressed_bytes, ingest_concurrency)?
+                .with_ingest_wait(ingest_wait_ms)?,
             config::Storage::load(
                 storage == StorageKind::Disk,
                 data_dir,
@@ -614,7 +632,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 max_buffer_bytes,
             )?
             .with_compact_interval(compact_interval_ms)?
-            .with_wal(wal_segment_bytes, batch_size)?
+            .with_wal(wal_segment_bytes, batch_size, wal_queue_bytes)?
             .with_scan(scan_threads, scan_fan_rows)?,
             config::Schema::load(time_columns),
         ),

@@ -99,11 +99,11 @@ use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -159,10 +159,15 @@ const PROBE_BYTES: usize = 64 * 1024;
 /// shows beside the flush.
 const ZSTD_LEVEL: i32 = 3;
 
-/// The most bytes of lines that may wait for the writer: what bounds the memory a stalled
-/// disk can take. Past it a body is shed with a `503`, and its sender keeps it. How many
-/// bodies may wait, each a parked thread, is the door's to bound, before it reads one.
-const MAX_QUEUED_BYTES: usize = 256 * 1024 * 1024;
+/// The most bytes of lines that may be between a body's sender and the store, where
+/// nothing says otherwise (`Options::queue_bytes`): waiting for the writer, or written
+/// and not yet handed to the store. What bounds the memory a stalled disk can take, and
+/// a store that is slow to take rows as well - the writer does not wait for the applier,
+/// so counted only up to the writer the rows it had written would collect behind it with
+/// nothing held against them. Past it a body waits for room, for as long as it is allowed
+/// (`Wait`), and is then shed with a `503`, and its sender keeps it. How many bodies may
+/// be inside at once, each a parked thread, is the door's to bound, before it reads one.
+pub const DEFAULT_QUEUE_BYTES: usize = 256 * 1024 * 1024;
 
 /// The most positions one unreadable byte of a segment is taken to have held: what a
 /// start skips, per byte it could not read, before it gives out a position. A record is
@@ -363,12 +368,26 @@ pub struct Line {
 pub enum Refused {
     /// The log cannot write: the error of the flush that failed.
     Cannot(String),
-    /// More is waiting on the log than it is allowed to hold: a shed, as the door's
-    /// are, and not a verdict on the disk.
+    /// More is waiting on the log than it is allowed to hold, and no room came in the
+    /// time the body was given to wait for it: a shed, as the door's are, and not a
+    /// verdict on the disk.
     Busy,
     /// The body is more, as records, than one frame holds. The sender's to fix: no retry
     /// of the same body will fit.
     TooLarge { bytes: usize, limit: usize },
+    /// The body's sender had gone, and the log had no room for the body: it was let go
+    /// rather than kept waiting for room that nobody would be answered from.
+    Left,
+}
+
+/// How long a body may wait for room in the log, and what ends the wait early.
+#[derive(Debug, Clone, Copy)]
+pub struct Wait<'a> {
+    /// From the moment the log is found full. Zero: do not wait.
+    pub at_most: Duration,
+    /// Set, with no lock, once the body's sender has gone. A body that is waiting sees
+    /// it the next time it looks, and `Wal::wake_room` has it look at once.
+    pub left: &'a AtomicBool,
 }
 
 /// How the log is written.
@@ -376,6 +395,9 @@ pub enum Refused {
 pub struct Options {
     pub segment_bytes: u64,
     pub batch_lines: usize,
+    /// The most bytes of lines that may be in the log and not yet in the store: see
+    /// `DEFAULT_QUEUE_BYTES`.
+    pub queue_bytes: usize,
 }
 
 impl Default for Options {
@@ -383,6 +405,7 @@ impl Default for Options {
         Self {
             segment_bytes: DEFAULT_SEGMENT_BYTES,
             batch_lines: DEFAULT_BATCH_LINES,
+            queue_bytes: DEFAULT_QUEUE_BYTES,
         }
     }
 }
@@ -400,6 +423,20 @@ pub struct Stats {
     pub flushes: u64,
     pub healthy: bool,
     pub last_error: Option<String>,
+    /// The bytes of the lines waiting for the writer.
+    pub queue_bytes: usize,
+    /// The bytes of the lines the writer has taken and the store does not have yet.
+    pub unapplied_bytes: usize,
+    /// The most the two have come to together.
+    pub queue_peak_bytes: usize,
+    /// Bodies waiting for room now: each parsed, and holding its permit and its place.
+    pub queue_waiting: usize,
+    /// Bodies that have had to wait for room, whatever came of the wait.
+    pub queue_waits: u64,
+    /// Bodies shed because no room came while they were allowed to wait for it.
+    pub queue_sheds: u64,
+    /// Bodies let go because their sender left while they waited for room.
+    pub queue_left: u64,
 }
 
 /// What has become of one body. `Logged` is the writer's word the moment a flush returns,
@@ -463,11 +500,30 @@ impl Outcome {
     }
 }
 
+/// A body in the log's queue: what its sender waits on.
+pub struct Ticket<'w> {
+    /// `None` for a body with no line in it, which has nothing to wait for.
+    outcome: Option<Arc<Outcome>>,
+    shared: &'w Shared,
+}
+
+impl Ticket<'_> {
+    /// Until the body's lines are durable and applied, or refused. `Err` carries why the
+    /// log could not take them. Blocks for a flush, so it is called from a blocking
+    /// thread.
+    pub fn wait(self) -> Result<(), Refused> {
+        match &self.outcome {
+            Some(outcome) => outcome.wait(self.shared),
+            None => Ok(()),
+        }
+    }
+}
+
 /// Whether a body is past what one frame holds, told from its bytes before it is parsed:
 /// every line of it that is not blank counted as a record.
 ///
 /// An upper bound - a line that will not parse is no record - so a body this lets by is
-/// one `commit` takes, and one it refuses is refused before gigabytes are spent parsing a
+/// one `enqueue` takes, and one it refuses is refused before gigabytes are spent parsing a
 /// body no frame would hold. Bodies of ordinary size are not walked: under a twenty-first
 /// of the bound in bytes, no number of lines reaches it.
 pub fn too_large(body: &[u8]) -> Option<Refused> {
@@ -487,6 +543,16 @@ pub fn too_large(body: &[u8]) -> Option<Refused> {
     })
 }
 
+/// What a body counts for against the log's bound: every line of it that is not blank,
+/// as a record. For a test that sets the bound in bodies.
+#[cfg(test)]
+pub(crate) fn counted(body: &[u8]) -> usize {
+    body.split(|b| *b == b'\n')
+        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+        .map(|line| RECORD_HEADER + 8 + line.len())
+        .sum()
+}
+
 struct Submission {
     lines: Vec<Line>,
     bytes: usize,
@@ -497,8 +563,9 @@ struct Submission {
 #[derive(Default)]
 struct Queue {
     waiting: VecDeque<Submission>,
-    /// The bytes of the lines waiting: held under `MAX_QUEUED_BYTES`.
-    bytes: usize,
+    /// The most bytes of lines that may be queued and unapplied together: what `start`
+    /// was given.
+    limit: usize,
     /// The flush tick asks, while the log cannot write, whether it can again.
     probe: bool,
     closing: bool,
@@ -518,6 +585,37 @@ struct Seg {
 struct Shared {
     queue: Mutex<Queue>,
     wake: Condvar,
+    /// Where a body waits for room. Notified with the queue's lock held, and only while
+    /// `room_waiters` says somebody is there: by the applier once a batch is stored, by a
+    /// flush that failed, by a thread that ended, and by whoever has changed what a
+    /// waiter looks at - a sender that left, a server that is stopping.
+    room: Condvar,
+    /// The bytes of the lines waiting for the writer. Written only with the queue's lock
+    /// held, and an atomic so that `/stats` reads it with no lock: the writer keeps that
+    /// lock while it moves every line of the bodies it takes, and a runtime thread must
+    /// not queue behind that.
+    queued: AtomicUsize,
+    /// The bytes of the lines the writer has taken and the applier has not yet handed to
+    /// the store. With `queued`, what is held under the queue's `limit`.
+    ///
+    /// Raised only with the queue's lock held, as the writer takes a body. Lowered by
+    /// the applier with no lock, which is safe because lowering can only make room: read
+    /// under the lock, the two together are never less than what is really there.
+    unapplied: AtomicUsize,
+    /// The most `queued` and `unapplied` have come to together. Kept under the queue's
+    /// lock, where the two are read as one.
+    peak: AtomicUsize,
+    /// Bodies waiting on `room` now. Written only with the queue's lock held, and an
+    /// atomic so that the door reads it with no lock, to word a refusal.
+    room_waiters: AtomicUsize,
+    /// Nobody waits for room from here on: the server is stopping.
+    hurry: AtomicBool,
+    /// Bodies that have had to wait for room.
+    room_waits: AtomicU64,
+    /// Bodies shed for want of room.
+    room_sheds: AtomicU64,
+    /// Bodies let go because their sender left while they waited.
+    room_left: AtomicU64,
     /// Every segment on disk, in order. The last is the one being written.
     segments: Mutex<Vec<Seg>>,
     /// The last position a flush made durable.
@@ -610,6 +708,16 @@ impl Shared {
         true
     }
 
+    /// Wake every body waiting for room, if any is: each looks again at what it waits
+    /// on. **The caller holds the queue's lock.** A waiter holds that lock from its look
+    /// until it is parked, so a wake-up sent under it is never between the two, and never
+    /// lost.
+    fn wake_room(&self) {
+        if self.room_waiters.load(Ordering::Acquire) > 0 {
+            self.room.notify_all();
+        }
+    }
+
     /// A thread of the log has died, and this is what every refusal says from here on.
     fn died(&self, why: &str) {
         *self.health.write().unwrap_or_else(|e| e.into_inner()) = Health::Died {
@@ -634,19 +742,32 @@ impl Drop for Stopping {
         // and it stays so - the writer, if it is the one left, does not say otherwise.
         let why = "a thread of the write-ahead log stopped; restart the server".to_string();
         shared.died(&why);
-        queue.bytes = 0;
+        shared.queued.store(0, Ordering::Release);
         for waiting in queue.waiting.drain(..) {
             waiting
                 .outcome
                 .set(Progress::Refused(Refused::Cannot(why.clone())));
         }
+        // And whoever is waiting for room, which will not come now: each looks again,
+        // and is told what the queued bodies were.
+        shared.wake_room();
     }
+}
+
+/// Take `by` off a count of bytes, and never below nothing: a count that had lost a
+/// byte somewhere would otherwise wrap, and read as a log that is full for ever.
+fn take_off(count: &AtomicUsize, by: usize) {
+    let _ = count.fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+        Some(held.saturating_sub(by))
+    });
 }
 
 /// A flushed batch on its way to the applier.
 struct Batch {
     first: u64,
     rows: Vec<Placed>,
+    /// What these rows' lines count for against the bound, until the store has them.
+    bytes: usize,
     /// The bodies whose lines these are.
     taken: Vec<Arc<Outcome>>,
 }
@@ -824,7 +945,7 @@ impl Wal {
     }
 
     /// Why the log cannot write, and `None` while it can: what the door reads before it
-    /// takes a body, and what `/health` and `commit` say. Whether and why are one read,
+    /// takes a body, and what `/health` and `enqueue` say. Whether and why are one read,
     /// so there is never the one without the other.
     pub fn refusal(&self) -> Option<String> {
         self.shared.refusal()
@@ -950,6 +1071,7 @@ impl Wal {
                 "ERROR write-ahead log - {why}; /ingest answers 503 until it can write"
             ));
         }
+        lock(&self.shared.queue).limit = options.queue_bytes.max(1);
         self.shared.stopped.store(false, Ordering::Release);
         let (tx, rx) = channel::<Batch>();
         let spawn = |name: &str, run: Box<dyn FnOnce() + Send>| {
@@ -968,16 +1090,41 @@ impl Wal {
         Ok(())
     }
 
-    /// Put a body's lines in the log - all of them, in one flush - and return once they
-    /// are durable and applied. `Err` is why the log could not take the body: none of its
-    /// lines is in the log then, and the sender must keep them. `received_at` is the
-    /// body's arrival time, in unix nanoseconds: what a row with no time of its own is
-    /// stored under, now and at every replay.
+    /// Put a body's lines in the log's queue - all of them, for one flush - waiting for
+    /// room if the log has none, and return what the body's sender then waits on
+    /// (`Ticket::wait`). `Err` is why the log did not take the body: none of its lines is
+    /// in the log then, and the sender must keep them. `received_at` is the body's
+    /// arrival time, in unix nanoseconds: what a row with no time of its own is stored
+    /// under, now and at every replay.
     ///
-    /// Blocks for a flush, so it is called from a blocking thread.
-    pub fn commit(&self, lines: Vec<Line>, received_at: i64) -> Result<(), Refused> {
+    /// **A full log makes the body wait, and the wait is the caller's to bound.** A body
+    /// that has been read and parsed is the dearest thing to turn away: its sender comes
+    /// back a second later and all of that is done again. So it waits here for the
+    /// applier to make room, for as long as `wait` allows, and only then is shed. What
+    /// the wait costs is a parsed body held in memory that the bound does not count, so
+    /// the caller keeps its permit for the parse until this returns: there are then no
+    /// more bodies waiting than there are permits.
+    ///
+    /// **Room first, and then whether to go on waiting.** A body whose sender has gone,
+    /// or that arrives while the server is stopping, is still taken whole when the log
+    /// has room for it.
+    ///
+    /// The clock is read only when the log is full: a body that finds room pays two
+    /// loads and a comparison for the look.
+    ///
+    /// Blocks while it waits, so it is called from a blocking thread.
+    pub fn enqueue(
+        &self,
+        lines: Vec<Line>,
+        received_at: i64,
+        wait: Wait<'_>,
+    ) -> Result<Ticket<'_>, Refused> {
+        let shared: &Shared = &self.shared;
         if lines.is_empty() {
-            return Ok(());
+            return Ok(Ticket {
+                outcome: None,
+                shared,
+            });
         }
         let bytes: usize = lines.iter().map(|l| RECORD_HEADER + 8 + l.raw.len()).sum();
         if bytes > MAX_BODY_RAW {
@@ -990,20 +1137,57 @@ impl Wal {
         {
             // The health is read under the queue's lock, which a failing flush holds while
             // it empties the queue: a body is refused here or by that flush, never left
-            // waiting behind it.
-            let mut queue = lock(&self.shared.queue);
-            if let Some(why) = self.shared.refusal() {
-                return Err(Refused::Cannot(why));
-            }
-            if queue.closing || self.shared.stopped.load(Ordering::Acquire) {
-                return Err(Refused::Cannot("the write-ahead log is closed".to_string()));
-            }
-            // A body always fits an empty queue: the bound is on what waits, and a
-            // body larger than it is still a body.
-            if !queue.waiting.is_empty() && queue.bytes + bytes > MAX_QUEUED_BYTES {
-                return Err(Refused::Busy);
-            }
-            queue.bytes += bytes;
+            // waiting behind it. And every look below is under it too, so whoever makes
+            // room, or changes what a waiter looks at, and then takes this lock finds the
+            // waiter either not yet looking - and it will see the change - or parked.
+            let mut queue = lock(&shared.queue);
+            // When this body's wait for room ends: set the first time it finds none.
+            let mut until: Option<Instant> = None;
+            let pending = loop {
+                if let Some(why) = shared.refusal() {
+                    return Err(Refused::Cannot(why));
+                }
+                if queue.closing || shared.stopped.load(Ordering::Acquire) {
+                    return Err(Refused::Cannot("the write-ahead log is closed".to_string()));
+                }
+                // A body always fits an empty log: the bound is on what is between the
+                // senders and the store, and a body larger than it is still a body.
+                let pending = shared.queued.load(Ordering::Relaxed)
+                    + shared.unapplied.load(Ordering::Acquire);
+                if pending == 0 || pending.saturating_add(bytes) <= queue.limit {
+                    break pending;
+                }
+                if wait.left.load(Ordering::Acquire) {
+                    shared.room_left.fetch_add(1, Ordering::Relaxed);
+                    return Err(Refused::Left);
+                }
+                let left = match until {
+                    _ if shared.hurry.load(Ordering::Acquire) => None,
+                    Some(until) => until
+                        .checked_duration_since(Instant::now())
+                        .filter(|left| !left.is_zero()),
+                    None if wait.at_most.is_zero() => None,
+                    None => {
+                        until = Some(Instant::now() + wait.at_most);
+                        shared.room_waits.fetch_add(1, Ordering::Relaxed);
+                        Some(wait.at_most)
+                    }
+                };
+                let Some(left) = left else {
+                    shared.room_sheds.fetch_add(1, Ordering::Relaxed);
+                    return Err(Refused::Busy);
+                };
+                shared.room_waiters.fetch_add(1, Ordering::AcqRel);
+                queue = shared
+                    .room
+                    .wait_timeout(queue, left)
+                    .unwrap_or_else(|e| e.into_inner())
+                    .0;
+                shared.room_waiters.fetch_sub(1, Ordering::AcqRel);
+            };
+            let queued = shared.queued.load(Ordering::Relaxed);
+            shared.queued.store(queued + bytes, Ordering::Release);
+            shared.peak.fetch_max(pending + bytes, Ordering::Relaxed);
             queue.waiting.push_back(Submission {
                 lines,
                 bytes,
@@ -1011,8 +1195,61 @@ impl Wal {
                 outcome: Arc::clone(&outcome),
             });
         }
-        self.shared.wake.notify_one();
-        outcome.wait(&self.shared)
+        shared.wake.notify_one();
+        Ok(Ticket {
+            outcome: Some(outcome),
+            shared,
+        })
+    }
+
+    /// Put a body's lines in the log and return once they are durable and applied:
+    /// `enqueue` with no wait for room, and then the wait for the answer. The tests'
+    /// way in, for a sender with nothing to hold between the two and nowhere to go: the
+    /// server calls the two apart, to give its permit back between them.
+    #[cfg(test)]
+    pub fn commit(&self, lines: Vec<Line>, received_at: i64) -> Result<(), Refused> {
+        // A sender that never leaves.
+        static STAYS: AtomicBool = AtomicBool::new(false);
+        let wait = Wait {
+            at_most: Duration::ZERO,
+            left: &STAYS,
+        };
+        self.enqueue(lines, received_at, wait)?.wait()
+    }
+
+    /// Have whoever is waiting for room look again: something it looks at has changed
+    /// that no thread of the log's changed - its sender has left.
+    ///
+    /// Takes the queue's lock, which the writer can keep for as long as moving a large
+    /// body's lines takes: called from a thread that may block, never a runtime worker.
+    pub fn wake_room(&self) {
+        let _queue = lock(&self.shared.queue);
+        self.shared.wake_room();
+    }
+
+    /// The server is stopping: nobody waits for room from here on. A body waiting is
+    /// shed at once, and so is one that finds no room later - a stop must not take as
+    /// long as the longest wait. Bodies already in the queue are written and applied as
+    /// they would have been.
+    ///
+    /// Takes the queue's lock, as `wake_room` does: a thread that may block.
+    pub fn hurry(&self) {
+        self.shared.hurry.store(true, Ordering::Release);
+        self.wake_room();
+    }
+
+    /// Bodies waiting for room now. Read with no lock: the door asks it on a runtime
+    /// worker, to say the right thing to a body it has kept waiting for nothing.
+    pub fn waiting_for_room(&self) -> usize {
+        self.shared.room_waiters.load(Ordering::Acquire)
+    }
+
+    /// What is queued and what is written and not yet stored, read as one under the
+    /// queue's lock: what the bound holds.
+    #[cfg(test)]
+    fn pending(&self) -> usize {
+        let _queue = lock(&self.shared.queue);
+        self.shared.queued.load(Ordering::Relaxed) + self.shared.unapplied.load(Ordering::Acquire)
     }
 
     /// Ask the writer, while the log cannot write, to try again: make a segment if there
@@ -1120,6 +1357,12 @@ impl Wal {
         // The two from one read of the health: never unhealthy beside no reason, or beside
         // the reason of a failure before this one.
         let (healthy, last_error) = self.shared.health().report();
+        // `unapplied` before `queued`. The writer takes a body out of `queued` and then
+        // into `unapplied`, so read in this order, with no lock, the pair can miss the
+        // body the writer has in hand and can never hold it twice. Read the other way
+        // round it could: in `queued` at the first read, in `unapplied` by the second.
+        let unapplied_bytes = self.shared.unapplied.load(Ordering::Acquire);
+        let queue_bytes = self.shared.queued.load(Ordering::Acquire);
         Stats {
             stream: self.stream,
             segments: segments.len(),
@@ -1131,6 +1374,13 @@ impl Wal {
             flushes: self.shared.flushes.load(Ordering::Relaxed),
             healthy,
             last_error,
+            queue_bytes,
+            unapplied_bytes,
+            queue_peak_bytes: self.shared.peak.load(Ordering::Relaxed),
+            queue_waiting: self.shared.room_waiters.load(Ordering::Acquire),
+            queue_waits: self.shared.room_waits.load(Ordering::Relaxed),
+            queue_sheds: self.shared.room_sheds.load(Ordering::Relaxed),
+            queue_left: self.shared.room_left.load(Ordering::Relaxed),
         }
     }
 
@@ -1138,7 +1388,13 @@ impl Wal {
     pub fn close(&self) {
         let state = std::mem::replace(&mut *lock(&self.state), State::Closed);
         if let State::Running { writer, applier } = state {
-            lock(&self.shared.queue).closing = true;
+            {
+                let mut queue = lock(&self.shared.queue);
+                queue.closing = true;
+                // Nobody waits for room in a log that is closing: each looks, and is
+                // told so.
+                self.shared.wake_room();
+            }
             self.shared.wake.notify_all();
             let _ = writer.join();
             let _ = applier.join();
@@ -1155,8 +1411,22 @@ impl Drop for Wal {
 impl Shared {
     fn new(segments: Vec<Seg>, checkpoint: u64) -> Self {
         Self {
-            queue: Mutex::new(Queue::default()),
+            // The default until `start` says: never the derive's zero, under which every
+            // body after the first would be one too many.
+            queue: Mutex::new(Queue {
+                limit: DEFAULT_QUEUE_BYTES,
+                ..Queue::default()
+            }),
             wake: Condvar::new(),
+            room: Condvar::new(),
+            queued: AtomicUsize::new(0),
+            unapplied: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+            room_waiters: AtomicUsize::new(0),
+            hurry: AtomicBool::new(false),
+            room_waits: AtomicU64::new(0),
+            room_sheds: AtomicU64::new(0),
+            room_left: AtomicU64::new(0),
             segments: Mutex::new(segments),
             written: AtomicU64::new(checkpoint),
             applied: AtomicU64::new(checkpoint),
@@ -1500,7 +1770,7 @@ impl Log {
                 "no segment to write to",
             )));
         };
-        // Held to what a reader will take: `commit` and the writer's own bound keep a
+        // Held to what a reader will take: `enqueue` and the writer's own bound keep a
         // flush under it, and a frame past it would be acknowledged and never read.
         if raw.len() > MAX_RAW {
             return Err(io(&open.path)(std::io::Error::other(format!(
@@ -1600,6 +1870,9 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
     loop {
         let mut lines: Vec<(Line, i64)> = Vec::new();
         let mut taken: Vec<Arc<Outcome>> = Vec::new();
+        // What this flush takes off the queue, kept for whichever of the applier and a
+        // failed write gives it back.
+        let mut bytes = 0usize;
         {
             let mut queue = lock(&shared.queue);
             while queue.waiting.is_empty() && !queue.probe && !queue.closing {
@@ -1612,12 +1885,20 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
             // Whatever has queued, in the order it queued, a whole body at a time: no more
             // bodies once the bound is reached, and never part of one.
             // So a flush is under `BATCH_BYTES` and one body, which is under `MAX_RAW`.
-            let mut bytes = 0usize;
             while lines.len() < log.batch_lines && bytes < BATCH_BYTES {
                 let Some(body) = queue.waiting.pop_front() else {
                     break;
                 };
-                queue.bytes -= body.bytes.min(queue.bytes);
+                // Out of the one count and then into the other, in that order: a reader
+                // with no lock can miss a body that is between the two, and can never
+                // count it twice - so long as it reads `unapplied` first and `queued`
+                // second, as `Wal::stats` does. Read the other way round, a body could
+                // be met in both.
+                let queued = shared.queued.load(Ordering::Relaxed);
+                shared
+                    .queued
+                    .store(queued.saturating_sub(body.bytes), Ordering::Release);
+                shared.unapplied.fetch_add(body.bytes, Ordering::AcqRel);
                 bytes += body.bytes;
                 lines.extend(body.lines.into_iter().map(|line| (line, body.received_at)));
                 taken.push(body.outcome);
@@ -1643,6 +1924,7 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
                 let _ = tx.send(Batch {
                     first,
                     rows,
+                    bytes,
                     taken: std::mem::take(&mut taken),
                 });
             })
@@ -1667,7 +1949,7 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
                 let why = e.to_string();
                 let first = {
                     // Under the queue's lock, so no body joins the queue behind a flush
-                    // that has failed: see `Wal::commit`.
+                    // that has failed: see `Wal::enqueue`.
                     let mut queue = lock(&shared.queue);
                     // The reason goes in with the verdict, and before any body is
                     // refused: whoever is told the log cannot write is told why, from the
@@ -1678,10 +1960,15 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
                     for outcome in &taken {
                         outcome.set(refused.clone());
                     }
-                    queue.bytes = 0;
+                    // This flush's lines go to no applier: they leave the count here.
+                    take_off(&shared.unapplied, bytes);
+                    shared.queued.store(0, Ordering::Release);
                     for waiting in queue.waiting.drain(..) {
                         waiting.outcome.set(refused.clone());
                     }
+                    // And the bodies waiting for room are told as the queued ones were:
+                    // each looks again, finds the log cannot write, and says why.
+                    shared.wake_room();
                     first
                 };
                 // Said last, and once the lock is let go: a stderr that will not take the
@@ -1710,9 +1997,22 @@ fn apply_loop(shared: &Arc<Shared>, rx: &Receiver<Batch>, mut apply: Apply) {
                 .collect(),
         );
         shared.applied.store(last, Ordering::Release);
+        // Off the count before the answer, never after it. The answer wakes the sender's
+        // thread at once: were the bytes still counted then, a sender that came straight
+        // back would be measured against lines the store already has, and shed by an
+        // idle log.
+        take_off(&shared.unapplied, batch.bytes);
         for outcome in batch.taken {
             outcome.set(Progress::Applied);
         }
+        // There is room now, and whoever is waiting for it is told - after the answers,
+        // so that no sender waits on this lock. Taken even with nobody waiting: a body
+        // about to wait holds it from its look at the count until it is parked, so the
+        // look comes after the bytes were taken off, or the wake-up after the body is
+        // parked. Without the lock a body could look, be passed by the wake-up, and park
+        // for its whole wait beside a log with room.
+        let _queue = lock(&shared.queue);
+        shared.wake_room();
     }
 }
 
@@ -1810,7 +2110,7 @@ mod tests {
     fn tiny() -> Options {
         Options {
             segment_bytes: 1,
-            batch_lines: DEFAULT_BATCH_LINES,
+            ..Options::default()
         }
     }
 
@@ -2680,5 +2980,576 @@ mod tests {
         let (wal, applied) = started(&scratch, Options::default());
         assert_eq!(wal.commit(body(3, 4), 0), Ok(()));
         assert_eq!(*lock(&applied), [4]);
+    }
+
+    // ── The bound on what is between a sender and the store ───────────────────────────
+    //
+    // The slow hop in these is the applier, and the test holds it: it says when it has
+    // been handed a batch and stores nothing until it is told to. Nothing here sleeps to
+    // let a thing happen; a state is waited for, and the wait's limit fails the test.
+
+    /// How many lines the bodies of these tests hold.
+    const EVEN: u64 = 4;
+
+    /// Body `nth` of a run of bodies that all come to the same number of bytes: its
+    /// lines' numbers have seven digits each.
+    fn even(nth: u64) -> Vec<Line> {
+        let from = 1_000_000 + nth * EVEN;
+        assert!(from + EVEN <= 10_000_000, "a line of another length");
+        body(from, from + EVEN)
+    }
+
+    /// What a body counts for against the bound.
+    fn bytes_of(lines: &[Line]) -> usize {
+        lines
+            .iter()
+            .map(|line| RECORD_HEADER + 8 + line.raw.len())
+            .sum()
+    }
+
+    /// The test's hold on the applier of a log started by `gated`.
+    struct Gate {
+        /// The rows in each batch the applier is handed, said before it stores one.
+        handed: Receiver<usize>,
+        /// A send lets the batch in hand through; dropped, every batch goes through.
+        go: Option<Sender<()>>,
+        /// The positions the applier has stored, in the order it did.
+        applied: Arc<Mutex<Vec<u64>>>,
+    }
+
+    impl Gate {
+        /// The rows of the next batch the applier is handed: it holds them, stored
+        /// nowhere, until `pass` or `open`.
+        fn handed(&self) -> usize {
+            self.handed
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the applier was handed no batch")
+        }
+
+        /// Let the batch in hand through, and no other.
+        fn pass(&self) {
+            let go = self.go.as_ref().expect("the gate is open for good");
+            go.send(()).expect("the applier is gone");
+        }
+
+        /// Let every batch through from here on.
+        fn open(&mut self) {
+            self.go = None;
+        }
+    }
+
+    /// A started log whose applier the test holds still.
+    ///
+    /// **The gate is the second of the two, so it is let go first.** Dropping a log
+    /// closes it, and a close waits for the applier: one still held at a gate nobody
+    /// will open would hang a failing test where it should fail. With the gate gone the
+    /// applier takes every batch it is handed.
+    fn gated(scratch: &Scratch, options: Options) -> (Arc<Wal>, Gate) {
+        let wal = Wal::create(&scratch.0).expect("create");
+        let (said, handed) = channel::<usize>();
+        let (go, told) = channel::<()>();
+        let applied = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&applied);
+        wal.start(
+            options,
+            Box::new(move |rows| {
+                let _ = said.send(rows.len());
+                // An error is the gate dropped: open for good.
+                let _ = told.recv();
+                lock(&seen).extend(rows.iter().map(|(seq, _)| *seq));
+            }),
+        )
+        .expect("start");
+        let gate = Gate {
+            handed,
+            go: Some(go),
+            applied,
+        };
+        (Arc::new(wal), gate)
+    }
+
+    /// `commit` on a thread of its own: the body's sender, parked until its answer.
+    fn sender(wal: &Arc<Wal>, lines: Vec<Line>) -> JoinHandle<Result<(), Refused>> {
+        let wal = Arc::clone(wal);
+        std::thread::spawn(move || wal.commit(lines, 0))
+    }
+
+    /// Wait for a state, looking every few milliseconds. The limit fails the test: it is
+    /// far past what any machine needs, and nothing passes by reaching it.
+    fn until(what: &str, mut reached: impl FnMut() -> bool) {
+        let began = std::time::Instant::now();
+        while !reached() {
+            assert!(
+                began.elapsed() < Duration::from_secs(30),
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// **A line counts against the bound until the store has it, and no longer.** The
+    /// writer taking a body off the queue does not make room for the next: the rows are
+    /// still in memory, on their way to the applier. And a body that has its answer is in
+    /// nobody's count - its bytes leave the bound before its sender is woken, so a sender
+    /// that comes straight back is never measured against lines that are already stored.
+    ///
+    /// The second half is a thousand bodies, each as large as the bound, each sent the
+    /// moment the one before was answered, with no wait allowed. With the bytes taken off
+    /// after the answer any of them could be shed, whenever the applier lost the
+    /// processor between the two.
+    #[test]
+    fn the_bound_counts_a_line_until_it_is_applied() {
+        let scratch = Scratch::new("bound-applied");
+        let one = bytes_of(&even(0));
+        let options = Options {
+            queue_bytes: one,
+            ..Options::default()
+        };
+        let (wal, mut gate) = gated(&scratch, options);
+
+        let first = sender(&wal, even(0));
+        assert_eq!(gate.handed(), EVEN as usize);
+        // Written, and with the applier: out of the queue, and still in the count.
+        let stats = wal.stats();
+        assert_eq!((stats.queue_bytes, stats.unapplied_bytes), (0, one));
+        assert_eq!(stats.last_seq, EVEN);
+        assert_eq!(wal.commit(even(1), 0), Err(Refused::Busy));
+        assert_eq!(wal.stats().queue_sheds, 1);
+
+        gate.open();
+        assert_eq!(first.join().expect("the sender"), Ok(()));
+        for nth in 2..1002 {
+            assert_eq!(wal.commit(even(nth), 0), Ok(()), "body {nth}");
+        }
+        let stats = wal.stats();
+        assert_eq!(stats.queue_sheds, 1);
+        assert_eq!((stats.queue_bytes, stats.unapplied_bytes), (0, 0));
+        assert_eq!(stats.queue_peak_bytes, one);
+        assert_eq!(lock(&gate.applied).len() as u64, 1001 * EVEN);
+    }
+
+    /// **A body's bytes leave the bound before the body is answered, on every run.** The
+    /// test holds the first body's answer shut, so the applier stops at the moment it
+    /// would give it. With the bytes taken off first the count is already down, and a
+    /// second body as large as the bound finds room while the first is still unanswered.
+    /// Taken off after the answer, the count would never fall while the answer is held,
+    /// and the wait for it fails the test: no luck with the processor is needed either
+    /// way, which the thousand bodies of the test above do need.
+    #[test]
+    fn a_body_is_out_of_the_bound_before_it_is_answered() {
+        let scratch = Scratch::new("bound-before-answer");
+        let options = Options {
+            queue_bytes: bytes_of(&even(0)),
+            ..Options::default()
+        };
+        let (wal, mut gate) = gated(&scratch, options);
+        let stays = AtomicBool::new(false);
+        let no_wait = || Wait {
+            at_most: Duration::ZERO,
+            left: &stays,
+        };
+
+        let first = wal
+            .enqueue(even(0), 0, no_wait())
+            .expect("an empty log has room");
+        // Handed to the applier: the writer has said `Logged` and is done with the answer.
+        assert_eq!(gate.handed(), EVEN as usize);
+        let answer = Arc::clone(first.outcome.as_ref().expect("a body with lines"));
+        let held = lock(&answer.progress);
+        assert_eq!(*held, Progress::Logged);
+        assert_eq!(wal.pending(), bytes_of(&even(0)));
+
+        gate.open();
+        until("the first body's bytes to leave the count", || {
+            wal.pending() == 0
+        });
+        assert_eq!(
+            *held,
+            Progress::Logged,
+            "answered before its bytes left the count"
+        );
+        assert_eq!(wal.stats().applied, EVEN);
+        let second = wal
+            .enqueue(even(1), 0, no_wait())
+            .expect("room, with the first body stored and not yet answered");
+
+        drop(held);
+        assert_eq!(first.wait(), Ok(()));
+        assert_eq!(second.wait(), Ok(()));
+        let stats = wal.stats();
+        assert_eq!((stats.queue_sheds, stats.queue_waits), (0, 0));
+        assert_eq!((stats.queue_bytes, stats.unapplied_bytes), (0, 0));
+        assert_eq!(*lock(&gate.applied), (1..=2 * EVEN).collect::<Vec<u64>>());
+    }
+
+    /// How long a body that a test expects to be woken may wait for room, and how long
+    /// the test gives it to come back. Far apart, so that the wake-up is the only way
+    /// out: a waiter also looks again when its own wait runs out, and with a short wait a
+    /// test would pass with the wake-up it is there to hold taken away.
+    const LONG_WAIT: Duration = Duration::from_secs(60);
+    const WOKEN_WITHIN: Duration = Duration::from_secs(10);
+
+    /// `enqueue` and the wait for the answer, on a thread of its own: a sender that may
+    /// wait `at_most` for room, and that has gone once `left` is set.
+    fn waiter(
+        wal: &Arc<Wal>,
+        lines: Vec<Line>,
+        at_most: Duration,
+        left: &Arc<AtomicBool>,
+    ) -> JoinHandle<Result<(), Refused>> {
+        let (wal, left) = (Arc::clone(wal), Arc::clone(left));
+        std::thread::spawn(move || {
+            let wait = Wait {
+                at_most,
+                left: &left,
+            };
+            wal.enqueue(lines, 0, wait)?.wait()
+        })
+    }
+
+    /// A flag nobody sets: a sender that stays.
+    fn staying() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    /// A log whose bound is one body, with one body written and held at the applier: no
+    /// other fits until the gate lets that one through.
+    fn full(
+        scratch: &Scratch,
+        options: Options,
+    ) -> (Arc<Wal>, Gate, JoinHandle<Result<(), Refused>>) {
+        let options = Options {
+            queue_bytes: bytes_of(&even(0)),
+            ..options
+        };
+        let (wal, gate) = gated(scratch, options);
+        let first = sender(&wal, even(0));
+        assert_eq!(gate.handed(), EVEN as usize);
+        (wal, gate, first)
+    }
+
+    /// The numbers of the lines a log holds, read back from its files.
+    fn stored(scratch: &Scratch) -> Vec<u64> {
+        let (records, _, warnings) = read_back(scratch).expect("read");
+        assert_eq!(warnings, Vec::<String>::new());
+        records.iter().map(|record| n_of(&record.4)).collect()
+    }
+
+    /// The numbers of the lines of these bodies, in order.
+    fn lines_of(bodies: &[u64]) -> Vec<u64> {
+        bodies
+            .iter()
+            .flat_map(|nth| even(*nth))
+            .map(|line| n_of(&String::from_utf8_lossy(&line.raw)))
+            .collect()
+    }
+
+    /// **A body the log has no room for waits, and is taken when there is some.** It is
+    /// not in the log while it waits - no position, no byte - and the applier storing the
+    /// body ahead of it is what wakes it.
+    #[test]
+    fn a_body_waits_for_room_and_is_taken_when_there_is_some() {
+        let scratch = Scratch::new("room-wait");
+        let (wal, mut gate, first) = full(&scratch, Options::default());
+        let second = waiter(&wal, even(1), LONG_WAIT, &staying());
+        until("the second body to wait for room", || {
+            wal.stats().queue_waiting == 1
+        });
+        assert!(!second.is_finished());
+        let stats = wal.stats();
+        assert_eq!((stats.last_seq, stats.queue_bytes), (EVEN, 0));
+
+        let began = std::time::Instant::now();
+        gate.open();
+        assert_eq!(first.join().expect("the first sender"), Ok(()));
+        assert_eq!(second.join().expect("the second sender"), Ok(()));
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "the body waiting for room was not woken by the batch that made it"
+        );
+        assert_eq!(*lock(&gate.applied), (1..=2 * EVEN).collect::<Vec<u64>>());
+        let stats = wal.stats();
+        assert_eq!(
+            (stats.queue_sheds, stats.queue_waits, stats.queue_waiting),
+            (0, 1, 0)
+        );
+        wal.close();
+        assert_eq!(stored(&scratch), lines_of(&[0, 1]));
+    }
+
+    /// **What is between the senders and the store never passes the bound, however many
+    /// senders there are, and none of them is shed for it.** Eight senders of five bodies
+    /// each against a bound of two bodies, with the applier letting one batch through at
+    /// a time: at every batch the bytes queued and the bytes written and not yet stored,
+    /// read together under the queue's lock, are within the bound.
+    #[test]
+    fn memory_stays_under_the_bound_while_senders_wait() {
+        const SENDERS: u64 = 8;
+        const BODIES: u64 = 5;
+        let scratch = Scratch::new("room-bound");
+        let bound = 2 * bytes_of(&even(0));
+        let options = Options {
+            queue_bytes: bound,
+            ..Options::default()
+        };
+        let (wal, mut gate) = gated(&scratch, options);
+        let senders: Vec<_> = (0..SENDERS)
+            .map(|sender| {
+                let wal = Arc::clone(&wal);
+                std::thread::spawn(move || {
+                    let left = AtomicBool::new(false);
+                    (0..BODIES)
+                        .map(|nth| {
+                            let wait = Wait {
+                                at_most: LONG_WAIT,
+                                left: &left,
+                            };
+                            wal.enqueue(even(sender * BODIES + nth), 0, wait)?.wait()
+                        })
+                        .collect::<Vec<Result<(), Refused>>>()
+                })
+            })
+            .collect();
+
+        let mut seen = 0;
+        while seen < SENDERS * BODIES * EVEN {
+            seen += gate.handed() as u64;
+            let pending = wal.pending();
+            assert!(
+                pending <= bound,
+                "{pending} bytes against a bound of {bound}"
+            );
+            gate.pass();
+        }
+        gate.open();
+        for sender in senders {
+            let answers = sender.join().expect("a sender");
+            assert_eq!(answers, vec![Ok(()); BODIES as usize]);
+        }
+        let stats = wal.stats();
+        assert_eq!((stats.queue_sheds, stats.queue_left), (0, 0));
+        assert!(stats.queue_peak_bytes <= bound, "{stats:?}");
+        assert_eq!((stats.queue_bytes, stats.unapplied_bytes), (0, 0));
+        wal.close();
+
+        // Every line once, whatever order the bodies went in.
+        let mut found = stored(&scratch);
+        found.sort_unstable();
+        let every: Vec<u64> = (0..SENDERS * BODIES).collect();
+        assert_eq!(found, lines_of(&every));
+    }
+
+    /// **A wait that runs out is a shed, as a full log was at once before.** The gate is
+    /// never opened while the two bodies ask, so no speed turns either into an `Ok`: the
+    /// twenty milliseconds are how long the test takes, and not a guess at anything.
+    #[test]
+    fn a_wait_that_runs_out_is_a_shed() {
+        let scratch = Scratch::new("room-shed");
+        let (wal, mut gate, first) = full(&scratch, Options::default());
+
+        assert_eq!(wal.commit(even(1), 0), Err(Refused::Busy));
+        let left = AtomicBool::new(false);
+        let wait = Wait {
+            at_most: Duration::from_millis(20),
+            left: &left,
+        };
+        assert_eq!(wal.enqueue(even(2), 0, wait).map(drop), Err(Refused::Busy));
+        let stats = wal.stats();
+        assert_eq!(
+            (stats.queue_sheds, stats.queue_waits, stats.queue_waiting),
+            (2, 1, 0)
+        );
+        assert_eq!(stats.last_seq, EVEN, "a body that was shed is in the log");
+
+        gate.open();
+        assert_eq!(first.join().expect("the first sender"), Ok(()));
+        wal.close();
+        assert_eq!(stored(&scratch), lines_of(&[0]));
+    }
+
+    /// **A log that fails tells every body waiting for room why.** Two bodies wait while
+    /// a third is with the applier; the log's directory then takes no new file. When the
+    /// first is stored, one of the two is given its room and its flush fails - and that
+    /// failure is what wakes the other, which is refused with the same reason and not
+    /// left to wait out a minute beside a log that will not write.
+    #[test]
+    #[cfg(unix)]
+    fn a_log_that_fails_tells_every_body_waiting_for_room_why() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("room-failed");
+        // A segment a frame long: the flush after the first needs a new file.
+        let (wal, mut gate, first) = full(&scratch, tiny());
+        let waiting = [
+            waiter(&wal, even(1), LONG_WAIT, &staying()),
+            waiter(&wal, even(2), LONG_WAIT, &staying()),
+        ];
+        until("both bodies to wait for room", || {
+            wal.stats().queue_waiting == 2
+        });
+        let dir = scratch.0.join(DIR);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("chmod");
+
+        let began = std::time::Instant::now();
+        gate.open();
+        let first = first.join().expect("the first sender");
+        let refused = waiting.map(|waiter| waiter.join().expect("a waiting sender"));
+        let took = began.elapsed();
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
+
+        assert_eq!(first, Ok(()));
+        let why = wal
+            .stats()
+            .last_error
+            .expect("the log says why it cannot write");
+        assert_eq!(refused, [(); 2].map(|()| Err(Refused::Cannot(why.clone()))));
+        assert!(
+            took < WOKEN_WITHIN,
+            "a body waiting for room was not woken by the flush that failed"
+        );
+        assert!(!wal.is_healthy());
+        assert_eq!(wal.stats().queue_waiting, 0);
+    }
+
+    /// **A sender that leaves gives up its wait, and nothing of its body is in the log.**
+    /// Its flag is set and the log is asked to look; it does not wait out its minute. The
+    /// body after it takes the positions it never had.
+    #[test]
+    fn a_sender_that_leaves_gives_up_its_wait() {
+        let scratch = Scratch::new("room-left");
+        let (wal, mut gate, first) = full(&scratch, Options::default());
+        let left = staying();
+        let second = waiter(&wal, even(1), LONG_WAIT, &left);
+        until("the second body to wait for room", || {
+            wal.stats().queue_waiting == 1
+        });
+
+        let began = std::time::Instant::now();
+        left.store(true, Ordering::Release);
+        wal.wake_room();
+        assert_eq!(
+            second.join().expect("the second sender"),
+            Err(Refused::Left)
+        );
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "a body whose sender had left went on waiting for room"
+        );
+        let stats = wal.stats();
+        assert_eq!(
+            (stats.queue_left, stats.queue_sheds, stats.queue_waiting),
+            (1, 0, 0)
+        );
+
+        gate.open();
+        assert_eq!(first.join().expect("the first sender"), Ok(()));
+        assert_eq!(wal.commit(even(2), 0), Ok(()));
+        assert_eq!(*lock(&gate.applied), (1..=2 * EVEN).collect::<Vec<u64>>());
+        wal.close();
+        assert_eq!(stored(&scratch), lines_of(&[0, 2]));
+    }
+
+    /// **A sender that has left is still taken when there is room.** Room is looked for
+    /// before the flag: a body whose sender hung up while it was being parsed goes into
+    /// the log whole, as it always has.
+    #[test]
+    fn a_body_whose_sender_has_left_is_taken_when_there_is_room() {
+        let scratch = Scratch::new("room-left-fits");
+        let (wal, applied) = started(&scratch, Options::default());
+        let left = AtomicBool::new(true);
+        let wait = Wait {
+            at_most: Duration::ZERO,
+            left: &left,
+        };
+        let taken = wal.enqueue(even(0), 0, wait).and_then(Ticket::wait);
+        assert_eq!(taken, Ok(()));
+        assert_eq!(lock(&applied).len() as u64, EVEN);
+        assert_eq!(wal.stats().queue_left, 0);
+    }
+
+    /// **Nobody waits for room once the log has been told to hurry.** A stop must not
+    /// take as long as the longest wait: the body waiting is shed at once, with the gate
+    /// still shut, and so is one that arrives afterwards with a minute to wait.
+    #[test]
+    fn nobody_waits_once_the_log_is_told_to_hurry() {
+        let scratch = Scratch::new("room-hurry");
+        let (wal, mut gate, first) = full(&scratch, Options::default());
+        let second = waiter(&wal, even(1), LONG_WAIT, &staying());
+        until("the second body to wait for room", || {
+            wal.stats().queue_waiting == 1
+        });
+
+        let began = std::time::Instant::now();
+        wal.hurry();
+        assert_eq!(
+            second.join().expect("the second sender"),
+            Err(Refused::Busy)
+        );
+        let third = waiter(&wal, even(2), LONG_WAIT, &staying());
+        assert_eq!(third.join().expect("the third sender"), Err(Refused::Busy));
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "a body went on waiting for room in a log told to hurry"
+        );
+        let stats = wal.stats();
+        assert_eq!(
+            (stats.queue_sheds, stats.queue_waits, stats.queue_waiting),
+            (2, 1, 0)
+        );
+        assert_eq!(stats.last_seq, EVEN);
+
+        // The body inside is finished, as a stop finishes it.
+        gate.open();
+        assert_eq!(first.join().expect("the first sender"), Ok(()));
+    }
+
+    /// **A thread of the log that dies tells the bodies waiting for room.** The applier
+    /// here dies only once the test has seen the second body waiting - were it to die
+    /// the moment it was handed the first, the second could arrive afterwards, be refused
+    /// at the door of the queue, and pass this with nobody ever having waited.
+    #[test]
+    fn a_thread_that_dies_tells_the_bodies_waiting_for_room() {
+        let scratch = Scratch::new("room-died");
+        let wal = Arc::new(Wal::create(&scratch.0).expect("create"));
+        let (said, handed) = channel::<usize>();
+        // Declared after the log, so let go first: the applier is never left held.
+        let (go, told) = channel::<()>();
+        let options = Options {
+            queue_bytes: bytes_of(&even(0)),
+            ..Options::default()
+        };
+        wal.start(
+            options,
+            Box::new(move |rows| {
+                let _ = said.send(rows.len());
+                let _ = told.recv();
+                panic!("the applier dies");
+            }),
+        )
+        .expect("start");
+
+        let first = sender(&wal, even(0));
+        let got = handed.recv_timeout(Duration::from_secs(30));
+        assert_eq!(got, Ok(EVEN as usize));
+        let second = waiter(&wal, even(1), LONG_WAIT, &staying());
+        until("the second body to wait for room", || {
+            wal.stats().queue_waiting == 1
+        });
+
+        let began = std::time::Instant::now();
+        go.send(()).expect("the applier is there");
+        let why = "a thread of the write-ahead log stopped; restart the server".to_string();
+        assert_eq!(
+            second.join().expect("the second sender"),
+            Err(Refused::Cannot(why.clone()))
+        );
+        assert!(
+            began.elapsed() < WOKEN_WITHIN,
+            "a body waiting for room was not told that the log's thread had died"
+        );
+        // Written before the applier was handed it: durable, so acknowledged.
+        assert_eq!(first.join().expect("the first sender"), Ok(()));
+        assert_eq!(wal.refusal(), Some(why));
+        assert_eq!(wal.stats().queue_waiting, 0);
     }
 }

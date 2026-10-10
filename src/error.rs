@@ -272,11 +272,18 @@ pub enum IngestError {
     #[error("the write-ahead log could not take the body: {0}")]
     Log(String),
 
-    /// More is waiting on the write-ahead log than it may hold: the disk is behind what
-    /// arrives. A shed, as the door's are - nothing of the body is in the log, and the
-    /// sender is told `503` and when to come back.
-    #[error("the write-ahead log has more waiting to be written than it may hold")]
+    /// More is waiting on the write-ahead log - to be written, or written and not yet
+    /// stored - than it may hold: the log's disk or the store is behind what arrives. A
+    /// shed, as the door's are - nothing of the body is in the log, and the sender is
+    /// told `503` and when to come back.
+    #[error("the write-ahead log has more waiting to be written or stored than it may hold")]
     Busy,
+
+    /// The body's sender hung up while the body waited for room in the write-ahead log,
+    /// and the body was let go: nothing of it is in the log, and there is nobody left to
+    /// answer. Not a shed - no sender was told to come back.
+    #[error("the body's sender left while it waited for room in the write-ahead log")]
+    Left,
 
     /// The body's lines, as log records, are more than one write of the log holds - a
     /// body is written whole. The sender's to fix, by sending less at once: a `413`.

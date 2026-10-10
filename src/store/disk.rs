@@ -1072,6 +1072,13 @@ impl DiskStore {
         self.applying.read().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Hold the log's applier still, as a replace-a-day does while it retires its day:
+    /// for a test of what waits behind a store that is slow to take rows.
+    #[cfg(test)]
+    pub(crate) fn still(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
+        self.applying.write().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// The days a replace-a-day retired under `stream`, each with the highest position
     /// retired: a replay stores no line of the day at or below it.
     pub fn replaced_days(&self, stream: u64) -> BTreeMap<i64, u64> {
