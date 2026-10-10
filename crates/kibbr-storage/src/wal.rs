@@ -232,10 +232,16 @@ fn io(path: &Path) -> impl Fn(std::io::Error) -> WalError + '_ {
     }
 }
 
-/// A line on stderr that never panics: `eprintln!` does when stderr is gone, and a panic
-/// here would end the thread every `/ingest` waits on.
+/// A line of the process's log, at `info`. Whatever writes the event out must not panic
+/// when stderr is gone, as `eprintln!` does - the binary's subscriber drops the line
+/// instead (`kibbr::logs`): a panic here would end the thread every `/ingest` waits on.
 fn say(message: &str) {
-    let _ = writeln!(std::io::stderr().lock(), "kibbr: {message}");
+    tracing::info!("{message}");
+}
+
+/// The log cannot write: an `error` event, `ERROR` before the sentence as text.
+fn fail(message: &str) {
+    tracing::error!("{message}");
 }
 
 /// Take a lock, recovering from a poisoning: what these guard is changed in steps that do
@@ -1067,8 +1073,8 @@ impl Wal {
         if let Err(e) = log.ensure(next_seq) {
             let why = e.to_string();
             self.shared.cannot(&why);
-            say(&format!(
-                "ERROR write-ahead log - {why}; /ingest answers 503 until it can write"
+            fail(&format!(
+                "write-ahead log - {why}; /ingest answers 503 until it can write"
             ));
         }
         lock(&self.shared.queue).limit = options.queue_bytes.max(1);
@@ -1974,8 +1980,8 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
                 // Said last, and once the lock is let go: a stderr that will not take the
                 // line delays the line, and not a `503` or the reason in it.
                 if first {
-                    say(&format!(
-                        "ERROR write-ahead log - {why}; /ingest answers 503 until it can \
+                    fail(&format!(
+                        "write-ahead log - {why}; /ingest answers 503 until it can \
                          write again"
                     ));
                 }

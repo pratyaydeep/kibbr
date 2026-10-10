@@ -1,5 +1,5 @@
 //! What an operator reaches for: the settings file, the two commands that ask a running
-//! server about itself, and the deadline on a stop.
+//! server about itself, the log's two formats, and the deadline on a stop.
 //!
 //! All of it from outside, as the other files here: the binary's flags, its stdout and
 //! stderr, its exit code, and HTTP over a bare `TcpStream`. The arithmetic of where a
@@ -106,8 +106,8 @@ impl Server {
                 let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
                 port = digits.parse().ok();
             }
-            // The banner's last line.
-            if line.contains("shutdown ") {
+            // The banner's last line as text, and its only line as JSON.
+            if line.contains("shutdown ") || line.starts_with('{') {
                 break;
             }
         }
@@ -243,7 +243,7 @@ fn timeless(out: &[u8]) -> String {
 fn every_command_takes_config_and_a_file_it_cannot_use_stops_it() {
     let scratch = Scratch::new("every-command");
     let bad = scratch.file("bad.toml", "[storage]\nwal_dir = \"/var/lib/kibbr/wal\"\n");
-    let good = scratch.file("good.toml", "# every key absent\n[query]\n[schema]\n");
+    let good = scratch.file("good.toml", "# every key absent\n[query]\n[log]\n");
     let input = scratch.file("in.ndjson", "{\"ts\":\"2024-01-15T10:00:00Z\",\"a\":1}\n");
     let data = scratch.path("data");
     let commands: Vec<Vec<&str>> = vec![
@@ -502,6 +502,155 @@ fn templates_and_stats_ask_the_running_server() {
             "{said}"
         );
     }
+}
+
+// ── The log ────────────────────────────────────────────────────────────────────────
+
+/// **With `--log-format json` every line a server writes to stderr is one JSON object** -
+/// when, how loud, from where, the sentence - from the line that says where it listens to
+/// `exit 0`; **and as text the lines are the ones they always were.**
+#[test]
+fn a_server_logs_an_object_a_line_as_json_and_its_old_lines_as_text() {
+    let server = Server::start(
+        &["--log-format", "json", "--log-level", "debug"],
+        &["--storage", "memory"],
+        &[],
+    );
+    assert_eq!(server.get("/health").0, 200);
+    let (code, said) = server.stop(Duration::from_secs(20));
+    assert_eq!(code, Some(0), "{said}");
+    let lines: Vec<Value> = said.lines().map(json).collect();
+    assert!(lines.len() >= 6, "{said}");
+    for line in &lines {
+        let keys: Vec<&String> = line.as_object().expect("an object").keys().collect();
+        assert_eq!(keys[..4], ["ts", "level", "target", "msg"], "{line}");
+        assert!(line["target"]
+            .as_str()
+            .is_some_and(|t| t.starts_with("kibbr")));
+        let ts = line["ts"].as_str().expect("ts");
+        assert!(chrono::DateTime::parse_from_rfc3339(ts).is_ok(), "{ts}");
+    }
+    // Memory storage is said as a warning of its own, since there is no paragraph.
+    assert_eq!(lines[0]["level"], "warn", "{said}");
+    assert!(lines[0]["msg"]
+        .as_str()
+        .is_some_and(|m| m.contains("in memory")));
+    assert!(lines
+        .iter()
+        .any(|l| l["msg"] == "SIGTERM received - shutting down"));
+    let last = lines.last().expect("a last line");
+    assert_eq!(
+        (&last["level"], &last["msg"]),
+        (&json("\"info\""), &json("\"exit 0\""))
+    );
+    // At `debug` a request is a line, and what it was is in fields and not only in the
+    // sentence.
+    let asked: Vec<&Value> = lines.iter().filter(|l| l["level"] == "debug").collect();
+    assert_eq!(asked.len(), 1, "{said}");
+    assert_eq!(asked[0]["msg"], "GET /health - 200");
+    assert_eq!(
+        (&asked[0]["method"], &asked[0]["path"], &asked[0]["status"]),
+        (&json("\"GET\""), &json("\"/health\""), &json("200"))
+    );
+    assert!(asked[0]["micros"].is_u64(), "{}", asked[0]);
+
+    // The variable and the file say it as the flag does, and a level leaves out what is
+    // quieter than it: at `warn` a clean stop says nothing at all.
+    let scratch = Scratch::new("log");
+    let config = scratch.file("kibbr.toml", "[log]\nformat = \"json\"\nlevel = \"warn\"\n");
+    let server = Server::start(
+        &["--config", &config, "--log-level", "info"],
+        &["--storage", "memory"],
+        &[],
+    );
+    let (code, said) = server.stop(Duration::from_secs(20));
+    assert_eq!(code, Some(0));
+    assert!(said.lines().all(|line| line.starts_with('{')), "{said}");
+    assert!(said.contains("\"msg\":\"exit 0\""), "{said}");
+
+    // As text: the banner, and `kibbr: ` before each sentence.
+    let server = Server::start(&[], &["--storage", "memory"], &[]);
+    let (code, said) = server.stop(Duration::from_secs(20));
+    assert_eq!(code, Some(0));
+    let logged: Vec<&str> = said.lines().filter(|l| l.starts_with("kibbr: ")).collect();
+    assert_eq!(
+        logged.first(),
+        Some(&"kibbr: SIGTERM received - shutting down")
+    );
+    assert_eq!(logged.last(), Some(&"kibbr: exit 0"));
+    assert!(!said.contains('{'), "{said}");
+
+    // As text at `error`: the banner still, and not one line of log.
+    let server = Server::start(
+        &[],
+        &["--storage", "memory"],
+        &[("KIBBR__LOG__LEVEL", "error")],
+    );
+    let (code, said) = server.stop(Duration::from_secs(20));
+    assert_eq!(code, Some(0));
+    assert!(!said.contains("kibbr: "), "{said}");
+}
+
+/// **What a command prints on stdout is the same bytes whatever the log is set to**, and
+/// what ends a command is one object on stderr when the log is JSON - the sentence it
+/// always was when it is text.
+#[test]
+fn a_commands_output_does_not_change_with_the_log() {
+    let scratch = Scratch::new("stdout");
+    let input = scratch.file(
+        "in.ndjson",
+        "{\"ts\":\"2024-01-15T10:00:00Z\",\"event\":\"login\",\"user\":7}\n\
+         {\"ts\":\"2024-01-15T10:00:01Z\",\"event\":\"login\",\"user\":\"u8\"}\nnot json\n",
+    );
+    let commands: Vec<Vec<&str>> = vec![
+        vec!["gen-logs", "--lines", "20", "--seed", "7"],
+        vec!["gen-logs", "--profile", "farm", "--lines", "20"],
+        vec!["parse", &input, "--json"],
+        vec!["parse", &input],
+        vec!["query", &input, "--count", "--match", "event=login"],
+        vec!["query", &input, "--explain", "--match", "event=login"],
+        vec![
+            "query",
+            &input,
+            "COUNT LOG {\"event\": \"login\"}",
+            "--format",
+            "json",
+        ],
+        vec!["explain", "COUNT LOG {\"event\": \"login\"} SINCE 1h"],
+    ];
+    for command in &commands {
+        let plain = run(command);
+        for flags in [
+            ["--log-format", "json", "--log-level", "trace"],
+            ["--log-format", "text", "--log-level", "error"],
+        ] {
+            let mut args: Vec<&str> = flags.to_vec();
+            args.extend(command);
+            let set = run(&args);
+            assert_eq!(plain.status.code(), set.status.code(), "{args:?}");
+            assert_eq!(timeless(&plain.stdout), timeless(&set.stdout), "{args:?}");
+            assert!(
+                !plain.stdout.is_empty(),
+                "{command:?} printed nothing to compare"
+            );
+        }
+    }
+
+    // What ends a command, in each format.
+    let gone = scratch.path("gone.ndjson");
+    let out = run(&["query", &gone, "--count"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).starts_with(&format!("kibbr: reading {gone}: ")));
+    let out = run(&["--log-format", "json", "query", &gone, "--count"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    let said = text(&out.stderr);
+    assert_eq!(said.lines().count(), 1, "{said}");
+    let line = json(said.trim());
+    assert_eq!(line["level"], "error");
+    assert!(line["msg"]
+        .as_str()
+        .is_some_and(|m| m.starts_with(&format!("reading {gone}: "))));
 }
 
 // ── The shutdown deadline ──────────────────────────────────────────────────────────

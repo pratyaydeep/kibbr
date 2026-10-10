@@ -26,7 +26,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::future::IntoFuture;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -552,8 +552,8 @@ fn restore(storage: &Storage, schema: &Schema, apply: bool) -> Result<Restored, 
         .collect();
     let orphans = claimed.iter().filter(|id| !known.contains(id)).count();
     if orphans > 0 {
-        log(&format!(
-            "WARN storage - {} template id(s) with rows on disk that no template \
+        log_warn(&format!(
+            "storage - {} template id(s) with rows on disk that no template \
              refers to; those rows are not queryable, and new templates take \
              fresh ids rather than reusing them",
             commas(orphans as u64)
@@ -566,7 +566,7 @@ fn restore(storage: &Storage, schema: &Schema, apply: bool) -> Result<Restored, 
         });
         if let Some((id, time_column)) = placed {
             if let Err(e) = stores.open_existing(id, &time_column) {
-                log(&format!("WARN leaf {id} - {}", error::chain(&e)));
+                log_warn(&format!("leaf {id} - {}", error::chain(&e)));
             }
         }
     }
@@ -574,7 +574,7 @@ fn restore(storage: &Storage, schema: &Schema, apply: bool) -> Result<Restored, 
     // Last, once every template has its leaf and every row group is in one: the log is
     // held against them.
     let held = Held::new();
-    let wal = Wal::open(&base, &mut |m| log(&format!("WARN wal - {m}")))?;
+    let wal = Wal::open(&base, &mut |m| log_warn(&format!("wal - {m}")))?;
     let replayed = match &wal {
         Some(wal) => replay(&trie, &stores, wal, &held, apply)?,
         None => Replayed::default(),
@@ -655,7 +655,7 @@ fn replay(
     };
     let stream = wal.stream();
     disk.attach_wal(stream, wal.checkpoint());
-    let mut warn = |m: String| log(&format!("WARN wal - {m}"));
+    let mut warn = |m: String| log_warn(&format!("wal - {m}"));
     if !apply {
         // Read for where the log ends, for the template ids it names - none of which
         // this command may hand to a template of its own making - and for the day each
@@ -815,19 +815,19 @@ fn replay(
 
     let stays = "it and any like it stay in the log, and the checkpoint behind them";
     if let Some((seq, template_id)) = unknown {
-        log(&format!(
-            "WARN wal - position {seq} names template {template_id}, which catalog.log does \
+        log_warn(&format!(
+            "wal - position {seq} names template {template_id}, which catalog.log does \
              not define; {stays}"
         ));
     }
     if let Some((seq, why)) = unreadable {
-        log(&format!(
-            "WARN wal - the line at position {seq} no longer parses ({why}); {stays}"
+        log_warn(&format!(
+            "wal - the line at position {seq} no longer parses ({why}); {stays}"
         ));
     }
     if let Some((seq, was, now)) = moved {
-        log(&format!(
-            "WARN wal - the line at position {seq} was stored under {} and now reads as {}: \
+        log_warn(&format!(
+            "wal - the line at position {seq} was stored under {} and now reads as {}: \
              the epoch window or the build differs from the one that logged it. {stays} - \
              start once under the settings it was logged with",
             rfc3339_nanos(was),
@@ -835,8 +835,8 @@ fn replay(
         ));
     }
     if let Some((seq, why)) = damaged {
-        log(&format!(
-            "WARN wal - whether a row group holds the line at position {seq} cannot be \
+        log_warn(&format!(
+            "wal - whether a row group holds the line at position {seq} cannot be \
              read ({why}); {stays}"
         ));
     }
@@ -932,8 +932,8 @@ impl Held {
             .unwrap_or_else(|e| e.into_inner())
             .insert(template_id);
         if first {
-            log(&format!(
-                "ERROR store - {why}; the line was acknowledged and is {}",
+            log_error(&format!(
+                "store - {why}; the line was acknowledged and is {}",
                 if position > 0 {
                     format!(
                         "in the write-ahead log at position {position}: its row, and every \
@@ -1018,7 +1018,7 @@ fn open_catalog(
 ) -> Result<Trie, ServeError> {
     let path = kibbr_storage::catalog::path_in(base);
     let existed = path.exists();
-    let mut warn = |message: String| log(&format!("WARN catalog.log - {message}"));
+    let mut warn = |message: String| log_warn(&format!("catalog.log - {message}"));
     fn storage_error(e: &(dyn std::error::Error + 'static)) -> ServeError {
         ServeError::Storage {
             detail: error::chain(e),
@@ -1035,9 +1035,11 @@ fn open_catalog(
                     kibbr_storage::triefile::load_reporting(snapshot, data_dir);
                 match failure {
                     Some(e) => {
-                        log(&format!("WARN trie.json - {}", error::chain(&e)));
-                        log("WARN trie.json - starting with an empty trie; templates \
-                             are relearned from the next lines ingested");
+                        log_warn(&format!("trie.json - {}", error::chain(&e)));
+                        log_warn(
+                            "trie.json - starting with an empty trie; templates \
+                             are relearned from the next lines ingested",
+                        );
                     }
                     None => {
                         let migrated = from_snapshot.catalog_records();
@@ -2859,20 +2861,20 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
                 jobs.note(planned, result);
                 jobs.wait(planned, every).filter(|_| scheduled)
             };
-            log(&match result {
-                Ok(done) => format!("compaction job {id} - {}", compact::line(done)),
+            match result {
+                Ok(done) => log(&format!("compaction job {id} - {}", compact::line(done))),
                 Err(e @ (StoreError::Cancelled { .. } | StoreError::InputsChanged { .. })) => {
-                    format!("compaction job {id} - {}", error::chain(e))
+                    log(&format!("compaction job {id} - {}", error::chain(e)))
                 }
-                Err(e) => format!(
-                    "WARN compaction job {id} - {}{}",
+                Err(e) => log_warn(&format!(
+                    "compaction job {id} - {}{}",
                     error::chain(e),
                     wait.map_or_else(String::new, |left| format!(
                         "; the day is left for {}s, unless its files change first",
                         left.as_secs().max(1)
                     ))
-                ),
-            });
+                )),
+            }
         })
     }));
     let state = match result {
@@ -2892,7 +2894,7 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
         Err(_) => {
             let why = "the compaction failed on a bug in this build (a panic); a file it wrote \
                        and had not named is removed by the next start";
-            log(&format!("WARN compaction job {id} - {why}"));
+            log_warn(&format!("compaction job {id} - {why}"));
             // The day it was on, remembered as failed: a look every interval would
             // otherwise walk into the same panic every interval.
             if let Some(planned) = days.get(noted) {
@@ -2981,9 +2983,7 @@ fn look_for_due_days(server: &Arc<Server>) {
         .spawn(move || compaction(&held, None, load::server_threads(), None));
     match spawned {
         Ok(handle) => jobs.scheduled = Some(handle),
-        Err(e) => log(&format!(
-            "WARN compaction - starting the look for due days: {e}"
-        )),
+        Err(e) => log_warn(&format!("compaction - starting the look for due days: {e}")),
     }
 }
 
@@ -3338,16 +3338,38 @@ fn fail(status: StatusCode, message: &str) -> Response {
 /// task is off this future and is waited for by the wind-down - so its sender is told
 /// 503 for lines that are stored, and sending them again stores them twice: what any
 /// answer lost on the way has always cost, and why the deadline is long.
+///
+/// At `debug` each request is a line of the log when it is answered: its method, its
+/// path, the status and how long it took. Asked for before the request is handed on,
+/// and only then - at any other level a request costs this nothing but the question.
 async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {
     let _guard = InFlight::enter(&server);
-    tokio::select! {
+    let noted = tracing::enabled!(tracing::Level::DEBUG).then(|| {
+        (
+            request.method().clone(),
+            request.uri().path().to_string(),
+            Instant::now(),
+        )
+    });
+    let answer = tokio::select! {
         answer = next.run(request) => answer,
         () = server.cut_off.cancelled() => fail(
             StatusCode::SERVICE_UNAVAILABLE,
             "the server is stopping, and its shutdown deadline passed before this request \
              was answered",
         ),
+    };
+    if let Some((method, path, since)) = noted {
+        let status = answer.status().as_u16();
+        tracing::debug!(
+            method = %method,
+            path = %path,
+            status,
+            micros = since.elapsed().as_micros() as u64,
+            "{method} {path} - {status}"
+        );
     }
+    answer
 }
 
 /// `Connection: close` on every answer after which this server closes the connection
@@ -3586,8 +3608,8 @@ async fn serve(
         };
         let holder = crate::lock::Holder::server(Some(reach.to_string()), load_token);
         if let Err(e) = lock.announce(&holder) {
-            log(&format!(
-                "WARN {e}; `kibbr load` and `kibbr compact` will not find this server"
+            log_warn(&format!(
+                "{e}; `kibbr load` and `kibbr compact` will not find this server"
             ));
         }
     }
@@ -3654,8 +3676,8 @@ async fn serve(
     // for the process's exit to close.
     let cut = left.is_some();
     if let Some(left) = left {
-        log(&format!(
-            "WARN shutdown deadline - {left} request(s) still in flight after {}; each is \
+        log_warn(&format!(
+            "shutdown deadline - {left} request(s) still in flight after {}; each is \
              answered 503 and let go",
             crate::config::duration_words(server.api.shutdown_deadline.unwrap_or_default())
         ));
@@ -3663,7 +3685,7 @@ async fn serve(
         match tokio::time::timeout(CUT_OFF_GRACE, &mut serving).await {
             Ok(served) => served.map_err(ServeError::Serve)?,
             Err(_) => {
-                log("WARN shutdown deadline - a connection did not take its answer; left open")
+                log_warn("shutdown deadline - a connection did not take its answer; left open")
             }
         }
     }
@@ -3747,8 +3769,8 @@ async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
         match flushed {
             Ok(summary) => {
                 if summary.failed > 0 {
-                    log(&format!(
-                        "WARN flush - {} leaf/leaves could not be written; their rows stay \
+                    log_warn(&format!(
+                        "flush - {} leaf/leaves could not be written; their rows stay \
                          buffered and the next tick retries",
                         summary.failed
                     ));
@@ -3756,23 +3778,23 @@ async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
                 if (summary.forced > 0) != forcing {
                     forcing = summary.forced > 0;
                     let (_, limit) = server.stores.buffer_bytes();
-                    log(&if forcing {
-                        format!(
-                            "WARN buffers - past the {} byte limit; closing the largest early \
+                    if forcing {
+                        log_warn(&format!(
+                            "buffers - past the {} byte limit; closing the largest early \
                              ({} this flush), which makes small row groups",
                             commas(limit),
                             summary.forced
-                        )
+                        ));
                     } else {
-                        format!(
+                        log(&format!(
                             "buffers - back under the {} byte limit; {} closed early in all",
                             commas(limit),
                             commas(server.stores.forced_closes())
-                        )
-                    });
+                        ));
+                    }
                 }
             }
-            Err(join) => log(&format!("WARN flush task failed: {join}")),
+            Err(join) => log_warn(&format!("flush task failed: {join}")),
         }
     }
 }
@@ -3805,8 +3827,8 @@ fn move_checkpoint(server: &Server) -> Option<wal::Advanced> {
         // of the log, or finds a segment this could not delete and deletes it.
         Some(e) => {
             if !server.checkpoint_failing.swap(true, Ordering::Relaxed) {
-                log(&format!(
-                    "WARN wal - the checkpoint moved and could not be kept: {e}"
+                log_warn(&format!(
+                    "wal - the checkpoint moved and could not be kept: {e}"
                 ));
             }
         }
@@ -3943,7 +3965,7 @@ fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), ServeError> {
             )),
             // Not a reason to fail the exit. Nothing loads the snapshot while the catalog
             // exists: it is there for a human to read.
-            Err(e) => log(&format!("WARN trie.json - {}", error::chain(&e))),
+            Err(e) => log_warn(&format!("trie.json - {}", error::chain(&e))),
         },
         None => log("trie.json - skipped, storage is memory"),
     }
@@ -4055,8 +4077,33 @@ fn ingest_line(server: &Server) -> String {
 /// about losing data. A warning a redirect can silence is a warning that will be silenced
 /// by the first person who pipes the process into a log file, and this is something to
 /// say rather than hide.
+///
+/// **As JSON it is one event and not a paragraph**: a collector reading an object a line
+/// is given the address and the settings an alert would be written on as fields, and
+/// the one sentence that must not be lost - storage in memory - as a warning of its own.
 fn banner(addr: SocketAddr, server: &Server) {
     let limits = server.limits;
+    if crate::logs::json() {
+        let data_dir = server.storage.base_path.as_ref();
+        tracing::info!(
+            addr = %addr,
+            storage = if data_dir.is_some() { "disk" } else { "memory" },
+            data_dir = %data_dir.map_or_else(String::new, |path| path.display().to_string()),
+            max_rows = limits.max_rows,
+            ingest_concurrency = server.api.ingest_concurrency,
+            ingest_wait_ms = server.api.ingest_wait.as_millis() as u64,
+            shutdown_deadline_ms =
+                server.api.shutdown_deadline.map_or(0, |d| d.as_millis() as u64),
+            scan_threads = server.storage.scan_threads,
+            "listening on http://{addr}"
+        );
+        if data_dir.is_none() {
+            tracing::warn!(
+                "storage is in memory: everything ingested is lost when this process exits"
+            );
+        }
+        return;
+    }
     let lines = [
         String::new(),
         "kibbr serve".to_string(),
@@ -4169,21 +4216,33 @@ fn banner(addr: SocketAddr, server: &Server) {
     eprintln!("{}", lines.join("\n"));
 }
 
-/// One lifecycle line. stderr for the reason the banner is there - these are logs, and
-/// this surface's data goes out over HTTP.
+/// One lifecycle line: an `info` event of the process's log. stderr for the reason the
+/// banner is there - these are logs, and this surface's data goes out over HTTP.
 ///
-/// **A line that cannot be written is dropped, as `error::report` drops one.** `eprintln!`
-/// panics when stderr is gone - the log collector at the other end of the pipe went
-/// away - and this is called from the flush task and from the threads a load and a
-/// compaction run on: the panic would end the work for want of somewhere to say it was
-/// being done.
+/// **A line that cannot be written is dropped, as `error::report` drops one**
+/// (`logs::write`). `eprintln!` panics when stderr is gone - the log collector at the
+/// other end of the pipe went away - and this is called from the flush task and from
+/// the threads a load and a compaction run on: the panic would end the work for want of
+/// somewhere to say it was being done.
 fn log(message: &str) {
-    let _ = writeln!(std::io::stderr().lock(), "kibbr: {message}");
+    tracing::info!("{message}");
+}
+
+/// A line an operator should read: something was skipped, delayed or left as it was.
+/// As text it is `log`'s line with `WARN` before the sentence, as it always was.
+fn log_warn(message: &str) {
+    tracing::warn!("{message}");
+}
+
+/// A line that says the server cannot do what it is for. `ERROR` before the sentence.
+fn log_error(message: &str) {
+    tracing::error!("{message}");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     /// A server over a store in memory: the job registries and the shutdown steps are the
     /// same, and nothing is opened.

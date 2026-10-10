@@ -16,6 +16,7 @@ pub mod gen;
 pub mod http;
 pub mod load;
 pub mod lock;
+pub mod logs;
 pub mod parse;
 pub mod query;
 pub mod reference;

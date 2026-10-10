@@ -1043,8 +1043,8 @@ impl Trie {
                 if time_source == TimeSource::Arrival {
                     // One WARN per template, naming the keys an operator could add to
                     // `time_columns` to give it a time of its own.
-                    eprintln!(
-                        "kibbr: WARN template {template_id} has no time column among \
+                    tracing::warn!(
+                        "template {template_id} has no time column among \
                          [{}]; its rows take their arrival time. Datetime-typed keys: {}",
                         self.time_columns.join(", "),
                         datetime_keys(columns.iter().map(|c| (c.name.as_str(), c.col_type)))
@@ -1086,8 +1086,8 @@ impl Trie {
                                 // `None ⊔ T` is a column learning its first type, not a
                                 // widening, and is not warned about.
                                 if let (Some(from), Some(to)) = (col.col_type, joined) {
-                                    eprintln!(
-                                        "kibbr: WARN template {} column `{key}` widened \
+                                    tracing::warn!(
+                                        "template {} column `{key}` widened \
                                          from {} to {} on value `{}`",
                                         meta.template_id,
                                         from.as_str(),

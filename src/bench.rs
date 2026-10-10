@@ -300,7 +300,7 @@ fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), Loa
     if !args.keep {
         let _ = fs::remove_dir_all(&scratch);
     } else if ours {
-        eprintln!("kibbr: kept {}", scratch.display());
+        tracing::info!("kept {}", scratch.display());
     }
     result
 }

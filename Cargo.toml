@@ -63,6 +63,10 @@ thiserror = "2"
 # The settings file, `--config`: parsed into the same structs the flags and variables
 # fill (src/config.rs). The parser and serde only - nothing here writes TOML.
 toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"] }
+# The process's own log: every lifecycle line, warning and error is a `tracing` event,
+# and one subscriber in the binary (src/logs.rs) writes each as a line of text or of
+# JSON. The macros and the core only - no attribute macro, so no syn in the build.
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 tokio-util = "0.7.19"
 # zstd, for the bulk door's zstd inputs and `bench-storage`'s zstd -19, and for the
@@ -97,6 +101,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
+tracing.workspace = true
 tokio-util.workspace = true
 zstd.workspace = true
 

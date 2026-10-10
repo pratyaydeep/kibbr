@@ -146,6 +146,8 @@ const INGEST_CONCURRENCY_ENV: &str = "KIBBR__API__INGEST_CONCURRENCY";
 const INGEST_WAIT_ENV: &str = "KIBBR__API__INGEST_WAIT_MS";
 const NATIVE_ADDR_ENV: &str = "KIBBR__API__NATIVE_ADDR";
 const SHUTDOWN_DEADLINE_ENV: &str = "KIBBR__API__SHUTDOWN_DEADLINE";
+const LOG_LEVEL_ENV: &str = "KIBBR__LOG__LEVEL";
+const LOG_FORMAT_ENV: &str = "KIBBR__LOG__FORMAT";
 const BASE_PATH_ENV: &str = "KIBBR__STORAGE__BASE_PATH";
 const TRIE_FILE_ENV: &str = "KIBBR__STORAGE__TRIE_FILE";
 const FLUSH_INTERVAL_ENV: &str = "KIBBR__INGESTOR__FLUSH_INTERVAL_MS";
@@ -288,9 +290,9 @@ pub enum ConfigError {
     #[error("--config {path}: {detail}")]
     FileSyntax { path: String, detail: String },
 
-    /// A setting that is not a whole number - an address, a duration - and could not be
-    /// read as what it is. `name` is where it was written: the variable, or the file's
-    /// section and key.
+    /// A setting that is not a whole number - an address, a duration, a log level - and
+    /// could not be read as what it is. `name` is where it was written: the variable, or
+    /// the file's section and key.
     #[error("{name} `{value}`: {reason}")]
     BadSetting {
         name: String,
@@ -328,6 +330,8 @@ pub struct File {
     pub query: QueryKeys,
     #[serde(default)]
     pub schema: SchemaKeys,
+    #[serde(default)]
+    pub log: LogKeys,
 }
 
 /// `[storage]`: where rows go and what the files and the log are held to.
@@ -386,6 +390,14 @@ pub struct SchemaKeys {
     pub time_columns: Option<Vec<String>>,
     /// Two RFC 3339 instants, start before end.
     pub epoch_window: Option<Vec<String>>,
+}
+
+/// `[log]`: kibbr's own log, not the logs it stores.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogKeys {
+    pub level: Option<String>,
+    pub format: Option<String>,
 }
 
 impl File {
@@ -498,6 +510,89 @@ pub fn listen(
             .unwrap_or_else(|| DEFAULT_HOST.to_string()),
         port.or(addr_port).unwrap_or(DEFAULT_PORT),
     ))
+}
+
+/// How loud kibbr's own log is. The levels are `tracing`'s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+/// How a log line is written: a line of text for a person at a terminal, or one JSON
+/// object a line for whatever collects a container's stderr.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum LogFormat {
+    Text,
+    Json,
+}
+
+/// `[log]`, resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Log {
+    pub level: LogLevel,
+    pub format: LogFormat,
+}
+
+impl Default for Log {
+    /// `info`, as text. Text and not JSON by default, where the design's sample file
+    /// says `json`: the lines a terminal, the scripts and `kibbr bench` read off a
+    /// server's stderr are the text ones, and a container says `format = "json"` once.
+    fn default() -> Self {
+        Self {
+            level: LogLevel::Info,
+            format: LogFormat::Text,
+        }
+    }
+}
+
+/// The log's settings: `--log-level` and `--log-format`, each over its variable, over
+/// `[log]`, over `info` and `text`.
+pub fn log(
+    file: &File,
+    level: Option<LogLevel>,
+    format: Option<LogFormat>,
+) -> Result<Log, ConfigError> {
+    fn named<T: clap::ValueEnum>(
+        var: &'static str,
+        file: Option<&String>,
+        key: &'static str,
+    ) -> Result<Option<T>, ConfigError> {
+        let Some((name, value)) = text_setting(None, var, file, key) else {
+            return Ok(None);
+        };
+        match T::from_str(value.trim(), true) {
+            Ok(read) => Ok(Some(read)),
+            Err(_) => {
+                let known: Vec<String> = T::value_variants()
+                    .iter()
+                    .filter_map(|v| v.to_possible_value())
+                    .map(|v| v.get_name().to_string())
+                    .collect();
+                Err(ConfigError::BadSetting {
+                    name,
+                    value,
+                    reason: format!("expected one of {}", known.join(", ")),
+                })
+            }
+        }
+    }
+    let default = Log::default();
+    let level = match level {
+        Some(level) => level,
+        None => {
+            named(LOG_LEVEL_ENV, file.log.level.as_ref(), "[log] level")?.unwrap_or(default.level)
+        }
+    };
+    let format = match format {
+        Some(format) => format,
+        None => named(LOG_FORMAT_ENV, file.log.format.as_ref(), "[log] format")?
+            .unwrap_or(default.format),
+    };
+    Ok(Log { level, format })
 }
 
 /// Which key names may carry a template's time: flag > environment > file > default.
@@ -1392,6 +1487,8 @@ mod tests {
         SCAN_FAN_ROWS_ENV,
         TIME_COLUMNS_ENV,
         EPOCH_WINDOW_ENV,
+        LOG_LEVEL_ENV,
+        LOG_FORMAT_ENV,
     ];
 
     /// **A setting is the flag, or else the variable, or else the file, or else the
@@ -1476,6 +1573,9 @@ scan_fan_rows = 99
 time_columns = ["when", "ts"]
 epoch_window = ["2001-01-01T00:00:00Z", "2002-01-01T00:00:00Z"]
 
+[log]
+level = "warn"
+format = "json"
 "#,
             base = dir.display()
         );
@@ -1528,6 +1628,21 @@ epoch_window = ["2001-01-01T00:00:00Z", "2002-01-01T00:00:00Z"]
         assert_eq!(schema(&file, None).time_columns, ["when", "ts"]);
         let window = epoch_window(&file).expect("a window");
         assert!(format!("{window:?}") != format!("{:?}", EpochWindow::default()));
+
+        assert_eq!(
+            log(&file, None, None).expect("the log settings"),
+            Log {
+                level: LogLevel::Warn,
+                format: LogFormat::Json
+            }
+        );
+        assert_eq!(
+            log(&file, Some(LogLevel::Debug), Some(LogFormat::Text)).expect("the flags"),
+            Log {
+                level: LogLevel::Debug,
+                format: LogFormat::Text
+            }
+        );
     }
 
     /// **A key this build has no setting for is refused, by name and by line** - a key
@@ -1668,16 +1783,17 @@ epoch_window = ["2001-01-01T00:00:00Z", "2002-01-01T00:00:00Z"]
         );
     }
 
-    /// **An address that cannot be read is an error that names where it was written and
-    /// what it may be.**
+    /// **An address or a log setting that cannot be read is an error that names where it
+    /// was written and what it may be.**
     #[test]
-    fn an_address_that_cannot_be_read_says_where_it_was_written() {
-        let _cleared = Cleared::of(&[NATIVE_ADDR_ENV]);
+    fn an_address_or_a_log_setting_that_cannot_be_read_says_where_it_was_written() {
+        let _cleared = Cleared::of(&[NATIVE_ADDR_ENV, LOG_LEVEL_ENV, LOG_FORMAT_ENV]);
         let none = File::default();
         assert_eq!(
             listen(&none, None, None).expect("defaults"),
             ("127.0.0.1".to_string(), DEFAULT_PORT)
         );
+        assert_eq!(log(&none, None, None).expect("defaults"), Log::default());
 
         for text in [
             "localhost",
@@ -1705,5 +1821,26 @@ epoch_window = ["2001-01-01T00:00:00Z", "2002-01-01T00:00:00Z"]
             ("[::1]".to_string(), 7800)
         );
         std::env::remove_var(NATIVE_ADDR_ENV);
+
+        std::env::set_var(LOG_LEVEL_ENV, "loud");
+        let Err(e) = log(&none, None, None) else {
+            panic!("`loud` was read");
+        };
+        assert_eq!(
+            e.to_string(),
+            "KIBBR__LOG__LEVEL `loud`: expected one of trace, debug, info, warn, error"
+        );
+        // The flag is not refused for a variable it overrides.
+        assert_eq!(
+            log(&none, Some(LogLevel::Error), None)
+                .expect("the flag")
+                .level,
+            LogLevel::Error
+        );
+        std::env::set_var(LOG_LEVEL_ENV, "DEBUG");
+        assert_eq!(
+            log(&none, None, None).expect("any case").level,
+            LogLevel::Debug
+        );
     }
 }

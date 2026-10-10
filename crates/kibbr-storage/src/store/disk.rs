@@ -94,7 +94,7 @@ pub const STAGING_DIR: &str = "staging";
 pub const DEFAULT_SEGMENT_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
 fn warn(message: String) {
-    eprintln!("kibbr: WARN {message}");
+    tracing::warn!("{message}");
 }
 
 // ── Names ──────────────────────────────────────────────────────────────────────────

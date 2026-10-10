@@ -128,8 +128,8 @@ impl Fan {
                     .thread_name(|n| format!("kibbr-scan-{n}"))
                     .build()
                     .map_err(|e| {
-                        eprintln!(
-                            "kibbr: WARN the scan pool could not start its {} thread(s): {e}; \
+                        tracing::warn!(
+                            "the scan pool could not start its {} thread(s): {e}; \
                              every query chooses its rows on its own thread",
                             self.helpers
                         );

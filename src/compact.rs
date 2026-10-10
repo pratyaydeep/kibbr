@@ -336,8 +336,8 @@ fn client(
     out: &mut dyn io::Write,
 ) -> Result<(), CompactError> {
     if args.segment_max_bytes.is_some() {
-        eprintln!(
-            "kibbr: WARN --segment-max-bytes is ignored: the server at {address} holds this \
+        tracing::warn!(
+            "--segment-max-bytes is ignored: the server at {address} holds this \
              data directory, and a file is sealed at the server's own size"
         );
     }

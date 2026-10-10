@@ -2088,8 +2088,8 @@ fn client(
     out: &mut dyn io::Write,
 ) -> Result<(), LoadError> {
     if args.time_columns.is_some() {
-        eprintln!(
-            "kibbr: WARN --time-columns is ignored: the server at {address} holds this data \
+        tracing::warn!(
+            "--time-columns is ignored: the server at {address} holds this data \
              directory, and a template's time source is chosen by the server's own list"
         );
     }

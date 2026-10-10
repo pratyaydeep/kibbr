@@ -677,6 +677,10 @@ scan_fan_rows = 32768               # --scan-fan-rows
 time_columns = ["@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix",
                 "datetime", "event_time", "created_at"]    # --time-columns
 epoch_window = ["2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]
+
+[log]
+level = "info"                      # --log-level            trace, debug, info, warn, error
+format = "text"                     # --log-format           text or json
 ```
 
 Those are the defaults, and every key is optional. A key that is not in that list is
@@ -702,6 +706,21 @@ One still in flight then - a sender that stopped halfway through a body - is ans
 follow, so the process exits 0 inside whatever grace it was given (Kubernetes: 30
 seconds) and the next start has nothing to replay. `"0s"` waits for every request,
 however long it takes.
+
+**The log** is the server's lifecycle lines, warnings and errors, on stderr. As
+`text` they are the lines this README shows - `kibbr: ` and a sentence, `WARN` or
+`ERROR` before a warning's or an error's. As `json` each is one object a line, for
+whatever collects a container's stderr, and at `debug` every request is a line too:
+
+```
+$ kibbr --log-format json serve --storage memory
+{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr::serve","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"scan_threads":4}
+{"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr::serve","msg":"storage is in memory: everything ingested is lost when this process exits"}
+{"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr::serve","msg":"SIGTERM received - shutting down"}
+```
+
+What a command prints on stdout - `query`, `parse`, `explain`, `gen-logs` - is the
+same bytes whatever the log is set to.
 
 ## Ask a running server
 
@@ -771,6 +790,7 @@ A workspace of four crates, each naming only the ones under it, and `fuzz/` besi
 Cargo.toml                the workspace, and the `kibbr` crate: the binary and its commands
 src/main.rs               CLI, error reporting
 src/config.rs             the settings: a flag, a `KIBBR__` variable, the `--config` file, a default
+src/logs.rs               the process's own log: `tracing` events as lines of text or of JSON
 src/error.rs              thiserror enums of the commands and the server
 src/gen.rs, src/farm.rs   the generators - `hostile` and the log farm
 src/parse.rs              the `parse` output

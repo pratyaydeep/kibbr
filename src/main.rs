@@ -1,7 +1,7 @@
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
 use kibbr::{
-    ask, bench, compact, config, demo, error, farm, gen, load, parse, query, serve, speed,
+    ask, bench, compact, config, demo, error, farm, gen, load, logs, parse, query, serve, speed,
 };
 use kibbr_core::infer;
 
@@ -25,12 +25,21 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[command(name = "kibbr", version, about = "kibbr - log store", long_about = None)]
 struct Cli {
     /// A TOML file of settings, read by every command: `[storage]`, `[ingestor]`,
-    /// `[api]`, `[query]` and `[schema]`, each key named as its variable is -
+    /// `[api]`, `[query]`, `[schema]` and `[log]`, each key named as its variable is -
     /// `[storage] base_path` is `KIBBR__STORAGE__BASE_PATH`. A flag wins over its
     /// variable and the variable over the file; a key this build has no setting for is
     /// refused. With no --config no file is read.
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
+    /// How much of kibbr's own log is written, to stderr: trace, debug, info, warn or
+    /// error. Overrides `KIBBR__LOG__LEVEL` and `[log] level`. [default: info]
+    #[arg(long, global = true, value_enum, value_name = "LEVEL")]
+    log_level: Option<config::LogLevel>,
+    /// How a log line is written: `text`, a line for a person, or `json`, one object a
+    /// line. A command's data is on stdout either way.
+    /// Overrides `KIBBR__LOG__FORMAT` and `[log] format`. [default: text]
+    #[arg(long, global = true, value_enum, value_name = "FORMAT")]
+    log_format: Option<config::LogFormat>,
     #[command(subcommand)]
     command: Command,
 }
@@ -605,7 +614,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            error::report(&e);
+            logs::failed(&e);
             ExitCode::FAILURE
         }
     }
@@ -617,6 +626,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
     // settings its writer did not ask for.
     let file = config::File::read(cli.config.as_deref())?;
     let file = &file;
+    // Then the log, so that everything after this line is said the way it was asked for.
+    logs::install(config::log(file, cli.log_level, cli.log_format)?);
     // Before any command types a value, and for every command alike: a bad window stops
     // the process here rather than after it has typed lines under the default.
     infer::set_epoch_window(config::epoch_window(file)?);
