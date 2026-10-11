@@ -650,6 +650,30 @@ fn a_bench_run_prints_the_eight_rows_and_saves_every_sample_behind_them() {
     assert_eq!(work_left(dir), Vec::<String>::new());
     assert!(!c.exists());
 
+    // ── So is a baseline taken without `--threads`, by a run with it ──
+    let threaded = bench(
+        dir,
+        3,
+        1,
+        &[
+            "--baseline",
+            a.to_str().expect("a path"),
+            "--out",
+            c.to_str().expect("a path"),
+            "--threads",
+            "1",
+        ],
+    );
+    assert_eq!(threaded.status.code(), Some(1));
+    let said = text(&threaded.stderr);
+    assert!(
+        said.contains("server.argv: ") && said.contains("--scan-threads 1\" in this run"),
+        "{said}"
+    );
+    assert!(text(&threaded.stdout).is_empty(), "something was measured");
+    assert_eq!(work_left(dir), Vec::<String>::new());
+    assert!(!c.exists());
+
     // ── A place the result could not be written to is refused before any server starts ──
     #[cfg(unix)]
     {
@@ -699,4 +723,84 @@ fn a_profile_the_bench_does_not_measure_is_refused_by_name() {
     );
     assert!(ran.stdout.is_empty());
     assert!(!dir.exists(), "something was made under --dir");
+}
+
+/// **`--threads T` is `--scan-threads T` on every server the bench starts, and the result
+/// says so.** Asked for a count that is not this machine's default, so that a flag which
+/// reached no server would leave the default in `/stats`.
+#[test]
+fn the_threads_asked_for_reach_every_server_and_are_in_the_result() {
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let default = (cores / 2).clamp(1, 4);
+    let asked = if default == 1 { 2.min(cores) } else { 1 };
+
+    let scratch = Scratch::new("threads");
+    let dir = scratch.0.as_path();
+    let out = dir.join("threads.json");
+    let ran = bench(
+        dir,
+        1,
+        1,
+        &[
+            "--out",
+            out.to_str().expect("a path"),
+            "--threads",
+            &asked.to_string(),
+        ],
+    );
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+
+    let result = read_json(&out);
+    let argv: Vec<&str> = result["server"]["argv"]
+        .as_array()
+        .expect("server.argv")
+        .iter()
+        .map(|argument| argument.as_str().expect("an argument"))
+        .collect();
+    let asked_text = asked.to_string();
+    assert_eq!(
+        argv[argv.len() - 2..],
+        ["--scan-threads", asked_text.as_str()]
+    );
+    assert!(
+        text(&ran.stdout)
+            .lines()
+            .any(|line| line.starts_with("server ")
+                && line.ends_with(&format!(" --scan-threads {asked}"))),
+        "the log's server line does not end with the flag"
+    );
+    // Each server's own word for it, in the `/stats` a unit ends on.
+    let run = &result["runs"][0];
+    for unit in ["ingest", "idle"] {
+        assert_eq!(
+            count(&run[unit]["stats_at_end"]["queries"]["scan_threads"]),
+            asked as u64,
+            "{unit}"
+        );
+    }
+    assert_eq!(work_left(dir), Vec::<String>::new());
+}
+
+/// More threads than cores are refused by the bench, in its own words, before a day is
+/// generated: `serve` would refuse them too, as a server that did not come up.
+#[test]
+fn more_threads_than_cores_are_refused_before_anything_is_made() {
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let scratch = Scratch::new("threads-above");
+    let dir = scratch.0.join("bench");
+    let ran = bench(&dir, 1, 1, &["--threads", &(cores + 1).to_string()]);
+    assert_eq!(ran.status.code(), Some(1));
+    let said = text(&ran.stderr);
+    assert!(
+        said.contains(&format!(
+            "--threads {} is above the {cores} core(s) this machine has",
+            cores + 1
+        )),
+        "{said}"
+    );
+    assert!(ran.stdout.is_empty());
+    assert!(!dir.exists(), "something was made under --dir");
+
+    let none = bench(&dir, 1, 1, &["--threads", "0"]);
+    assert_eq!(none.status.code(), Some(2), "{}", text(&none.stderr));
 }

@@ -821,6 +821,9 @@ $ curl -s -X POST 127.0.0.1:7700/query -H 'Content-Type: application/json' --dat
 while each row was measured. It measures in the Dockerfile's `bench` target, which is
 the same binary on a base that has the `ps` and `df` the bench runs; the script checks
 the two images hold the same bytes. `bench/run.sh --lines 200000` is the laptop's run.
+`--threads T` is `kibbr bench --threads T`: every server the bench starts is given
+`--scan-threads T`, and with no `--threads` each takes the default. A `KIBBR__` variable
+does not reach them either way - the bench takes those out of its children.
 
 `deploy/` holds the Kubernetes manifests - a StatefulSet of one pod and its volume - and
 the two Vector sinks; `deploy/README.md` says what of them was checked and what was not.

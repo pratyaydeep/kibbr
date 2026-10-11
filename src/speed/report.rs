@@ -3891,6 +3891,7 @@ mod tests {
             runs: 3,
             samples: 100,
             body_lines: 2_000,
+            threads: None,
             unchecked: false,
         }
     }

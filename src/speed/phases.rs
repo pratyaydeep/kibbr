@@ -89,6 +89,8 @@ pub struct Work<'a> {
     pub work: &'a Path,
     /// `--ingest-concurrency` of every server.
     pub cores: usize,
+    /// `--scan-threads` of every server, where the bench was given `--threads`.
+    pub threads: Option<usize>,
     pub stream: &'a LiveStream,
     /// One `/ingest` request head for each body of the stream.
     pub heads: &'a [Vec<u8>],
@@ -189,7 +191,7 @@ fn connect(server: &Server) -> Result<Conn, SpeedError> {
 /// A new server on a new copy of the loaded directory, and the one connection the main
 /// thread keeps to it.
 fn started(work: &Work) -> Result<(Server, Conn), SpeedError> {
-    let server = Server::start(work.exe, work.loaded, work.work, work.cores)?;
+    let server = Server::start(work.exe, work.loaded, work.work, work.cores, work.threads)?;
     let mut conn = connect(&server)?;
     conn.reserve(work.answer_room);
     Ok((server, conn))
@@ -448,16 +450,18 @@ fn unexpected(detail: String) -> SpeedError {
 /// CPU time for the child. Returns the seven expected answers, and the room a unit's
 /// connection is given for an answer: twice the largest body read here and a head, since
 /// a fetch under ingest returns other rows than it does of the loaded ones alone.
+#[allow(clippy::too_many_arguments)]
 pub fn preflight(
     exe: &Path,
     loaded: &Corpus,
     work: &Path,
     cores: usize,
+    threads: Option<usize>,
     stream: &LiveStream,
     heads: &[Vec<u8>],
     requests: &Seven<Vec<u8>>,
 ) -> Result<(Seven<Expect>, usize), SpeedError> {
-    let server = Server::start(exe, loaded, work, cores)?;
+    let server = Server::start(exe, loaded, work, cores, threads)?;
     let mut conn = connect(&server)?;
 
     let health = server.health(&mut conn)?;
@@ -2165,6 +2169,7 @@ mod tests {
             loaded: &loaded,
             work: Path::new("work"),
             cores: 8,
+            threads: None,
             stream: &stream,
             heads: &[],
             requests: &requests,

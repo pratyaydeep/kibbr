@@ -34,9 +34,9 @@
 #
 #   --lines N       lines in the loaded day and in the live stream     [200000]
 #   --threads T     `kibbr bench --threads T`: the scan threads of every server measured.
-#                   Refused if the bench in the image has no such flag - it is not
-#                   dropped, since a result headed "8 threads" that used 4 is worse
-#                   than none.
+#                   Refused if the bench in the image has no such flag (an image built
+#                   before it had one, under --no-build) - it is not dropped, since a
+#                   result headed "8 threads" that used 4 is worse than none.
 #   --runs R        as `kibbr bench --runs`                            [3]
 #   --samples K     as `kibbr bench --samples`                         [100]
 #   --unchecked     as `kibbr bench --unchecked`: not a measurement. For trying the script.

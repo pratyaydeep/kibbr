@@ -435,6 +435,17 @@ enum Command {
             value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
         )]
         body_lines: usize,
+        /// Scan threads of every server measured: each is started with `--scan-threads
+        /// T`. Without it no server is told, and each takes this build's default (half
+        /// the cores, at most 4); no `KIBBR__` variable reaches one either way. More
+        /// than the machine has cores is refused. Two results compare only at the same
+        /// value, and one taken without the flag only with another taken without it.
+        #[arg(
+            long,
+            value_name = "T",
+            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+        )]
+        threads: Option<usize>,
         /// Skip what makes a run a measurement - the pause before each run, the waits for
         /// a machine with no other kibbr process and no swapping, the look after each
         /// server that throws a disturbed one's numbers away - and allow a debug build.
@@ -841,6 +852,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             runs,
             samples,
             body_lines,
+            threads,
             unchecked,
             table,
             plan_only,
@@ -861,6 +873,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                             runs,
                             samples,
                             body_lines,
+                            threads,
                             unchecked,
                         },
                         &mut out,

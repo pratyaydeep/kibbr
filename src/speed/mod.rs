@@ -42,7 +42,9 @@
 //! `KIBBR__` variable removed - and itself as `bench --plan-only`; of a server, the
 //! address it prints, `/health`, `/stats`, `/query` and `/ingest`; of the system, a
 //! child's CPU time, the swap counter and the process list; and in this crate, for the
-//! plan step only, the generator, the parser, the trie and `engine::plan`. Each of them is
+//! plan step only, the generator, the parser, the trie and `engine::plan`. `--threads T`
+//! is the one thing a caller sets on a server: `serve --scan-threads T` on every one, and
+//! with none given no such flag, as before it was added. Each of them is
 //! asked once before the first run, on a server started for that, so that one that
 //! answers in another form stops the command there and not an hour in. A field the bench
 //! only records may be missing and is then `null`; the two a rate is made of may not. How
@@ -77,6 +79,11 @@
 //! eight files of this module are digested into every result (`report::SOURCES`), and a
 //! table over two digests says so in capitals. So nothing here is tuned after the first
 //! saved result - not a query's text, not a place in the stream, not a pause.
+//!
+//! **Changed once since, at M11: `--threads` was added.** The cloud box has eight cores
+//! alike and the default is four, and no variable reaches a server, so the bench could
+//! not measure the eight. The digest moved with it, and `testdata/bench/baseline.json`
+//! was taken again by this instrument, at `--threads 4`. Nothing that is timed changed.
 
 pub mod corpus;
 pub mod host;
@@ -216,6 +223,9 @@ pub struct Args {
     pub runs: usize,
     pub samples: usize,
     pub body_lines: usize,
+    /// `--scan-threads` of every server measured. `None`: the flag is not passed, and a
+    /// server takes its build's default.
+    pub threads: Option<usize>,
     pub unchecked: bool,
 }
 
@@ -522,10 +532,21 @@ fn start(args: &Args) -> Result<Start, SpeedError> {
     let exe = std::env::current_exe().map_err(io_at(Path::new("this binary's own path")))?;
     let binary = host::binary(&exe, &commit)?;
     let mut machine = host::machine();
+    // Now, and by the bench: `serve` refuses it too, but as a server that did not start.
+    if let Some(threads) = args
+        .threads
+        .filter(|threads| *threads > machine.cores_logical)
+    {
+        return Err(SpeedError::Host(format!(
+            "--threads {threads} is above the {} core(s) this machine has, and `kibbr \
+             serve` refuses scan threads it has no core for. Nothing was started",
+            machine.cores_logical
+        )));
+    }
     machine.disk_free_bytes = corpus::free_space(&args.dir, args.lines)?;
     machine.cpu_clock_check = host::cpu_clock_check()?;
     let server = ServerFacts {
-        argv: server::argv(server::COPY, machine.cores_logical),
+        argv: server::argv(server::COPY, machine.cores_logical, args.threads),
         // What every child's command has taken out of it, read off one that is not run.
         env_removed: server::scrub(&mut Command::new(&exe)),
         env_noted: server::env_noted(),
@@ -961,8 +982,16 @@ fn measure(
 
     // One server asked everything a run will ask; its answers are the expected ones.
     let cores = start.machine.cores_logical;
-    let (expect, answer_room) =
-        phases::preflight(&start.exe, &loaded, work, cores, &stream, &heads, &requests)?;
+    let (expect, answer_room) = phases::preflight(
+        &start.exe,
+        &loaded,
+        work,
+        cores,
+        args.threads,
+        &stream,
+        &heads,
+        &requests,
+    )?;
     let data = data(&loaded, &stream);
     if let Some(baseline) = &start.baseline {
         report::comparable_data(baseline, &data, &queries, &expect)?;
@@ -1006,6 +1035,7 @@ fn measure(
         loaded: &loaded,
         work,
         cores,
+        threads: args.threads,
         stream: &stream,
         heads: &heads,
         requests: &requests,
@@ -1411,6 +1441,7 @@ mod tests {
             runs: DEFAULT_RUNS,
             samples: DEFAULT_SAMPLES,
             body_lines: DEFAULT_BODY_LINES,
+            threads: None,
             unchecked: false,
         };
         assert_eq!(label(&args), "baseline");

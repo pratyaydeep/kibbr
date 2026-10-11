@@ -123,6 +123,7 @@ impl Server {
         loaded: &Corpus,
         work: &Path,
         cores: usize,
+        threads: Option<usize>,
     ) -> Result<Server, SpeedError> {
         let number = STARTED.fetch_add(1, Ordering::Relaxed) + 1;
         let copy = work.join(format!("copy-{number}"));
@@ -143,7 +144,7 @@ impl Server {
             log,
             copy,
         };
-        launch(command(exe, &made.copy, cores), made, START_LIMIT)
+        launch(command(exe, &made.copy, cores, threads), made, START_LIMIT)
     }
 
     /// `GET /stats`. A required field that is missing or of another type is
@@ -390,9 +391,9 @@ fn difference(copy: &[FileDigest], recorded: &[FileDigest]) -> Option<String> {
 }
 
 /// `exe` with a server's arguments, the copy's path standing where they name it.
-fn command(exe: &Path, copy: &Path, cores: usize) -> Command {
+fn command(exe: &Path, copy: &Path, cores: usize, threads: Option<usize>) -> Command {
     let mut command = Command::new(exe);
-    for argument in argv(COPY, cores) {
+    for argument in argv(COPY, cores, threads) {
         if argument == COPY {
             // As the system spells it, which need not be text.
             command.arg(copy);
@@ -480,7 +481,14 @@ fn banner_port(written: &[u8]) -> Option<u16> {
 /// measurement is not the measurement. A result records them with `<copy>` as `data_dir`.
 ///
 /// A flag a later build adds is not here and takes that build's default.
-pub fn argv(data_dir: &str, cores: usize) -> Vec<String> {
+///
+/// **`--scan-threads` is the one flag that is asked for and not typed out**: it is the
+/// bench's own `--threads`, last on the line, and with none given it is not on the line
+/// at all - the build's default then, which follows the machine, as it was for every
+/// result saved before the flag. No variable can stand in for it: `KIBBR__` is scrubbed.
+/// The arguments are recorded and two results compare only where they are equal, so a
+/// result at four threads is held to one at four.
+pub fn argv(data_dir: &str, cores: usize, threads: Option<usize>) -> Vec<String> {
     let cores = cores.to_string();
     let max_rows = MAX_ROWS.to_string();
     let segment_max_bytes = SEGMENT_MAX_BYTES.to_string();
@@ -510,6 +518,10 @@ pub fn argv(data_dir: &str, cores: usize) -> Vec<String> {
     for (flag, value) in flags {
         argv.push(flag.to_string());
         argv.push(value.to_string());
+    }
+    if let Some(threads) = threads {
+        argv.push("--scan-threads".to_string());
+        argv.push(threads.to_string());
     }
     argv
 }
@@ -674,13 +686,13 @@ mod tests {
              --max-buffer-bytes 536870912 \
              --compact-interval-ms 0 \
              --time-columns @timestamp,timestamp,time,ts,ts_ms,ts_unix,datetime,event_time,created_at";
-        let argv = argv(COPY, 8);
+        let argv = argv(COPY, 8, None);
         assert_eq!(argv, expected.split(' ').collect::<Vec<_>>());
 
         // Only the copy and the cores differ between two servers, and the copy's path
         // reaches the child as one argument whatever it holds.
         let copy = Path::new("testdata/bench/work-1.noindex/copy 7");
-        let command = command(Path::new("/bin/kibbr"), copy, 4);
+        let command = command(Path::new("/bin/kibbr"), copy, 4, None);
         let passed: Vec<&OsStr> = command.get_args().collect();
         assert_eq!(passed.len(), argv.len());
         for (at, (passed, recorded)) in passed.iter().zip(&argv).enumerate() {
@@ -691,6 +703,23 @@ mod tests {
             }
         }
         assert_eq!(command.get_program(), "/bin/kibbr");
+    }
+
+    /// **`--threads` reaches every server as `--scan-threads`, and with none given the
+    /// command line is the one every earlier result recorded.**
+    #[test]
+    fn the_scan_threads_asked_for_are_the_last_flag_and_none_is_no_flag() {
+        let without = argv(COPY, 8, None);
+        assert!(!without.iter().any(|argument| argument == "--scan-threads"));
+
+        let with = argv(COPY, 8, Some(4));
+        assert_eq!(with[..without.len()], without[..]);
+        assert_eq!(with[without.len()..], ["--scan-threads", "4"]);
+
+        let command = command(Path::new("/bin/kibbr"), Path::new("copy"), 8, Some(4));
+        let passed: Vec<&OsStr> = command.get_args().collect();
+        assert_eq!(passed[passed.len() - 2..], ["--scan-threads", "4"]);
+        assert_eq!(passed.len(), with.len());
     }
 
     #[test]
@@ -1150,7 +1179,11 @@ mod tests {
             copy_bytes: 0,
         };
         let missing = dir.join("no-such-kibbr");
-        let Err(error) = launch(command(&missing, &copy, 8), made, Duration::from_secs(30)) else {
+        let Err(error) = launch(
+            command(&missing, &copy, 8, None),
+            made,
+            Duration::from_secs(30),
+        ) else {
             panic!("there is no such binary");
         };
         assert!(
