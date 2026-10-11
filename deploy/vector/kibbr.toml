@@ -15,19 +15,39 @@
 # what is archived is byte for byte what was sent live - which is what lets `kibbr load`
 # rebuild a day and get the rows the live door stored.
 #
-# Nothing of the envelope is kept: no pod, no namespace, no container. Adding one is a
-# line here (`line.pod = .kubernetes.pod_name`), and it is a key in every template from
-# then on - decide it before the first line is stored, not after.
+# **Three things of the envelope are kept, as one nested object, on every line**:
+#
+#   "k8s": {"namespace": "...", "pod": "...", "container": "..."}
+#
+# and nothing else of it - no labels, no node, no image, no stream, no file. kibbr reads
+# them as the keys `k8s.namespace`, `k8s.pod` and `k8s.container`: columns to ask of, not
+# promoted, so no template is made for a pod. All three are always there, `null` where
+# the source gave none, so that a line's key set does not depend on what the source knew.
+# A `k8s` key of the application's own is written over.
+#
+# **This is fixed before the first line is stored.** A template is a line's key set, and
+# from the first line on every template's holds these three: taking one out, adding a
+# fourth or renaming `k8s` later makes every template again beside the old ones, and a
+# query by the old name stops finding new lines.
+#
+# The names on the right are 0.37.1's `kubernetes_logs` fields under its default (legacy)
+# log namespace.
 [transforms.kibbr_lines]
 type   = "remap"
 inputs = ["kubernetes_logs"]
 source = '''
+k8s = {
+  "namespace": .kubernetes.pod_namespace,
+  "pod": .kubernetes.pod_name,
+  "container": .kubernetes.container_name
+}
 parsed, err = parse_json(.message)
 if err == null && is_object(parsed) {
   . = parsed
 } else {
   . = { "message": .message }
 }
+.k8s = k8s
 '''
 
 # ── Live: every line to /ingest ────────────────────────────────────────────────────

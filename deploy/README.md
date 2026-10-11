@@ -73,8 +73,18 @@ role belongs to the DaemonSet and is not written here.
 - **Vector sends the application's own JSON line, not its envelope.** A
   `kubernetes_logs` event holds the container's line as a string in `.message`. The
   transform puts the parsed object in the event's place and keeps a line that is not a
-  JSON object as `{"message": "..."}`. No pod, namespace or container name is kept;
-  adding one adds a key to every template, so decide it before the first line is stored.
+  JSON object as `{"message": "..."}`.
+- **Namespace, pod and container are kept, as one nested object on every line**:
+  `"k8s":{"namespace":"...","pod":"...","container":"..."}`, and nothing else of the
+  envelope. kibbr stores them as the columns `k8s.namespace`, `k8s.pod` and
+  `k8s.container` - asked for as `COUNT LOG {"k8s.pod":"api-0"}` - and promotes none of
+  them, so a pod is a value and not a template. All three are always there, `null` where
+  the source gave none; a `k8s` key of the application's own is written over.
+- **That object is fixed before the first ingest.** A template is a line's key set, and
+  from the first line every template's includes these three keys. Changing the object
+  afterwards - a fourth key, one fewer, another name - gives every kind of line a second
+  template beside its first, and a query by the old key stops finding new lines. Decide
+  it now; `vector/kibbr.toml` is where.
 - **Both sinks read the transform.** What is archived to S3 is what was sent live.
 - **The archive is an object for each Vector pod and hour**, sooner at 100 MB, under
   `logs/date=YYYY-MM-DD/hour=HH/`. A closed day is loaded with
@@ -110,8 +120,10 @@ role belongs to the DaemonSet and is not written here.
   is also what it leaves out: no healthcheck is run and no credential is looked for.
   The design's `encoding.codec = "ndjson"` does not load on 0.37.1; the codec is `json`
   and the newlines come from `framing.method = "newline_delimited"`.
-- **The transform**, by three `vector test` cases in `vector/kibbr.test.toml`: a JSON
-  object line, a line of text, and a line that is JSON and not an object.
+- **The transform**, by five `vector test` cases in `vector/kibbr.test.toml`: a JSON
+  object line with a whole envelope around it, of which only the three names come
+  through; a line of text; a line that is JSON and not an object; a line with a `k8s`
+  key of its own; and an event with no metadata, whose three keys are `null`.
 
   ```
   docker run --rm -v "$PWD/deploy/vector:/cfg:ro" timberio/vector:0.37.1-distroless-libc \
@@ -122,7 +134,11 @@ role belongs to the DaemonSet and is not written here.
   a `demo_logs` source in the `kubernetes_logs` source's place, the transform and the
   `kibbr` sink as written but for the host name, and the kibbr image as the server. 2,000
   lines sent; Vector's healthcheck of `/health` passed; kibbr counted 2,000 rows in one
-  template of the lines' own keys, none rejected, none shed.
+  template of the lines' own keys, none rejected, none shed. **That run was before the
+  transform kept `k8s`**, and was not made again with it.
+- **What kibbr makes of the `k8s` object**, by hand, on a server in memory: three lines
+  alike but for it - two pods, and one with all three `null` - are one template, and
+  `{"k8s.pod":"api-0"}` and `{"k8s.namespace":"shop"}` count 1 and 2 of them.
 - **The image the StatefulSet runs**: not root, a volume at `/var/lib/kibbr`, ingest,
   stop, start on the same volume, same count (the repository's README has the run).
 
@@ -142,6 +158,9 @@ role belongs to the DaemonSet and is not written here.
   time of the load, and refuses a day in which more than 1% of the lines are like that
   (`--max-arrival-share`). On such data the two doors do not agree.
 - **Vector 0.37.1 on the cluster's `kubernetes_logs` events.** The transform was tested
-  on events made by hand and by `demo_logs`, not on a container runtime's.
+  on events made by hand and by `demo_logs`, not on a container runtime's - so the three
+  field names it reads (`kubernetes.pod_namespace`, `.pod_name`, `.container_name`) are
+  the reference's, and a source that names them otherwise gives three `null`s and no
+  error.
 - **Resource requests, the disk buffers' sizes and the startup probe's ten minutes** are
   reasoned, not measured.

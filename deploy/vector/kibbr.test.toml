@@ -1,5 +1,5 @@
 # What deploy/vector/kibbr.toml is checked with, since there is no cluster to check it
-# against: a source standing in for the cluster's own, and three tests of the transform.
+# against: a source standing in for the cluster's own, and five tests of the transform.
 # Not part of what is deployed.
 #
 # deploy/README.md has the two commands. (They are not written here: Vector reads a
@@ -15,13 +15,21 @@ insert_at = "kibbr_lines"
 type = "log"
 [tests.inputs.log_fields]
 message = '{"ts":"2024-01-15T10:00:00Z","level":"info","user":{"id":7}}'
+"kubernetes.pod_namespace" = "shop"
 "kubernetes.pod_name" = "api-0"
+"kubernetes.container_name" = "api"
+"kubernetes.pod_node_name" = "ip-10-0-3-17"
+"kubernetes.container_image" = "shop/api:1.4.2"
+"kubernetes.pod_labels.app" = "api"
+stream = "stdout"
+file = "/var/log/pods/shop_api-0_1f2e/api/0.log"
+source_type = "kubernetes_logs"
 [[tests.outputs]]
 extract_from = "kibbr_lines"
 [[tests.outputs.conditions]]
 type = "vrl"
 source = '''
-assert_eq!(., {"ts":"2024-01-15T10:00:00Z","level":"info","user":{"id":7}})
+assert_eq!(., {"ts":"2024-01-15T10:00:00Z","level":"info","user":{"id":7},"k8s":{"namespace":"shop","pod":"api-0","container":"api"}})
 '''
 
 [[tests]]
@@ -31,12 +39,15 @@ insert_at = "kibbr_lines"
 type = "log"
 [tests.inputs.log_fields]
 message = 'panic: runtime error: index out of range'
+"kubernetes.pod_namespace" = "shop"
+"kubernetes.pod_name" = "api-0"
+"kubernetes.container_name" = "api"
 [[tests.outputs]]
 extract_from = "kibbr_lines"
 [[tests.outputs.conditions]]
 type = "vrl"
 source = '''
-assert_eq!(., {"message":"panic: runtime error: index out of range"})
+assert_eq!(., {"message":"panic: runtime error: index out of range","k8s":{"namespace":"shop","pod":"api-0","container":"api"}})
 '''
 
 [[tests]]
@@ -46,10 +57,46 @@ insert_at = "kibbr_lines"
 type = "log"
 [tests.inputs.log_fields]
 message = '[1,2,3]'
+"kubernetes.pod_namespace" = "shop"
+"kubernetes.pod_name" = "api-0"
+"kubernetes.container_name" = "api"
 [[tests.outputs]]
 extract_from = "kibbr_lines"
 [[tests.outputs.conditions]]
 type = "vrl"
 source = '''
-assert_eq!(., {"message":"[1,2,3]"})
+assert_eq!(., {"message":"[1,2,3]","k8s":{"namespace":"shop","pod":"api-0","container":"api"}})
+'''
+
+[[tests]]
+name = "a k8s key of the line's own is written over"
+[[tests.inputs]]
+insert_at = "kibbr_lines"
+type = "log"
+[tests.inputs.log_fields]
+message = '{"msg":"rollout","k8s":{"cluster":"blue","pod":"not-this-one"}}'
+"kubernetes.pod_namespace" = "shop"
+"kubernetes.pod_name" = "api-0"
+"kubernetes.container_name" = "api"
+[[tests.outputs]]
+extract_from = "kibbr_lines"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(., {"msg":"rollout","k8s":{"namespace":"shop","pod":"api-0","container":"api"}})
+'''
+
+[[tests]]
+name = "an event the source gave no metadata keeps the three keys, as null"
+[[tests.inputs]]
+insert_at = "kibbr_lines"
+type = "log"
+[tests.inputs.log_fields]
+message = '{"level":"warn"}'
+[[tests.outputs]]
+extract_from = "kibbr_lines"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(., {"level":"warn","k8s":{"namespace":null,"pod":null,"container":null}})
 '''
