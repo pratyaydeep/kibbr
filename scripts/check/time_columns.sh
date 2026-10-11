@@ -7,7 +7,7 @@
 # templates had no time at all, their rows went to `undated`, and every time-range query
 # skipped them.
 #
-#   NLINES=20000 scripts/measure/time_columns.sh
+#   NLINES=20000 scripts/check/time_columns.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

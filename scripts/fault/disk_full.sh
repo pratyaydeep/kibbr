@@ -9,7 +9,7 @@
 #      store's own writes have begun to fail, which refuse nothing: the rows they could
 #      not write are in the log. The one body that is not never reaches the log - every
 #      line of it needs a template the catalog cannot write - and no batch here is one:
-#      scripts/measure/catalog_full_503.sh holds that 503.
+#      scripts/fault/catalog_full_503.sh holds that 503.
 #   2. When the log cannot write, `POST /ingest` answers 503 with a `Retry-After` and the
 #      log's write error in the body, and `/health` reports `degraded`.
 #   3. The server stays up. A disk that has gone away is not a reason to stop answering

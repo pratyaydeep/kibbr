@@ -545,7 +545,7 @@ zcat archive.gz | kibbr load --data-dir kibbr-data -       # standard input
 directories and asks both `scripts/check/agree.sh`'s query set: they must answer identically.
 
 It, `scripts/check/store_agree.sh` (the memory store against the disk store) and
-`scripts/measure/roundtrip.sh` (every line back out as it went in) each print how many runs of
+`scripts/check/roundtrip.sh` (every line back out as it went in) each print how many runs of
 row groups their disk servers shared between threads, and with `NEED_FAN_OUTS=1` fail
 at none. That is for a run made to hold the shared scan to the plain one, with
 `KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0` in the environment: on

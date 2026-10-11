@@ -30,8 +30,8 @@
 # few bytes short of a block boundary - so the next template's record needs a block that
 # is not there, and it is the first write the next body asks for.
 #
-#   DISK_MB=10 BODY_LINES=200 scripts/measure/catalog_full_503.sh
-#   BIN=$PWD/other/kibbr PORT=7700 scripts/measure/catalog_full_503.sh
+#   DISK_MB=10 BODY_LINES=200 scripts/fault/catalog_full_503.sh
+#   BIN=$PWD/other/kibbr PORT=7700 scripts/fault/catalog_full_503.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

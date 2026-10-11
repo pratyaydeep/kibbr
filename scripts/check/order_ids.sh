@@ -14,7 +14,7 @@
 # the chunks already on disk were rendered as canonical RFC 3339 - `dt_form` was written
 # and never read. The undated set cannot show that, which is why both are here.
 #
-#   scripts/measure/order_ids.sh
+#   scripts/check/order_ids.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

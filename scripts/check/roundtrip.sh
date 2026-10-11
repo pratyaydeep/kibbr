@@ -34,11 +34,11 @@
 # - `_received_at` is a system column, not ingested, and is ignored - unless the line has
 #   a key of that name, which is then compared like any other.
 #
-#   scripts/measure/roundtrip.sh
-#   HOSTILE=5000 FARM=5000 scripts/measure/roundtrip.sh
-#   BIN=/path/to/an/older/kibbr scripts/measure/roundtrip.sh
+#   scripts/check/roundtrip.sh
+#   HOSTILE=5000 FARM=5000 scripts/check/roundtrip.sh
+#   BIN=/path/to/an/older/kibbr scripts/check/roundtrip.sh
 #   FARM=60000 NEED_FAN_OUTS=1 KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0 \
-#     KIBBR__API__MAX_BODY_BYTES=67108864 scripts/measure/roundtrip.sh
+#     KIBBR__API__MAX_BODY_BYTES=67108864 scripts/check/roundtrip.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

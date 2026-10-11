@@ -9,7 +9,7 @@
 # the segment, in either direction: 130 partitions became 34,892 segment files on the real
 # binary.
 #
-#   scripts/measure/date_forms.sh
+#   scripts/check/date_forms.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

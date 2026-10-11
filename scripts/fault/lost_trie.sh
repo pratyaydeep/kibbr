@@ -6,7 +6,7 @@
 # every query came back 0 after the delete: trie.json was the only thing
 # on disk that could rebuild a trie, so losing it made every row unreachable.
 #
-#   NLINES=2000 GEN_SEED=42 scripts/measure/lost_trie.sh
+#   NLINES=2000 GEN_SEED=42 scripts/fault/lost_trie.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

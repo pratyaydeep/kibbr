@@ -8,7 +8,7 @@
 #   the system value is left out of that row;
 # - a line with no time column at all comes back with a `_received_at` the store gave it.
 #
-#   scripts/measure/received_at.sh
+#   scripts/check/received_at.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

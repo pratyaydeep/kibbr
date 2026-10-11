@@ -53,7 +53,7 @@ if err == null && is_object(parsed) {
 # ── Live: every line to /ingest ────────────────────────────────────────────────────
 # The design's sink, with what 0.37.1 calls its settings: there is no `ndjson` codec -
 # the codec is `json` and the newlines come from `framing` - and the body is gzipped,
-# which /ingest reads (scripts/measure/vector_check.sh runs this sink against a server).
+# which /ingest reads (scripts/fault/vector_check.sh runs this sink against a server).
 #
 # A 503 from kibbr carries a Retry-After and means "send again": Vector retries it, and
 # its adaptive concurrency sends fewer at once. Nothing here turns retries off.

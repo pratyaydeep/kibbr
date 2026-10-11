@@ -11,7 +11,7 @@
 # whichever a machine happens to have. On arm64 it runs under Rosetta - 0.37.1 shipped no
 # arm64 darwin build.
 #
-#   scripts/measure/vector_check.sh
+#   scripts/fault/vector_check.sh
 #
 # Two experiments, in order:
 #
