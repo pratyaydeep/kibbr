@@ -28,3 +28,6 @@ sample.ndjson
 /testdata/bench/farm-*
 
 /brag*
+
+# Claude Code's per-machine state: settings, worktrees.
+.claude/
