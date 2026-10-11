@@ -95,7 +95,7 @@ pub const MAX_INGEST_WAIT_MS: usize = 30_000;
 /// body and nothing more - held the final flush, the checkpoint and `trie.json` until
 /// the kill arrived and none of them ran. With the deadline, what is still in flight
 /// then is cut off and the wind-down follows, inside the five seconds that are left:
-/// 200,000 buffered rows stop in a second and a half (`scripts/shutdown_time.sh`).
+/// 200,000 buffered rows stop in a second and a half (`scripts/fault/shutdown_time.sh`).
 /// Nothing acknowledged is lost either way - it is in the write-ahead log - but a stop
 /// that finishes leaves nothing to replay.
 pub const DEFAULT_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(25);
@@ -119,7 +119,7 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// interface publishes an unauthenticated write endpoint, and that is typed, not
 /// defaulted into.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
-pub use crate::serve::DEFAULT_PORT;
+pub use crate::cmd::serve::DEFAULT_PORT;
 
 /// The cores this machine reports; one where it reports none.
 fn cores() -> usize {

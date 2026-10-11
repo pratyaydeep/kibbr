@@ -2,7 +2,7 @@
 //!
 //! Each of these is a choice rather than a discovery, so nothing in the source can be read
 //! to check it and no differential can find it: the engine and the oracle would agree just
-//! as happily on the opposite choice. `scripts/parser_equivalence.sh` pins the ones that
+//! as happily on the opposite choice. `scripts/check/parser_equivalence.sh` pins the ones that
 //! need a corpus; these are the ones that need a shaped fixture, and `--exists`, which the
 //! grammar cannot spell and that script therefore does not cover.
 //!

@@ -1,12 +1,11 @@
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-use kibbr::{
-    ask, bench, compact, config, demo, error, farm, gen, load, logs, parse, query, serve, speed,
-};
+use kibbr::cmd::{ask, bench, bench_storage, compact, demo, load, parse, query, serve};
+use kibbr::gen::{self, Profile};
+use kibbr::{config, error, logs};
 use kibbr_core::infer;
 
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -408,11 +407,11 @@ enum Command {
         /// Holds the loaded directory - built once, and never opened by a server - each
         /// server's copy of it, and the default results. One volume, so that a copy can
         /// be a clone.
-        #[arg(long, value_name = "PATH", default_value = speed::DEFAULT_DIR)]
+        #[arg(long, value_name = "PATH", default_value = bench::DEFAULT_DIR)]
         dir: PathBuf,
         /// How many times the whole sequence is run; each printed number is the middle
         /// one. Odd. Two results compare only at the same value.
-        #[arg(long, value_name = "R", default_value_t = speed::DEFAULT_RUNS, value_parser = odd)]
+        #[arg(long, value_name = "R", default_value_t = bench::DEFAULT_RUNS, value_parser = odd)]
         runs: usize,
         /// Timed asks of each query on the idle server, servers each query is asked on
         /// once under ingest, and timed plans of each shape; the scan rate is read off a
@@ -421,7 +420,7 @@ enum Command {
         #[arg(
             long,
             value_name = "K",
-            default_value_t = speed::DEFAULT_SAMPLES,
+            default_value_t = bench::DEFAULT_SAMPLES,
             value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
         )]
         samples: usize,
@@ -431,7 +430,7 @@ enum Command {
         #[arg(
             long,
             value_name = "L",
-            default_value_t = speed::DEFAULT_BODY_LINES,
+            default_value_t = bench::DEFAULT_BODY_LINES,
             value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
         )]
         body_lines: usize,
@@ -681,18 +680,12 @@ fn run(cli: Cli) -> Result<(), CliError> {
             day,
             services,
             dirty_rate,
-        } => gen_logs(
+        } => gen::gen_logs(
             &mut out, profile, lines, templates, seed, day, services, dirty_rate,
         )
         .map_err(CliError::from),
-        Command::Parse { input, limit, json } => {
-            let reader = open(&input)?;
-            parse::run(reader, &mut out, limit, json)
-        }
-        Command::Demo { input, full } => {
-            let reader = open(&input)?;
-            demo::run(reader, &mut out, full)
-        }
+        Command::Parse { input, limit, json } => parse::cli(&input, &mut out, limit, json),
+        Command::Demo { input, full } => demo::cli(&input, &mut out, full),
         // Writes nothing to `out`: the banner and the lifecycle log are stderr (see
         // `serve::banner`), and everything else this command produces leaves over HTTP.
         Command::Serve {
@@ -767,72 +760,45 @@ fn run(cli: Cli) -> Result<(), CliError> {
             time_columns,
             segment_max_bytes,
             json,
-        } => {
-            let storage = config::Storage::load(
-                file,
-                true,
-                data_dir,
-                None,
-                None,
-                None,
-                None,
-                segment_max_bytes,
-                None,
-            )?;
-            let schema = config::schema(file, time_columns.clone());
-            let args = load::Args {
-                inputs,
-                replace_day,
-                max_mb_per_sec,
-                threads,
-                load_buffer_bytes,
-                received_at,
-                proceed,
-                max_arrival_share,
-                time_columns,
-                json,
-            };
-            load::command(args, storage, schema, &mut out).map_err(CliError::from)
-        }
+        } => load::cli(
+            file,
+            &mut out,
+            inputs,
+            data_dir,
+            replace_day,
+            max_mb_per_sec,
+            threads,
+            load_buffer_bytes,
+            received_at,
+            proceed,
+            max_arrival_share,
+            time_columns,
+            segment_max_bytes,
+            json,
+        ),
         Command::Compact {
             day,
             data_dir,
             threads,
             segment_max_bytes,
             json,
-        } => {
-            // Before the settings are loaded, which creates the directory they name: a
-            // compaction of a path that is not a data directory makes nothing there.
-            let base = config::Storage::base_named(file, data_dir.clone());
-            let day_number = compact::precheck(day.as_deref(), &base)?;
-            let storage = config::Storage::load(
-                file,
-                true,
-                data_dir,
-                None,
-                None,
-                None,
-                None,
-                segment_max_bytes,
-                None,
-            )?;
-            let args = compact::Args {
-                day,
-                threads,
-                segment_max_bytes,
-                json,
-            };
-            let schema = config::schema(file, None);
-            compact::command(args, day_number, storage, schema, &mut out).map_err(CliError::from)
-        }
+        } => compact::cli(
+            file,
+            &mut out,
+            day,
+            data_dir,
+            threads,
+            segment_max_bytes,
+            json,
+        ),
         Command::BenchStorage {
             input,
             es,
             scratch,
             keep,
             time_columns,
-        } => bench::run(
-            &bench::Args {
+        } => bench_storage::run(
+            &bench_storage::Args {
                 input,
                 es,
                 scratch,
@@ -856,36 +822,22 @@ fn run(cli: Cli) -> Result<(), CliError> {
             unchecked,
             table,
             plan_only,
-        } => {
-            let result = if plan_only {
-                speed::plan_only(samples, &mut out)
-            } else if !table.is_empty() {
-                speed::table(&table, &mut out)
-            } else {
-                match (lines, profile) {
-                    (Some(lines), Some(Profile::Farm)) => speed::run(
-                        &speed::Args {
-                            lines,
-                            out: save,
-                            baseline,
-                            label,
-                            dir,
-                            runs,
-                            samples,
-                            body_lines,
-                            threads,
-                            unchecked,
-                        },
-                        &mut out,
-                    ),
-                    // Both are asked for unless `--table` or `--plan-only` is given, so
-                    // what is left is the other profile. Refused here, before the module
-                    // is reached: it is handed no profile, and makes nothing under `--dir`.
-                    _ => Err(speed::SpeedError::Profile),
-                }
-            };
-            result.map_err(CliError::from)
-        }
+        } => bench::cli(
+            &mut out,
+            lines,
+            profile,
+            save,
+            baseline,
+            label,
+            dir,
+            runs,
+            samples,
+            body_lines,
+            threads,
+            unchecked,
+            table,
+            plan_only,
+        ),
         Command::Explain {
             query,
             max_rows,
@@ -930,28 +882,28 @@ fn run(cli: Cli) -> Result<(), CliError> {
             max_buckets,
             max_groups,
             time_columns,
-        } => {
-            let limits = config::limits(file, max_rows, max_buckets, max_groups)?;
-            let reader = open(&input)?;
-            let args = query::Args {
-                trieql,
-                matches,
-                count,
-                fetch,
-                exists,
-                group_by,
-                since,
-                between,
-                format,
-                explain,
-                reference,
-                limit,
-                after,
-                limits,
-                schema: config::schema(file, time_columns),
-            };
-            query::run(reader, &mut out, &args)
-        }
+        } => query::cli(
+            file,
+            &mut out,
+            &input,
+            trieql,
+            matches,
+            count,
+            fetch,
+            exists,
+            group_by,
+            since,
+            between,
+            format,
+            explain,
+            reference,
+            limit,
+            after,
+            max_rows,
+            max_buckets,
+            max_groups,
+            time_columns,
+        ),
     };
 
     // A closed downstream pipe (`| head`) is how the command ends, not a failure.
@@ -966,12 +918,6 @@ fn run(cli: Cli) -> Result<(), CliError> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Profile {
-    Hostile,
-    Farm,
-}
-
 /// `bench --runs`: an odd count, so that the median of the runs is one of them and not a
 /// number between two.
 fn odd(text: &str) -> Result<usize, String> {
@@ -982,89 +928,6 @@ fn odd(text: &str) -> Result<usize, String> {
         )),
         Err(e) => Err(e.to_string()),
     }
-}
-
-/// A flag that belongs to the other profile is refused rather than ignored: a `--day` that
-/// silently did nothing would leave its caller measuring the wrong file.
-#[allow(clippy::too_many_arguments)]
-fn gen_logs<W: Write>(
-    out: &mut W,
-    profile: Profile,
-    lines: u64,
-    templates: Option<usize>,
-    seed: u64,
-    day: Option<String>,
-    services: Option<usize>,
-    dirty_rate: Option<f64>,
-) -> Result<(), error::GenError> {
-    use error::GenError;
-    match profile {
-        Profile::Hostile => {
-            for (given, flag) in [
-                (day.is_some(), "--day"),
-                (services.is_some(), "--services"),
-                (dirty_rate.is_some(), "--dirty-rate"),
-            ] {
-                if given {
-                    return Err(GenError::WrongProfile {
-                        flag,
-                        profile: "farm",
-                    });
-                }
-            }
-            gen::generate(out, lines, templates.unwrap_or(12), seed)
-        }
-        Profile::Farm => {
-            if templates.is_some() {
-                return Err(GenError::WrongProfile {
-                    flag: "--templates",
-                    profile: "hostile",
-                });
-            }
-            if lines > farm::MAX_LINES {
-                return Err(GenError::TooManyLines(farm::MAX_LINES));
-            }
-            // Ten characters, 1970 to 9999: every time form the farm writes - RFC 3339 with
-            // a four-digit year, epoch seconds and milliseconds - is valid on that range
-            // and on no wider one.
-            let day_text = day.unwrap_or_else(|| farm::DEFAULT_DAY.to_string());
-            let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("a valid date");
-            let last = chrono::NaiveDate::from_ymd_opt(9999, 12, 31).expect("a valid date");
-            let day = chrono::NaiveDate::parse_from_str(&day_text, "%Y-%m-%d")
-                .ok()
-                .filter(|d| day_text.len() == 10 && (epoch..=last).contains(d))
-                .ok_or_else(|| GenError::BadDay(day_text.clone()))?;
-            let services = services.unwrap_or(farm::MAX_SERVICES);
-            if !(1..=farm::MAX_SERVICES).contains(&services) {
-                return Err(GenError::BadServices(services));
-            }
-            let rate = dirty_rate.unwrap_or(0.5);
-            if !(0.0..=100.0).contains(&rate) {
-                return Err(GenError::BadDirtyRate(rate));
-            }
-            let opts = farm::Options {
-                lines,
-                seed,
-                day: (day - epoch).num_days(),
-                services,
-                // Parts per million: the rate is read once, and every draw after it is an
-                // integer comparison.
-                dirty_ppm: (rate * 10_000.0).round() as u32,
-            };
-            farm::generate(out, &opts)
-        }
-    }
-}
-
-fn open(input: &str) -> Result<Box<dyn BufRead>, CliError> {
-    if input == "-" {
-        return Ok(Box::new(BufReader::new(io::stdin())));
-    }
-    let file = File::open(input).map_err(|source| CliError::Read {
-        path: input.to_string(),
-        source,
-    })?;
-    Ok(Box::new(BufReader::new(file)))
 }
 
 fn is_broken_pipe(e: &CliError) -> bool {

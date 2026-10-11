@@ -2,7 +2,7 @@
 //! malformed query reports a position inside the query, and nothing makes it panic.
 //!
 //! That a TrieQL query and the flags it translates return the same `QueryResult` is
-//! `scripts/parser_equivalence.sh`, over a hundred generated combinations rather than the
+//! `scripts/check/parser_equivalence.sh`, over a hundred generated combinations rather than the
 //! handful anyone would write here. What is pinned below is the translation itself, one
 //! case per grammar clause.
 
@@ -285,7 +285,7 @@ fn no_input_panics() {
 // ── The translation ────────────────────────────────────────────────────────────────
 
 /// One case per grammar clause, against the flags that already meant it. The generated
-/// hundred are in `scripts/parser_equivalence.sh`; these are the ones a reader can check
+/// hundred are in `scripts/check/parser_equivalence.sh`; these are the ones a reader can check
 /// by eye.
 ///
 /// Every value here is one the fixture actually holds. A pattern that matches no template
@@ -401,7 +401,7 @@ fn group_by_settles_the_mode_under_either_verb() {
 /// The fixture is from 2024 and the window is relative to now, so an hour-wide one is
 /// empty on both surfaces - which is evidence the clause was applied only alongside the
 /// same query without it, which is not. Without the first assertion a parser that read
-/// `SINCE` and threw it away would pass this, as `scripts/parser_equivalence.sh` found
+/// `SINCE` and threw it away would pass this, as `scripts/check/parser_equivalence.sh` found
 /// when that mutation was tried against it.
 #[test]
 fn since_narrows_the_window() {

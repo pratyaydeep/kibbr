@@ -235,7 +235,7 @@ mod tests {
         }
         assert!(files.len() > 40, "{} source files", files.len());
         assert!(
-            files.iter().any(|(name, _)| name == "src/serve.rs"),
+            files.iter().any(|(name, _)| name == "src/cmd/serve/handlers.rs"),
             "the server's handlers are among the files read"
         );
         let holding = |word: &str| -> Vec<&str> {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `kibbr bench`, run inside the image, on a farm day of seed 42.
 #
-# The bench is the one in the binary (src/speed/): it makes the day with `gen-logs
+# The bench is the one in the binary (src/cmd/bench/): it makes the day with `gen-logs
 # --profile farm --seed 42`, loads it once, and measures servers that are children of the
 # same binary. This script is what is around it: it builds the image, runs the bench in a
 # container, brings the result out, and writes it as a table with a `shed` column.

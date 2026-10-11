@@ -34,7 +34,7 @@ spec:
       automountServiceAccountToken: false
       # SIGKILL follows SIGTERM by this long. kibbr gives the requests in flight 25
       # seconds ([api] shutdown_deadline) and runs the final flush, the checkpoint and
-      # the trie snapshot in what is left: scripts/shutdown_deadline.sh holds a stop to
+      # the trie snapshot in what is left: scripts/fault/shutdown_deadline.sh holds a stop to
       # thirty. Raise the two together, or neither.
       terminationGracePeriodSeconds: 30
       securityContext:

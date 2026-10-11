@@ -100,7 +100,7 @@ pub struct QueryResult {
     pub count: u64,
     pub rows: Vec<Row>,
     /// Ordered by bucket ascending - the unplaceable `None` first - then by values.
-    /// Every surface prints them in the order they arrive, and `scripts/agree.sh` diffs
+    /// Every surface prints them in the order they arrive, and `scripts/check/agree.sh` diffs
     /// the JSON as text, so the order is part of the answer.
     pub groups: Vec<Group>,
     pub meta: QueryMeta,

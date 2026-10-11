@@ -6,7 +6,7 @@
 //! touching the Elasticsearch translation layer too - by then an unknown field and an
 //! empty result have already been the same response for several releases.
 //!
-//! Pinned here rather than left to the differential in `scripts/agree.sh`, because that
+//! Pinned here rather than left to the differential in `scripts/check/agree.sh`, because that
 //! script judges the engine against the oracle: if the distinction were dropped from
 //! both, they would keep agreeing. These assertions are against the observable answer.
 

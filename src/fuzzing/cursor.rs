@@ -77,7 +77,7 @@ use chrono::{DateTime, Utc};
 
 use crate::config::{Limits, Schema};
 use crate::error::{self, CliError};
-use crate::query::{self, Args, Format};
+use crate::cmd::query::{self, Args, Format};
 use kibbr_core::flatten;
 use kibbr_core::types::ColValue;
 use kibbr_engine::engine::{self, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};

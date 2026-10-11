@@ -60,7 +60,7 @@ role belongs to the DaemonSet and is not written here.
 
 - **Thirty seconds to stop.** `terminationGracePeriodSeconds: 30`, and kibbr gives the
   requests in flight 25 of them before it flushes, checkpoints and exits 0
-  (`scripts/shutdown_deadline.sh`: gone 27.1 to 27.6 seconds after SIGTERM with a query
+  (`scripts/fault/shutdown_deadline.sh`: gone 27.1 to 27.6 seconds after SIGTERM with a query
   and a half-sent body in flight). Raise the grace and `KIBBR__API__SHUTDOWN_DEADLINE`
   together.
 - **All three probes are `/health`.** It answers `"ok":true` once the server listens and

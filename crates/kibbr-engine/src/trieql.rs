@@ -29,7 +29,7 @@
 //! `time(...)` buckets the answer by the timestamp instead of by a column, and is the one
 //! group key that is computed rather than read. It takes the same `duration` `SINCE` does,
 //! parsed by the same function: `SINCE 5m` and `time(5m)` reading differently would be the
-//! drift `scripts/parser_equivalence.sh` exists to prevent.
+//! drift `scripts/check/parser_equivalence.sh` exists to prevent.
 //!
 //! `key` and `datetime` are left unspelled above: both are a bare run of characters, or
 //! the same text quoted. Keywords ignore case; the duration's unit does not, because the
@@ -556,7 +556,7 @@ impl<'a> Parser<'a> {
 /// The unit is case-sensitive where the keywords are not. It is not a keyword: it is the
 /// tail of a literal, the grammar spells it in lower case, and `--since` on the flag
 /// surface reads it the same way - two surfaces that answer differently is the one thing
-/// `scripts/parser_equivalence.sh` exists to prevent.
+/// `scripts/check/parser_equivalence.sh` exists to prevent.
 fn duration(src: &str, text: &str, pos: usize) -> Result<Duration, ParseError> {
     let bad = || ParseError::new(src, pos, Kind::BadDuration);
     // By character, not by `len() - 1`: `len` is bytes, and an index inside a multibyte

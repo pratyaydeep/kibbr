@@ -321,11 +321,11 @@ pub enum CliError {
     #[error(transparent)]
     Serve(#[from] ServeError),
     #[error(transparent)]
-    Load(#[from] crate::load::LoadError),
+    Load(#[from] crate::cmd::load::LoadError),
     #[error(transparent)]
-    Compact(#[from] crate::compact::CompactError),
+    Compact(#[from] crate::cmd::compact::CompactError),
     #[error(transparent)]
-    Speed(#[from] crate::speed::SpeedError),
+    Speed(#[from] crate::cmd::bench::SpeedError),
     #[error(transparent)]
-    Ask(#[from] crate::ask::AskError),
+    Ask(#[from] crate::cmd::ask::AskError),
 }

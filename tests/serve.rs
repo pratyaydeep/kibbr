@@ -1651,7 +1651,7 @@ fn the_first_503_names_the_logs_write_error_and_so_do_stats_and_health() {
 // ── After a kill ───────────────────────────────────────────────────────────────────
 
 /// `kill -9` loses no acknowledged line and stores none twice - whichever side of the
-/// checkpoint the line is on. `scripts/crash_test.sh` is the full version of this, twenty
+/// checkpoint the line is on. `scripts/fault/crash_test.sh` is the full version of this, twenty
 /// kills at drawn moments; this is the two cases it rests on, each made on purpose.
 ///
 /// **Rows in a row group, and a checkpoint that does not know.** Every line is flushed

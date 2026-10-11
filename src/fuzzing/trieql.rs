@@ -34,7 +34,7 @@ use chrono::{DateTime, Utc};
 
 use crate::config::Limits;
 use crate::error::{self, CliError, QueryError};
-use crate::query;
+use crate::cmd::query;
 use kibbr_engine::engine::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
 use kibbr_engine::trieql::{self, Kind, ParseError, Parsed};
 

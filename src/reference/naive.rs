@@ -263,7 +263,7 @@ pub fn run(
 /// A timestamp's bucket start, worked out from scratch.
 ///
 /// Written again rather than calling `engine::bucket_of`, for the reason `in_window` is:
-/// where a boundary falls is exactly what `scripts/agree.sh` is checking, and a mutation
+/// where a boundary falls is exactly what `scripts/check/agree.sh` is checking, and a mutation
 /// to one flooring rule must not move both answers together. Where the engine floors with
 /// `div_euclid`, this counts whole widths from the epoch and steps back one for an instant
 /// before it - the same rule, reached a different way.

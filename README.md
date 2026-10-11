@@ -497,7 +497,7 @@ Naming the skipped steps is the point. Four of the six are the difference betwee
 this and a database that survives being restarted - which is what the default,
 `--storage disk`, is: a line is in the write-ahead log under `<data-dir>/wal/`, flushed,
 before `/ingest` answers `200`, and a start after `kill -9` puts back every line no data
-file holds yet, once. `scripts/crash_test.sh` kills a server twenty times mid-ingest and
+file holds yet, once. `scripts/fault/crash_test.sh` kills a server twenty times mid-ingest and
 holds what is stored to what was acknowledged, line by line.
 
 ## Load closed days
@@ -513,7 +513,7 @@ zcat archive.gz | kibbr load --data-dir kibbr-data -       # standard input
 
 - **All or nothing.** The load writes finished files into `staging/`, then publishes
   every one of them in one `manifest.log` record. A load killed at any moment is either
-  wholly there after the next start or wholly absent - `scripts/load_kill.sh` kills it at
+  wholly there after the next start or wholly absent - `scripts/fault/load_kill.sh` kills it at
   random twenty times to check.
 - **Never twice, for the same inputs.** A load's id is a hash, over the whole set of
   inputs, of each one's file name and decompressed bytes. The same set loaded again under
@@ -541,11 +541,11 @@ zcat archive.gz | kibbr load --data-dir kibbr-data -       # standard input
   the rate holds the pass that parses and encodes - and `--load-buffer-bytes` (64 MiB of
   rows unless told otherwise) keeps it from crowding it out of memory.
 
-`scripts/two_doors.sh` sends the same 200,000 lines through both doors into two data
-directories and asks both `scripts/agree.sh`'s query set: they must answer identically.
+`scripts/check/two_doors.sh` sends the same 200,000 lines through both doors into two data
+directories and asks both `scripts/check/agree.sh`'s query set: they must answer identically.
 
-It, `scripts/store_agree.sh` (the memory store against the disk store) and
-`scripts/roundtrip.sh` (every line back out as it went in) each print how many runs of
+It, `scripts/check/store_agree.sh` (the memory store against the disk store) and
+`scripts/measure/roundtrip.sh` (every line back out as it went in) each print how many runs of
 row groups their disk servers shared between threads, and with `NEED_FAN_OUTS=1` fail
 at none. That is for a run made to hold the shared scan to the plain one, with
 `KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0` in the environment: on
@@ -570,7 +570,7 @@ kibbr compact --data-dir kibbr-data --day 2024-01-15    # that day, now
 - **Nothing a query can see moves.** Not a row, not a count, and not a row's position
   among its template's rows of the day - so a cursor handed out before a compaction
   resumes after it, and a query already running finishes on the old files.
-  `scripts/compact_agree.sh` asks `scripts/agree.sh`'s query set of a live day, compacts
+  `scripts/check/compact_agree.sh` asks `scripts/check/agree.sh`'s query set of a live day, compacts
   it three ways, and asks again.
 - **When.** A day is due the day after its last live row. A server looks every
   `--compact-interval-ms` - a minute; `0` never looks - and compacts what is due;
@@ -583,7 +583,7 @@ kibbr compact --data-dir kibbr-data --day 2024-01-15    # that day, now
   exit 1, and nothing is created or deleted there.
 - **Killed at any moment, every row is there once.** The rebuilt files are files nobody
   has named until the one record names them, and a start deletes what the manifest does
-  not name. `scripts/compact_kill.sh` kills it twenty times, alone and under a server.
+  not name. `scripts/fault/compact_kill.sh` kills it twenty times, alone and under a server.
 - `/stats` has `storage.compaction`: whether one is running, how many days were rebuilt,
   the last one's report - the one `--json` prints - and the last error. A day that fails
   is left for twice as long each time, and never makes `/ingest` refuse.
@@ -607,7 +607,7 @@ files and row groups.
 
 `GET /` is a log viewer. Open <http://127.0.0.1:7700/> after starting the server.
 
-It is one file - `src/viewer.html`, inline CSS and vanilla JS, compiled into the
+It is one file - `src/cmd/serve/viewer.html`, inline CSS and vanilla JS, compiled into the
 binary with `include_str!`. There is nothing to deploy beside the binary, no build
 step, and no request to anywhere but this server; `tests/serve.rs` asserts the last
 of those rather than trusting it. It is served `no-store`, because a viewer cached
@@ -711,7 +711,7 @@ One still in flight then - a sender that stopped halfway through a body - is ans
 follow, so the process exits 0 inside whatever grace it was given (Kubernetes: 30
 seconds) and the next start has nothing to replay. `"0s"` waits for every request,
 however long it takes. A query cut off there stops scanning; it used to run on, and the
-process waited for it. `scripts/shutdown_deadline.sh` holds a stop to the thirty
+process waited for it. `scripts/fault/shutdown_deadline.sh` holds a stop to the thirty
 seconds, five times: 2,500,000 rows stored and 100,000 more in buffers, one client that
 sent half an `/ingest` body, one idle socket, and `MATCH LOG {}` with `--max-rows 0`
 running when the signal arrives. The process was gone 27.1 to 27.6 seconds after it,
@@ -734,9 +734,9 @@ whatever collects a container's stderr, and at `debug` every request is a line t
 
 ```
 $ kibbr --log-format json serve --storage memory
-{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr::serve","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"request_timeout_ms":30000,"scan_threads":4}
-{"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr::serve","msg":"storage is in memory: everything ingested is lost when this process exits"}
-{"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr::serve","msg":"SIGTERM received - shutting down"}
+{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr::cmd::serve::lifecycle","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"request_timeout_ms":30000,"scan_threads":4}
+{"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr::cmd::serve::lifecycle","msg":"storage is in memory: everything ingested is lost when this process exits"}
+{"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr::cmd::serve::lifecycle","msg":"SIGTERM received - shutting down"}
 ```
 
 What a command prints on stdout - `query`, `parse`, `explain`, `gen-logs` - is the
@@ -866,25 +866,25 @@ A workspace of four crates, each naming only the ones under it, and `fuzz/` besi
 
 ```
 Cargo.toml                the workspace, and the `kibbr` crate: the binary and its commands
-src/main.rs               CLI, error reporting
+src/main.rs               the clap definitions and the dispatch
 src/config.rs             the settings: a flag, a `KIBBR__` variable, the `--config` file, a default
 src/logs.rs               the process's own log: `tracing` events as lines of text or of JSON
 src/error.rs              thiserror enums of the commands and the server
-src/gen.rs, src/farm.rs   the generators - `hostile` and the log farm
-src/parse.rs              the `parse` output
-src/demo.rs               the `demo` tree
-src/query.rs              the `query` command, and the result JSON both surfaces answer with
-src/reference/            the brute-force oracle behind `query --reference`
-src/serve.rs              the HTTP surface, the banner, the shutdown sequence
-src/load.rs               `kibbr load` - the bulk door: staging, the load id, the commit
-src/compact.rs            `kibbr compact` - the command, and a server's compaction jobs
 src/lock.rs               the LOCK file: one process owns a data directory
-src/ask.rs                `kibbr templates`, `kibbr stats` and `kibbr health`
-src/bench.rs              `kibbr bench-storage`
-src/speed/                `kibbr bench`
-src/http.rs               the small HTTP client `load`, `compact` and `bench-storage --es` speak
+src/client.rs             the small HTTP client `load`, `compact` and `bench-storage --es` speak
+src/cmd/parse.rs          the `parse` output
+src/cmd/demo.rs           the `demo` tree
+src/cmd/query.rs          the `query` command, and the result JSON both surfaces answer with
+src/cmd/serve/            the HTTP surface, the banner, the shutdown sequence
+src/cmd/serve/viewer.html the log viewer served at `/` - one file, compiled into the binary
+src/cmd/load.rs           `kibbr load` - the bulk door: staging, the load id, the commit
+src/cmd/compact.rs        `kibbr compact` - the command, and a server's compaction jobs
+src/cmd/ask.rs            `kibbr templates`, `kibbr stats` and `kibbr health`
+src/cmd/bench_storage.rs  `kibbr bench-storage`
+src/cmd/bench/            `kibbr bench`
+src/gen/                  the generators - `hostile` (mod.rs) and the log farm (farm.rs)
+src/reference/            the brute-force oracle behind `query --reference`
 src/fuzzing/              what each fuzz target holds its subject to
-src/viewer.html           the log viewer served at `/` - one file, compiled into the binary
 tests/fixture.rs          outer-surface tests
 tests/serve.rs            the HTTP contract, over a bare TcpStream
 Dockerfile                the image: a static binary on distroless, and the `bench` target
