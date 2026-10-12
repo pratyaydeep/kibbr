@@ -454,6 +454,7 @@ pub enum StoreError {
     },
     /// A day compaction will not take as it stands: a file a failed seal left, or a commit only
     /// a restart can settle.
+    /// Refused before a byte is written, but for the seal of the day's open file as it begins.
     #[error("compact {day}: {path}: {why}. Nothing was compacted")]
     CompactRefused {
         day: String,

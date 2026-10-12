@@ -1119,6 +1119,7 @@ impl DiskStore {
 
     /// Publish a load's staged files: one manifest record, which is the commit, then the
     /// move, then the rows.
+    /// Numbered here, under the flush's lock, so a load and the live door can never want one name.
     pub fn commit_load(&self, commit: LoadCommit) -> Result<Committed, StoreError> {
         let mut files = lock(&self.files);
         if let Some(pending) = files.unmoved.iter().next() {

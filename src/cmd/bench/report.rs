@@ -1,24 +1,8 @@
-//! What a bench leaves behind: the result file, the raw log and the table.
-//!
-//! This file holds the result's types, schema `kibbr-bench/1`, as they are written and
-//! read: field names carry their unit, a number the server or the system did not give is
-//! `null` and never 0, and every sample is kept in the order it was taken. Under them: the
-//! medians over the runs, the writing and reading of a result, what makes two results the
-//! same work, how a number is printed, the table with the lines under it, each line of the
-//! raw log, and `SOURCES`, the digest of the bench's own code.
-//!
-//! **Reading is lenient where writing is exact.** An `Option` that is missing from a file
-//! reads as `None`, and a field this build does not know is stepped over, so a result
-//! saved by an earlier build of the bench still prints its column.
-//!
-//! **A ratio is always a speed-up.** `this / baseline` for a rate and `baseline / this`
-//! for a time, so above 1 is faster on every row. Every number in the table is the middle
-//! of the runs' own numbers, never a percentile over their pooled samples; where a
-//! column's runs overlap the baseline's, a line under the table says the ratio is not a
-//! difference.
-//!
-//! **Nothing here is timed.** Each log line is built from a result's types after the
-//! unit they describe is over, and none is printed inside a window.
+//! What a bench leaves behind: the result file (schema `kibbr-bench/1`), the raw log and
+//! the table. Reading is lenient where writing is exact, so a result saved by an earlier
+//! build of the bench still prints its column. A ratio is always a speed-up, and every
+//! table number is the middle of the runs' own numbers, never a percentile over pooled
+//! samples. Nothing here is timed: each log line is built after its unit is over.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -37,8 +21,7 @@ use super::{crc_hex, on_stdout, place_lines, SpeedError, SCAN_TAIL, SWAP_GAP};
 /// The `schema` of every result this build writes, and the only one it reads.
 pub const SCHEMA: &str = "kibbr-bench/1";
 
-/// The bench's own source, in the order it is digested. A result records the CRC-32C of
-/// these with ASCII white space left out, so formatting does not move it and an edit does:
+/// The bench's own source, in the order it is digested with ASCII white space left out:
 /// two results under two digests were measured by two instruments.
 pub const SOURCES: [(&str, &str); 8] = [
     ("mod.rs", include_str!("mod.rs")),
@@ -211,7 +194,7 @@ pub struct ResultFile {
     pub baseline: Option<BaselineRef>,
 }
 
-/// The checkout the bench ran in. Without git, `sha` is `null`.
+/// The checkout the bench ran in, where without git `sha` is `null`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Commit {
     pub sha: Option<String>,
@@ -370,8 +353,7 @@ pub struct Run {
     pub loaded: LoadedRun,
 }
 
-/// What was looked at before a run and after it. Under `--unchecked` nothing is, and each
-/// reading is `null`.
+/// What was looked at before a run and after it, each reading `null` under `--unchecked`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Checks {
     pub waited_s: u64,
@@ -386,18 +368,15 @@ pub struct Checks {
     pub flush_ms_before: Option<f64>,
     pub flush_ms_after: Option<f64>,
     /// How the machine was powered when the references were taken before the run, and
-    /// again at its end. `null` where the system has no reading this build takes, and in a
-    /// result saved before these were kept.
+    /// again at its end; `null` where there is no reading, or in a result saved without them.
     pub power_before: Option<Power>,
     pub power_after: Option<Power>,
     /// Whether swap and the process list were read after each unit.
     pub after_unit_checks: bool,
 }
 
-/// How the machine was powered at one moment. A laptop in Low Power Mode holds every
-/// core back, and one on its battery may, so the same build then reads slower in every
-/// row: on the machine this was written on, on its battery in Low Power Mode, the spin
-/// reference takes 1.7 times as long.
+/// How the machine was powered at one moment: a laptop in Low Power Mode or on its
+/// battery holds its cores back, and the same build then reads slower in every row.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Power {
     /// What the machine draws from, as the system names it: `AC Power`, `Battery Power`.
@@ -539,8 +518,8 @@ pub struct AtEnd {
     pub reached_buffer_limit: Option<bool>,
     pub requests_shed: Option<u64>,
     pub lines_rejected: Option<u64>,
-    /// Writes to the store that failed in the window. The server acknowledges lines
-    /// while its store cannot write, so above 0 the rate is not of rows that were stored.
+    /// Writes to the store that failed in the window; the server acknowledges lines while
+    /// its store cannot write, so above 0 the rate is not of rows that were stored.
     pub write_failures: Option<u64>,
     /// Lines the log holds that the store does not yet.
     pub wal_behind: Option<u64>,
@@ -629,8 +608,8 @@ pub struct ScanRun {
     /// `key_rows x asks`: the data's count, not the server's.
     pub rows: u64,
     pub cpu_s: Option<f64>,
-    /// `rows / cpu_s`: the table's number. `null` where the system reported no CPU time
-    /// over the block; nothing is divided by 0.
+    /// `rows / cpu_s`, the table's number; `null` where the system reported no CPU time
+    /// over the block.
     pub rows_per_cpu_s: Option<f64>,
     pub wall_s: f64,
     /// `cpu_s / wall_s`.
@@ -641,7 +620,7 @@ pub struct ScanRun {
     pub beside: Beside,
 }
 
-/// The same rate read off the four queries' own blocks. Not in the table.
+/// The same rate read off the four queries' own blocks, which is not in the table.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Beside {
     #[serde(rename = "S2")]
@@ -729,8 +708,8 @@ pub struct Laps {
     pub forced_closes: Vec<Option<u64>>,
     pub buffered_bytes: Vec<Option<u64>>,
     pub requests_shed: Vec<Option<u64>>,
-    /// Writes to the store that failed in the lap, and whether its last flush had, from
-    /// the lap's last `/stats`. A result saved before these were kept reads with none.
+    /// Writes to the store that failed in the lap, and whether its last flush had; a
+    /// result saved before these were kept reads with none.
     #[serde(default)]
     pub write_failures: Vec<Option<u64>>,
     #[serde(default)]
@@ -763,7 +742,7 @@ pub struct PerRunPair {
     pub p99_ms: Vec<f64>,
 }
 
-/// The middle of the runs for each number. Never a percentile over pooled samples.
+/// The middle of the runs for each number, never a percentile over pooled samples.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Medians {
     pub ingest_lines_per_s: f64,
@@ -790,7 +769,7 @@ pub struct Pair {
     pub p99_ms: f64,
 }
 
-/// The baseline a result was measured against. Its ratios are not stored: they are worked
+/// The baseline a result was measured against; its ratios are not stored but worked
 /// out again from the two files whenever a table is printed.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BaselineRef {
@@ -838,8 +817,8 @@ pub fn source_digest() -> BenchSource {
     }
 }
 
-/// Read a saved result. A file that cannot be read, is not JSON, or is of another schema
-/// is `SpeedError::Baseline`, by path.
+/// Read a saved result, where a file that cannot be read, is not JSON, or is of another
+/// schema is `SpeedError::Baseline`, by path.
 pub fn read(path: &Path) -> Result<Saved, SpeedError> {
     let refused = |detail: String| SpeedError::Baseline {
         path: path.to_path_buf(),
@@ -879,9 +858,8 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Where a result's raw log goes: beside it, `.log` for `.json`. A result that is itself
-/// named `.log` keeps its name and the log takes one more `.log`, so that the two are
-/// never one file.
+/// Where a result's raw log goes: beside it, `.log` for `.json`, or one more `.log`
+/// after a result itself named `.log`, so that the two are never one file.
 pub fn log_path(out: &Path) -> PathBuf {
     if out.extension().is_some_and(|extension| extension == "log") {
         beside(out, ".log")
@@ -890,7 +868,7 @@ pub fn log_path(out: &Path) -> PathBuf {
     }
 }
 
-/// The line that says where a result went. It is the last line of the raw log before the
+/// The line that says where a result went, the last line of the raw log before the
 /// table, so the text given to `write` already holds it.
 pub fn saved_line(out: &Path) -> String {
     format!("saved {} and {}", out.display(), log_path(out).display())
@@ -920,8 +898,7 @@ fn taken(path: &Path) -> Result<bool, SpeedError> {
 }
 
 /// Write `bytes` to a new file at `path` and flush them to the disk. A file of that name
-/// is replaced: it is only ever a `.tmp` an interrupted bench left, and an hour of
-/// measuring must not end unsaved over one.
+/// is replaced: it is only ever a `.tmp` an interrupted bench left.
 fn put(path: &Path, bytes: &[u8]) -> Result<(), SpeedError> {
     let mut file = File::create(path).map_err(io_at(path))?;
     file.write_all(bytes)
@@ -929,12 +906,8 @@ fn put(path: &Path, bytes: &[u8]) -> Result<(), SpeedError> {
         .map_err(io_at(path))
 }
 
-/// Make the directory a result will be saved in, and prove that a file can be made
-/// there, before a run is spent: a place that cannot be written to is otherwise found
-/// when the last run is over. The proof is a file beside the result's place, made and
-/// removed. It is not the `.tmp` a result is written through, which may hold the samples
-/// of an earlier result that would not read back; and one that is already there is
-/// someone's, and is neither written over nor removed.
+/// Make the directory a result will be saved in and prove a file can be made there, with
+/// a file of its own beside the result's place, before a run is spent.
 pub fn writable(out: &Path) -> Result<(), SpeedError> {
     if let Some(dir) = out.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         fs::create_dir_all(dir).map_err(io_at(dir))?;
@@ -958,9 +931,8 @@ pub fn writable(out: &Path) -> Result<(), SpeedError> {
     }
 }
 
-/// A result as it is saved: one object, each of its fields on a line of its own and each
-/// run on one line. The numbers a table is printed from can then be found by eye, and a
-/// change between two saved results reads as a change of lines.
+/// A result as it is saved, each field on a line of its own and each run on one line, so
+/// that a change between two saved results reads as a change of lines.
 pub fn result_text(file: &ResultFile) -> Result<String, SpeedError> {
     let value = serde_json::to_value(file)?;
     let serde_json::Value::Object(fields) = &value else {
@@ -989,14 +961,8 @@ pub fn result_text(file: &ResultFile) -> Result<String, SpeedError> {
     Ok(text)
 }
 
-/// Save a result and its raw log: each written beside its place as `.tmp`, then renamed,
-/// the directory made if it is not there. Nothing is written over: a file at either place
-/// is `SpeedError::OutExists`.
-///
-/// A number that is not finite is written as `null`, and a result holding one where a
-/// number must stand cannot be read again. Such a result keeps its `.tmp` name, with
-/// every sample in it, and the error names it: it is not left where a later run would
-/// take it for a baseline.
+/// Save a result and its raw log through `.tmp` names, writing over nothing; a result
+/// that would not read back keeps its `.tmp` name so no later run takes it for a baseline.
 pub fn write(out: &Path, file: &ResultFile, log: &str) -> Result<(), SpeedError> {
     let log_to = log_path(out);
     for place in [out, log_to.as_path()] {
@@ -1075,9 +1041,8 @@ fn every<T: Copy>(values: &[Option<T>]) -> Option<Vec<T>> {
     values.iter().copied().collect()
 }
 
-/// The middle of each of `per_run`'s lists; `flags.runs` is odd, so it is one of them.
-/// A number that one run could not give is `None`. With no run at all there is no number,
-/// and each reads 0.
+/// The middle of each of `per_run`'s lists, which `flags.runs` being odd makes one of
+/// them; a number that one run could not give is `None`.
 pub fn medians(per_run: &PerRun) -> Medians {
     let middle = |values: &[f64]| median(values).unwrap_or_default();
     let middle_of_every = |values: &[Option<f64>]| every(values).and_then(|all| median(&all));
@@ -1108,14 +1073,14 @@ pub fn medians(per_run: &PerRun) -> Medians {
     }
 }
 
-/// The speed-up of a rate on a baseline's: `this / baseline`, above 1 when faster. `None`
-/// when the baseline's is 0.
+/// The speed-up of a rate on a baseline's: `this / baseline`, above 1 when faster, and
+/// `None` when the baseline's is 0.
 pub fn speedup_of_rate(this: f64, baseline: f64) -> Option<f64> {
     quotient(this, baseline)
 }
 
-/// The speed-up of a time on a baseline's: `baseline / this`, above 1 when faster. `None`
-/// when this one is 0.
+/// The speed-up of a time on a baseline's: `baseline / this`, above 1 when faster, and
+/// `None` when this one is 0.
 pub fn speedup_of_time(this: f64, baseline: f64) -> Option<f64> {
     quotient(baseline, this)
 }
@@ -1135,9 +1100,8 @@ fn range(values: &[f64]) -> Option<(f64, f64)> {
     }))
 }
 
-/// Whether the smallest to the largest of `a` and the same of `b` share a value: a ratio
-/// between two such sets of runs is not a difference. Ends count, and a rate and a time
-/// take the same rule.
+/// Whether the smallest to the largest of `a` and the same of `b` share a value, ends
+/// included: a ratio between two such sets of runs is not a difference.
 pub fn overlap(a: &[f64], b: &[f64]) -> bool {
     match (range(a), range(b)) {
         (Some((a_least, a_most)), Some((b_least, b_most))) => {
@@ -1361,8 +1325,7 @@ fn data_differences(
 }
 
 /// A `FAIL` sentence for each query that answers otherwise than the baseline's did. Only
-/// asked once the bytes and the texts are known to be the same: a faster wrong answer is
-/// not a column.
+/// asked once the bytes and the texts are the same: a faster wrong answer is not a column.
 fn answer_failures(base: &Seven<Expect>, this: &Seven<Expect>) -> Vec<String> {
     const WHY: &str = "the same query over the same bytes has another answer";
     let mut found = Vec::new();
@@ -1415,9 +1378,8 @@ fn refuse(baseline: &Saved, found: Vec<String>) -> Result<(), SpeedError> {
     })
 }
 
-/// What can be compared with a baseline before the data is looked at: the schema, the
-/// flags, the plan shapes' texts, the server's arguments and the machine. A difference is
-/// `SpeedError::Baseline` naming each key with both values.
+/// What can be compared with a baseline before the data is looked at - schema, flags,
+/// plan texts, server arguments, machine - where a difference is `SpeedError::Baseline`.
 pub fn comparable_before(
     baseline: &Saved,
     flags: &Flags,
@@ -1436,9 +1398,8 @@ pub fn comparable_before(
     refuse(baseline, found)
 }
 
-/// What can be compared once the preflight has run: the loaded files and the live
-/// stream's digest, the seven texts, and each expected answer - where the same query over
-/// the same bytes has another answer, the detail is a `FAIL` sentence with both.
+/// What can be compared once the preflight has run: the loaded files, the live stream's
+/// digest, the seven texts, and each expected answer, where another answer is a `FAIL`.
 pub fn comparable_data(
     baseline: &Saved,
     data: &Data,
@@ -1454,15 +1415,8 @@ pub fn comparable_data(
 
 // ── How a number is printed ────────────────────────────────────────────────────────
 
-/// Milliseconds as the log and the table print them: four decimals under 0.1, two under
-/// 10, one under 1,000, none above, and thousands separated. The bounds are where the
-/// shorter form would round up into the next one, so 9.996 is `10.0` and never `10.00`,
-/// and 0.0996 is `0.10`.
-///
-/// Four decimals under a tenth, because two would leave a plan of 30 microseconds one
-/// figure - `0.03` for anything from 0.025 to 0.035 - and print one of 4 as `0.00`. A
-/// tenth of a microsecond is about what the clock resolves. A time of exactly 0 is
-/// `0.00`: it has no figures to keep.
+/// Milliseconds as the log and the table print them, with more decimals the smaller the
+/// value, bounded where a shorter form would round up into the next one.
 pub fn ms(value: f64) -> String {
     if value > 0.0 && value < 0.0995 {
         format!("{value:.4}")
@@ -1657,9 +1611,8 @@ fn loaded_cell(file: &ResultFile, base: Option<&ResultFile>) -> String {
     format!("{} ms", cells.join("  "))
 }
 
-/// The line that is always under the rows: what the scan row was divided by, and the same
-/// block by the wall clock with the cores it kept busy - where a scan spread over several
-/// threads shows, which a rate per CPU-second cannot.
+/// The line that is always under the rows: the scan block by the wall clock with the
+/// cores it kept busy, where a spread scan shows, which a rate per CPU-second cannot.
 fn scan_note(base: &ResultFile, others: &[&ResultFile]) -> String {
     let wall = |file: &ResultFile| or_na(file.medians.scan_rows_per_wall_s, rate);
     let cores = |file: &ResultFile| or_na(file.medians.scan_cores_busy, |c| format!("{c:.2}"));
@@ -1703,9 +1656,8 @@ fn laps(file: &ResultFile) -> u64 {
     file.runs.iter().map(|run| run.loaded.laps as u64).sum()
 }
 
-/// Laps whose server said, in its last `/stats`, that a write to its store had failed or
-/// that its last flush had: the count is the surer of the two, since the flag is cleared
-/// by the next flush that writes. A lap whose server said neither is not counted.
+/// Laps whose server said a write to its store had failed, or that its last flush had.
+/// The count is the surer of the two: the flag is cleared by the next flush that writes.
 fn laps_that_could_not_write(laps: &Laps) -> u64 {
     let failed = |at: usize| {
         let failures = laps.write_failures.get(at).copied().flatten();
@@ -1761,8 +1713,7 @@ fn runs_named(runs: &[usize]) -> String {
 }
 
 /// What a run began or ended as, where either was not mains power with Low Power Mode
-/// off: `began and ended on Battery Power with Low Power Mode on`. A reading that was on
-/// mains, or was not taken, is not named.
+/// off. A reading that was on mains, or was not taken, is not named.
 fn off_mains(checks: &Checks) -> Option<String> {
     let words = |power: &Option<Power>| {
         power
@@ -1779,9 +1730,8 @@ fn off_mains(checks: &Checks) -> Option<String> {
     }
 }
 
-/// A line for the runs that began or ended on a battery or in Low Power Mode, the runs
-/// that did the same named together. Nothing is refused for it: the numbers are a slower
-/// machine's, and only this line says so of a result read alone.
+/// A line for the runs that began or ended on a battery or in Low Power Mode. Nothing is
+/// refused for it: only this line says the numbers are a slower machine's.
 fn off_mains_lines(runs: &[Run]) -> Vec<String> {
     let mut said: Vec<(String, Vec<usize>)> = Vec::new();
     for run in runs {
@@ -1803,10 +1753,8 @@ fn off_mains_lines(runs: &[Run]) -> Vec<String> {
         .collect()
 }
 
-/// A line for a run whose two readings of the spin reference are further apart than two
-/// results' may be. The spin set against a baseline's is the one taken before each run,
-/// so a run whose machine sped up or slowed down part way - taken out of Low Power Mode,
-/// or throttled - would otherwise print as any other.
+/// A line for a run whose two readings of the spin reference are too far apart: only the
+/// first is set against a baseline's, so a machine that changed part way would not show.
 fn spin_moved(run: &Run) -> Option<String> {
     let (before, after) = (run.checks.spin_ms_before?, run.checks.spin_ms_after?);
     apart(after, before, SPIN_APART).then(|| {
@@ -2031,8 +1979,7 @@ fn overlap_line(name: &str, now: &[f64], was: &[f64], in_ms: bool) -> Option<Str
 }
 
 /// A line for each ratio the table prints for `file` whose runs overlap the baseline's,
-/// in the rows' order. A ratio with no line had every one of its runs on one side of
-/// every one of the baseline's.
+/// in the rows' order.
 fn overlap_lines(base: &ResultFile, file: &ResultFile) -> Vec<String> {
     let (was, now) = (&base.per_run, &file.per_run);
     let mut lines = Vec::new();
@@ -2092,9 +2039,7 @@ fn apart(now: f64, was: f64, share: f64) -> bool {
 }
 
 /// The power states a result's runs went through, in the order they were read, each
-/// named once for as long as it lasted: one state for a machine that was left alone.
-/// `None` for a result with no reading - one that was not checked, one of a system with
-/// none, one saved before they were kept - of which nothing can be said.
+/// named once for as long as it lasted. `None` for a result with no reading.
 fn power_of(runs: &[Run]) -> Option<String> {
     let mut states: Vec<String> = powers(runs).map(power_words).collect();
     states.dedup();
@@ -2116,12 +2061,8 @@ fn power_half<'a, T: PartialEq>(runs: &'a [Run], half: impl Fn(&'a Power) -> Opt
     states
 }
 
-/// Whether two results are known to have been taken in different power states: what the
-/// machine drew from, or Low Power Mode, went through other values in one than in the
-/// other. Each half is set against the same half, over the readings that have it, so a
-/// part the system did not give is not held against the machine here either: a `pmset`
-/// that failed once in an hour is not a machine that changed state, and a Mac that names
-/// no Low Power Mode is still told from itself on its battery.
+/// Whether two results are known to have been taken in different power states. Each half
+/// is set against the same half, so a part the system did not give is not held against it.
 fn power_differs(base: &[Run], file: &[Run]) -> bool {
     fn differ<T: PartialEq>(was: &[T], now: &[T]) -> bool {
         !was.is_empty() && !now.is_empty() && was != now
@@ -2308,16 +2249,7 @@ fn failures(base: &ResultFile, file: &ResultFile) -> Vec<String> {
 }
 
 /// The table from saved results, the first as the baseline and one column a file: the
-/// eight rows, then the lines under them. Results that are not the same work are
-/// `SpeedError::Baseline`.
-///
-/// Under the rows, in this order: what a bracketed ratio is, when there is one; what the
-/// scan row was divided by, always; then for each result what is true of it alone, and
-/// for each one after the baseline a line for every ratio whose runs overlap the
-/// baseline's, what was not the same between the two, and what makes the column wrong.
-/// A line about one result is headed by its label when the table holds more than one,
-/// and a line that sets a column against the baseline when there is more than one such
-/// column.
+/// eight rows, then the lines under them, or `SpeedError::Baseline` if not the same work.
 pub fn table(saved: &[Saved]) -> Result<Table, SpeedError> {
     let Some((first, rest)) = saved.split_first() else {
         return Ok(Table::default());
@@ -2493,8 +2425,8 @@ impl<'a> Log<'a> {
         }
     }
 
-    /// Print one line, or several, and flush: a line is a fact, and a run is watched as it
-    /// goes. Never called inside a timed window.
+    /// Print one line, or several, and flush, since a run is watched as it goes; never
+    /// called inside a timed window.
     pub fn line(&mut self, text: &str) -> Result<(), SpeedError> {
         writeln!(self.out, "{text}")
             .and_then(|()| self.out.flush())
@@ -2861,9 +2793,8 @@ fn start_lines(file: &ResultFile, loaded: &Corpus) -> Vec<String> {
     lines
 }
 
-/// The lines before the first run: what is being measured, on which commit, binary and
-/// machine, with which server arguments, over which bytes, and each query with its
-/// expected answer. `file` is the result as it stands then, with no run in it.
+/// The lines before the first run - what is measured, on which commit, binary and machine,
+/// over which bytes, each query with its expected answer - from `file` with no run in it.
 pub fn log_start(log: &mut Log, file: &ResultFile, loaded: &Corpus) -> Result<(), SpeedError> {
     print(log, &start_lines(file, loaded))
 }
@@ -3409,7 +3340,7 @@ fn marked(lap: usize, laps: usize) -> bool {
 }
 
 /// One line as a quarter of a run's laps passes, so that a run of minutes is seen to
-/// move. Called after every lap, between two servers; it prints for a few of them.
+/// move; called after every lap, between two servers.
 pub fn log_lap(log: &mut Log, run: usize, lap: usize, laps: usize) -> Result<(), SpeedError> {
     if !marked(lap, laps) {
         return Ok(());
@@ -3563,9 +3494,8 @@ fn end_line(run: &Run) -> String {
     )
 }
 
-/// A run's `end` line: units thrown away, the references and the power state again, the
-/// binary, the time.
-/// Printed once the binary has been found to be the bytes that started.
+/// A run's `end` line - units thrown away, the references and the power state again, the
+/// binary, the time - printed once the binary is found to be the bytes that started.
 pub fn log_end(log: &mut Log, run: &Run) -> Result<(), SpeedError> {
     log.line(&end_line(run))
 }
@@ -4919,9 +4849,8 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
         file.runs[0].idle.scan.refused = 1;
         file.runs[0].idle.queries.s2.refused = 3;
         file.runs[0].loaded.queries.s1.refused = 5;
-        // A store that failed to write in the middle of run 1's window and wrote again,
-        // one that was still failing when run 2's window closed, and laps on such stores:
-        // one known by the count alone, one by the flag alone, one by both.
+        // Stores that failed to write: mid-window and recovered in run 1, still failing at run
+        // 2's end, and laps known by the count alone, the flag alone, and both.
         file.runs[0].ingest.at_end.write_failures = Some(3);
         file.runs[1].ingest.at_end.write_failures = Some(1);
         file.runs[1].ingest.health_at_end = Health {
@@ -5183,9 +5112,8 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
     fn a_run_whose_two_spins_are_apart_says_the_machine_changed_state() {
         let mut file = baseline().file;
         let quiet = notes(&file);
-        // Run 1 as it was rehearsed: in Low Power Mode when it began, out of it at the
-        // end. Run 2 inside the share, a hair under 5% of its first reading; run 3 a hair
-        // over it, the other way.
+        // Run 1 began in Low Power Mode and ended out of it. Run 2 is a hair inside the share
+        // of its first reading; run 3 a hair over it, the other way.
         (
             file.runs[0].checks.spin_ms_before,
             file.runs[0].checks.spin_ms_after,
@@ -5262,9 +5190,8 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
             )]
         );
 
-        // A run that left Low Power Mode part way, one on mains throughout, and one that
-        // was unplugged before it ended. Runs that did the same are named together, each
-        // kind once, in the order it was first met.
+        // A run that left Low Power Mode part way, one on mains throughout, one unplugged before
+        // it ended. Runs that did the same are named together, in the order first met.
         let mut file = powered(baseline(), "AC Power", false).file;
         file.runs[0].checks.power_before = Some(power("Battery Power", true));
         file.runs[0].checks.power_after = Some(power("Battery Power", false));

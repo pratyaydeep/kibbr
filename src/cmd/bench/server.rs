@@ -1,20 +1,8 @@
 //! One child `kibbr serve`, on a copy of the loaded directory, for one unit of measuring.
-//!
-//! This file holds the server's command line - every flag typed out, the same for every
-//! server - the scrub of a child's environment, the start (copy, verify, spawn, standard
-//! error to a file, the port from the banner, the first `/health`), and the reading of
-//! `/stats` and `/health`.
-//!
-//! **A server of its own for every unit.** Whatever a server took or cached would be in
-//! the next number, so none outlives its unit, and each starts from the loaded bytes.
-//! **Killed, not stopped.** What it holds is not wanted, and a clean stop would write its
-//! buffers out; that is safe only because it ran on a copy, which goes with it.
-//!
-//! **Up means it said where and answered.** The server is given `--port 0` and writes the
-//! address it was given to standard error, which goes to a file, so the file is read
-//! until the address is in it. The socket is bound before the store is opened, so a
-//! connection made then is only waiting: a server is up at its first `/health` that is a
-//! 200, and the time from spawn to that answer is what a result records as its start.
+//! A server of its own for every unit: whatever one took or cached would be in the next
+//! number. Killed, not stopped: a clean stop would write its buffers out, and it ran on a
+//! copy. Up means it printed its address (`--port 0`) and answered `/health` with a 200;
+//! spawn to that answer is what a result records as its start.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -54,7 +42,7 @@ const QUOTED: usize = 40;
 /// has.
 static STARTED: AtomicU64 = AtomicU64::new(0);
 
-/// A running server. Dropping it kills the process, reaps it and removes its copy.
+/// A running server; dropping it kills the process, reaps it and removes its copy.
 pub struct Server {
     pub pid: u32,
     pub addr: SocketAddr,
@@ -64,14 +52,14 @@ pub struct Server {
     pub copy_ms: f64,
     pub copy_files: u64,
     pub copy_bytes: u64,
-    /// The server's standard error. A file and never a pipe: the farm widens columns on
+    /// The server's standard error, a file and never a pipe: the farm widens columns on
     /// every start, and a pipe nobody drains blocks the server.
     pub log: PathBuf,
     child: Child,
     copy: PathBuf,
 }
 
-/// What the bench reads of `/stats`. The first two fields are required of every server;
+/// What the bench reads of `/stats`: the first two fields are required of every server,
 /// each of the rest is `None` where the answer does not hold it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Stats {
@@ -87,9 +75,8 @@ pub struct Stats {
     pub buffered_bytes: Option<u64>,
     pub max_buffer_bytes: Option<u64>,
     pub forced_closes: Option<u64>,
-    /// Writes to the store that failed since the server started, and whether its last
-    /// flush did. While the store cannot write, `/ingest` goes on answering 200 - the
-    /// lines are in the log - and no row reaches a file.
+    /// Writes to the store that failed since the server started; while it cannot write,
+    /// `/ingest` goes on answering 200 and no row reaches a file.
     pub write_failures: Option<u64>,
     pub degraded: Option<bool>,
     pub wal_last_seq: Option<u64>,
@@ -110,14 +97,8 @@ struct Made {
 }
 
 impl Server {
-    /// Copy the loaded directory under `work`, read the copy back against the marker,
-    /// start `exe serve` on it with `argv` and a scrubbed environment, and wait until it
-    /// has printed its address and answered `/health` with 200 and `ok`.
-    ///
-    /// A child that exits first, or is not ready in `START_LIMIT`, is
-    /// `SpeedError::ServerStart` with the end of its standard error; a copy that is not
-    /// the marker's list is `SpeedError::Corpus`. Nothing is left running on an error,
-    /// and no copy is left behind; the server's standard error is.
+    /// Copy the loaded directory under `work`, verify it against the marker, start `exe serve`
+    /// on it and wait for a 200 `ok` from `/health`; an error leaves nothing running and no copy.
     pub fn start(
         exe: &Path,
         loaded: &Corpus,
@@ -147,30 +128,29 @@ impl Server {
         launch(command(exe, &made.copy, cores, threads), made, START_LIMIT)
     }
 
-    /// `GET /stats`. A required field that is missing or of another type is
-    /// `SpeedError::Surface`, and so is an answer that is not a 200, or none.
+    /// `GET /stats`; a required field that is missing or mistyped, or an answer that is not a
+    /// 200, is `SpeedError::Surface`.
     pub fn stats(&self, conn: &mut Conn) -> Result<Stats, SpeedError> {
         let answer = self.ask_stats(conn)?;
         self.read_stats(conn, &answer)
     }
 
-    /// The first half of `stats`: the question, and its answer still unread in `conn`.
-    /// For the `/stats` that opens a window, where what follows the answer's last byte is
-    /// inside the window and reading the answer can wait until the senders are released.
+    /// The first half of `stats`, its answer left unread in `conn`: for the `/stats` that
+    /// opens a window, where reading the answer can wait until the senders are released.
     pub fn ask_stats(&self, conn: &mut Conn) -> Result<Answer, SpeedError> {
         self.get(conn, "GET /stats", "/stats")
     }
 
-    /// The second half: read the answer `ask_stats` left in `conn`. Nothing may have been
-    /// sent down `conn` since.
+    /// The second half: read the answer `ask_stats` left in `conn`, down which nothing may
+    /// have been sent since.
     pub fn read_stats(&self, conn: &mut Conn, answer: &Answer) -> Result<Stats, SpeedError> {
         let stats = parse_stats(conn.body(answer))?;
         self.keep(conn, answer, "GET /stats")?;
         Ok(stats)
     }
 
-    /// `GET /health`: its `status`, and its `detail` when it has one. An answer that is
-    /// not 200 is `SpeedError::Surface`; a status other than `ok` is the caller's to judge.
+    /// `GET /health`: its `status` and `detail`, where a status other than `ok` is the
+    /// caller's to judge.
     pub fn health(&self, conn: &mut Conn) -> Result<Health, SpeedError> {
         let answer = self.get(conn, "GET /health", "/health")?;
         let health = parse_health(conn.body(&answer))?;
@@ -332,8 +312,7 @@ impl Drop for Server {
 }
 
 /// Make `copy` from the loaded directory and read it back: the files and bytes copied.
-/// The read proves the server starts on the loaded bytes, and puts them in the file
-/// cache - a clone is a new file, and its pages are not the original's.
+/// The read proves the server starts on the loaded bytes, and puts them in the file cache.
 fn copied(loaded: &Corpus, copy: &Path) -> Result<(u64, u64), SpeedError> {
     let on = |path: &Path| {
         let path = path.to_path_buf();
@@ -404,9 +383,8 @@ fn command(exe: &Path, copy: &Path, cores: usize, threads: Option<usize>) -> Com
     command
 }
 
-/// Start `command` with standard error to the log, and wait until it is up. From the
-/// spawn on, a `Server` owns the process and the copy, so every way out of here that is
-/// an error kills the one and removes the other.
+/// Start `command` with standard error to the log, and wait until it is up. From the spawn
+/// on a `Server` owns the process and the copy, so an error kills one and removes the other.
 fn launch(mut command: Command, made: Made, limit: Duration) -> Result<Server, SpeedError> {
     let spawn = |command: &mut Command| {
         let on = |path: &Path| {
@@ -448,9 +426,8 @@ fn launch(mut command: Command, made: Made, limit: Duration) -> Result<Server, S
     Ok(server)
 }
 
-/// The port of the first `http://127.0.0.1:<port>` in what a server has written so far.
-/// `None` until the digits are followed by something that is not one: the file is read
-/// while it is being written, and a port read off half a line would be another port.
+/// The port of the first `http://127.0.0.1:<port>` a server has written. `None` until a
+/// non-digit follows: the file is read while written, and half a line is another port.
 fn banner_port(written: &[u8]) -> Option<u16> {
     let mut from = 0;
     while let Some(at) = written[from..]
@@ -473,21 +450,9 @@ fn banner_port(written: &[u8]) -> Option<u16> {
     None
 }
 
-/// The arguments of every server, after the binary's name: each flag at the value that was
-/// its default when the first result was saved, typed out, so that "the same flags"
-/// survives a default that moves. `--port 0`, so that no port is picked and then lost to
-/// another process; `--compact-interval-ms 0`, because a copy holding live rows of a past
-/// day is due for compaction by the wall clock's date, and a compaction under a
-/// measurement is not the measurement. A result records them with `<copy>` as `data_dir`.
-///
-/// A flag a later build adds is not here and takes that build's default.
-///
-/// **`--scan-threads` is the one flag that is asked for and not typed out**: it is the
-/// bench's own `--threads`, last on the line, and with none given it is not on the line
-/// at all - the build's default then, which follows the machine, as it was for every
-/// result saved before the flag. No variable can stand in for it: `KIBBR__` is scrubbed.
-/// The arguments are recorded and two results compare only where they are equal, so a
-/// result at four threads is held to one at four.
+/// Every server's arguments, each flag typed out so that "the same flags" survives a moved
+/// default: port 0 loses no port, compaction is off because a copy's past day is due for
+/// it under the measurement, and `--scan-threads` is there only when `--threads` is given.
 pub fn argv(data_dir: &str, cores: usize, threads: Option<usize>) -> Vec<String> {
     let cores = cores.to_string();
     let max_rows = MAX_ROWS.to_string();
@@ -616,9 +581,8 @@ fn parse_health(body: &[u8]) -> Result<Health, SpeedError> {
     })
 }
 
-/// Take every `KIBBR__` variable out of a child's environment, and return their names in
-/// order, for the log. Called for every child the bench starts - a server, the generator,
-/// the load, the plan step - so that none reads a limit the result does not record.
+/// Take every `KIBBR__` variable out of a child's environment and return their names, so
+/// that no child reads a limit the result does not record.
 pub fn scrub(command: &mut Command) -> Vec<String> {
     let mut removed = Vec::new();
     for (name, _) in std::env::vars_os() {
@@ -747,9 +711,8 @@ mod tests {
         );
     }
 
-    /// `/stats` as a server of this build answers it over a loaded farm day, with the
-    /// note cut to its first words and the counters the bench reads set apart from one
-    /// another, so that one read from another's place shows.
+    /// `/stats` as a server of this build answers it, the counters the bench reads set apart
+    /// from one another, so that one read from another's place shows.
     const STATS: &str = r#"{"uptime_seconds":0.026272959,"started_at":"2026-10-07T15:24:22.940221Z","storage":{"kind":"disk","durable":true,"note":"a line is written to the write-ahead log under wal/ and flushed before /ingest acknowledges it","base_path":"/s/data","trie_file":"/s/data/trie.json","catalog":"/s/data/catalog.log","flush_interval_ms":500,"row_group_timeout_ms":300000,"wal":{"dir":"/s/data/wal","stream":"ecca12cf6193f716","segments":1,"first_segment":1,"bytes":28,"last_seq":600,"applied":598,"checkpoint":0,"flushes":2,"healthy":true,"last_error":null,"segment_bytes":67108864,"batch_size":500,"held_rows":0,"replay":{"records":0,"applied":0,"covered":0,"held":0,"replaced":0,"behind_checkpoint":0,"torn":0,"corrupt":0,"seconds":0.0}},"stores_open":80,"open_segments":0,"max_open_segments":512,"segment_max_bytes":536870912,"rows":2000,"buffered_rows":7,"buffered_bytes":1536352,"max_buffer_bytes":536870912,"compact_interval_ms":0,"compaction":{"running":false,"runs":0,"days_compacted":0,"last":null,"last_error":null},"forced_closes":3,"write_failures":5,"last_write_error":null,"degraded":true,"approx_bytes":145294},"trie":{"templates":80,"nodes":780,"tokens":1044},"ingest":{"lines_read":600,"lines_ingested":600,"lines_rejected":1,"lines_per_second":0.0,"requests_shed":4,"ingest_concurrency":8,"ingest_bodies":256},"queries":{"served":0,"per_second":0.0}}"#;
 
     #[test]

@@ -1181,6 +1181,7 @@ impl Visitor for Grouped<'_> {
 
 /// Errors an execution can end on: a `StoreError` is the storage layer failing, a
 /// `BucketError` is the client's to fix.
+/// `Exists` is two questions: no time clause reads no data, a time clause scans to the first row.
 #[derive(Debug, Error)]
 pub enum ExecError {
     #[error(transparent)]

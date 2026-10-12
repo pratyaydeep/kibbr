@@ -1,89 +1,8 @@
 //! `kibbr bench --lines N --profile farm`: this build's speed on one farm day, measured the
-//! same way every time, so that the number a change is held to is one command's and not a
-//! script's.
-//!
-//! **What is measured.** Eight rows, each number the middle of an odd count of runs and
-//! never a percentile over their pooled samples:
-//!
-//! - `ingest lines/s`: the whole live stream, once, from four senders into a server that
-//!   is asked nothing else - the lines the server says it acknowledged between two
-//!   `/stats` answers, over its own clock in the same two answers. No client clock and no
-//!   count of lines sent is in it.
-//! - `S1` to `S4`, p50 and p99: each query asked `--samples` times back to back down one
-//!   open connection to a server that has taken no line, timed on this process's clock
-//!   from the request's first byte written to the answer's last byte read.
-//! - `scan rows/s/core`: a block of asks of one count over two wide templates - the rows
-//!   that hold its key, read from an answer, times the asks, over the CPU-seconds the
-//!   server process used across exactly those asks. Per CPU-second and not per second, so
-//!   that a scan spread over four threads still reads as what one core did; the same block
-//!   by the wall clock is printed under the table.
-//! - `plan step at 10,000 templates`: the p50 of `engine::plan` on a trie of its own, in a
-//!   process of its own, since the farm cannot have that many templates.
-//! - the same four queries under four-sender ingest, p99: one sample a server, each query
-//!   asked when a fixed share of the live stream has been acknowledged.
-//!
-//! **A unit is one server's work, and no server is shared.** The plan step, ingest alone,
-//! the idle server and each lap under ingest are units. Each of the three kinds that need
-//! a server starts one on its own copy of the loaded directory - read back against the
-//! digests taken when it was loaded - and kills it when its work is done. Whatever a
-//! server took, cached or wrote would otherwise be in the next number; and a query under
-//! ingest reads a store that grows at the ingest rate, so a hundred of them on one server
-//! would each read another store. With a server a sample, every sample of a query starts
-//! from the loaded bytes and is asked at the same place in the same stream.
-//!
-//! **The order of a run** is: a pause and the checks, the plan step, ingest alone, the
-//! idle server, the laps. Ingest is one number on every core and the most sensitive to
-//! heat, so what stands before it must be the same in every build: a pause and a few
-//! seconds of one core planning. After the query phases it would follow minutes of one
-//! core in one build and seconds of eight in the next.
-//!
-//! **What the bench touches, and nothing else.** Three children of this same binary -
-//! `gen-logs`, `load` and `serve`, with every flag a number depends on typed out and every
-//! `KIBBR__` variable removed - and itself as `bench --plan-only`; of a server, the
-//! address it prints, `/health`, `/stats`, `/query` and `/ingest`; of the system, a
-//! child's CPU time, the swap counter and the process list; and in this crate, for the
-//! plan step only, the generator, the parser, the trie and `engine::plan`. `--threads T`
-//! is the one thing a caller sets on a server: `serve --scan-threads T` on every one, and
-//! with none given no such flag, as before it was added. Each of them is
-//! asked once before the first run, on a server started for that, so that one that
-//! answers in another form stops the command there and not an hour in. A field the bench
-//! only records may be missing and is then `null`; the two a rate is made of may not. How
-//! the machine is powered is asked of the system too, beside the references of each run,
-//! and only recorded: a system that does not say is `null` and stops nothing.
-//!
-//! **Two gates, and what a disturbed unit costs.** A run starts on a machine with no
-//! other kibbr process and a swap-out counter that is not moving, and waits for one.
-//! Both are read again after each unit, between two servers and never beside one: a unit
-//! during which either moved is thrown away with none of its numbers kept, and done
-//! again - a lap costs seconds to repeat, where a run costs minutes. Everything else
-//! about the machine is printed and recorded and decides nothing. `--unchecked` skips
-//! all of it and marks the result as not a measurement.
-//!
-//! **The files.** This one holds what the command line reaches - `Args`, `run`, `table`,
-//! `plan_only` - the one error type, the constants a result records under `flags`, the
-//! texts of the queries, the steps taken once before the first run, and the loop over the
-//! runs.
-//!
-//! - `corpus`: the loaded directory, built once and only ever copied; the live stream.
-//! - `server`: one child `kibbr serve` on a copy, killed when its work is done.
-//! - `wire`: one kept HTTP/1.1 connection, and the bytes of each request.
-//! - `host`: the machine - a child's CPU time, swap, other kibbr processes, the references,
-//!   the power state.
-//! - `phases`: what is timed - ingest alone, the idle server, one lap under ingest.
-//! - `plan`: the plan step on a trie of 10,000 templates, in a process of its own.
-//! - `report`: the result file, the raw log, the table, and what makes two results
-//!   comparable.
-//!
-//! **Frozen once a result is saved as a baseline.** A later result is printed as a ratio on
-//! the baseline's, and that ratio is of two builds only while the instrument is one. The
-//! eight files of this module are digested into every result (`report::SOURCES`), and a
-//! table over two digests says so in capitals. So nothing here is tuned after the first
-//! saved result - not a query's text, not a place in the stream, not a pause.
-//!
-//! **Changed once since, at M11: `--threads` was added.** The cloud box has eight cores
-//! alike and the default is four, and no variable reaches a server, so the bench could
-//! not measure the eight. The digest moved with it, and `testdata/bench/baseline.json`
-//! was taken again by this instrument, at `--threads 4`. Nothing that is timed changed.
+//! same way every time, so that the number a change is held to is one command's.
+//! A unit is one server's work on its own copy of the loaded bytes; no server is shared,
+//! and a unit disturbed by swap or another kibbr process is done again. Frozen once a
+//! result is saved as a baseline: the module's files are digested into every result.
 
 pub mod corpus;
 pub mod host;
@@ -116,7 +35,7 @@ use report::{
 /// Where the loaded directory, each server's copy of it and the default results go, unless
 /// `--dir` names another place.
 pub const DEFAULT_DIR: &str = "testdata/bench";
-/// `--runs`, unless given. Odd, so that the median of the runs is one of them.
+/// `--runs`, unless given: odd, so that the median of the runs is one of them.
 pub const DEFAULT_RUNS: usize = 3;
 /// `--samples`, unless given: with 100, the p99 is the 99th smallest.
 pub const DEFAULT_SAMPLES: usize = 100;
@@ -131,11 +50,11 @@ pub const SENDERS: usize = 4;
 pub const LOADED_SEED: u64 = 42;
 /// `gen-logs --seed` of the stream that is sent to the servers.
 pub const LIVE_SEED: u64 = 43;
-/// The arrival time given at both doors - `load --received-at` and `/ingest?received_at=` -
-/// so that no stored value depends on the date the bench ran. Noon of the farm's day.
+/// The arrival time given at both doors, noon of the farm's day, so that no stored value
+/// depends on the date the bench ran.
 pub const RECEIVED_AT: &str = "2024-01-15T12:00:00Z";
 /// Where in the live stream each of the four queries is asked under ingest, as the share
-/// of its lines acknowledged: what a result records. `place_lines` is what is waited for.
+/// of its lines acknowledged; `place_lines` is what is waited for.
 pub const LOAD_AT: [f64; 4] = [0.02, 0.03, 0.07, 0.14];
 /// `LOAD_AT` in whole percent, so that a place is a line count worked out in integers.
 const LOAD_AT_PERCENT: [u64; 4] = [2, 3, 7, 14];
@@ -144,14 +63,13 @@ const LOAD_AT_PERCENT: [u64; 4] = [2, 3, 7, 14];
 pub const WARMUP: usize = 3;
 /// Plans that are not measured before a shape's timed ones, when there are that many.
 pub const PLAN_WARMUP: usize = 5;
-/// How long a sender waits before it sends a refused body again. The bench's own wait and
+/// How long a sender waits before it sends a refused body again: the bench's own wait and
 /// not the server's `Retry-After`, so that a refusal costs the same on every build.
 pub const REFUSAL_PAUSE: Duration = Duration::from_millis(50);
 /// Attempts in a row that read no status line, after which a sender gives up.
 pub const SILENT_LIMIT: usize = 5;
-/// With no body acknowledged for this long, a place in the stream not reached, or a
-/// query still refused, the phase ends in an error: a server that refuses for ever must
-/// not hold a run for ever.
+/// With nothing acknowledged, reached or answered for this long the phase ends in an
+/// error: a server that refuses for ever must not hold a run for ever.
 pub const STALL: Duration = Duration::from_secs(120);
 /// The pause before each run.
 pub const SETTLE: Duration = Duration::from_secs(20);
@@ -194,17 +112,12 @@ pub const TIME_COLUMNS: [&str; 9] = [
 ];
 /// `--segment-max-bytes`, at the load and on every server, typed out for the same reason.
 pub const SEGMENT_MAX_BYTES: u64 = 536_870_912;
-/// `--max-rows` of every server: the rows a fetch with no `LIMIT` is cut at. S3 is such a
-/// fetch, and must never reach it.
+/// `--max-rows` of every server, the rows a fetch with no `LIMIT` is cut at, which S3 must
+/// never reach.
 pub const MAX_ROWS: u64 = 10_000;
 
-/// The seven query texts, in the order every result holds them. S1 and S4 are the measuring
-/// script's, byte for byte. S2 keeps its key and takes a value a quarter of the scanned
-/// rows hold, and S3 takes the farm's own id column: the script's texts match no farm row,
-/// and a filter that matches nothing is settled without reading a row. SCAN is the scan
-/// rate's own query - two wide templates, most rows matching - and KEY and SCANKEY count
-/// the rows S2 and SCAN must look at. S3's text is made by `queries`, around an id that is
-/// read from the loaded stream.
+/// The seven query texts, in the order every result holds them; S2, S3 and SCAN are not
+/// the measuring script's, since a filter that matches no farm row reads no row.
 pub const S1: &str = r#"COUNT LOG {"event":"login_ok"}"#;
 pub const S2: &str = r#"COUNT LOG {"level":"info"}"#;
 pub const S4: &str = "MATCH LOG {} LIMIT 500";
@@ -212,8 +125,8 @@ pub const KEY: &str = r#"COUNT LOG {"level": *}"#;
 pub const SCAN: &str = r#"COUNT LOG {"status":"200"}"#;
 pub const SCANKEY: &str = r#"COUNT LOG {"status": *}"#;
 
-/// What `kibbr bench --lines N --profile farm` was asked for. The profile is not here: the
-/// command line refuses every one but the farm before it builds this.
+/// What `kibbr bench --lines N --profile farm` was asked for; the profile is refused by
+/// the command line before this is built.
 pub struct Args {
     pub lines: u64,
     pub out: Option<PathBuf>,
@@ -223,18 +136,18 @@ pub struct Args {
     pub runs: usize,
     pub samples: usize,
     pub body_lines: usize,
-    /// `--scan-threads` of every server measured. `None`: the flag is not passed, and a
+    /// `--scan-threads` of every server measured; with `None` the flag is not passed and a
     /// server takes its build's default.
     pub threads: Option<usize>,
     pub unchecked: bool,
 }
 
-/// What stops `kibbr bench`. Each sentence says what was met and, where there is one, what
-/// to do about it: the command is run rarely and by hand, an hour at a time.
+/// What stops `kibbr bench`, each sentence saying what was met and what to do about it:
+/// the command is run rarely and by hand.
 #[derive(Debug, Error)]
 pub enum SpeedError {
-    /// `--profile hostile`. The queries, their expected answers and the places in the
-    /// stream are the farm's; over other data they would be numbers about nothing.
+    /// `--profile hostile`: the queries, their expected answers and the places in the
+    /// stream are the farm's.
     #[error("kibbr bench measures the farm profile only")]
     Profile,
 
@@ -257,9 +170,8 @@ pub enum SpeedError {
         source: io::Error,
     },
 
-    /// A child that is not a server: `what` is its command, as `kibbr gen-logs`. `stderr`
-    /// is what was wrong where the exit code does not say it, and then the last lines the
-    /// child wrote to standard error.
+    /// A child that is not a server: `what` is its command, and `stderr` what was wrong
+    /// followed by the last lines the child wrote to standard error.
     #[error("`{what}`, which the bench runs as a child, {}: {stderr}", ended(.code))]
     Child {
         what: &'static str,
@@ -268,7 +180,7 @@ pub enum SpeedError {
     },
 
     /// The loaded directory, its marker, the live stream or the plan step's trie is not
-    /// what every result is measured over. The text is the whole sentence.
+    /// what every result is measured over.
     #[error("{0}")]
     Corpus(String),
 
@@ -281,16 +193,15 @@ pub enum SpeedError {
     ServerStart { log: PathBuf, tail: String },
 
     /// Something the bench reads answered in another form than the one it was written
-    /// for. Met in the preflight, before a run is spent.
+    /// for, met in the preflight before a run is spent.
     #[error("{surface} did not answer the way kibbr bench reads it: {detail}")]
     Surface {
         surface: &'static str,
         detail: String,
     },
 
-    /// A query's answer that cannot be a sample: a status that is neither 200 nor a
-    /// refusal, a refusal that was still the answer `STALL` after the first try, or a 200
-    /// that is not the answer this query has over these bytes.
+    /// A query's answer that cannot be a sample: an odd status, a refusal still the answer
+    /// after `STALL`, or a 200 that is not this query's answer over these bytes.
     #[error("{name}: the server's answer cannot be measured (status {status}): {body}")]
     Query {
         name: &'static str,
@@ -303,8 +214,7 @@ pub enum SpeedError {
     #[error("{}: {detail}", who(.sender))]
     Sender { sender: usize, detail: String },
 
-    /// The machine, or the binary on it, is not fit to measure on. The text is the whole
-    /// sentence.
+    /// The machine, or the binary on it, is not fit to measure on.
     #[error("{0}")]
     Host(String),
 
@@ -315,7 +225,7 @@ pub enum SpeedError {
     Waited { minutes: u64, reason: String },
 
     /// `reason` is either gate's: pages swapped out during a unit, or another kibbr
-    /// process alive when it ended. The advice is for both.
+    /// process alive when it ended.
     #[error(
         "run {run}: {units} of its units were disturbed and thrown away, the last because \
          {reason}. Nothing was saved: stop what runs beside the bench, or make room if the \
@@ -335,10 +245,8 @@ pub enum SpeedError {
     #[error("JSON that kibbr bench reads or writes is not in the form it has")]
     Json(#[from] serde_json::Error),
 
-    /// Returned after the table is printed - and, by a run, after the result is saved - so
-    /// that the command still ends on its table and exits 1. It says nothing of a saved
-    /// result: `--table` returns it too, and saves none; a run has said `saved ...` on
-    /// the line above its table.
+    /// Returned after the table is printed, so that the command still ends on its table and
+    /// exits 1; it says nothing of a saved result, since `--table` returns it too.
     #[error("the table above carries {lines} FAIL line(s)")]
     Failed { lines: usize },
 }
@@ -390,15 +298,14 @@ pub fn plan_warmup(samples: usize) -> usize {
     PLAN_WARMUP.min(samples)
 }
 
-/// Asks in the scan block: a quarter of the samples and at least one. The scan rate is a
+/// Asks in the scan block, a quarter of the samples and at least one: the scan rate is a
 /// sum over the block and not a percentile, so a quarter is enough.
 pub fn scan_asks(samples: usize) -> usize {
     (samples / 4).max(1)
 }
 
-/// The live lines that must be acknowledged before each of the four queries is asked under
-/// ingest: `LOAD_AT` of `lines`, rounded up. In integers, because 0.14 x 2,000 is not 280
-/// in floating point and a place must be the same line on every machine.
+/// The live lines that must be acknowledged before each query is asked under ingest:
+/// `LOAD_AT` of `lines` rounded up, in integers so a place is the same line on every machine.
 pub fn place_lines(lines: u64) -> [u64; 4] {
     LOAD_AT_PERCENT.map(|percent| (lines * percent).div_ceil(100))
 }
@@ -412,8 +319,8 @@ pub fn label(args: &Args) -> String {
     }
 }
 
-/// What a result records under `flags`: the command line's values, and every constant a
-/// number depends on. Two results compare only where these are equal.
+/// What a result records under `flags`, the command line's values and every constant a
+/// number depends on: two results compare only where these are equal.
 pub fn flags(args: &Args) -> Flags {
     Flags {
         lines: args.lines,
@@ -507,11 +414,8 @@ fn default_out(dir: &Path, commit: &Commit) -> PathBuf {
     ))
 }
 
-/// Everything that can be refused before a child is started: a result that would be
-/// written over, a baseline that cannot be read or is of other work, a debug build, a
-/// volume without room, a clock for a child's CPU time that does not agree with this
-/// process's own, and - last, so that every refusal before it makes nothing on disk - a
-/// place the result cannot be written to. That last one makes the result's directory.
+/// Everything that can be refused before a child is started. A place the result cannot
+/// be written to is last, so that every refusal before it makes nothing on disk.
 fn start(args: &Args) -> Result<Start, SpeedError> {
     let commit = host::commit();
     let out = match &args.out {
@@ -595,10 +499,8 @@ impl Watch {
         }
     }
 
-    /// What stands in the way of a quiet machine at this moment: what the wait is for, and
-    /// the same with its numbers. The swap-out counter counts from boot, so only a
-    /// difference means anything: it is read twice, `SWAP_GAP` apart. A system with no
-    /// counter has no such gate.
+    /// What stands in the way of a quiet machine at this moment. The swap-out counter counts
+    /// from boot, so it is read twice, `SWAP_GAP` apart; with no counter there is no such gate.
     fn disturbance(&mut self) -> Result<Option<(&'static str, String)>, SpeedError> {
         let others = host::other_kibbr()?;
         if !others.is_empty() {
@@ -631,8 +533,7 @@ impl Watch {
     }
 
     /// Wait until neither gate is shut, looking again every `WAIT_STEP`, and return the
-    /// seconds waited. Each look that fails is said on standard error; a machine that is
-    /// not quiet after `WAIT_LIMIT` ends the command.
+    /// seconds waited. A machine that is not quiet after `WAIT_LIMIT` ends the command.
     fn quiet(&mut self) -> Result<u64, SpeedError> {
         let mut waited = Duration::ZERO;
         loop {
@@ -658,9 +559,8 @@ impl Watch {
         }
     }
 
-    /// Before a run's first unit: the pause, the two gates, and then - with nothing of
-    /// kibbr's running - the load average, the memory, how the machine is powered, and
-    /// the two references. Under `--unchecked` none of it, and every reading is `null`.
+    /// Before a run's first unit: the pause, the two gates, and then the readings and the
+    /// two references. Under `--unchecked` none of it, and every reading is `null`.
     fn before_run(&mut self, work: &Path) -> Result<Checks, SpeedError> {
         if !self.checked {
             return Ok(Checks::default());
@@ -693,9 +593,8 @@ impl Watch {
         Ok(checks)
     }
 
-    /// Why the unit that has just ended is thrown away, if it is: swap-outs moved since it
-    /// began, or another kibbr process is alive. Read with the unit's own server gone,
-    /// between two units and never inside one.
+    /// Why the unit that has just ended is thrown away, if it is. Read with the unit's own
+    /// server gone, between two units and never inside one.
     fn disturbed(&mut self) -> Result<Option<String>, SpeedError> {
         let mut reasons = Vec::new();
         let now = host::swap()?;
@@ -718,11 +617,8 @@ impl Watch {
         Ok((!reasons.is_empty()).then(|| reasons.join(", and ")))
     }
 
-    /// Run one unit, and run it again for as long as it was disturbed. A disturbed unit
-    /// keeps none of its numbers: it is named with its reason, the gates are waited for,
-    /// and it is done again. One more than `VOID_LIMIT` of them in a run end the command -
-    /// a machine that swaps under the bench's own load needs room made, not a mark in a
-    /// table.
+    /// Run one unit, and run it again for as long as it was disturbed. Past `VOID_LIMIT` the
+    /// command ends: a machine that swaps under the bench's own load needs room made.
     fn unit<T>(
         &mut self,
         log: &mut Log,
@@ -756,9 +652,8 @@ impl Watch {
     }
 }
 
-/// One run: the checks, the plan step, ingest alone, the idle server, the laps, and the
-/// references, the power state and the binary's digest again. Each unit's lines are
-/// printed when the unit is over, never while it runs.
+/// One run: the checks, the units, and the references, power state and binary's digest
+/// again. Each unit's lines are printed when the unit is over, never while it runs.
 fn one_run(
     run: usize,
     start: &Start,
@@ -867,13 +762,8 @@ fn data(loaded: &Corpus, stream: &corpus::LiveStream) -> Data {
     }
 }
 
-/// Make this invocation's work directory, which must not be there yet.
-///
-/// Its name is the process id's, and a process id comes round again - at once in a
-/// container, where the bench is the same low one every time. A directory of that name is
-/// then an earlier bench's that did not end well: it holds what that bench's children
-/// wrote, and its result if it could not be saved where it was told. Used as this run's
-/// own it would be removed whole when this run ended well.
+/// Make this invocation's work directory, which must not be there yet. A process id comes
+/// round again, and an earlier bench's directory may hold its only unsaved result.
 fn make_work(work: &Path) -> Result<(), SpeedError> {
     fs::create_dir(work).map_err(|source| match source.kind() {
         io::ErrorKind::AlreadyExists => SpeedError::Host(format!(
@@ -890,14 +780,8 @@ fn make_work(work: &Path) -> Result<(), SpeedError> {
     })
 }
 
-/// A result that could not be saved where it was told is put in the work directory,
-/// which a failed command leaves and names, and `said` - standard error - is told where.
-/// What was measured is not thrown away with the place it could not go to.
-///
-/// If it cannot be kept there either, that is said with its own reason, and the result is
-/// printed to `said` whole: the terminal is then the last place it can be. Not when
-/// either write stopped at a result that would not read back - that one is on the disk
-/// under its `.tmp` name, and the error says where.
+/// A result that could not be saved where it was told is put in the work directory, and
+/// failing that printed whole to `said`: what was measured is not thrown away.
 fn keep_unsaved(
     work: &Path,
     out: &Path,
@@ -941,9 +825,8 @@ fn keep_unsaved(
     }
 }
 
-/// Everything from the loaded directory to the saved result, with `work` as the place
-/// for this invocation's copies and its children's standard error. `made` is set once
-/// `work` is this invocation's own: until then nothing of it is there to keep or remove.
+/// Everything from the loaded directory to the saved result. `made` is set once `work`
+/// is this invocation's own: until then nothing of it is there to keep or remove.
 fn measure(
     args: &Args,
     start: &Start,
@@ -1064,10 +947,8 @@ fn measure(
     file.notes = report::notes(&file);
     report::log_summary(&mut log, &file)?;
 
-    // The table is made before the result is saved, so that the log saved beside it ends
-    // with the table; and printed after, so that nothing says `saved` of a file that is
-    // not there. A table that cannot be made does not cost the result: it is saved first,
-    // and the error is told after. Nor does a place that can no longer be written to.
+    // The table is made before the result is saved, so the log saved beside it ends with it,
+    // and printed after, so nothing says `saved` of a file that is not there.
     let mut columns = Vec::with_capacity(2);
     columns.extend(start.baseline.clone());
     columns.push(Saved {
@@ -1111,13 +992,8 @@ fn measure(
     Ok(())
 }
 
-/// Measure, save, and print the table. `Err(SpeedError::Failed)` comes after the table is
-/// printed and the result saved.
-///
-/// The work directory - each server's copy and every child's standard error - is this
-/// invocation's own, made by it and refused if it is already there: removed when the
-/// result is saved, and left and named when the command fails, since a child's last
-/// words are then in it. One this invocation did not make is neither.
+/// Measure, save and print the table, removing the work directory when the result is
+/// saved and leaving and naming it on failure, when a child's last words are in it.
 pub fn run(args: &Args, out: &mut dyn Write) -> Result<(), SpeedError> {
     let start = start(args)?;
     let work = corpus::work_dir(&args.dir);
@@ -1202,9 +1078,8 @@ pub fn cli(
                 },
                 out,
             ),
-            // Both are asked for unless `--table` or `--plan-only` is given, so
-            // what is left is the other profile. Refused here, before the module
-            // is reached: it is handed no profile, and makes nothing under `--dir`.
+            // Both are asked for unless `--table` or `--plan-only` is given, so what is left is
+            // the other profile, refused before anything is made under `--dir`.
             _ => Err(SpeedError::Profile),
         }
     };

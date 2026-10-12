@@ -3,6 +3,33 @@
 //! `column::Column`. It never panics, never reads outside the file, and refuses what it
 //! does not know. A first byte of `0xfb` makes the rest instructions (`build`) with lengths
 //! and CRCs put right, since a fuzzer does not guess a CRC.
+//!
+//! The instructions (`build`), each number taken modulo 8, so 4, 5 and 7 are 0, 1 and 3 again:
+//!
+//! ```text
+//! 0  frame      [2] len  [len] payload      framed: its length and CRC are worked out
+//! 1  row group  see `group`                 a header frame and the chunk area after it
+//! 2  trailer                                the last frame's length, then 'KBBR'
+//! 3  bytes      [2] len  [len] bytes        appended as they are
+//! 6  seal       [1] flags                   the footer of what was built, and its trailer
+//! ```
+//!
+//! A row group (`group`):
+//!
+//! ```text
+//! [1]   flags      bit 0: write a schema record of this many columns first, and name it
+//! [57]  the header's fields from template_id to last, as they are
+//! [1]   columns, modulo 33; per column:
+//!         [1] layout  [1] compression
+//!         [1] knob    bit 7: with compression 1, the body is what is given, compressed
+//!                     here; bits 0-1: 1, 2 or 3 turns one bit of stored_len, stored_crc
+//!                     or body_len; bits 2-6: which bit
+//!         [1] len, modulo 32  [len] the pieces: type, encoding and form, as they are
+//!         [2] len  [len] the chunk's bytes
+//! [1]   sections, modulo 5; per section:
+//!         [1] kind  [1] column  [1] len  [len] bytes
+//! [1]   knob       bits 0-1: 1 turns one bit of chunks_len; bits 2-6: which bit
+//! ```
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::mem::size_of;

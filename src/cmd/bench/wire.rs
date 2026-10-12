@@ -1,24 +1,8 @@
 //! One kept HTTP/1.1 connection, and the bytes of every request sent down it.
-//!
-//! `Conn` writes a head and a body that were built beforehand and reads one answer into a
-//! buffer it keeps, so that between a request's first byte and its answer's last nothing
-//! is formatted and, once the buffer has grown to the answer's size, nothing is allocated.
-//! Beside it are the request bytes for a query, an `/ingest` body and a `GET`, and the
-//! typed reading of a query's answer, which happens after its clock has stopped.
-//!
-//! **Why the bench has a client of its own.** The crate's client opens a connection for
-//! each request and returns the status and the body only. A connection a request would
-//! time the handshake, and a refusal's `connection: close` and `retry-after` could not be
-//! seen. Header names and the values `close` and `chunked` are compared without regard to
-//! ASCII case: this server writes `content-length`, and a reader that looked for
-//! `Content-Length` would find no length on any answer and wait out the socket's timeout.
-//!
-//! **An attempt is what was read, before it is what was written.** A server that refuses a
-//! body may answer before it has read it and close the socket, and the write then fails
-//! part way with the refusal already waiting to be read. So `send` reads one answer
-//! whether or not the write succeeded, and fails only when no status line came back. What
-//! was written is kept beside the answer, as `wrote_all`: a body that was not all written
-//! cannot have been taken, since its length was announced, and sending it again is safe.
+//! The bench has a client of its own because the crate's opens a connection per request,
+//! which would time the handshake, and hides a refusal's headers. `send` reads one answer
+//! whether or not the write succeeded: a server may refuse a body before reading it, and a
+//! body not all written (`wrote_all`) cannot have been taken, so sending it again is safe.
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -54,14 +38,13 @@ const EXCERPT: usize = 300;
 pub struct Conn {
     stream: TcpStream,
     addr: SocketAddr,
-    /// The last answer, head and body; `Answer::body` is a range of it. It keeps the
-    /// length it has grown to - what an answer read so far is counted beside it - so
-    /// that no byte of it is cleared again for each answer.
+    /// The last answer, head and body; `Answer::body` is a range of it. It keeps the length
+    /// it has grown to, so that no byte of it is cleared again for each answer.
     buf: Vec<u8>,
     timeout: Duration,
 }
 
-/// One answer, as far as the bench reads it. `body` is a range of the connection's buffer
+/// One answer, as far as the bench reads it; `body` is a range of the connection's buffer
 /// and holds until the next `send`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
@@ -69,16 +52,16 @@ pub struct Answer {
     /// The answer said `connection: close`, or ended before its announced end: either
     /// way nothing more can be sent down this socket.
     pub close: bool,
-    /// `retry-after`, in seconds. Recorded, not obeyed.
+    /// `retry-after`, in seconds: recorded, not obeyed.
     pub retry_after: Option<u64>,
     pub body: Range<usize>,
-    /// Whether the whole request was written before the answer was read. False is a
+    /// Whether the whole request was written before the answer was read; false is a
     /// refusal that came before the server had read the body.
     pub wrote_all: bool,
 }
 
-/// No status line was read. `wrote_all` says whether the request was written whole: if it
-/// was not, the server cannot have taken its body.
+/// No status line was read; if `wrote_all` is false the server cannot have taken the
+/// request's body.
 #[derive(Debug, Error)]
 #[error("no answer was read: {source}")]
 pub struct SendError {
@@ -86,8 +69,8 @@ pub struct SendError {
     pub source: io::Error,
 }
 
-/// What the bench reads of a query's answer: `count`, and of `meta` what is there. `rows`
-/// and `groups` are stepped over and never built.
+/// What the bench reads of a query's answer: `count`, and of `meta` what is there, with
+/// `rows` and `groups` stepped over and never built.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QueryAnswer {
     pub count: u64,
@@ -128,12 +111,8 @@ struct Head {
 }
 
 impl Conn {
-    /// Connect, with `TCP_NODELAY` set - a head and a small body on a default socket can
-    /// wait 40 ms behind a delayed acknowledgement, which would be most of S1 - and
-    /// `timeout` as the connect, the read and the write timeout. It must not be zero.
-    ///
-    /// The buffer is made here, at the size of a first read, so that the first answer
-    /// down a new connection is not the one that pays for it.
+    /// Connect with `timeout` on connect, read and write, and with `TCP_NODELAY`, since a
+    /// small body on a default socket can wait behind a delayed acknowledgement.
     pub fn open(addr: SocketAddr, timeout: Duration) -> io::Result<Conn> {
         Ok(Conn {
             stream: connect(addr, timeout)?,
@@ -143,36 +122,23 @@ impl Conn {
         })
     }
 
-    /// Make room for an answer of `bytes`, head and body, before it is asked for. A
-    /// buffer grows to the largest answer it has read; a connection that is asked a
-    /// large one once - a fetch, on a server a lap has just started - would grow inside
-    /// that one sample.
+    /// Make room for an answer of `bytes` before it is asked for, so that a connection asked
+    /// a large one once does not grow inside that one sample.
     pub fn reserve(&mut self, bytes: usize) {
         if self.buf.len() < bytes {
             self.buf.resize(bytes, 0);
         }
     }
 
-    /// Drop the socket and connect again to the same address: after an answer that said
-    /// `connection: close`, or an attempt that read none. The buffer is kept.
+    /// Drop the socket and connect again to the same address, keeping the buffer: after an
+    /// answer that said `connection: close`, or an attempt that read none.
     pub fn reopen(&mut self) -> io::Result<()> {
         self.stream = connect(self.addr, self.timeout)?;
         Ok(())
     }
 
-    /// Write `head` and then `body`, and read one answer.
-    ///
-    /// `Ok` whenever a status line was read - also after a write that failed part way,
-    /// with `wrote_all` false: a refusal sent before the server had read the body is then
-    /// waiting in the socket, and it is an answer. `Err` only when no status line was
-    /// read; the error is the write's where the write failed, since that came first.
-    /// The read after a failed write returns at once where the server has closed the
-    /// socket, which is what ends a write on loopback; after a write that timed out it
-    /// waits the timeout again.
-    ///
-    /// An answer that ended before its head or its body did is still `Ok`, with `close`
-    /// set and `body` holding what arrived: its status was read, and a refusal is counted
-    /// by its status. Whoever needs the body finds out when it does not parse.
+    /// Write `head` and then `body`, and read one answer: `Ok` whenever a status line was
+    /// read, even after a failed write or a cut-short answer, since a refusal is an answer.
     pub fn send(&mut self, head: &[u8], body: &[u8]) -> Result<Answer, SendError> {
         let written = self.write(head, body);
         match (self.read(), written) {
@@ -273,9 +239,7 @@ impl Conn {
     }
 
     /// A chunked body from `body`, its chunks moved down to stand in one piece: where it
-    /// stops, and whether its last chunk and what trails it came. A chunk is always
-    /// moved toward the front, over size lines already read, so nothing unread is
-    /// written over.
+    /// stops, and whether it came whole. A chunk only moves forward, over size lines already read.
     fn chunked(&mut self, end: &mut usize, body: usize) -> (usize, bool) {
         // Where the next size line begins, and where the joined body ends so far.
         let mut at = body;
@@ -397,8 +361,7 @@ fn find(bytes: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// Read a head, or as much of one as has arrived: only lines that have their `\r\n` are
-/// read, so a header cut in two is not taken for a shorter one. `None` when the first
-/// line is not there yet or is not a status line.
+/// read, so a header cut in two is not taken for a shorter one.
 fn parse_head(bytes: &[u8]) -> Option<Head> {
     let mut rest = bytes;
     let mut next = || {
@@ -470,9 +433,8 @@ fn chunk_size(line: &[u8]) -> Option<usize> {
     usize::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()
 }
 
-/// A query's request, head and body in one buffer so that it is one write:
-/// `POST /query` with `{"q":"<trieql>"}`. `Host` carries no port, so the bytes are the
-/// same for every server of every run.
+/// A query's request, `POST /query` with `{"q":"<trieql>"}`, head and body in one buffer
+/// so that it is one write.
 pub fn query_request(trieql: &str) -> Vec<u8> {
     // The text as a JSON string, with its quotes escaped.
     let body = format!(r#"{{"q":{}}}"#, serde_json::Value::from(trieql));
@@ -499,8 +461,8 @@ pub fn get_request(path: &str) -> Vec<u8> {
     format!("GET {path} HTTP/1.1\r\nHost: {HOST}\r\n\r\n").into_bytes()
 }
 
-/// The start of a body, for an error that has to show what a server said: its first 300
-/// bytes, with whatever is not UTF-8 replaced.
+/// The start of a body, for an error that has to show what a server said, with whatever
+/// is not UTF-8 replaced.
 pub fn excerpt(body: &[u8]) -> String {
     let shown = String::from_utf8_lossy(&body[..body.len().min(EXCERPT)]);
     if body.len() > EXCERPT {
@@ -510,9 +472,8 @@ pub fn excerpt(body: &[u8]) -> String {
     }
 }
 
-/// A field as a `T`, or nothing where the answer holds something that is not one. A
-/// field the bench only records must not stop a run because a later build spells it
-/// another way: it is then missing, and printed as missing.
+/// A field as a `T`, or nothing where the answer holds something that is not one: a field
+/// the bench only records must not stop a run because a later build spells it another way.
 fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -558,9 +519,8 @@ struct Meta {
     limit_source: Option<String>,
 }
 
-/// Read a 200's body from `/query`. A body with no `count` is `SpeedError::Surface`, and
-/// so is one that is not JSON; a `meta` field that is not there, or is of another type
-/// than the bench reads, is `None`.
+/// Read a 200's body from `/query`, where a body with no `count` or that is not JSON is
+/// `SpeedError::Surface` and a `meta` field the bench cannot read is `None`.
 pub fn query_answer(body: &[u8]) -> Result<QueryAnswer, SpeedError> {
     let surface = |detail: String| SpeedError::Surface {
         surface: "POST /query",
@@ -596,8 +556,8 @@ pub fn query_answer(body: &[u8]) -> Result<QueryAnswer, SpeedError> {
     })
 }
 
-/// The `ingested` count of a 200 from `/ingest`: the lines the server took of the body.
-/// `None` where the body does not hold one - a body cut short among them.
+/// The `ingested` count of a 200 from `/ingest`, the lines the server took of the body;
+/// `None` where the body does not hold one.
 pub fn ingested(body: &[u8]) -> Option<u64> {
     #[derive(Deserialize)]
     struct Taken {

@@ -4,10 +4,6 @@
 //! Edges are in walk order - promoted tokens first, then the rest sorted - and not the
 //! flattener's identity order; `ParsedLog::walk_tokens` turns one into the other.
 
-// Not every walk and variant here has a caller yet. Written now because teaching a walk
-// its lock discipline later means editing every call site that already exists.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -773,6 +769,7 @@ impl Trie {
 
     /// Put one parsed line into the trie: walk order to a leaf, then join this line's types
     /// into its columns, the catalog record written before the leaf changes.
+    /// `now` is a parameter so a test that pins `first_seen` and `last_seen` can fix the clock.
     pub fn ingest(
         &self,
         parsed: &ParsedLog,

@@ -3,6 +3,17 @@
 //! input is read as both files, against a second frame reader written here (`walk`). The
 //! first byte picks one of five ways to read it, because a mutated byte under a CRC is
 //! a tear and nothing behind the frame reader would be reached.
+//!
+//! ```text
+//! byte       the rest is
+//! % 4 == 0   the file, as it is
+//! % 4 == 1   payloads, one a line, framed here with their true length and CRC
+//! % 4 == 2   the same, then what follows the last newline unframed - a tail - and one
+//!            whole frame after it, which a reader that steps over a tear would read
+//! % 4 == 3   payloads, one a line, each given a kind neither file knows: a known kind
+//!            spelled nearly right, or the line's own
+//! % 8 == 4   choices: which records to build, written by the writers into one file
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;

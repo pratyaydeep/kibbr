@@ -1,24 +1,8 @@
 //! The bytes every number is measured over: the loaded directory and the live stream.
-//!
-//! This file holds the two children that make them, `kibbr gen-logs` and `kibbr load`;
-//! the marker that says a load finished and what it wrote; the listing of a directory with
-//! a CRC-32C for each file; the check of a directory against its marker; the copy a server
-//! is started on; the id S3 asks for; and the live stream cut into bodies.
-//!
-//! **Loaded once, then only copied.** Two loads of one file are not the same bytes - a file
-//! id, creation times - so a result is comparable with a baseline only while both ran on
-//! the one load. No server ever opens the loaded directory: each is started on a copy that
-//! was read back against the marker, and the copy is removed with its server.
-//!
-//! **Children, not calls.** The generator and the load are this binary run again, with the
-//! flags an operator would type: no default of the command line is copied into the bench,
-//! and what was loaded is what `kibbr load` loads. Each child's environment is scrubbed and
-//! its standard error goes to a file.
-//!
-//! **Nothing is removed that this invocation did not make.** `--dir` may be pointed at the
-//! wrong place. A loaded directory with no marker, or one that is no longer the bytes its
-//! marker lists, is an error that names both and says what to move; a load that failed
-//! leaves what it wrote where it is.
+//! Loaded once, then only copied: two loads of one file are not the same bytes, so results
+//! compare only on the one load, and every server starts on a verified copy. The generator
+//! and the load are children of this binary, so no command-line default is copied here.
+//! Nothing is removed that this invocation did not make: `--dir` may be the wrong place.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -39,8 +23,7 @@ use super::{
 };
 
 /// The data directory's lock file, at its root. It names the process that last held the
-/// directory, so it differs from one load to the next and is no part of the loaded bytes;
-/// a server takes a copy that has none as it stands.
+/// directory, so it differs from one load to the next and is no part of the loaded bytes.
 const LOCK: &str = "LOCK";
 
 /// The two children, as an error names them.
@@ -53,17 +36,16 @@ const QUOTED_LINES: usize = 20;
 /// Bytes read at a time from a file or a child's pipe.
 const CHUNK: usize = 1 << 20;
 
-/// Room made for each line of the live stream before it is read. A farm line is about 490
-/// bytes; a little over, so that the buffer is not grown - and copied, at half a
-/// gigabyte - on a machine whose memory the servers need.
+/// Room made for each line of the live stream before it is read: a little over a farm
+/// line, so that the buffer is not grown and copied on a machine the servers need.
 const LIVE_BYTES_PER_LINE: usize = 520;
 
 /// Differences between a directory and its marker that an error spells out; past this it
 /// counts the rest.
 const MAX_NAMED: usize = 5;
 
-/// One file of the loaded directory: its path from the directory's root, with `/` between
-/// its parts on every system, its length and its CRC-32C as eight hex digits.
+/// One file of the loaded directory: its path from the root with `/` between its parts on
+/// every system, its length and its CRC-32C as eight hex digits.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileDigest {
     pub path: String,
@@ -72,8 +54,7 @@ pub struct FileDigest {
 }
 
 /// A directory's files in path order, and the names that are no part of it: `LOCK`, and
-/// every file or directory whose name begins with `.` - what a file manager leaves in any
-/// folder it is shown. `left_out` is for the log, which names each once.
+/// whatever begins with `.`, which a file manager leaves in any folder it is shown.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Listing {
     pub files: Vec<FileDigest>,
@@ -87,7 +68,7 @@ pub struct InputDigest {
     pub crc32c: String,
 }
 
-/// What `kibbr load --json` said. A field it did not give is `null`.
+/// What `kibbr load --json` said, where a field it did not give is `null`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LoadFacts {
     pub load_id: Option<String>,
@@ -166,7 +147,7 @@ pub fn marker_path(dir: &Path, lines: u64) -> PathBuf {
 }
 
 /// Where the standard error of the load that made the directory is kept, with the
-/// generator's before it - which is nothing, unless the generator failed.
+/// generator's before it.
 pub fn load_log(dir: &Path, lines: u64) -> PathBuf {
     dir.join(format!("farm-{lines}-seed{LOADED_SEED}.load.log"))
 }
@@ -177,10 +158,8 @@ fn input_path(dir: &Path, lines: u64) -> PathBuf {
     dir.join(format!("farm-{lines}-seed{LOADED_SEED}.ndjson"))
 }
 
-/// Where this invocation keeps its copies and every child's standard error. `.noindex`
-/// keeps the system's indexer out of files that live for a second. Named by the process
-/// id, which comes round again: the run makes the directory itself and refuses one that
-/// is already there, so it never takes an earlier bench's for its own.
+/// Where this invocation keeps its copies and every child's standard error, `.noindex` to
+/// keep the system's indexer out of files that live for a second.
 pub fn work_dir(dir: &Path) -> PathBuf {
     dir.join(format!("work-{}.noindex", std::process::id()))
 }
@@ -206,9 +185,8 @@ pub fn stale_work(dir: &Path) -> Vec<PathBuf> {
     left
 }
 
-/// Hold the volume of `dir` to the room a run of `lines` needs, and return what it has
-/// free. Asked before anything is built: the generated file alone is a quarter of the
-/// need, and a volume that fills under a server is a run lost an hour in.
+/// Hold the volume of `dir` to the room a run of `lines` needs and return what it has
+/// free, before anything is built: a volume that fills under a server is a run lost.
 pub fn free_space(dir: &Path, lines: u64) -> Result<u64, SpeedError> {
     let free = host::disk_free(dir)?;
     enough(dir, free, lines)?;
@@ -253,14 +231,8 @@ pub(super) fn digest(path: &Path) -> io::Result<(u64, u32)> {
     }
 }
 
-/// Every file under `dir` in path order, with its length and CRC-32C, less `LOCK` and
-/// every name that begins with `.`, at any depth. Reads every byte it lists, which is
-/// also what puts a fresh copy in the file cache.
-///
-/// `LOCK` is the one at the directory's root, the data directory's own; a file of that
-/// name further down would be listed like any other. A directory whose name begins with
-/// `.` is named once and not entered. Anything that is neither a file nor a directory - a
-/// link, a socket - is an error: `kibbr load` writes none, and a copy could not carry it.
+/// Every file under `dir` in path order with its length and CRC-32C, less the root's
+/// `LOCK` and every name that begins with `.`; a link or a socket is an error.
 pub fn listing(dir: &Path) -> io::Result<Listing> {
     let mut found = Listing::default();
     list_into(dir, "", &mut found)?;
@@ -317,14 +289,8 @@ fn named(path: &Path, e: io::Error) -> io::Error {
     io::Error::new(e.kind(), format!("{}: {e}", path.display()))
 }
 
-/// Copy the listed files from `from` to `to`, and make every directory of `from` whose
-/// name does not begin with `.`, the empty ones too - and nothing else, so no `LOCK` and
-/// no dot file reaches a copy. `std::fs::copy`, which clones where the volume can.
-/// Returns the files and the bytes copied.
-///
-/// `to` must not be there: a copy is a new directory, and one that was left by another
-/// server is not written into. A listed path that would leave `to` - `..`, or a path from
-/// the root - is refused, since the list comes from a marker anyone can edit.
+/// Copy the listed files from `from` to a new directory `to`, with every directory not
+/// named `.`-something, refusing a listed path that would leave `to`: a marker can be edited.
 pub fn copy_tree(from: &Path, files: &[FileDigest], to: &Path) -> io::Result<(u64, u64)> {
     // Every path is held to the directory before anything is made.
     for file in files {
@@ -414,14 +380,8 @@ pub fn differences(listed: &[FileDigest], recorded: &[FileDigest]) -> Vec<String
 
 // ── The loaded directory ───────────────────────────────────────────────────────────
 
-/// The loaded directory for `lines` under `dir`: built by this call - generate, find S3's
-/// id, load, list, write the marker, delete the generated file - or, with its marker
-/// there, listed again and held to it.
-///
-/// A directory that differs from its marker, or stands without one, is
-/// `SpeedError::Corpus` naming both: it is never loaded again in place, since a baseline
-/// taken on the old bytes would then compare with nothing. `exe` is this binary, whose
-/// children's environment is scrubbed by `server::scrub`.
+/// The loaded directory for `lines` under `dir`, built by this call or, with its marker
+/// there, held to it; never loaded again in place, or a baseline would compare with nothing.
 pub fn prepare(
     exe: &Path,
     dir: &Path,
@@ -527,18 +487,16 @@ fn build(
     let log = load_log(dir, lines);
     let input = generate_to_file(exe, lines, &input_path, &log)?;
     let made = load_and_mark(exe, dir, lines, built_by, input);
-    // The generated file does not outlive this call, whichever way it went: the marker
-    // has its length and digest, nothing reads it again, and the generator writes the
-    // same bytes whenever it is asked. Of two failures the first is told.
+    // The generated file does not outlive this call, whichever way it went: the marker has
+    // its digest and the generator writes the same bytes again. Of two failures the first is told.
     let removed = fs::remove_file(&input_path).map_err(io_at(&input_path));
     let made = made?;
     removed?;
     Ok(made)
 }
 
-/// What is done with the generated file once it is whole: S3's id is found in it before
-/// the load, so that a stream with none costs no load; it is loaded; what the load wrote
-/// is listed; and the marker is written last.
+/// What is done with the generated file once it is whole. S3's id is found in it before
+/// the load, so that a stream with none costs no load; the marker is written last.
 fn load_and_mark(
     exe: &Path,
     dir: &Path,
@@ -704,8 +662,7 @@ impl Lines {
 }
 
 /// Generate the loaded day into `path`: to a `.tmp` name, digested as it is written,
-/// then renamed. The generator's standard error goes to `log`. A generator that failed
-/// leaves no file: what it wrote of one is removed.
+/// then renamed. A generator that failed leaves no file.
 fn generate_to_file(
     exe: &Path,
     lines: u64,
@@ -762,8 +719,7 @@ fn generate_into(
 }
 
 /// The id S3 asks for: the first string at `job`, then `id`, in the loaded stream. Taken
-/// from the stream because the farm's stream depends on `--lines`, and a test runs at
-/// another count than the measurement.
+/// from the stream because the farm's stream depends on `--lines`.
 fn s3_id(input: &Path, lines: u64) -> Result<String, SpeedError> {
     let file = File::open(input).map_err(io_at(input))?;
     let found = first_job_id(BufReader::with_capacity(CHUNK, file)).map_err(io_at(input))?;
@@ -805,11 +761,8 @@ fn first_job_id(mut lines: impl BufRead) -> io::Result<Option<String>> {
     }
 }
 
-/// Run `kibbr load` on the generated file, into a directory that is not there yet, and
-/// return what it said. Every flag a number depends on is typed out: the arrival time, so
-/// that no stored value depends on the date; the time columns and the file size, so that
-/// a default that moves does not move what was loaded. Its standard error is added to
-/// `log`.
+/// Run `kibbr load` on the generated file into a new directory, and return what it said.
+/// Every flag a number depends on is typed out, so a default that moves moves nothing loaded.
 fn load(exe: &Path, input: &Path, loaded: &Path, log: &Path) -> Result<LoadFacts, SpeedError> {
     let stderr = OpenOptions::new()
         .create(true)
@@ -850,9 +803,8 @@ fn load(exe: &Path, input: &Path, loaded: &Path, log: &Path) -> Result<LoadFacts
     load_facts(&output.stdout).map_err(|wrong| failed(Some(wrong)))
 }
 
-/// Read what `kibbr load --json` printed. `ok` must be true, with at least one row, all
-/// on one day - the farm's - or the error says which was not. A field the bench only
-/// records is `None` where the answer does not hold it, or holds it as another type.
+/// Read what `kibbr load --json` printed: `ok`, at least one row, all on one day. A field
+/// the bench only records is `None` where the answer does not hold it as that type.
 fn load_facts(stdout: &[u8]) -> Result<LoadFacts, String> {
     let answer: serde_json::Value = serde_json::from_slice(stdout).map_err(|e| {
         format!(
@@ -893,13 +845,8 @@ fn load_facts(stdout: &[u8]) -> Result<LoadFacts, String> {
 
 // ── The live stream ────────────────────────────────────────────────────────────────
 
-/// The live stream: `kibbr gen-logs --profile farm --lines <lines> --seed 43` as a child,
-/// its standard output held whole, digested, and cut into bodies of `body_lines` lines.
-/// The child's standard error goes to a file under `work`. A stream that is not `lines`
-/// lines is `SpeedError::Child`.
-///
-/// On no disk: it is made again by every invocation, and its digest is what two results
-/// are compared on.
+/// The live stream: `kibbr gen-logs --profile farm` as a child, its output held whole,
+/// digested and cut into bodies; on no disk, so its digest is what two results compare on.
 pub fn live_stream(
     exe: &Path,
     lines: u64,
@@ -939,8 +886,8 @@ pub fn live_stream(
     })
 }
 
-/// Cut NDJSON into bodies of `body_lines` lines, each ending at a line's end; the last
-/// holds what is left and may be short. Every byte is in exactly one body, in order.
+/// Cut NDJSON into bodies of `body_lines` lines, each ending at a line's end and the last
+/// possibly short, so that every byte is in exactly one body, in order.
 pub fn cut(bytes: &[u8], body_lines: usize) -> Vec<Body> {
     let full = body_lines.max(1);
     let mut bodies = Vec::new();
@@ -970,8 +917,8 @@ pub fn cut(bytes: &[u8], body_lines: usize) -> Vec<Body> {
     bodies
 }
 
-/// One `/ingest` request head for each body of the stream, in the stream's order, built
-/// before any server starts: a sender writes a head and a body and formats nothing.
+/// One `/ingest` request head for each body of the stream, built before any server
+/// starts, so that a sender formats nothing.
 pub fn heads(stream: &LiveStream) -> Vec<Vec<u8>> {
     stream
         .bodies
@@ -980,9 +927,8 @@ pub fn heads(stream: &LiveStream) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// The bodies sender `sender` of `senders` sends, in order: its own number, then every
-/// `senders`-th after it. The shares are disjoint and together are every body; with fewer
-/// bodies than senders, a sender's share is empty and it sends nothing.
+/// The bodies sender `sender` of `senders` sends: its own number, then every
+/// `senders`-th after it, so the shares are disjoint and together are every body.
 pub fn share(bodies: usize, sender: usize, senders: usize) -> Vec<usize> {
     (sender..bodies).step_by(senders.max(1)).collect()
 }

@@ -1,29 +1,8 @@
 //! The machine the bench runs on: what it is, and whether it is fit to measure on.
-//!
-//! This file holds the machine's facts, a child's CPU time and resident size, the swap
-//! counters, the look for other kibbr processes, the load average and available memory,
-//! how the machine is powered, the two references - a spin on one core and a flush to the
-//! disk, neither of which touches kibbr - the commit of the checkout, and the digest of
-//! the binary.
-//!
-//! **Two gates and no more.** A run waits while another kibbr process is alive and while
-//! the swap-out counter moves; a unit that either disturbed is thrown away and done again.
-//! Everything else here is printed and recorded, and decides nothing: a gate this machine
-//! fails at rest would stop the one run that cannot be taken again.
-//!
-//! **A child's CPU time is checked before it is believed.** The scan rate is rows over the
-//! CPU-seconds a server used, and on macOS the system counts those in ticks of its own
-//! clock, which are not nanoseconds: read as nanoseconds they are 41.7 times out on this
-//! machine and every scan rate with them. So on every start this process spins, and what
-//! the system says it used by the child's reading must agree with what `getrusage` says.
-//!
-//! **Programs and files, not calls, wherever a program or a file will do.** `ps`,
-//! `vm_stat`, `sysctl`, `pmset`, `df` and `git` are run as children and `/proc` is read as
-//! text; what they print is parsed by functions that take the text, so each is tested on
-//! text pasted from a real machine. Each child is run with `LC_ALL=C`: `sysctl` prints a
-//! load average with the locale's decimal sign. The only `unsafe` in the bench is here -
-//! the calls std has none for: a process's CPU time by pid, the clock those ticks are in,
-//! `getrusage`, and `sysconf` for the tick `/proc` counts in.
+//! Two gates and no more - another kibbr process alive, the swap-out counter moving; the
+//! rest is recorded and decides nothing. A child's CPU time is checked against `getrusage`
+//! on every start: macOS counts it in Mach ticks, not nanoseconds. System programs are run
+//! as children with `LC_ALL=C` and their text parsed, so each parser is tested on real text.
 
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -40,9 +19,8 @@ use super::corpus::digest;
 use super::report::{Binary, Commit, Machine, Power};
 use super::{crc_hex, SpeedError, FLUSH_REF_BYTES, FLUSH_REF_WRITES};
 
-/// Rounds of the spin reference: about a quarter of a second on a performance core of the
-/// machine this was written on (267 ms, optimised), long enough that the scheduler's
-/// choice of core shows and short enough to take three.
+/// Rounds of the spin reference: long enough that the scheduler's choice of core shows,
+/// short enough to take three.
 const SPIN_ROUNDS: u64 = 1 << 27;
 
 /// Where the spin's arithmetic starts. Any odd number would do; it is fixed so that the
@@ -78,8 +56,8 @@ impl Cpu {
     }
 }
 
-/// Pages swapped in and out since boot. Only a difference between two reads means
-/// anything, and only `outs` is a gate.
+/// Pages swapped in and out since boot, where only a difference between two reads means
+/// anything and only `outs` is a gate.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Swap {
     pub ins: u64,
@@ -88,25 +66,14 @@ pub struct Swap {
 
 // ── A process's CPU time ───────────────────────────────────────────────────────────
 
-/// The CPU time and memory of process `pid`, or `None` where this system has no source
-/// the bench reads, or the process is gone.
-///
-/// The whole process, every thread of it, since it started: what a server used over a
-/// block of asks is the difference of two reads. On Linux the times come in ticks of
-/// 10 ms, so a short block can read as no CPU at all.
+/// The CPU time and memory of process `pid`, every thread since it started, or `None`
+/// where this system has no source the bench reads or the process is gone.
 pub fn cpu(pid: u32) -> Option<Cpu> {
     os::cpu(pid)
 }
 
-/// Hold `cpu` to `getrusage`: spin until this process has used 200 ms of CPU by
-/// `getrusage`, and return the same spin by `cpu(own pid)` over it. Outside 2% of 1 is
-/// `SpeedError::Host` with both numbers - a tick count read as nanoseconds is 41.7 times
-/// out. Against `getrusage` and not the wall clock, so a busy machine cannot fail it.
-/// `Ok(None)` where `cpu` has no source.
-///
-/// Where the source counts in coarse ticks, two of them are allowed on top of the 2%:
-/// over 200 ms a clock of 10 ms steps is off by up to a tenth with nothing wrong, and
-/// what the check is for - a unit read as another - is out by a factor, not a tenth.
+/// Hold `cpu` to `getrusage` over a spin of this process's own, and not to the wall clock,
+/// so that a tick read as another unit fails and a busy machine does not.
 pub fn cpu_clock_check() -> Result<Option<f64>, SpeedError> {
     let pid = std::process::id();
     if cpu(pid).is_none() {
@@ -180,16 +147,14 @@ fn own_cpu_s() -> Option<f64> {
 
 // ── The two gates ──────────────────────────────────────────────────────────────────
 
-/// The swap counters. `Ok(None)`: this system has no counter the bench reads, which is
-/// said in the log and is not a gate. A counter that is there and cannot be read is
-/// `SpeedError::Host`: a gate that cannot be read cannot pass.
+/// The swap counters, or `Ok(None)` where this system has none the bench reads; one that
+/// is there and cannot be read is an error, since a gate that cannot be read cannot pass.
 pub fn swap() -> Result<Option<Swap>, SpeedError> {
     os::swap()
 }
 
 /// The pids of every process whose command's file name is exactly `kibbr`, less this
-/// process and its children. A process list that cannot be read is `SpeedError::Host`:
-/// without it the check cannot pass.
+/// process and its children; a process list that cannot be read is `SpeedError::Host`.
 pub fn other_kibbr() -> Result<Vec<u32>, SpeedError> {
     let cannot = |why: String| {
         SpeedError::Host(format!(
@@ -203,14 +168,8 @@ pub fn other_kibbr() -> Result<Vec<u32>, SpeedError> {
         .ok_or_else(|| cannot("printed a list that does not hold this process".to_string()))
 }
 
-/// The `kibbr` processes in what `ps` printed, less process `own` and its children - the
-/// servers and the plan step this bench started itself. `None` when `own` is not in the
-/// list: a list this process is missing from was not read the way it is written, and
-/// would say "no other kibbr" of any machine.
-///
-/// The name is held exactly: `kibbr-helper` is another program, and so is a test binary,
-/// which cargo names `kibbr-<hash>`. A process that has exited and not been reaped prints
-/// in brackets or with `<defunct>` after it, and is not counted - it uses no CPU.
+/// The `kibbr` processes in what `ps` printed, less process `own` and its children. `None`
+/// when `own` is not in the list: such a list would say "no other kibbr" of any machine.
 fn others(ps: &str, own: u32) -> Option<Vec<u32>> {
     let mut seen_own = false;
     let mut found = Vec::new();
@@ -234,28 +193,25 @@ fn ps_row(line: &str) -> Option<(u32, u32, &str)> {
 
 // ── Printed and recorded, never a gate ─────────────────────────────────────────────
 
-/// The 1-minute load average. Printed, never a gate.
+/// The 1-minute load average: printed, never a gate.
 pub fn load_average() -> Option<f64> {
     os::load_average()
 }
 
-/// Memory an application could be given without swapping, in bytes. Printed, never a
+/// Memory an application could be given without swapping, in bytes: printed, never a
 /// gate.
 pub fn memory_available() -> Option<u64> {
     os::memory_available()
 }
 
-/// How the machine is powered at this moment: what it draws from, and whether Low Power
-/// Mode is on. Printed and recorded beside the references, never a gate: it says why a
-/// spin read slower, and a run on a battery is still a run. `None` on a system the bench
-/// has no reading for, or one whose `pmset` could not be run.
+/// How the machine is powered and whether Low Power Mode is on: recorded beside the
+/// references to say why a spin read slower, never a gate.
 pub fn power() -> Option<Power> {
     os::power()
 }
 
-/// The spin reference: a fixed count of rounds of arithmetic on one thread, the least of
-/// three. It is the bench's own code and reads the same on every commit, so a run that
-/// was throttled, or put on the efficiency cores, shows here.
+/// The spin reference, the least of three runs of fixed arithmetic on one thread: the
+/// same on every commit, so a throttled run or one on the efficiency cores shows here.
 pub fn spin() -> Duration {
     (0..REFERENCE_TRIES)
         .map(|_| {
@@ -267,10 +223,8 @@ pub fn spin() -> Duration {
         .unwrap_or_default()
 }
 
-/// `rounds` rounds of xorshift64 from `x`. Each round's value goes through `black_box`,
-/// so that the loop is the same loads, shifts and stores whatever a later compiler could
-/// make of it: a reference that a compiler upgrade made faster would read as a cooler
-/// machine.
+/// `rounds` rounds of xorshift64 from `x`, each through `black_box`: a reference that a
+/// compiler upgrade made faster would read as a cooler machine.
 fn spin_rounds(mut x: u64, rounds: u64) -> u64 {
     for _ in 0..rounds {
         x ^= x << 13;
@@ -281,13 +235,8 @@ fn spin_rounds(mut x: u64, rounds: u64) -> u64 {
     x
 }
 
-/// The flush reference, the same idea for the disk: `FLUSH_REF_WRITES` writes of
-/// `FLUSH_REF_BYTES` bytes to one file in `dir`, each followed by `sync_all`, timed as
-/// one sum; the least of three. The file is removed.
-///
-/// `sync_all` because that is what the server's log calls after each body, and on macOS
-/// it is the full flush that waits for the disk. Making the file is outside the clock:
-/// the reference is the flushes, which are what a sender's cycle waits on.
+/// The flush reference, the least of three: `FLUSH_REF_WRITES` writes to one file in
+/// `dir`, each followed by `sync_all`, which is what the server's log calls after each body.
 pub fn flush_ref(dir: &Path) -> io::Result<Duration> {
     let path = dir.join(format!("flush-reference-{}", std::process::id()));
     // Not zeros: a volume that stores a run of zeros as a hole would flush nothing.
@@ -332,11 +281,8 @@ fn flush_once(path: &Path, block: &[u8]) -> io::Result<Duration> {
 
 // ── What the machine is ────────────────────────────────────────────────────────────
 
-/// What the machine is. `disk_free_bytes` and `cpu_clock_check` are left for the caller,
-/// from `disk_free` and `cpu_clock_check`: the one needs a path and the other can fail.
-///
-/// `cores_logical` is what a server started with no `--ingest-concurrency` would take,
-/// by the same call, and is what every server of the bench is given by name.
+/// What the machine is, less `disk_free_bytes` and `cpu_clock_check`, which the caller
+/// fills: the one needs a path and the other can fail.
 pub fn machine() -> Machine {
     let (cores_performance, cores_efficiency) = os::core_kinds();
     Machine {
@@ -359,7 +305,7 @@ pub fn machine() -> Machine {
 }
 
 /// Free bytes on the volume that holds `dir`, or its nearest parent that exists: what
-/// `df -Pk` prints as available, which is what a writer that is not root can take.
+/// `df -Pk` prints as available to a writer that is not root.
 pub fn disk_free(dir: &Path) -> Result<u64, SpeedError> {
     let at = nearest_existing(dir);
     let cannot = |why: String| {
@@ -378,9 +324,8 @@ pub fn disk_free(dir: &Path) -> Result<u64, SpeedError> {
     })
 }
 
-/// `dir`, or the nearest directory above it that exists, as a whole path: a `--dir` that
-/// is yet to be made is on the volume of the directory it will be made in. A whole path,
-/// so that a name beginning with `-` is not read by `df` as a flag.
+/// `dir`, or the nearest directory above it that exists: a `--dir` yet to be made is on
+/// that volume. A whole path, so that a name beginning with `-` is not read by `df` as a flag.
 fn nearest_existing(dir: &Path) -> PathBuf {
     let mut at = dir;
     let found = loop {
@@ -398,9 +343,8 @@ fn nearest_existing(dir: &Path) -> PathBuf {
     fs::canonicalize(found).unwrap_or_else(|_| found.to_path_buf())
 }
 
-/// The available bytes in what `df -Pk` printed for one path: the number before the
-/// capacity, which is the one column that ends in `%`. Found from that column and not by
-/// counting from the left, because a file system's name may hold spaces.
+/// The available bytes in what `df -Pk` printed for one path. Found from the one column
+/// that ends in `%`, not by counting from the left: a file system's name may hold spaces.
 fn df_available_bytes(text: &str) -> Option<u64> {
     let row: Vec<&str> = text
         .lines()
@@ -416,12 +360,8 @@ fn df_available_bytes(text: &str) -> Option<u64> {
 
 // ── The checkout and the binary ────────────────────────────────────────────────────
 
-/// The checkout the bench runs in: what git says of the working directory. Without git,
-/// or outside a checkout, every field but `how` is `None`.
-///
-/// `src_dirty` asks about `src`, `Cargo.toml` and `Cargo.lock` at the checkout's root and
-/// nothing else: over the whole tree it is true for a file manager's leavings, and would
-/// be true of every result. It cannot see a file git does not track yet.
+/// The checkout the bench runs in, as git tells it; `src_dirty` asks only about `src`,
+/// `Cargo.toml` and `Cargo.lock`, since the whole tree is dirty in every result.
 pub fn commit() -> Commit {
     let git = |args: &[&str]| {
         asked("git", args)
@@ -461,11 +401,8 @@ pub fn commit() -> Commit {
     }
 }
 
-/// The binary at `exe`: its length, CRC-32C and modification time, whether this is a
-/// release build, and whether it is older than `commit`.
-///
-/// The commit is the checkout's and the binary may have been built before it was made;
-/// `stale` is the one sign of that a result can carry.
+/// The binary at `exe`: its length, CRC-32C and modification time, whether it is a
+/// release build, and `stale` if it is older than `commit` and so not built from it.
 pub fn binary(exe: &Path, commit: &Commit) -> Result<Binary, SpeedError> {
     let (bytes, crc) = digest(exe).map_err(|source| SpeedError::Io {
         path: exe.to_path_buf(),
@@ -497,8 +434,8 @@ pub fn binary(exe: &Path, commit: &Commit) -> Result<Binary, SpeedError> {
     })
 }
 
-/// Whether the binary is still the bytes `was` recorded. A build beside the bench
-/// replaces the binary being measured; that is `SpeedError::Host`.
+/// Whether the binary is still the bytes `was` recorded, since a build beside the bench
+/// replaces the binary being measured.
 pub fn binary_unchanged(was: &Binary) -> Result<(), SpeedError> {
     let changed = |now: String| {
         SpeedError::Host(format!(
@@ -574,8 +511,7 @@ fn vm_stat_swap(text: &str) -> Option<Swap> {
 }
 
 /// Memory an application could be given without swapping, from what `vm_stat` printed:
-/// the free, inactive, speculative and purgeable pages, at the page size its first line
-/// names.
+/// the free, inactive, speculative and purgeable pages.
 #[cfg(any(target_os = "macos", test))]
 fn vm_stat_available(text: &str) -> Option<u64> {
     let (_, after) = text.split_once("page size of ")?;
@@ -589,8 +525,7 @@ fn vm_stat_available(text: &str) -> Option<u64> {
 }
 
 /// Whether Low Power Mode is on, in what `pmset -g` printed: the number beside
-/// `lowpowermode` among the settings in use, as in ` lowpowermode         0`. `None` where
-/// the system names no such setting.
+/// `lowpowermode`. `None` where the system names no such setting.
 #[cfg(any(target_os = "macos", test))]
 fn pmset_low_power(text: &str) -> Option<bool> {
     text.lines().find_map(|line| {
@@ -663,10 +598,8 @@ struct ProcStat {
     resident_pages: u64,
 }
 
-/// Read `/proc/<pid>/stat`. Its second field is the command's name in brackets, which
-/// may itself hold spaces and brackets, so the fields are counted from the last `)`: the
-/// one after it is the third. Major faults are the 12th, user and system time the 14th
-/// and 15th, the resident pages the 24th.
+/// Read `/proc/<pid>/stat`. The command's name may hold spaces and brackets, so the
+/// fields are counted from the last `)`.
 #[cfg(any(target_os = "linux", test))]
 fn proc_stat(text: &str) -> Option<ProcStat> {
     let (_, after) = text.rsplit_once(')')?;
@@ -706,8 +639,7 @@ mod os {
     pub const SWAP_COUNTER: Option<&str> = Some("vm_stat");
 
     /// What turns a tick of the Mach clock into nanoseconds: times `numer`, over `denom`.
-    /// 125/3 on Apple silicon, 1/1 on Intel. Asked once; it does not change while the
-    /// system is up.
+    /// Asked once; it does not change while the system is up.
     // libc marks this call and its structure as deprecated in favour of the `mach2`
     // crate, which this build does not have and the bench does not add for one call.
     #[allow(deprecated)]
@@ -731,11 +663,8 @@ mod os {
         let (numer, denom) = timebase()?;
         let pid = libc::c_int::try_from(pid).ok()?;
         let mut info = MaybeUninit::<libc::rusage_info_v2>::uninit();
-        // SAFETY: `info` is room for one `rusage_info_v2`, the structure the call writes
-        // for `RUSAGE_INFO_V2`. The call declares its buffer as a pointer to a
-        // `rusage_info_t`, itself a pointer to anything, which is why the pointer is
-        // cast and the structure is not. It fills the buffer when it returns 0 - the
-        // only case in which it is read.
+        // SAFETY: `info` is room for one `rusage_info_v2`, filled when the call returns 0 - the
+        // only case in which it is read. The cast is to the call's own `rusage_info_t` pointer.
         let info = unsafe {
             if libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V2, info.as_mut_ptr().cast()) != 0 {
                 return None;
@@ -756,7 +685,7 @@ mod os {
         Some(format!("proc_pid_rusage, mach timebase {numer}/{denom}"))
     }
 
-    /// The step `cpu` counts in, in seconds: 42 ns here, which is nothing beside 2%.
+    /// The step `cpu` counts in, in seconds: nothing beside the check's share.
     pub fn cpu_step_s() -> f64 {
         0.0
     }
@@ -781,8 +710,7 @@ mod os {
     }
 
     /// Two children, one for each half: the settings in use name the mode and not the
-    /// source, and the battery's status names the source and not the mode. A half that
-    /// could not be read is `None` beside the other; with neither there is no reading.
+    /// source, the battery's status the source and not the mode.
     pub fn power() -> Option<Power> {
         let read = |args: &[&str]| asked(PMSET, args).ok();
         let power = Power {
@@ -800,8 +728,7 @@ mod os {
         sysctl("machdep.cpu.brand_string")
     }
 
-    /// Performance and efficiency cores, where the machine has the two kinds; an Intel
-    /// Mac names neither.
+    /// Performance and efficiency cores, where the machine has the two kinds.
     pub fn core_kinds() -> (Option<usize>, Option<usize>) {
         let count = |name: &str| sysctl(name)?.parse().ok();
         (
@@ -852,7 +779,7 @@ mod os {
         Some(format!("/proc/<pid>/stat, {ticks} ticks a second"))
     }
 
-    /// The step `cpu` counts in, in seconds: 10 ms on every kernel anyone runs.
+    /// The step `cpu` counts in, in seconds.
     pub fn cpu_step_s() -> f64 {
         sysconf(libc::_SC_CLK_TCK).map_or(0.0, |ticks| 1.0 / ticks as f64)
     }
@@ -885,9 +812,8 @@ mod os {
         meminfo_bytes(&fs::read_to_string("/proc/meminfo").ok()?, "MemAvailable")
     }
 
-    /// Not read here: where a Linux machine says what it draws from, and whether it is
-    /// holding its cores back, differs from one to the next. The spin reference is what
-    /// shows a slower machine on this system.
+    /// Not read here: Linux machines differ in where they say what they draw from, and the
+    /// spin reference is what shows a slower machine on this system.
     pub fn power() -> Option<Power> {
         None
     }
@@ -1137,8 +1063,7 @@ Now drawing from 'AC Power'
  -InternalBattery-0 (id=7929955)\t94%; charging; 0:33 remaining present: true
 ";
 
-    /// Both again on the same machine on its battery in Low Power Mode, as it printed
-    /// them: the state in which the spin reference takes 1.7 times as long.
+    /// Both again on the same machine on its battery in Low Power Mode, as it printed them.
     const PMSET_LOW: &str = "\
 System-wide power settings:
 Currently in use:
@@ -1289,9 +1214,8 @@ Now drawing from 'Battery Power'
  6500     1 (kibbr)
  6600     1 /Users/someone/repo/kibbr/scripts/check/agree.sh
 ";
-        // 4000 is this process; 4001 and 4002 are its servers. 5000 is another bench and
-        // 5001 that one's server; 6000 is a kibbr started by name, 6400 one under a
-        // directory with a space in its name.
+        // 4000 is this process, 4001 and 4002 its servers; 5000 another bench, 5001 its server;
+        // 6000 a kibbr started by name, 6400 one under a directory with a space in its name.
         assert_eq!(others(ps, 4000), Some(vec![5000, 5001, 6000, 6400]));
         // Seen from the other bench, this one and its two servers are the others.
         assert_eq!(others(ps, 5000), Some(vec![4000, 4001, 4002, 6000, 6400]));

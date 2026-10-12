@@ -819,6 +819,7 @@ impl Wal {
 
     /// Read every record past the checkpoint back, in order, and hand each to `each`, whose
     /// `Err` stops the replay; a torn end is skipped and nothing is cut.
+    /// Every segment is flushed before it is read: after a kill its last frames may be cache only.
     pub fn replay(
         &self,
         warn: &mut dyn FnMut(String),
@@ -913,6 +914,7 @@ impl Wal {
 
     /// Put a body's lines in the queue, all for one flush, waiting up to `wait` for room, and
     /// return what its sender waits on; `Err` means none of its lines is in the log.
+    /// `received_at` is the body's arrival time; it blocks, so it is called from a blocking thread.
     pub fn enqueue(
         &self,
         lines: Vec<Line>,
@@ -1052,6 +1054,7 @@ impl Wal {
 
     /// Move the checkpoint to just before the oldest position still only in memory and delete the
     /// segments behind it; `oldest` is asked after `applied` is read, so no row is missed.
+    /// The file is a hint: a failed write keeps no segment; they are looked for even with no move.
     pub fn advance(
         &self,
         oldest: impl FnOnce() -> Option<u64>,

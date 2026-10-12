@@ -1,45 +1,8 @@
 //! What is timed: ingest alone, the idle server, and one lap under ingest.
-//!
-//! This file holds the three units that start a server, the look at a new server that
-//! gives every query its expected answer before the first run, the sender loop the two
-//! ingesting units share, and the percentile rule every reported number goes through.
-//!
-//! **Nothing of the bench's own sits inside a timed window but a write, a read and a
-//! clock.** The bytes of every request are built before a server starts; an answer is read
-//! into a buffer that is already there, and is typed only after its clock has stopped;
-//! nothing is printed, and nothing is asked of the server that the unit is not measuring.
-//! Between two asks of a block the answer just read is typed and held to the expected one:
-//! that is the bench's own time and not the server's, it is the same few microseconds in
-//! every build, and it is in no sample.
-//!
-//! **A sample is what the caller waited.** A query's clock runs from just before its
-//! first byte is written to just after its answer's last byte is read, on a connection
-//! that is already open. Nothing refuses a query today; one that is refused is sent again
-//! after the same pause a refused body waits, and its sample runs from the first try. A
-//! query still refused `STALL` after its first try is `SpeedError::Query`: the main thread
-//! is the one asking, so nothing else would end a lap whose senders go on storing the
-//! stream beside it.
-//!
-//! **The ingest rate is the server's own count over the server's own clock.** `/stats`
-//! is asked once before the senders are released and once after the last returns, and
-//! nothing is asked between: the lines are the ones the server acknowledged, and the
-//! seconds are read in the same two answers. The senders wait at a gate with their
-//! connections open, so no handshake is in the window, and the main thread is woken by
-//! the last sender and not by a clock, so the window does not end a tick late.
-//!
-//! **An attempt to send a body is what was read, before it is what was written.** A
-//! refusal can arrive before the server has read the body, with the write failing part
-//! way: it is still a refusal, counted under its status. Only attempts that read no
-//! status line at all count toward the five in a row that end a sender, and any answer
-//! sets that count back, so a server that sheds for seconds does not end a phase. What
-//! bounds a server that refuses for ever is the main thread, which watches the lines
-//! acknowledged and asks the server nothing.
-//!
-//! **A lap's senders are stopped by killing the server.** A sender may be waiting on an
-//! answer for as long as the socket allows, and a flag is only read between attempts. So
-//! every way out of an ingesting unit raises the flag, opens the gate and kills the
-//! server before it joins the threads; a sender whose connection dies after the flag
-//! returns quietly.
+//! Nothing of the bench's own sits inside a timed window but a write, a read and a clock:
+//! requests are built beforehand and answers typed after their clock has stopped. The ingest
+//! rate is the server's own count over its own clock, between two `/stats` answers. A lap's
+//! senders are stopped by killing the server, since a flag is only read between attempts.
 
 use std::cmp::Ordering;
 use std::path::Path;
@@ -79,8 +42,8 @@ const GATE_POLL: Duration = Duration::from_micros(100);
 /// asks the server nothing; the look is for a server that has stopped taking bodies.
 const STALL_TICK: Duration = Duration::from_secs(1);
 
-/// What every unit starts from. All of it is made before the first run and none of it
-/// changes: a unit that needed something built would build it inside its window.
+/// What every unit starts from, all made before the first run: a unit that needed
+/// something built would build it inside its window.
 pub struct Work<'a> {
     /// This binary: the server measured is the binary measuring.
     pub exe: &'a Path,
@@ -97,7 +60,7 @@ pub struct Work<'a> {
     /// The seven query requests, head and body.
     pub requests: &'a Seven<Vec<u8>>,
     pub expect: &'a Seven<Expect>,
-    /// Room each unit's connection is given before it asks anything: enough for the
+    /// Room each unit's connection is given before it asks anything, enough for the
     /// largest answer the first server gave, so that no sample grows a buffer.
     pub answer_room: usize,
     pub lines: u64,
@@ -129,15 +92,13 @@ pub struct Lap {
     /// senders were released and the one asked after the fourth query.
     pub lines: u64,
     pub seconds: f64,
-    /// The server's counters in that second answer. The server is new, so they are the
-    /// lap's.
+    /// The server's counters in that second answer, which are the lap's because the
+    /// server is new.
     pub forced_closes: Option<u64>,
     pub buffered_bytes: Option<u64>,
     pub requests_shed: Option<u64>,
-    /// Writes to the store that failed, and whether its last flush had, in that same
-    /// answer. A store that cannot write goes on acknowledging lines - they are in its
-    /// log - while no row reaches a file, so a lap on one is not a lap on this build's
-    /// store. The count and not the flag alone, which the next flush that writes clears.
+    /// Writes to the store that failed in that same answer: a store that cannot write goes
+    /// on acknowledging lines, so a lap on one is not a lap on this build's store.
     pub write_failures: Option<u64>,
     pub degraded: Option<bool>,
     /// Times the senders were refused a body, by either status; a body refused twice
@@ -147,9 +108,8 @@ pub struct Lap {
     pub wraps: u64,
 }
 
-/// The value at nearest rank `p` of `values`: the `ceil(p x n)`-th smallest. With 100
-/// values, `0.50` is the 50th smallest and `0.99` the 99th; defined for every `n` above
-/// 0, and `None` for none.
+/// The value at nearest rank `p` of `values`, the `ceil(p x n)`-th smallest, defined for
+/// every `n` above 0 and `None` for none.
 pub fn percentile<T: Copy + PartialOrd>(values: &[T], p: f64) -> Option<T> {
     let mut sorted = values.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
@@ -237,13 +197,8 @@ fn as_ms(took: Duration) -> f64 {
     took.as_secs_f64() * 1e3
 }
 
-/// Ask one query down a kept connection, and time it.
-///
-/// A 503 or a 429 is counted, and the same bytes are sent again after the pause a refused
-/// body waits: the sample is then what the caller waited, from the first try. A query
-/// still refused `STALL` after its first try is `SpeedError::Query`, and so is any other
-/// status than 200. The answer is typed after the clock has stopped, and so is a
-/// connection made again because the answer closed the first.
+/// Ask one query down a kept connection, and time it. A refusal is counted and the query
+/// sent again after `REFUSAL_PAUSE`: the sample is what the caller waited, from the first try.
 fn ask(
     conn: &mut Conn,
     server: &Server,
@@ -253,16 +208,8 @@ fn ask(
     ask_within(conn, || whose(server), name, request, STALL)
 }
 
-/// `ask`, with how long a query may go on being refused and the words that say whose
-/// answer it was. `whose` is only called for an error, so nothing is built for an ask
-/// that is answered.
-///
-/// The limit is held against the clock value each attempt takes anyway, and only on a
-/// refusal: an ask that is answered reads the clock once, as it would with no limit. It
-/// is there for a lap. The main thread is the one in this loop, so it is not looking at
-/// the lines acknowledged, and a lap's senders begin their share of the stream again
-/// until they are stopped: a server that refused a query for ever would have them store
-/// the stream into its copy until the volume was full.
+/// `ask`, with how long a query may go on being refused. The limit is for a lap: the main
+/// thread asks, so nothing else would stop senders storing the stream until the volume is full.
 fn ask_within(
     conn: &mut Conn,
     whose: impl Fn() -> String,
@@ -355,9 +302,8 @@ fn quoted(expect: &Expect) -> String {
     serde_json::to_string(expect).unwrap_or_else(|_| format!("count {}", expect.count))
 }
 
-/// Hold an answer from a server that has taken no line to the one the preflight kept. A
-/// difference stops the run with the query and both answers: the same query over the same
-/// bytes must not answer otherwise, and a sample of another answer is not a sample.
+/// Hold an answer from a server that has taken no line to the one the preflight kept:
+/// a sample of another answer is not a sample.
 fn same(name: &'static str, expect: &Expect, got: &QueryAnswer) -> Result<(), SpeedError> {
     if is(expect, got) {
         return Ok(());
@@ -374,9 +320,8 @@ fn same(name: &'static str, expect: &Expect, got: &QueryAnswer) -> Result<(), Sp
     })
 }
 
-/// S3 carries no `LIMIT`, so the server's own limit on rows applies to it. It must never
-/// be reached: S3 exists to read every row of every template that holds the key, and a
-/// truncated answer is one that stopped counting what it read.
+/// S3 carries no `LIMIT`, so the server's own limit on rows applies to it and must never
+/// be reached: a truncated answer is one that stopped counting what it read.
 fn within_backstop(name: &'static str, got: &QueryAnswer) -> Result<(), SpeedError> {
     if got.truncated != Some(true) && got.count <= MAX_ROWS {
         return Ok(());
@@ -399,9 +344,7 @@ fn within_backstop(name: &'static str, got: &QueryAnswer) -> Result<(), SpeedErr
 }
 
 /// Hold an answer from a server that is taking lines to what can be held of it: the
-/// loaded rows are still there, so it counts at least what it counted without the live
-/// ones, and a fetch returns at least as many rows as it did - which for the newest 500
-/// is the 500.
+/// loaded rows are still there, so no count and no fetch can be less than without the live ones.
 fn under_ingest(name: &'static str, expect: &Expect, got: &QueryAnswer) -> Result<(), SpeedError> {
     if got.count < expect.count {
         return Err(SpeedError::Query {
@@ -442,14 +385,8 @@ fn unexpected(detail: String) -> SpeedError {
     }
 }
 
-/// One server on a copy, asked everything a run will ask, before a run is spent: it
-/// answers `/health` with `ok`; its `/stats` has the fields a rate is made of, no line
-/// taken and the rows the load reported; each of the seven queries answers 200, and its
-/// answer becomes the expected one; the first body of the live stream is taken with an
-/// `ingested` count and the server's own count moves by as much; and the system gives a
-/// CPU time for the child. Returns the seven expected answers, and the room a unit's
-/// connection is given for an answer: twice the largest body read here and a head, since
-/// a fetch under ingest returns other rows than it does of the loaded ones alone.
+/// One server on a copy, asked everything a run will ask before a run is spent; returns
+/// the seven expected answers and the room a unit's connection is given for an answer.
 #[allow(clippy::too_many_arguments)]
 pub fn preflight(
     exe: &Path,
@@ -667,11 +604,7 @@ fn per_second(rows: u64, seconds: Option<f64>) -> Option<f64> {
 }
 
 /// `unmeasured` asks whose answers are checked, then `asks` timed ones back to back with
-/// the server's CPU time read before the first and after the last, then - where the
-/// block has a tail - that long with nothing asked and the CPU time read once more.
-///
-/// The vectors are sized beforehand. Between two timed asks the answer is typed and held
-/// to the expected one, after its own clock has stopped.
+/// the server's CPU time read around them, then the tail where the block has one.
 #[allow(clippy::too_many_arguments)]
 fn block(
     conn: &mut Conn,
@@ -759,10 +692,8 @@ fn idle_block(block: &Block) -> IdleBlock {
     }
 }
 
-/// The scan rate, from the scan block and the count of rows its query must look at. The
-/// rows are the data's - that count times the asks - and not what the server says it
-/// scanned, which a later build is free to count another way; the seconds are the CPU
-/// the whole server process used across exactly those asks.
+/// The scan rate. The rows are the data's - the key's count times the asks - and not what
+/// the server says it scanned, which a later build is free to count another way.
 fn scan_run(scan_key_rows: u64, key_rows: u64, scan: &Block, blocks: &Four<Block>) -> ScanRun {
     let asks = scan.client_ms.len();
     let rows = scan_key_rows * asks as u64;
@@ -805,13 +736,8 @@ fn scan_run(scan_key_rows: u64, key_rows: u64, scan: &Block, blocks: &Four<Block
     }
 }
 
-/// The idle server: a new server that is never sent a line. The two counts, then the scan
-/// block, then a block of timed asks for each of the four queries.
-///
-/// The scan block stands first for the reason ingest stands first in a run: what comes
-/// before it - a start and two counts - is the same in every build, where after the
-/// fourth query's block it would follow minutes of one core in one build and seconds in
-/// the next.
+/// The idle server, a new one that is never sent a line: the two counts, the scan block
+/// first so that what precedes it is the same in every build, then the four queries' blocks.
 pub fn idle(work: &Work) -> Result<(IdleRun, ScanRun), SpeedError> {
     let (server, mut conn) = started(work)?;
     let (requests, expect) = (work.requests, work.expect);
@@ -1028,24 +954,15 @@ enum Sent {
 }
 
 /// Connect again after an answer that closed the socket, or an attempt that read none.
-/// A connection that cannot be made is met again by the next attempt, which then reads no
-/// answer and counts toward the five.
+/// A connection that cannot be made is met by the next attempt, which counts as silent.
 fn reconnect(conn: &mut Conn, mine: &Counts) {
     if conn.reopen().is_ok() {
         mine.reconnects.fetch_add(1, Relaxed);
     }
 }
 
-/// Send one body until it is answered 200.
-///
-/// An attempt is classified by what was read. A 200 after the whole body was written is
-/// the body taken. A 503 or a 429 is a refusal under its status, whether or not the body
-/// was all written: the same body is sent again after the bench's own pause - not the
-/// server's `retry-after`, which is recorded - on a new connection if this one is done.
-/// An attempt that read no status line is sent again too: at once if the body was
-/// written whole, since it may have been taken and the wait is then the server's, after
-/// the pause if it was not. Five such attempts in a row end the sender; any answer sets
-/// the count back to 0.
+/// Send one body until it is answered 200, each attempt classified by what was read.
+/// `SILENT_LIMIT` attempts in a row with no status line end the sender; any answer resets it.
 fn send_body(
     conn: &mut Conn,
     head: &[u8],
@@ -1173,9 +1090,8 @@ struct Returned {
     ended: Instant,
 }
 
-/// One sender: wait at the gate, then send bodies `at`, `at + 4`, ... of the stream in
-/// order, flat out - no pause between an answer and the next body, nothing generated, cut
-/// or allocated for a body.
+/// One sender: wait at the gate, then send its share of the stream in order, flat out,
+/// with nothing generated, cut or allocated for a body.
 fn send_share(at: usize, mut conn: Conn, work: &Work, shared: &Shared, rounds: Rounds) -> Returned {
     let share = corpus::share(work.stream.bodies.len(), at, SENDERS);
     // Sized before the gate. A lap notes nothing: its lines by the second are not read.
@@ -1223,9 +1139,7 @@ fn send_share(at: usize, mut conn: Conn, work: &Work, shared: &Shared, rounds: R
 }
 
 /// Start a server's four senders, run `main` on this thread beside them, then end the
-/// unit: raise the flag, open the gate if it is still shut, kill the server, and join
-/// the senders. A sender's own error is the unit's, before whatever the main thread
-/// then met because of it.
+/// unit. A sender's own error is the unit's, before whatever the main thread then met.
 fn beside_senders<T>(
     work: &Work,
     server: Server,
@@ -1240,9 +1154,8 @@ fn beside_senders<T>(
     let (done, returned) = mpsc::channel();
 
     let (measured, joined) = thread::scope(|scope| {
-        // Declared before the release, so that on any way out the flag is raised and the
-        // gate opened first and the server killed second, with the senders joined after
-        // both.
+        // Declared before the release, so that on any way out the flag is raised and the gate
+        // opened first, the server killed second, and the senders joined after both.
         let server = server;
         let release = Release(&shared);
         let shared = &shared;
@@ -1301,10 +1214,8 @@ fn a_sender_failed() -> SpeedError {
     }
 }
 
-/// The `/stats` that opens a window, and the gate: every sender is waiting, the server is
-/// asked, and the gate is opened the moment the answer's last byte is read - the answer
-/// is typed after, so that reading it is not at the head of the window. Returns the
-/// answer, held to a server that has taken no line, and when the gate opened.
+/// The `/stats` that opens a window, and the gate, opened the moment the answer's last
+/// byte is read: the answer is typed after, so reading it is not at the head of the window.
 fn open_the_gate(
     server: &Server,
     conn: &mut Conn,
@@ -1346,9 +1257,8 @@ fn ingest_window(
     let began = Instant::now();
     let (before, opened) = open_the_gate(server, conn, shared)?;
 
-    // Woken by each sender as it returns; between them, once a second, a look at the
-    // lines acknowledged - an atomic of this process - for a server that has stopped
-    // taking bodies. Nothing is asked of the server here.
+    // Woken by each sender as it returns; between them, once a second, a look at this
+    // process's own count for a server that has stopped taking bodies. The server is not asked.
     let mut left = SENDERS;
     let mut seen = 0;
     let mut moved = Instant::now();
@@ -1414,10 +1324,8 @@ fn by_second(opened: Instant, senders: &[Returned]) -> Vec<u64> {
     each
 }
 
-/// Ingest alone: a new server that is never sent a query; the senders connect and wait;
-/// `/stats`; they are released and each sends its share of the stream once; `/stats`
-/// again when the last returns. The window is between the two answers, on the server's
-/// own clock, and nothing else is asked of the server inside it.
+/// Ingest alone, on a new server that is never sent a query: the window is between two
+/// `/stats` answers, on the server's own clock, with nothing else asked inside it.
 pub fn ingest_alone(work: &Work) -> Result<IngestRun, SpeedError> {
     let (server, mut conn) = started(work)?;
     let unit = server.unit();
@@ -1527,8 +1435,7 @@ pub fn ingest_alone(work: &Work) -> Result<IngestRun, SpeedError> {
 // ── One lap under ingest ───────────────────────────────────────────────────────────
 
 /// Wait until `place` live lines are acknowledged, and return how many were when the
-/// wait ended. One atomic is read between sleeps and the server is asked nothing. A
-/// place not reached in `STALL` is an error: the senders are then not getting through.
+/// wait ended. A place not reached in `STALL` is an error: the senders are not getting through.
 fn reach(
     name: &'static str,
     place: u64,
@@ -1616,21 +1523,14 @@ fn lap_main(
     })
 }
 
-/// One lap: a new server; S1, S2 and S3 once, unmeasured; the senders released from their
-/// first bodies; each query asked once, timed, when its place in the live stream has been
-/// acknowledged; `/stats`; kill.
-///
-/// Every lap starts from the loaded bytes and sends the same bodies in the same order,
-/// and a query reads one snapshot taken before its scan: so its place fixes what it
-/// reads, to one round of bodies, whatever the queries before it took. A query that
-/// could not start at its place - the one before it was still running - starts the
-/// moment it can and is counted as late, not hidden.
+/// One lap on a new server: the senders released, then each query asked once, timed, at
+/// its place in the live stream, which fixes what it reads; a query that starts late is counted.
 pub fn lap(work: &Work) -> Result<Lap, SpeedError> {
     let (server, mut conn) = started(work)?;
     let start_s = server.start_s;
 
     // The first answers of a process cost more than the ones after; these three are
-    // asked once so that no sample is one. S4 is not: it would be minutes a run.
+    // asked once so that no sample is one. S4 is not: it would cost too much a run.
     let [_, _, n3, _] = Four::<()>::NAMES;
     for ((name, request), expect) in Four::<()>::NAMES
         .into_iter()
@@ -1668,12 +1568,8 @@ pub fn lap(work: &Work) -> Result<Lap, SpeedError> {
     })
 }
 
-/// A run's laps as a result keeps them: for each query its samples in lap order with
-/// their percentiles, and for each lap what its server said at the end.
-///
-/// A sample is late when it was asked more than one round of bodies past its place. What
-/// a sample counted over the expected count is the live rows its snapshot held; the lines
-/// acknowledged while it ran are load beside it, and are kept under that name.
+/// A run's laps as a result keeps them: each query's samples in lap order with their
+/// percentiles, a sample late when asked more than one round of bodies past its place.
 pub fn loaded(laps: &[Lap], work: &Work) -> LoadedRun {
     let round = (SENDERS * work.body_lines) as u64;
     let places = place_lines(work.lines);
