@@ -1,31 +1,8 @@
 //! Type inference. First match wins; the order is the contract.
 //!
-//! ```text
-//! 1.  parses as RFC 3339, and the type holds
-//!     that instant exactly                        -> Datetime
-//! 2.  exactly 10 or 13 ASCII digits, no leading
-//!     zero, naming a moment inside the epoch
-//!     window that the type holds                  -> Datetime  (seconds / millis)
-//! 3.  matches the UUID pattern                    -> Uuid
-//! 4.  parses as IpAddr (v4 or v6)                 -> Ip
-//! 5.  contains @ and matches email                -> String
-//! 6.  parses as i64                               -> Int64
-//! 7.  parses as f64                               -> Float64
-//! 8.  true / True / false / False                 -> Bool
-//! 9.  anything else                               -> String
-//! ```
-//!
-//! Rule 2 sits above rule 6 on purpose: a ten-digit number is a Unix timestamp before it
-//! is an integer, because getting that wrong turns every time-range query into a full
-//! scan. The window keeps it to numbers that name a moment a log line could carry, so an
-//! order id naming 2112 falls through to rule 6. One naming a moment this century is
-//! still taken for a date - the accepted trade, and the column join corrects it the first
-//! time an id of another shape arrives.
-//!
-//! A value the typed form cannot hold exactly is not a member of that type: it falls
-//! through to the rungs below, and for anything shaped like a date that means text.
-//! Nothing is clamped, rounded, rolled forward or truncated, because each of those can
-//! store a different value from the one ingested, not a different spelling of it.
+//! Rule 2 (epoch digits) sits above rule 6 (i64): a timestamp read as an integer turns
+//! every time-range query into a full scan. A value the typed form cannot hold exactly
+//! falls through to the rungs below; nothing is clamped, rounded or truncated.
 
 use std::net::IpAddr;
 use std::sync::OnceLock;
@@ -34,18 +11,16 @@ use chrono::{DateTime, FixedOffset};
 
 use crate::types::{ColValue, ColumnType, DtForm, Typed};
 
-/// Run the ladder against a raw value. Every rung is written out separately and in
-/// order; do not collapse them, the order is the thing being specified.
+/// Run the ladder against a raw value, every rung written out in order because the order
+/// is the specification.
 pub fn infer(raw: &str) -> Typed {
     // 1. RFC 3339, where the instant it names is one the type holds exactly.
     if let Some(ns) = rfc3339_nanos(raw) {
         return dated(ColValue::Datetime(ns), DtForm::Rfc3339);
     }
 
-    // 2. Exactly 10 or 13 ASCII digits -> seconds / milliseconds since the epoch, if the
-    //    moment they name is inside the window. Above rule 6 deliberately. Outside it the
-    //    digits fall through, neither refused nor text: rule 6 reads them as the integer
-    //    they are.
+    // 2. 10 or 13 digits inside the epoch window. Above rule 6 deliberately; outside the
+    //    window they fall through to it.
     if is_epoch_digits(raw) {
         let digits: i64 = match raw.parse() {
             Ok(v) => v,
@@ -58,9 +33,8 @@ pub fn infer(raw: &str) -> Typed {
             (1_000_000, DtForm::EpochMillis)
         };
         if epoch_window().contains(digits, per_unit) {
-            // Nanoseconds run out in 2262, which only a window reaching past it admits.
-            // Past that the digits fall through like any outside the window: a clamped
-            // instant would be another moment, and every such value the same one.
+            // Nanoseconds run out in 2262; past it the digits fall through, since a clamped
+            // instant would be another moment.
             if let Some(ns) = digits.checked_mul(per_unit) {
                 return dated(ColValue::Datetime(ns), form);
             }
@@ -114,9 +88,7 @@ fn typed(ty: ColumnType, value: ColValue) -> Typed {
     }
 }
 
-/// A `Datetime`, tagged with the rung that read it. Only rungs 1 and 2 produce one, and
-/// the tag is what lets a later promotion to `String` write back the shape that arrived
-/// rather than a canonical timestamp - see `DtForm`.
+/// A `Datetime`, tagged with the rung that read it - see `DtForm`.
 fn dated(value: ColValue, form: DtForm) -> Typed {
     Typed {
         ty: Some(ColumnType::Datetime),
@@ -125,18 +97,8 @@ fn dated(value: ColValue, form: DtForm) -> Typed {
     }
 }
 
-/// The instant an RFC 3339 value names, in the `i64` nanoseconds a `Datetime` holds, or
-/// `None` when it is not RFC 3339 or the type cannot hold that instant exactly.
-///
-/// The parser accepts three things the type cannot keep, each of which would store
-/// another value rather than another spelling of this one:
-///
-/// - a second of 60, held as a full second past `:59`, which comes back as the next
-///   minute - on any day, leap second or not;
-/// - more than nine fraction digits, the ones past the ninth dropped. Dropping zeros
-///   loses nothing, but the rule counts digits rather than reading them, so whether a
-///   value is a `Datetime` never turns on which digit would have been lost;
-/// - any year from 0 to 9999, where i64 nanoseconds run only from 1677 to 2262.
+/// The instant an RFC 3339 value names, or `None` where the type cannot hold it exactly:
+/// a second of 60, more than nine fraction digits, a year outside 1677 to 2262.
 fn rfc3339_nanos(raw: &str) -> Option<i64> {
     let dt = DateTime::parse_from_rfc3339(raw).ok()?;
     // How chrono holds a leap second: a sub-second part of a full second or more.
@@ -153,31 +115,16 @@ fn rfc3339_nanos(raw: &str) -> Option<i64> {
     dt.timestamp_nanos_opt()
 }
 
-/// Ten or thirteen ASCII digits, the first of them not a zero.
-///
-/// A count of seconds or milliseconds since 1970 is not written with a leading zero; ten
-/// digits that start with one are an id kept at a fixed width, and read as an epoch they
-/// come back as a date nobody wrote. They land on rule 6 instead. Under the default window
-/// the ones it would have admitted name 2000-01-01 to 2001-09-09, so its lower edge is
-/// out of reach of ten and thirteen digits.
+/// Ten or thirteen ASCII digits, the first not a zero: a leading zero is a fixed-width
+/// id, not a count since 1970.
 fn is_epoch_digits(s: &str) -> bool {
     (s.len() == 10 || s.len() == 13)
         && !s.starts_with('0')
         && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// The moments rule 2 may read ten or thirteen digits as: `[start, end)`.
-///
-/// By default 2000-01-01 up to but not including 2100-01-01, which costs real timestamps
-/// nothing - no log line is stamped before 2000 or after 2100 - and sends most ten-digit
-/// ids to `Int64`: an order id naming 2112, a phone number naming 2282.
-///
-/// It decides what type is *stored*, and a column never narrows: a window turned on over
-/// data typed without one makes every misread id column `Datetime` joined with `Int64`,
-/// which is `String`, for good.
-///
-/// Nanoseconds in an `i128`, because either end may be any RFC 3339 instant and an `i64`
-/// of nanoseconds runs out in 2262.
+/// The moments rule 2 may read ten or thirteen digits as, `[start, end)`, by default 2000
+/// to 2100; it decides the type stored, and a column never narrows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EpochWindow {
     start_ns: i128,
@@ -187,9 +134,8 @@ pub struct EpochWindow {
 const NANOS_PER_SEC: i128 = 1_000_000_000;
 
 impl EpochWindow {
-    /// `None` unless `start` is before `end`. An empty window is refused rather than read
-    /// as "rule 2 off": it would type every epoch timestamp as an integer and send every
-    /// time-range query on it to a full scan, the failure rule 2 exists to prevent.
+    /// `None` unless `start` is before `end`: an empty window would type every epoch
+    /// timestamp as an integer.
     pub fn new(start: DateTime<FixedOffset>, end: DateTime<FixedOffset>) -> Option<Self> {
         let nanos = |dt: DateTime<FixedOffset>| {
             i128::from(dt.timestamp()) * NANOS_PER_SEC + i128::from(dt.timestamp_subsec_nanos())
@@ -217,12 +163,8 @@ impl Default for EpochWindow {
 
 static EPOCH_WINDOW: OnceLock<EpochWindow> = OnceLock::new();
 
-/// Fix the window for the rest of the process. The first call wins, and a process that
-/// never makes one reads the default.
-///
-/// Once, because the ladder is re-run on stored text - to match a query term, to read a
-/// row's place in time - and a window that moved while the process ran would give one
-/// text two types, so a stored value would stop matching itself.
+/// Fix the window for the rest of the process, first call wins: the ladder is re-run on
+/// stored text, and a moving window would give one text two types.
 pub fn set_epoch_window(window: EpochWindow) {
     // Ignoring a second call keeps the window every earlier `infer` already used.
     let _ = EPOCH_WINDOW.set(window);

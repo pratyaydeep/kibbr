@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Note there is no `Null` column type: a column has one type, and absence
-/// on a given line is expressed by `ColValue::Null`, not by a different type.
+/// A column has one type; absence on a line is `ColValue::Null`, not a `Null` type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ColumnType {
     String,
@@ -41,37 +40,12 @@ impl ColumnType {
     }
 }
 
-/// The type join. **The ladder types a value; a column has one type**, and this is the
-/// rule that turns the second into the first:
-///
-/// ```text
-/// ⊥ = None                        no evidence; a null claims nothing about the column
-/// None  ⊔ T        = T
-/// T     ⊔ T        = T
-/// Int64 ⊔ Float64  = Float64
-/// _     ⊔ _        = String       ⊤
-/// ```
-///
-/// Commutative and associative, so a column's type does not depend on arrival order -
-/// the suite checks this by feeding one file's lines in several orders and diffing the
-/// tree. A rule that read differently backwards would not merely fail that check, it
-/// would make it unmeasurable.
-///
-/// Monotonic: a column never narrows, because narrowing is what would reintroduce order
-/// dependence - forbidden even where it looks obviously right. Price: one `"N/A"` among
-/// ten million clean timestamps pins that column to String permanently and sends every
-/// time-range query on it to a full scan. Payoff: it is how rung 2's known
-/// misclassification self-corrects - a real timestamp field stays `Datetime`, while a
-/// ten-digit order id meets its first `AX-99213` and widens back to `String` on its own,
-/// with no heuristic, second pass or sampling.
-///
-/// `Int64 ⊔ Float64 = Float64` loses precision above 2^53. Accepted: String is worse for
-/// every query anyone would actually run.
+/// The type join that turns per-value types into one column type: commutative,
+/// associative and monotonic, so arrival order cannot matter.
 pub fn join(a: Option<ColumnType>, b: Option<ColumnType>) -> Option<ColumnType> {
     match (a, b) {
-        // `None`'s second job: the identity element of ⊔. Both sides `None` land here
-        // too, so a column that has only ever held nulls keeps type `None` - a different
-        // statement from `String`.
+        // `None` is the identity of ⊔, so a column of only nulls keeps type `None`, which is
+        // not `String`.
         (None, other) | (other, None) => other,
         (Some(x), Some(y)) if x == y => Some(x),
         (Some(ColumnType::Int64), Some(ColumnType::Float64))
@@ -111,11 +85,7 @@ impl ColValue {
         }
     }
 
-    /// The value as a query prints it when nothing records how it was written: `to_json`,
-    /// except a `Datetime`, which is RFC 3339 through the one renderer in `fmt`.
-    ///
-    /// A row carries the JSON its line wrote only where this would not give it back, so
-    /// this is also what "the line wrote exactly this" is checked against.
+    /// The value as a query prints it: `to_json`, except a `Datetime` is RFC 3339 through `fmt`.
     pub fn printed(&self) -> serde_json::Value {
         match self {
             ColValue::Datetime(ns) => serde_json::Value::String(crate::fmt::rfc3339(*ns)),
@@ -124,16 +94,8 @@ impl ColValue {
     }
 }
 
-/// Which rung of the ladder read a `Datetime`, so a later widening can be undone.
-///
-/// A `Datetime` column stores nanoseconds and throws the text away. Promoting one to
-/// `String` therefore has to *reconstruct* the text, and rendering a ten-digit order id
-/// that rung 2 mistook for a timestamp as `2112-08-16T...` is not the string that was
-/// ingested. Recording the rung makes the promotion invert the rung instead.
-///
-/// The rung is known only where the text is, at parse time, which is why this has to
-/// travel from the ladder rather than be worked out at write time. Rung 2 never reads
-/// digits that start with a zero, so inverting it has no leading zero to lose.
+/// Which rung of the ladder read a `Datetime`, so promoting the column to `String` can
+/// write back the text that arrived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DtForm {
     /// Rows in this partition came from more than one rung. Promotion falls back to
@@ -144,16 +106,8 @@ pub enum DtForm {
     EpochMillis,
 }
 
-/// One value on one line: the type the type ladder chose, plus the decoded value.
-///
-/// `ty` is `None` only for an explicit JSON `null`. A null carries no evidence about
-/// the column's type, so the ladder is not run on it and nothing is claimed.
-///
-/// `dt_form` is `Some` exactly when `ty` is `Some(Datetime)`. It rides here rather than
-/// inside `ColValue::Datetime` because `engine::value_matches` compares a stored
-/// `ColValue` against `infer(text).value`: folding the rung into the variant would stop
-/// `ts=1705314600` matching a row that was ingested as RFC 3339, which is a silent change
-/// to what a query means.
+/// One value on one line: the ladder's type, `None` for a JSON null, and the decoded
+/// value; `dt_form` rides outside `ColValue` so `engine::value_matches` ignores the rung.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Typed {
     pub ty: Option<ColumnType>,
@@ -170,25 +124,16 @@ impl Typed {
     }
 }
 
-/// Where a template's rows get their time from.
-///
-/// Decided once, when the template is created, from the first name on `time_columns`
-/// that is one of its keys and whose value on that line inferred as `Datetime`; `Arrival`
-/// when none qualifies. Recorded in the catalog and never changed, so a restart partitions
-/// and orders the same rows the same way.
+/// Where a template's rows get their time from, decided once at creation and recorded in
+/// the catalog so a restart orders rows the same way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TimeSource {
     Column(String),
     Arrival,
 }
 
-/// The system column holding a row's arrival time, on rows whose template's time column
-/// gave them none.
-///
-/// A backslash and an underscore: key escaping writes `\\` for a backslash, so no
-/// flattened key can ever be spelled this way - the collision is unreachable rather than
-/// detected. It is added after fingerprinting and never enters a key set, a fingerprint or
-/// a template id. A query shows it as `store::RECEIVED_AT_NAME`.
+/// The system column holding a row's arrival time, spelled with `\_` so no flattened key
+/// can collide with it.
 pub const RECEIVED_AT_COLUMN: &str = "\\_received_at";
 
 impl TimeSource {
