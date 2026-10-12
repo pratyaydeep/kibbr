@@ -59,7 +59,11 @@
 # measured on. The TrieQL is built in python and the answers compared there: splitting
 # JSON in shell is how a harness starts lying about what it tested.
 #
-#   NLINES=200000 COMBOS=100 SEED=7 GEN_SEED=1 scripts/check/two_doors.sh
+# The query set is the one KIBBR_SEED draws, 7 unless it is given: a run that fails is
+# run again as it was, and the seed is on the `queries` line. 7 is agree.sh's own default;
+# not every seed's set passes check 5 - of 42's, 19 queries in 100 return rows.
+#
+#   NLINES=200000 COMBOS=100 KIBBR_SEED=7 GEN_SEED=1 scripts/check/two_doors.sh
 #   PROFILE=farm scripts/check/two_doors.sh
 #   BIN=$PWD/old/kibbr RESTART_BIN=$PWD/target/release/kibbr scripts/check/two_doors.sh
 #   NEED_FAN_OUTS=1 KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0 \
@@ -73,7 +77,7 @@ NLINES=${NLINES:-200000}
 GEN_SEED=${GEN_SEED:-1}
 PROFILE=${PROFILE:-hostile}
 COMBOS=${COMBOS:-100}
-SEED=${SEED:-7}
+SEED=${KIBBR_SEED:-7}
 BATCH=2000
 # 1: fail unless a server here shared out at least one run of row groups
 # (`queries.scan_fan_outs` in /stats). For a run made to hold a scan shared between
@@ -124,8 +128,7 @@ cleanup() {
 trap cleanup EXIT
 
 # The query set, drawn while the doors fill: it reads only the file. Printed once and asked
-# of both servers in both rounds - agree.sh's term draws are reseeded from the clock, so a
-# second harvest would not be the same list.
+# of both servers in both rounds; it is the set its seed draws, on every run.
 env "${CLOCK[@]}" INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS SEED=$SEED GEN_SEED=$GEN_SEED \
   NLINES=$NLINES BIN=$BIN scripts/check/agree.sh > "$WORK/combos.tsv" 2>"$WORK/harvest.log" &
 HARVEST_PID=$!
@@ -467,7 +470,7 @@ wait "$HARVEST_PID"
 HARVEST_CODE=$?
 HARVEST_PID=""
 if [ "$HARVEST_CODE" != 0 ]; then echo "FAIL agree.sh printed no query set:"; cat "$WORK/harvest.log"; exit 1; fi
-echo "queries    $(tail -1 "$WORK/harvest.log")"
+echo "queries    seed $SEED (KIBBR_SEED); $(tail -1 "$WORK/harvest.log")"
 python3 "$WORK/translate.py" < "$WORK/combos.tsv" > "$WORK/queries.txt" || exit 1
 NQ=$(wc -l < "$WORK/queries.txt" | tr -d ' ')
 [ "$NQ" = "$COMBOS" ] || { echo "FAIL agree.sh printed $NQ combinations, want $COMBOS"; exit 1; }

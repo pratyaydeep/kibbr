@@ -22,9 +22,11 @@
 #                    exit 0 without answering or gating. No draw reads an answer, so the
 #                    RANDOM sequence is the one a normal run takes.
 #
-# Which term a line gives is drawn inside `$(term_from ...)`, and bash reseeds RANDOM from
-# the clock in a subshell, so two runs with one SEED still differ there. A caller prints
-# the list once and asks every side that one list.
+# One SEED is one query set: every draw is taken from RANDOM in this shell. Which term a
+# line gives used to be drawn inside `$(term_from ...)`, and bash reseeds RANDOM from the
+# clock in a subshell, so two runs with one SEED differed there; the draw is now made
+# before the call and handed in. A caller still prints the list once and asks every side
+# that one list.
 #
 # BIN names another build, as in the other scripts; the default is built first.
 #
@@ -116,8 +118,9 @@ summary="input: $NLINES lines, ${#KEYS[@]} distinct keys, ${#ROWS[@]} sampled li
 if [ "$PRINT_QUERIES" = 1 ]; then echo "$summary" >&2; else echo "$summary"; fi
 
 # One `key=value` term off a sampled line, chosen by index so the caller can take several
-# from the same line and be sure a template holds them together.
-term_from() { IFS=$'\t' read -r -a f <<< "${ROWS[$1]}"; echo "${f[$((RANDOM % ${#f[@]}))]}"; }
+# from the same line and be sure a template holds them together. Which of the line's terms
+# is `$2`, a number the caller drew: this runs in a subshell, where RANDOM is the clock's.
+term_from() { IFS=$'\t' read -r -a f <<< "${ROWS[$1]}"; echo "${f[$(($2 % ${#f[@]}))]}"; }
 
 # That line's own time, as RFC 3339, or empty if it has no time key. An epoch is
 # converted here so the boundary draw below works on every template, not only the ones
@@ -172,18 +175,23 @@ for i in $(seq 1 "$COMBOS"); do
   # 1-3 terms, normally off one line so a template exists that holds them all. One draw
   # in four crosses to a second line and one value in six is replaced, which is what
   # reaches the "unknown template" answer and the `*` wildcard.
-  for _ in $(seq 1 $((1 + RANDOM % 3))); do
+  # How many is drawn here and not inside `$(seq ...)`, for the reason `term_from` is
+  # handed its draw.
+  terms=$((1 + RANDOM % 3))
+  for _ in $(seq 1 "$terms"); do
     from=$row
     term=""
     if [ "$boundary" -eq 0 ]; then
       if [ $((RANDOM % 4)) -eq 0 ]; then from=$((RANDOM % ${#ROWS[@]})); fi
-      term=$(term_from "$from")
+      pick=$RANDOM
+      term=$(term_from "$from" "$pick")
       case $((RANDOM % 6)) in
         0) term="${term%%=*}=*" ;;
         1) term="${term%%=*}=no_such_value_$i" ;;
       esac
     else
-      term=$(term_from "$from")
+      pick=$RANDOM
+      term=$(term_from "$from" "$pick")
     fi
     ARGS[${#ARGS[@]}]="--match"; ARGS[${#ARGS[@]}]="$term"
   done

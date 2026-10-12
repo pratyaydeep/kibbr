@@ -140,8 +140,7 @@ cleanup() {
 trap cleanup EXIT
 
 # The query set, drawn while the day is ingested: it reads only the file. Printed once and
-# asked of every round - agree.sh's term draws are reseeded from the clock, so a second
-# harvest would not be the same list.
+# asked of every round; it is the set its SEED draws, on every run.
 env "${CLOCK[@]}" INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS SEED=$SEED GEN_SEED=$GEN_SEED \
   NLINES=$NLINES BIN=$BIN scripts/check/agree.sh > "$WORK/combos.tsv" 2>"$WORK/harvest.log" &
 HARVEST_PID=$!

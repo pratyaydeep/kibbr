@@ -81,8 +81,13 @@ PY
 
 # ── Helpers ────────────────────────────────────────────────────────────────────────
 
+# kibbr's data directory, for this run alone. With none named a server takes the default,
+# `kibbr-data` under wherever this was run from, and leaves it there: at the repo's root,
+# and holding the rows of every run before this one.
+WORK=$(mktemp -d)
+
 kibbr_up() {  # $@ = extra serve flags
-  $KIBBR serve --port $PORT "$@" >/dev/null 2>>"$RUN/kibbr.log" &
+  $KIBBR serve --port $PORT --data-dir "$WORK/data" "$@" >/dev/null 2>>"$RUN/kibbr.log" &
   echo $! > "$RUN/kibbr.pid"
   for _ in $(seq 1 50); do
     curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && return 0
@@ -107,7 +112,16 @@ metric()  { curl -s "http://$METRICS/metrics" | grep -F "$1" | grep -v '^#' ; }
 sum_of()  { metric "$1" | awk '{s+=$(NF-1)} END {printf "%d\n", s}'; }
 
 cleanup() { pkill -f "bin/vector" 2>/dev/null; pkill -f "kibbr serve" 2>/dev/null; }
-trap cleanup EXIT
+# At the exit the server is killed outright and waited for - nothing it holds is needed
+# once the script is done - so that nothing is still writing under the directory when it
+# is removed.
+finish() {
+  cleanup
+  local pid; pid=$(cat "$RUN/kibbr.pid" 2>/dev/null)
+  [ -n "$pid" ] && { kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }
+  rm -rf "$WORK"
+}
+trap finish EXIT
 
 # ══ A - restart mid-batch ══════════════════════════════════════════════════════════
 
