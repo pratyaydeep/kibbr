@@ -30,8 +30,8 @@ pub const BUCKET_COLUMN: &str = "bucket";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GroupKey {
     Column(String),
-    /// `time(<width>)` - the bucket width. At most one per clause: the zero-fill below
-    /// has one time axis, and two of them would silently produce nested buckets.
+    /// `time(<width>)` - the bucket width; at most one per clause, because the zero-fill has
+    /// one time axis.
     Time(Duration),
 }
 
@@ -45,11 +45,8 @@ impl GroupKey {
     }
 }
 
-/// The `time(...)` width and the column keys, split out of what the clause named.
-///
-/// The two are read separately everywhere below - one decides the time axis, the others
-/// the label - while `Vec<GroupKey>` keeps the order they were written in, which is the
-/// order every surface prints its columns.
+/// The `time(...)` width and the column keys, split out of what the clause named: one
+/// decides the time axis, the others the label.
 pub fn split_keys(keys: &[GroupKey]) -> (Option<Duration>, Vec<String>) {
     let mut width = None;
     let mut columns = Vec::new();
@@ -72,20 +69,12 @@ pub enum QueryMode {
     GroupBy(Vec<GroupKey>),
 }
 
-/// One group of a `GROUP BY`, and the rows in it.
-///
-/// A struct rather than an entry in a `HashMap<String, u64>`, because a map cannot say
-/// "this bucket exists and is empty" - an absent key is an absent bucket, and a gap in a
-/// chart and a zero in a chart mean different things to whoever is reading it at 3am. A
-/// 6h range at 5m is 72 observations, some of which are zero.
-///
-/// It also retires the separator a map key needed. The label used to be the values joined
-/// by a unit separator, split again three different ways by the three renderers; the
-/// values are a list here and nothing joins them.
+/// One group of a `GROUP BY` and the rows in it; a struct, not a map entry, because a map
+/// cannot say "this bucket exists and is empty".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
-    /// The bucket's start, in Unix nanoseconds, or `None` for rows that cannot be placed
-    /// in time. `None` throughout when the clause named no `time(...)`.
+    /// The bucket's start in Unix nanoseconds, or `None` for rows that cannot be placed in
+    /// time and whenever the clause named no `time(...)`.
     pub bucket: Option<i64>,
     /// The column values, in the order the keys were written.
     pub values: Vec<String>,
@@ -94,14 +83,12 @@ pub struct Group {
 
 #[derive(Debug, Default)]
 pub struct QueryResult {
-    /// `false` = no such template. Distinct from `exists: true, count: 0`, and
-    /// every layer above depends on the difference.
+    /// `false` = no such template, which is distinct from `exists: true, count: 0`.
     pub exists: bool,
     pub count: u64,
     pub rows: Vec<Row>,
-    /// Ordered by bucket ascending - the unplaceable `None` first - then by values.
-    /// Every surface prints them in the order they arrive, and `scripts/check/agree.sh` diffs
-    /// the JSON as text, so the order is part of the answer.
+    /// Ordered by bucket ascending - the unplaceable `None` first - then by values; the order
+    /// is part of the answer because `scripts/check/agree.sh` diffs the JSON as text.
     pub groups: Vec<Group>,
     pub meta: QueryMeta,
 }
@@ -110,42 +97,33 @@ pub struct QueryResult {
 pub struct QueryMeta {
     pub templates_matched: usize,
     pub template_ids: Vec<u64>,
-    /// **Segment files** read, not leaves. It counted leaves and reported 870 where
-    /// 16,694 files were read; `leaves_opened` below took that meaning.
-    /// A file whose every row group a window pruned is not in it, because nothing in it
-    /// was read.
+    /// **Segment files** read, not leaves; a file whose every row group a window pruned is
+    /// not in it.
     pub files_opened: u64,
-    /// Leaves with a store, opened for this query. What `files_opened` used to mean.
+    /// Leaves with a store, opened for this query.
     pub leaves_opened: usize,
-    /// Row groups whose chunks were read, and row groups dropped on their footer
-    /// timestamps before any column data was. Together they are what the segment format
-    /// buys: `SINCE 1h` over fifty row groups reads one.
+    /// Row groups whose chunks were read; `row_groups_pruned` are those dropped on their
+    /// footer timestamps before any column data was.
     pub row_groups_read: u64,
     pub row_groups_pruned: u64,
     /// Bytes of column chunk read off disk - where column pruning shows up.
     pub bytes_read: u64,
     pub rows_scanned: u64,
     pub rows_returned: u64,
-    /// The limit dropped rows that matched. `count` is the total that matched and
-    /// `rows_returned` is how many survived the cap, so this is `rows_returned < count` -
-    /// carried as its own field because every surface above has to say so, and a reader
-    /// comparing two numbers is a reader who can miss it.
+    /// The limit dropped rows that matched (`rows_returned < count`); its own field because
+    /// every surface has to say so.
     pub truncated: bool,
-    /// Who set the page size; `truncated` says whether it fired. Read together: only
-    /// `backstop` *and* `truncated` means "narrow your query", and a caller that asked for
-    /// ten rows and got ten needs telling nothing.
+    /// Who set the page size; only `backstop` *and* `truncated` together mean "narrow your
+    /// query".
     pub limit_source: LimitSource,
-    /// Hand this back as `AFTER` to get the next page, or `None` because there is no next
-    /// page. Present only when a `LIMIT` both applied and actually stopped short of the
-    /// end - `rows_returned == limit` is not the same fact, and a cursor that yields an
-    /// empty page is a cursor that lied.
+    /// Hand this back as `AFTER` for the next page; `None` unless a `LIMIT` stopped short of
+    /// the end, so no cursor yields an empty page.
     pub next_cursor: Option<String>,
-    /// Walk plus scan. Loading the file is not query time - the CLI has to build the
-    /// trie first because nothing persists it yet.
+    /// Walk plus scan; loading the trie is not query time.
     pub duration: Duration,
 }
 
-/// Who set the cap on rows returned. Two fields, not one: see `QueryMeta::limit_source`.
+/// Who set the cap on rows returned; read with `truncated`, see `QueryMeta::limit_source`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum LimitSource {
     /// Nothing capped this answer - no `LIMIT`, no backstop, or a mode returning no rows.
@@ -193,60 +171,32 @@ impl TimeRange {
     }
 }
 
-/// A query, already built. Nothing here parses text: the flags build this directly and
-/// `crate::trieql` builds the same struct from a query string, so the engine has one
-/// input whichever surface asked.
+/// A query, already built: the flags and `crate::trieql` build the same struct, so the
+/// engine has one input whichever surface asked.
 #[derive(Debug)]
 pub struct Query {
     pub matches: Vec<Match>,
     pub mode: QueryMode,
     pub time: TimeRange,
-    /// `None` = every matching row. Resolved by `Query::new`, which drops a limit the mode
-    /// cannot use and supplies `max_rows` where the caller named none.
-    ///
-    /// An unlimited `MATCH` materialises every matching row in the server before a byte of
-    /// the response is written: a denial-of-service path on a shared daemon, reachable by
-    /// accident from a terminal. The backstop is a *page size* and not a truncation - the
-    /// answer says so and carries a cursor - which is what makes capping it an answer
-    /// rather than a refusal.
+    /// `None` = every matching row; `Query::new` supplies `max_rows` as a page size where
+    /// the caller named none, so an unlimited `MATCH` cannot materialise every row.
     pub limit: Option<usize>,
     /// Who supplied `limit`.
     pub limit_source: LimitSource,
-    /// Where the last page stopped, from `QueryMeta::next_cursor`. `None` = start at the
+    /// Where the last page stopped, from `QueryMeta::next_cursor`; `None` = start at the
     /// newest row.
     pub cursor: Option<Cursor>,
-    /// The instant the query was built against, carried for the same reason `now` is a
-    /// parameter to `query::build` and `trieql::parse` rather than a call inside them: a
-    /// caller that wants a reproducible answer has to be able to fix it.
-    ///
-    /// `GROUP BY time(...)` needs it. A window with no `until` still has a right-hand
-    /// edge to zero-fill out to, and that edge is `now`. It is deliberately *not* folded
-    /// into `Cursor::guard`, for the reason the window itself is not: two calls a
-    /// millisecond apart would then refuse each other's cursors.
+    /// The instant the query was built against - the edge `GROUP BY time(...)` zero-fills to
+    /// with no `until` - kept out of `Cursor::guard` so pages a moment apart agree.
     pub now: SystemTime,
-    /// What this query may not exceed. Carried rather than passed to `execute`, so the
-    /// number the CLI was configured with is the number the engine reads.
+    /// What this query may not exceed, carried so the engine reads the number the CLI was
+    /// configured with.
     pub limits: Limits,
 }
 
 impl Query {
-    /// The one constructor, so the flag surface and TrieQL resolve the limit identically.
-    ///
-    /// `limit` caps *rows returned*, not rows counted: `MATCH … LIMIT 10` answers with the
-    /// newest ten and a `count` of every row that matched, as SQL's LIMIT bounds the result
-    /// set and not `COUNT(*)`. `Count` and `GroupBy` return no rows, so a limit has nothing
-    /// to cap there and is normalised away rather than quietly halving a total; `cursor`
-    /// goes with it, since a mode returning no rows has no sequence to page. `--explain`
-    /// prints what survived.
-    ///
-    /// An `Option`, not a 0-means-absent sentinel: `LIMIT 0` asks for no rows and has to
-    /// stay distinguishable from asking for nothing. `ScanOptions.limit` keeps the sentinel
-    /// - it is the storage interface, where "unlimited" is a real setting.
-    ///
-    /// `limits.max_rows` is the server's cap on an unlimited `Fetch`, in rows; `0` means
-    /// none. The bucket caps beside it are read by `check_buckets`, not here.
-    /// The caller's own limit stands above it and is not clamped; `COUNT`/`GROUP BY`
-    /// return no rows for it to bound.
+    /// The one constructor, so the flag surface and TrieQL resolve the limit identically: it
+    /// caps rows returned, not counted, and goes with the cursor in a mode returning no rows.
     pub fn new(
         matches: Vec<Match>,
         mode: QueryMode,
@@ -308,9 +258,8 @@ impl Query {
         }
     }
 
-    /// A cursor of this query, at a rank this query produced. The one way to mint one -
-    /// `Cursor::guard` is the query's, so a cursor cannot be built without a query to
-    /// answer for it.
+    /// A cursor of this query at a rank it produced - the one way to mint one, so a cursor
+    /// cannot be built without a query to answer for it.
     pub fn cursor_at(&self, rank: Rank) -> Cursor {
         Cursor::new(rank, self)
     }
@@ -318,51 +267,11 @@ impl Query {
 
 // ── Time buckets ───────────────────────────────────────────────────────────────────
 //
-// Boundaries sit on a fixed grid: multiples of the width counted from the **Unix epoch**,
-// so 5-minute buckets always begin at :00, :05, :10 … :55 of every hour. The grid is a
-// property of the clock and not of the query - which is the whole of `bucket_of` below,
-// and the reason two overlapping queries agree on where the bars go.
-//
-// **A range emits every bucket it touches, including the two it only partly covers.** A
-// row anywhere in the range has to land in some emitted bucket or it disappears from the
-// chart while still being counted in `count`. So the bucket count is `range / width` only
-// when both edges are already on the grid, and one more when they are not:
-//
-//     aligned - [10:00:00, 16:00:00) at 5m
-//
-//     grid    10:00   10:05   10:10    ...    15:50   15:55   16:00
-//             ├───────┼───────┼─────────────────┼───────┼───────┤
-//     range   ●───────────────────────────────────────────────○
-//             ^since                                      ^until
-//                                                → 72 buckets = 6h / 5m
-//
-//     unaligned - [10:03:17, 16:03:17), the same six hours
-//
-//     grid    10:00   10:05   10:10    ...    15:55   16:00   16:05
-//             ├───────┼───────┼─────────────────┼───────┼───────┤
-//     range       ●───────────────────────────────────────○
-//                 ^since                              ^until
-//                                                → 73 buckets
-//
-// A row at 10:03:20 is in range and its bucket starts at 10:00, before the range does; a
-// row at 16:02:00 is in range and its bucket starts at 16:00, after it. Both buckets are
-// real observations and both are emitted, so the ends straddle rather than land and the
-// count goes up by one. `SINCE 6h` is unaligned nearly always - `now` is whatever instant
-// it is - so this is the ordinary case rather than the exception. It is also where
-// `SINCE 30d GROUP BY time(1s)` gets its 2,592,001 rather than 2,592,000.
-//
-// `ceil(range / width)` is therefore the exact count only for a range whose edges are
-// already multiples of the width, which is what the property test in this file generates.
-//
-// `bucket_of` is the left edge of this and `bucket_after` the right; `window_span` puts
-// the two together, and `zero_fill` fills in what the scan did not reach.
+// Boundaries are multiples of the width from the Unix epoch, so overlapping queries agree
+// on where the bars go. A range emits every bucket it touches, so unaligned edges add one.
 
-/// What a bucketed `GROUP BY` was refused for.
-///
-/// A refusal and not a truncation. A chart cut off partway through still looks like a
-/// chart, and nothing on it says which half is missing; an error says so in one sentence.
-/// Both numbers are named because only the pair is actionable - "too many" without the
-/// permitted count leaves the writer guessing how much narrower to go.
+/// What a bucketed `GROUP BY` was refused for; a refusal, not a truncation, and it names
+/// both the requested and the permitted count because only the pair is actionable.
 #[derive(Debug, PartialEq, Eq)]
 pub enum BucketError {
     TooManyBuckets {
@@ -380,8 +289,7 @@ pub enum BucketError {
 }
 
 // Hand-written rather than derived, because every number in these sentences is rendered
-// with thousands separators - `2,592,000 buckets` is the figure that makes the refusal
-// land, and `2592000` is one an operator has to count digits on.
+// with thousands separators.
 impl std::fmt::Display for BucketError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -418,30 +326,14 @@ impl std::fmt::Display for BucketError {
 
 impl std::error::Error for BucketError {}
 
-/// A bucket width in nanoseconds.
-///
-/// Saturating: `time(1000000000d)` is a width no `i64` of nanoseconds can hold, and one
-/// bucket covering every representable instant is the honest answer to it rather than a
-/// panic. `0` is unreachable - the parser rejects a zero width, which has no boundaries
-/// to floor against.
+/// A bucket width in nanoseconds, saturating: `time(1000000000d)` fits no `i64`, and one
+/// bucket covering every representable instant is the honest answer to it.
 fn width_nanos(width: Duration) -> i64 {
     i64::try_from(width.as_nanos()).unwrap_or(i64::MAX).max(1)
 }
 
-/// A timestamp's bucket start, in Unix nanoseconds.
-///
-/// The grid, and the section header above says why it is the epoch's and not the query's:
-/// a chart that shifts its bars when you nudge the time range is a bug people do not
-/// report clearly, and flooring against the query start is how it happens.
-///
-/// `div_euclid` floors toward negative infinity, so a pre-1970 timestamp lands in the
-/// bucket that contains it rather than in the one after it.
-///
-/// The multiply saturates, because flooring `i64::MIN` to a width that does not divide it
-/// lands *below* `i64::MIN` - there is no representable boundary there. That bottom bucket
-/// is therefore short and off the grid, alone among all of them. It is the year 1677 and
-/// reachable only by a timestamp column holding `i64::MIN` itself; containment still
-/// holds, which is what the ordering and the sum depend on.
+/// A timestamp's bucket start in Unix nanoseconds, floored on the epoch's grid and not the
+/// query's, so a chart does not shift its bars when the range is nudged.
 pub fn bucket_of(ns: i64, width: i64) -> i64 {
     ns.div_euclid(width).saturating_mul(width)
 }
@@ -452,15 +344,8 @@ fn bucket_after(ns: i64, width: i64) -> i64 {
     bucket_of(ns.saturating_sub(1), width).saturating_add(width)
 }
 
-/// The half-open span of bucket starts a query's own window implies, `[lo, hi)`.
-///
-/// `None` where the window has no edge to read from: with no `SINCE` and no `BETWEEN`
-/// there is no range to enumerate, and the span comes from the rows instead.
-///
-/// The right edge is `until`, or `now` where the window is open-ended - `SINCE 6h` means
-/// the last six hours, and the sixth of them is a bucket like any other. `now` is not a
-/// filter: a row whose clock ran ahead still counts and still gets a bucket, which is
-/// what `span_with` is for.
+/// The half-open span of bucket starts a query's own window implies, `[lo, hi)`; `None`
+/// with no `since`. The right edge is `until`, or `now`, which is not a filter.
 fn window_span(query: &Query) -> Option<(i64, i64)> {
     let width = width_nanos(query.bucket_width()?);
     let since = query.time.since?;
@@ -469,11 +354,8 @@ fn window_span(query: &Query) -> Option<(i64, i64)> {
     Some((lo, bucket_after(end, width).max(lo)))
 }
 
-/// The window's span widened to hold every bucket that actually received a row.
-///
-/// The widening is what keeps `sum(groups) == count` true. A row ahead of `now` by a
-/// skewed clock, or any row at all when the window has no lower bound, would otherwise
-/// fall in a bucket nothing emitted - counted in `count` and invisible in the chart.
+/// The window's span widened to hold every bucket that received a row, which keeps
+/// `sum(groups) == count` true for a row ahead of `now` or a window with no lower bound.
 fn span_with(base: Option<(i64, i64)>, seen: Option<(i64, i64)>, width: i64) -> Option<(i64, i64)> {
     match (base, seen) {
         (Some((lo, hi)), Some((min, max))) => {
@@ -485,11 +367,8 @@ fn span_with(base: Option<(i64, i64)>, seen: Option<(i64, i64)>, width: i64) -> 
     }
 }
 
-/// How many buckets a span holds.
-///
-/// Rounded up. Both edges come out of `bucket_of`, so the span is a whole number of widths
-/// and the rounding never fires - except against the saturated bottom bucket, where losing
-/// the remainder would drop the rows in it out of the sum.
+/// How many buckets a span holds, rounded up so the saturated bottom bucket's rows are
+/// not dropped out of the sum.
 fn span_len(span: (i64, i64), width: i64) -> u64 {
     let (lo, hi) = span;
     u64::try_from(hi.saturating_sub(lo))
@@ -497,11 +376,8 @@ fn span_len(span: (i64, i64), width: i64) -> u64 {
         .div_ceil(width.unsigned_abs().max(1))
 }
 
-/// The bucket count against `max_buckets`, before anything is read.
-///
-/// Called from `query::finish` on both surfaces, so `SINCE 30d GROUP BY time(1s)` is
-/// refused without reading thirty days of rows, and called again inside `execute` for the
-/// span a query with no lower bound derives from its rows.
+/// The bucket count against `max_buckets`, before anything is read, so a refused query
+/// reads no rows.
 pub fn check_buckets(query: &Query) -> Result<(), BucketError> {
     let Some(width) = query.bucket_width() else {
         return Ok(());
@@ -512,9 +388,8 @@ pub fn check_buckets(query: &Query) -> Result<(), BucketError> {
     check_span(span, width, query.limits.max_buckets)
 }
 
-/// How many buckets this query's own window implies, for `--explain`. `None` where the
-/// query is not bucketed, or where its window has no edge and the span comes from the
-/// rows instead - which `--explain` cannot know, having read none.
+/// How many buckets this query's own window implies, for `--explain`; `None` where it is
+/// not bucketed or its window has no edge.
 pub fn planned_buckets(query: &Query) -> Option<u64> {
     let width = query.bucket_width()?;
     Some(span_len(window_span(query)?, width_nanos(width)))
@@ -536,18 +411,8 @@ fn check_span(span: (i64, i64), width: Duration, permitted: usize) -> Result<(),
 /// values of the other keys.
 type Tally = HashMap<(Option<i64>, Vec<String>), u64>;
 
-/// The tally as the answer: every observed label combination given a count in every
-/// bucket of the span, zero where nothing landed.
-///
-/// **Zeros, not gaps.** A bucket with no rows is a real observation - the thing was
-/// quiet - and it is not the same statement as a bucket nobody asked about. The cross
-/// product is over the label combinations that were *observed*, because a column's domain
-/// is not something the engine can know: three levels seen means three series, each with
-/// a point in all 72 buckets.
-///
-/// Rows that cannot be placed in time keep their count under `bucket: None`, so the
-/// groups always sum to `count`. They are never zero-filled - there is one of them or
-/// there is not.
+/// The tally as the answer, with a zero in every bucket of the span for each observed
+/// label combination: a quiet bucket is an observation. Unplaceable rows are not filled.
 fn zero_fill(
     tally: Tally,
     width: Option<Duration>,
@@ -556,9 +421,7 @@ fn zero_fill(
     limits: Limits,
 ) -> Result<Vec<Group>, BucketError> {
     let Some(width) = width else {
-        // No time axis: the groups are what was seen, and nothing is filled in. This is
-        // the pre-existing `GROUP BY level`, whose row count is the column's domain and
-        // not a product of anything.
+        // No time axis: the groups are what was seen, and nothing is filled in.
         let mut groups: Vec<Group> = tally
             .into_iter()
             .map(|((bucket, values), count)| Group {
@@ -604,8 +467,7 @@ fn zero_fill(
     check_span(span, width, limits.max_buckets)?;
 
     // One series per observed label combination. With no other key there is exactly one,
-    // and it is the bare time series - which is what makes `GROUP BY time(5m)` alone
-    // produce 72 rows rather than none.
+    // the bare time series.
     let mut series: BTreeSet<&Vec<String>> = placed.iter().map(|(_, values, _)| *values).collect();
     let empty = Vec::new();
     if columns == 0 {
@@ -644,7 +506,7 @@ fn zero_fill(
 
 // ── The plan ───────────────────────────────────────────────────────────────────────
 
-/// What the plan decided, and nothing else. No rows, no store handles.
+/// What the plan decided, and nothing else: no rows, no store handles.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub leaves: Vec<PlannedLeaf>,
@@ -658,29 +520,16 @@ pub struct Plan {
 #[derive(Debug, PartialEq)]
 pub struct PlannedLeaf {
     pub template_id: u64,
-    /// The template's path, storage path, time column and text columns, as the template
-    /// was when the plan was made.
-    ///
-    /// Shared and not copied. A plan of thousands of leaves was thousands of copies of
-    /// twenty strings each, which cost more than choosing the leaves did; this is one
-    /// count raised for a leaf. A column that widens makes a new template, so a plan
-    /// already made goes on reading the one it holds.
+    /// The template's path, storage path, time column and text columns as they were when
+    /// the plan was made, shared and not copied.
     pub template: Arc<Template>,
-    /// Terms the path could not settle - the scan's predicates. Empty means the leaf
-    /// answers the pattern by its shape alone and every row in it matches.
+    /// Terms the path could not settle - the scan's predicates; empty means every row in the
+    /// leaf matches by its shape alone.
     pub residual: Vec<Match>,
 }
 
-/// Choose the templates that could hold a matching row. Reads no data.
-///
-/// Read from the trie's key index and not walked: a term's key gives the list of the
-/// templates that have that column, and the lists are merged. The cost is the length of
-/// the lists a pattern names and no longer the size of the trie, which a walk paid in
-/// full - a lock and a copied label for every node - whatever was asked.
-///
-/// **The plan is the one the walk makes**, leaf for leaf and in the same order: see
-/// `chosen`, which applies the walk's two filters, and `plan_by_walk`, which is the walk
-/// and is what a debug build holds every plan to.
+/// Choose the templates that could hold a matching row from the trie's key index, reading
+/// no data: the plan `plan_by_walk` makes, at the cost of the lists a pattern names.
 pub fn plan(trie: &Trie, query: &Query) -> Plan {
     let started = Instant::now();
     let refused = refusals(query);
@@ -702,16 +551,8 @@ pub fn plan(trie: &Trie, query: &Query) -> Plan {
     }
 }
 
-/// A debug build's check of every plan: the walk is made beside it and the two compared.
-///
-/// Each half only where no other thread moved it in between, and each half by what moves
-/// it. The leaves are compared when the index took no `put` from the plan's read of it to
-/// the end of the walk: a template is put while its leaf's lock is held, and the walk
-/// reads a leaf under that lock, so no `put` means the walk saw the templates the index
-/// described. `skipped` counts root edges, and a line makes its root edge before its
-/// template's record is durable and long before the `put` - or with no `put` at all,
-/// when the line is then refused - so it is compared when the root has the edges it had.
-/// Edges are only ever added, so the same count is the same edges.
+/// A debug build's check of every plan against the walk. Each half is compared only where
+/// no other thread moved it in between: the leaves by `edits`, `skipped` by root edges.
 fn hold_to_the_walk(
     trie: &Trie,
     query: &Query,
@@ -746,8 +587,7 @@ fn hold_to_the_walk(
 }
 
 /// Each exact term's promoted token and the length of its `KEY=` prefix: what the root
-/// filter reads. Made once for a query, where `keeps` makes them again for every edge - a
-/// plan asks about the first label of thousands of templates and cannot afford that.
+/// filter reads, made once for a query rather than for every edge.
 fn refusals(query: &Query) -> Vec<(String, usize)> {
     query
         .matches
@@ -763,21 +603,16 @@ fn refusals(query: &Query) -> Vec<(String, usize)> {
         .collect()
 }
 
-/// Whether the root filter refuses a root edge with this label: `!keeps(label, query)`,
-/// with the tokens already made. The one predicate both the count of skipped root edges
-/// and the choice of templates use, so the two cannot come to disagree.
+/// Whether the root filter refuses a root edge with this label. The one predicate both the
+/// count of skipped edges and the choice of templates use, so the two cannot disagree.
 fn refuses(label: &str, refused: &[(String, usize)]) -> bool {
     refused
         .iter()
         .any(|(token, prefix)| label != token && label.starts_with(&token[..*prefix]))
 }
 
-/// `Plan::skipped` and the count of the root's edges, read in one hold of the root's
-/// lock.
-///
-/// Counted at the root and not from the index: an edge whose subtree holds no template is
-/// counted by the walk too, and a line refused after its nodes were made leaves one. The
-/// edge count is what a debug build's check knows the root by.
+/// `Plan::skipped` and the count of the root's edges, in one hold of the root's lock.
+/// Counted at the root because the walk also counts an edge whose subtree has no template.
 fn pruned(trie: &Trie, refused: &[(String, usize)]) -> (usize, usize) {
     let root = trie.root();
     let Ok(children) = root.children.read() else {
@@ -790,25 +625,8 @@ fn pruned(trie: &Trie, refused: &[(String, usize)]) -> (usize, usize) {
     (skipped, children.len())
 }
 
-/// The templates the pattern could match, in id order, each with the terms left to the
-/// scan.
-///
-/// **The walk's two filters, both of them.** The walk keeps a leaf when `keeps` accepts
-/// the root edge it hangs under and `select` accepts the leaf, and the second does not
-/// imply the first: a path settles nothing from a label that is also one of the leaf's
-/// columns, and it keeps the last token of a key it holds twice, and in both cases
-/// `select` leaves the term to the scan for a leaf the root filter had already dropped. So
-/// a template under a root edge the filter refuses is dropped here by its first label, as
-/// the walk never opens it; and what is left is `select`, with "the leaf's columns hold
-/// the term's key" read as "the template is in that key's list".
-///
-/// The root filter is asked of every template and is not skipped when no root edge was
-/// counted as refused: the root's edges were read before the index was, and a line makes
-/// its root edge before its template is put, so a template can be here under an edge that
-/// count did not see.
-///
-/// Every list is in ascending id and the walk's plan is sorted by id, so the shortest
-/// list is read front to back with the others merged against it, and nothing is sorted.
+/// The templates the pattern could match, in id order, with the terms left to the scan.
+/// Applies both of the walk's filters, since `select` does not imply `keeps`.
 fn chosen(keys: &KeyIndex, query: &Query, refused: &[(String, usize)]) -> Vec<PlannedLeaf> {
     // One list a term, with how far into it the merge has come. A key no template has
     // is a pattern no template can match.
@@ -849,9 +667,8 @@ fn chosen(keys: &KeyIndex, query: &Query, refused: &[(String, usize)]) -> Vec<Pl
         let mut residual = Vec::new();
         for term in &query.matches {
             match template.promoted(&term.key) {
-                // The value is in the path, so the template settles the term now and
-                // every row in it agrees - no predicate, and the scan has nothing to
-                // check.
+                // The value is in the path, so the template settles the term now and the scan has
+                // nothing to check.
                 Some(have) => match &term.value {
                     MatchValue::Any => {}
                     MatchValue::Exact(want) if want == have => {}
@@ -869,14 +686,8 @@ fn chosen(keys: &KeyIndex, query: &Query, refused: &[(String, usize)]) -> Vec<Pl
     leaves
 }
 
-/// The plan as a walk of the trie makes it: every node crossed, every leaf under a root
-/// edge `keeps` accepts put to `select`, the survivors sorted by id.
-///
-/// This was the plan, and it is kept whole as what the plan is held to: a debug build
-/// makes it beside every plan it answers, and the tests compare the two on generated
-/// tries. A change to `keeps`, `select` or `flatten::promoted_of` is a change to make to
-/// `refuses`, `chosen` and `Template::of` as well, and those comparisons are what say so
-/// when only one side moved.
+/// The plan as a walk of the trie makes it, kept as what `plan` is held to: a change to
+/// `keeps`, `select` or `promoted_of` is one to `refuses`, `chosen` and `Template::of` too.
 fn plan_by_walk(trie: &Trie, query: &Query) -> Plan {
     let started = Instant::now();
     let root = trie.root();
@@ -925,20 +736,8 @@ fn plan_by_walk(trie: &Trie, query: &Query) -> Plan {
     }
 }
 
-/// Whether a root subtree can be skipped outright.
-///
-/// Promoted tokens are hoisted to the front of the path (`ParsedLog::walk_tokens`), so a
-/// root label `event=login_ok` is the only thing an exact `--match event=…` can reach.
-/// A label that starts with `KEY=` and is not the wanted token is another promoted value
-/// of that key, and nothing else: the key is spelled as its token spells it, `=` escaped
-/// (`flatten::promoted_token`), so the `=` after it is the bare one promotion wrote. It is
-/// not a literal key named `KEY=…`, whose token has no bare `=`, and not a promoted value
-/// that happens to begin with the rest of a longer key.
-///
-/// A pattern over non-promoted keys prunes nothing and costs one `starts_with` per root
-/// child. Correctness never rests on this: `select` re-checks every leaf that survives.
-/// The plan does rest on it: `select` keeps some leaves this drops, and their rows fail
-/// the scan (see `chosen`, which asks the same question through `refuses`).
+/// Whether a root subtree is kept: promoted tokens are hoisted to the front of the path,
+/// so a root label `KEY=` with another value cannot hold an exact match on that key.
 fn keeps(label: &str, query: &Query) -> bool {
     query.matches.iter().all(|m| match &m.value {
         MatchValue::Exact(v) => {
@@ -990,64 +789,12 @@ fn select(path: &[String], columns: &BTreeSet<&str>, query: &Query) -> Option<Ve
 
 // ── Result order ───────────────────────────────────────────────────────────────────
 
-/// Where a row sits in the answer. Smaller is earlier.
-///
-/// Rows come back **newest first**: "the last 100 errors" is what a limit is nearly always
-/// asked for, and an ascending order would hand back the oldest hundred instead. Leaving
-/// this unspecified was not a neutral position - it made LIMIT meaningless.
-///
-/// `Reverse(ts)` puts the newest first and, because `None` is the least `Option`, puts a
-/// row with no readable timestamp last. A template with no `ts` column at all has nothing
-/// to sort by, so those rows fall back to **arrival order**: `seq` is where the row sits
-/// among the rows it was stored beside. The same pair settles a tie between two rows
-/// sharing a timestamp.
-///
-/// Both tiebreak components are facts about the *row*, not about the query that found it -
-/// which is what lets a cursor built from one still name the same row later (see `Cursor`).
-/// `leaf_key` is the leaf's key set hashed; `seq` is the ordinal its store gave it. The
-/// order is total and computed from the data alone, so the differential compares the
-/// answer exactly instead of as an unordered set.
-///
-/// **`seq` is only ever compared within a tie**, which is what lets a disk store define it
-/// as the row's position in its day partition rather than a number it has to write down.
-/// Equal timestamps are in the same day, so a tie group never spans two partitions; rows
-/// that cannot be placed in time all tie, and all live in the one undated partition. The
-/// in-memory store counts per leaf instead, so the two mint different cursor *bytes* for
-/// one row - and the same row *order*, because within a partition the two counts run in
-/// the same direction.
-///
-/// This order is also what lets a disk store skip whole partitions once the limit fills:
-/// read newest-first, a day whose newest row is older than the worst row already held
-/// cannot contain an answer. It does not license stopping mid-partition - rows inside a
-/// day are in arrival order, not timestamp order - so `Newest` stays.
+/// Where a row sits in the answer, smaller is earlier: newest first, then the leaf's key
+/// hash and the store's ordinal - all facts about the row, so a cursor can name it.
 pub type Rank = (Reverse<Option<i64>>, u64, u64);
 
-/// A leaf's place in the order, from its key set alone.
-///
-/// Shared with the oracle as `value_matches` is: which number a leaf gets is a contract
-/// both sides must land on exactly, not a mechanism worth reimplementing.
-///
-/// It replaced the leaf's rank among the leaves *this query* matched, which was a fact
-/// about the query and not the leaf: one new template matching the pattern renumbered every
-/// leaf after it, and a cursor issued before that landed between rows. A key-set hash is
-/// content-derived, so it is the same number in the next process and off disk.
-///
-/// A NUL ends each token, and a NUL *inside* a token is hashed as `0xFF`, a byte no UTF-8
-/// text holds. A key may contain a NUL - `{"a\u0000b": 1}` is a line - and hashed as it
-/// stands that one key spelled the bytes of the two keys `a` and `b`, so two templates got
-/// one key by construction and not by a 64-bit accident. Their rows of one instant then
-/// carried one `Rank`, and a page that stopped on the first skipped the second for good:
-/// the scan drops every row at or before the cursor's rank. The same defect as the one
-/// `Cursor::spelling` describes, in the other hash a cursor carries.
-///
-/// Escaped rather than length-prefixed so that a path with no NUL in it - every path there
-/// has been but those - keeps the key it had, and with it the order of its tied rows. The
-/// key of a path that does hold one moved, in the build that changed the guard's spelling
-/// too: every cursor issued before it is refused by the guard, so none carrying an old key
-/// is resolved against the new order.
-///
-/// Two paths colliding on 64 bits still give their tied rows one `Rank`. That is the
-/// accident this accepts; what it may not do is hash the same bytes for two paths.
+/// A leaf's place in the order, hashed from its key set so it survives a restart; a NUL
+/// inside a token is hashed as `0xFF`, so no two paths spell the same bytes.
 pub fn leaf_key(path: &[String]) -> u64 {
     let mut h = FNV_OFFSET;
     for token in path {
@@ -1077,46 +824,16 @@ fn fnv(mut h: u64, bytes: &[u8]) -> u64 {
 
 // ── Cursors ────────────────────────────────────────────────────────────────────────
 
-/// Where a page stopped: the `Rank` of its last row, plus a guard.
-///
-/// Keyset, not offset. A cursor names a *row*, so nothing ingested elsewhere can shift
-/// it; `OFFSET n` names a position in a sequence that moves, so it re-serves rows when
-/// anything lands at the head between two calls - and pays for the n rows it skips.
-///
-/// Nothing stores one. A cursor is a function of the last row handed out, so there is no
-/// session and no expiry and the server may restart between two pages. That is the line
-/// between `search_after`, which Kibana uses, and `scroll` or a Splunk job, which park a
-/// frozen result set server-side.
-///
-/// **What it names, and what a restart does to it.** All three components are properties of
-/// the row - its timestamp, its leaf's key set hashed, the ordinal its store gave it - and
-/// none is a position in a structure a restart rebuilds. So it resolves to the same row in
-/// the next process as long as that row is still stored. On disk that ordinal is the row's
-/// position inside its day partition, which is not written down anywhere because it does
-/// not have to be: it is where the row sits in the file.
-///
-/// It still does not freeze the data. A row ingested ahead of the cursor between two pages
-/// is not shown until you start again without one, as under `Cursor::guard`.
-///
-/// The guard is why `query` is in here. A cursor read against a different pattern is a
-/// cursor into a different answer - it would resume from a row that answer never contained
-/// and skip everything ranked above it, without complaining. Four bytes is the difference
-/// between an error and a wrong answer.
+/// Where a page stopped: the `Rank` of its last row, which names a row and so is keyset
+/// and stateless, plus a guard that refuses it against another pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
     rank: Rank,
     query: u32,
 }
 
-/// Bumped when `Rank`'s components change meaning, and read before anything else in
-/// `decode`: a cursor from an older layout would resolve against a layout it never
-/// described and answer confidently with the wrong rows. Nothing reads a superseded version
-/// and nothing translates one - this check is the whole compatibility story.
-///
-/// A change to how the guard is computed does not bump it. A cursor whose guard was
-/// computed another way names the same row in the same order and is refused as
-/// `WrongQuery`, which is a refusal and not a wrong page; the version is for the case the
-/// guard cannot catch.
+/// Bumped when `Rank`'s components change meaning, and read first in `decode`: a cursor
+/// from an older layout would answer confidently with the wrong rows.
 const CURSOR_VERSION: &str = "v3";
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -1134,21 +851,8 @@ const CURSOR_BYTES: usize = 1 + 8 + 8 + 8 + 4;
 const HEX_LEN: usize = CURSOR_BYTES * 2;
 
 impl Cursor {
-    /// The fingerprint a cursor is checked against: what was matched, and in what order.
-    /// Anything that would renumber the leaves or reorder the rows is in here, and nothing
-    /// that would not.
-    ///
-    /// The time window is deliberately *out*. It renumbers nothing - `select` chooses
-    /// leaves from the pattern alone - and putting it in makes the common case impossible:
-    /// `SINCE 1h` resolves against `now`, so two calls a millisecond apart produce two
-    /// different windows and every cursor from a relative window would be refused by the
-    /// query that issued it.
-    ///
-    /// What that costs, stated rather than hidden: pages are a moving view over live data.
-    /// A row ingested between two pages lands ahead of the cursor and is not shown until
-    /// you start again without one. Widening the window mid-page has the same shape. This
-    /// is how `search_after` and Loki behave; freezing the window into the cursor instead
-    /// would make it a snapshot, with the expiry and server-side state that implies.
+    /// The fingerprint a cursor is checked against - the pattern and the order, not the time
+    /// window, because `SINCE 1h` resolves against `now` and would refuse its own cursors.
     pub fn guard(query: &Query) -> u32 {
         let h = fnv(FNV_OFFSET, &Self::spelling(query));
         // Folded to 32 bits: this is a guard against a mistake, not against an attacker,
@@ -1156,24 +860,8 @@ impl Cursor {
         ((h >> 32) ^ h) as u32
     }
 
-    /// The bytes `guard` hashes: the pattern, then the name of the order.
-    ///
-    /// Written so that no two patterns spell the same bytes, because a hash of bytes two
-    /// patterns share cannot refuse either's cursor at any width. The count of terms comes
-    /// first; a key and an exact value are each eight bytes of length and then the text,
-    /// so a `=` or a NUL inside one ends nothing; and a tag after the key says whether a
-    /// value follows, so the wildcard is not the one-character value `*`, which the
-    /// grammar keeps apart from it.
-    ///
-    /// `Query::tokens` is not this spelling and must not become it: it prints `key=*` for
-    /// both of those and is what `--explain` shows a person. The guard hashed it once, and
-    /// `{"a": "b", "c": "d"}` handed its cursor to `{"a": "b\u0000c=d"}`.
-    ///
-    /// Terms are spelled in the order they were written, as `tokens` has them, so a
-    /// pattern with its terms the other way round is still another query to the guard.
-    ///
-    /// Visible to the crate so that `fuzzing::cursor` can ask, of two patterns sharing a
-    /// guard, whether they were ever different to it.
+    /// The bytes `guard` hashes, length-prefixed so that no two patterns spell the same bytes;
+    /// `Query::tokens` is not this spelling and must not become it.
     pub fn spelling(query: &Query) -> Vec<u8> {
         fn text(out: &mut Vec<u8>, text: &str) {
             out.extend_from_slice(&(text.len() as u64).to_be_bytes());
@@ -1191,15 +879,13 @@ impl Cursor {
                 }
             }
         }
-        // The order is by the effective time, whatever a template calls its
-        // column; the guard names that rather than a column, so a cursor survives a
-        // template being created with another name between two pages.
+        // The order is by the effective time, whatever a template calls its column, so a cursor
+        // survives a template being created with another name between two pages.
         out.extend_from_slice(b"effective_time");
         out
     }
 
-    /// The `Rank` a page stopped at. Read by the scan, and by the oracle, which reaches
-    /// the same answer by sorting rather than by filtering as it goes.
+    /// The `Rank` a page stopped at, read by the scan and by the oracle.
     pub fn rank(&self) -> Rank {
         self.rank
     }
@@ -1211,8 +897,8 @@ impl Cursor {
         }
     }
 
-    /// Opaque on purpose. Nobody should be able to write one by hand, because anyone who
-    /// can will depend on the layout that `CURSOR_VERSION` exists to change.
+    /// The cursor as opaque text: anyone who can write one by hand will depend on the layout
+    /// `CURSOR_VERSION` exists to change.
     pub fn encode(&self) -> String {
         let (Reverse(ts), leaf, seq) = self.rank;
         let mut out = String::with_capacity(CURSOR_VERSION.len() + 1 + HEX_LEN);
@@ -1223,9 +909,8 @@ impl Cursor {
                 out.push_str(&format!("{b:02x}"));
             }
         };
-        // `ts` is an `Option`, and the absent case is a real one - a template with no `ts`
-        // column pages like any other. The flag carries it; the eight bytes beside it are
-        // then zero and mean nothing.
+        // `ts` is an `Option`, and the absent case is a real one: the flag carries it, and the
+        // eight bytes beside it are then zero and mean nothing.
         match ts {
             Some(ns) => {
                 hex(&[1]);
@@ -1242,8 +927,8 @@ impl Cursor {
         out
     }
 
-    /// The text back into a cursor. The guard is *not* checked here - the query it belongs
-    /// to is not built yet at parse time - which is what `check` is for.
+    /// The text back into a cursor; the guard is *not* checked here, because the query it
+    /// belongs to is not built yet at parse time - see `check`.
     pub fn decode(text: &str) -> Result<Self, CursorError> {
         let (version, body) = text.split_once('.').ok_or(CursorError::Malformed)?;
         if version != CURSOR_VERSION {
@@ -1283,7 +968,7 @@ impl Cursor {
         })
     }
 
-    /// Does this cursor belong to this query? Checked once, before the scan.
+    /// Whether this cursor belongs to this query, checked once before the scan.
     pub fn check(&self, query: &Query) -> Result<(), CursorError> {
         if self.query == Self::guard(query) {
             return Ok(());
@@ -1316,31 +1001,14 @@ impl PartialEq for Ranked {
 }
 impl Eq for Ranked {}
 
-/// The best `keep` rows by `Rank`, held in `keep + 1` rows of memory - or all of them,
-/// in order, when nothing was capped.
-///
-/// The bounded case is a max-heap, worst row on top, so one push and one pop per row keeps
-/// the best `keep` and drops the rest as they arrive. Collecting every matching row into a
-/// `Vec` and sorting afterwards would allocate exactly what the cap was asked to avoid.
-///
-/// One more than asked for, deliberately: `rows_returned == limit` does not mean there is
-/// another page, and a `next_cursor` that yields an empty page is a cursor that lied. The
-/// extra row is held only to answer that question and dropped before the answer leaves.
+/// The best `keep` rows by `Rank` in a max-heap of `keep + 1`, or all of them when nothing
+/// was capped. The one extra row only answers whether there is a next page.
 struct Newest {
     /// `None` = keep everything.
     keep: Option<usize>,
     heap: BinaryHeap<Ranked>,
-    /// Whether a store may be told that a row is not worth building: see
-    /// `Fetch::wants_row`. It starts `true` and goes `false`, for the rest of the query,
-    /// at the first row asked about whose time is not in the day it is stored under.
-    ///
-    /// Until such a row no two rows offered carry one `Rank`, and the rows kept are then
-    /// the best of the rows that matched whichever of the rest were offered. From such a
-    /// row on two rows can carry one `Rank` - one position in each of two days, and one
-    /// time, or none - and which of the two the heap keeps is decided by where its equal
-    /// rows lie, which every push moves, one that is popped at once among them. So from
-    /// there every row is offered, in storage order, and the heap goes through the states
-    /// it would have gone through had no row ever been asked about.
+    /// Whether a store may be told a row is not worth building (`Fetch::wants_row`): `false`
+    /// from the first row stored outside its own day, since two rows may then share a `Rank`.
     gate: bool,
 }
 
@@ -1353,9 +1021,8 @@ impl Newest {
         }
     }
 
-    /// A heap that is offered every row from the first, and asks to be asked about none:
-    /// what a fetch was before a store could ask, kept for the tests to hold the answer
-    /// to.
+    /// A heap that is offered every row from the first, kept for the tests to hold the
+    /// answer to.
     #[cfg(test)]
     fn offered_every_row(keep: Option<usize>) -> Self {
         Self {
@@ -1367,9 +1034,8 @@ impl Newest {
     fn offer(&mut self, rank: Rank, row: Row) {
         self.heap.push(Ranked { rank, row });
         if let Some(keep) = self.keep {
-            // One more than `keep` is held, counted down from a length the push above
-            // made at least one and not up from `keep`: `LIMIT 18446744073709551615` is a
-            // limit a client can write, and there is no one more than it.
+            // Counted down from a length the push made at least one, not up from `keep`: a client
+            // can write `LIMIT 18446744073709551615`, and there is no one more than it.
             if self.heap.len() - 1 > keep {
                 // The greatest `Rank` is the last row in result order, so this drops the
                 // oldest candidate and never one that belongs in the answer.
@@ -1378,12 +1044,8 @@ impl Newest {
         }
     }
 
-    /// The rank one more `offer` would drop, or `None` while there is still room.
-    ///
-    /// What a partition is measured against: a partition whose best possible row is worse
-    /// than this one holds nothing that belongs in the answer. `None` while the heap is
-    /// filling, because nothing can be ruled out until it is full - and `None` for an
-    /// unlimited query, which has to read everything by definition.
+    /// The rank one more `offer` would drop, which a partition is measured against; `None`
+    /// while there is still room, and for an unlimited query.
     fn worst(&self) -> Option<Rank> {
         let keep = self.keep?;
         if self.heap.len() > keep {
@@ -1393,11 +1055,8 @@ impl Newest {
         }
     }
 
-    /// Newest first, and the `Rank` the next page should resume after.
-    ///
-    /// `into_sorted_vec` is ascending by `Ord`, and `Rank` is smallest-first. The overflow
-    /// row - if the scan produced one - is the proof that a next page exists, and the row
-    /// before it is where this one stopped.
+    /// Newest first, and the `Rank` the next page should resume after: the overflow row is
+    /// the proof that a next page exists, and the row before it is where this one stopped.
     fn finish(self) -> (Vec<Row>, Option<Rank>) {
         let keep = self.keep;
         let mut ranked = self.heap.into_sorted_vec();
@@ -1411,11 +1070,7 @@ impl Newest {
 }
 
 /// The `Fetch` mode's sink: rank each row, drop the ones an earlier page served, and let
-/// the heap keep the best.
-///
-/// A struct rather than a closure because a closure can only be handed rows: this one
-/// also says whether a day is worth opening (`wants_partition`) and, while there is a
-/// limit to fill, whether a row is worth building (`wants`, `wants_row`).
+/// the heap keep the best. A struct, because a closure cannot say what is worth opening.
 struct Fetch<'a> {
     keep: &'a mut Newest,
     key: u64,
@@ -1425,31 +1080,19 @@ struct Fetch<'a> {
 
 impl Visitor for Fetch<'_> {
     fn row(&mut self, row: &Row, seq: u64) {
-        // `seq` comes from the store, so it is the row's own ordinal and not a count of
-        // what this scan admitted. A row leaving a relative `SINCE` window between two
-        // pages used to renumber every row behind it in its leaf.
+        // `seq` comes from the store, so it is the row's own ordinal and not a count of what
+        // this scan admitted.
         let rank = (Reverse(effective_ts(row, self.ts)), self.key, seq);
-        // Served on an earlier page. `Rank` is a total order, so this is exact where a
-        // `ts` comparison alone is not: rows sharing one nanosecond split across the page
-        // boundary rather than being repeated by an inclusive bound or dropped by an
-        // exclusive one.
+        // Served on an earlier page. `Rank` is a total order, so rows sharing one nanosecond
+        // split across the page boundary rather than being repeated or dropped.
         if self.after.is_some_and(|stop| rank <= stop) {
             return;
         }
         self.keep.offer(rank, row.clone());
     }
 
-    /// The best `Rank` any row in this partition could carry, against the worst one
-    /// already held.
-    ///
-    /// `seq: 0` is the floor for this leaf at this timestamp, so the tuple really is a
-    /// lower bound and a partition rejected here cannot contain an answer. The undated
-    /// partition reports `None`, and `Reverse(None)` is the greatest `Rank` there is - so
-    /// it is skipped exactly when the heap is full of dated rows and read when the worst
-    /// row held is itself undated. That rule is the existing ordering, not a special case.
-    ///
-    /// `Newest` is shared across the leaves of one query, so the cut tightens as the scan
-    /// goes on rather than restarting at each leaf.
+    /// The best `Rank` any row in this partition could carry, against the worst one already
+    /// held: `seq: 0` makes it a lower bound, and `Newest` is shared so the cut tightens.
     fn wants_partition(&mut self, newest: Option<i64>) -> bool {
         let best = (Reverse(newest), self.key, 0u64);
         self.keep.worst().is_none_or(|worst| best < worst)
@@ -1465,21 +1108,8 @@ impl Visitor for Fetch<'_> {
         }
     }
 
-    /// Could `row` change what the heap holds? Not for a row at or before the cursor,
-    /// which `row` drops before the heap sees it; and not for a row ranked after the
-    /// worst row of a full heap, which `offer` would push and pop again at once.
-    ///
-    /// A rank equal to the worst is let through: the push and the pop then run as they
-    /// would have, and which of the two equal rows is left is theirs to say.
-    ///
-    /// **Refusing a row leaves the heap as offering it would have**, and that is what
-    /// lets a row go unbuilt without the answer moving: pushing a rank greater than every
-    /// rank held and popping it puts each row back where it was. It holds while the ranks
-    /// held are all different, which they are until a row that is not `placed` - so the
-    /// first such row turns the gate off, and it stays off: see `Newest::gate`.
-    ///
-    /// `ts` only decides whether the row is built. `row` ranks the row it is handed by
-    /// the time it reads off it, as it always did.
+    /// Whether `row` could change what the heap holds. Refusing one leaves the heap as offering
+    /// it would have while all ranks held differ, so the first unplaced row turns the gate off.
     fn wants_row(&mut self, ts: Option<i64>, seq: u64, placed: bool) -> bool {
         if !placed {
             self.keep.gate = false;
@@ -1495,12 +1125,8 @@ impl Visitor for Fetch<'_> {
     }
 }
 
-/// The `GroupBy` mode's sink: each row counted under its bucket and its label.
-///
-/// A struct rather than a closure because it says what it reads of a row, which a closure
-/// cannot be asked: the grouping's columns, and the two time columns when the rows are
-/// bucketed. A store that builds each row out of columns then builds one of those few and
-/// not of every column the terms read beside them.
+/// The `GroupBy` mode's sink: each row counted under its bucket and its label. A struct,
+/// because it says which columns it reads, so a store builds only those.
 struct Grouped<'a> {
     tally: &'a mut Tally,
     columns: &'a [String],
@@ -1535,9 +1161,8 @@ impl<'a> Grouped<'a> {
 
 impl Visitor for Grouped<'_> {
     fn row(&mut self, row: &Row, _: u64) {
-        // `None` twice over: no `time(...)` was asked for, or one was and this row has no
-        // timestamp to place it by. The renderers tell the two apart from the width, which
-        // they already hold.
+        // `None` twice over: no `time(...)` was asked for, or this row has no timestamp to
+        // place it by. The renderers tell the two apart from the width.
         let bucket = self
             .bucket_ns
             .and_then(|w| effective_ts(row, self.ts).map(|ns| bucket_of(ns, w)));
@@ -1554,27 +1179,8 @@ impl Visitor for Grouped<'_> {
 
 // ── The scan ───────────────────────────────────────────────────────────────────────
 
-/// Both halves.
-///
-/// `QueryMode::Exists` is two questions wearing one name, and which one was asked is
-/// decided by the time clause:
-///
-/// - **No time clause** - "does this template exist at all?". Answered by the plan, and it
-///   reads no data: `leaves_opened` and `rows_scanned` both stay 0, which is the mode's
-///   whole claim.
-/// - **With a time clause** - "is this firing *now*?". `--exists --since 5m` is a cheap
-///   liveness check, not a contradiction, so it scans - and stops dead on the first row
-///   inside the window. `count` is 0 or 1 and `rows_scanned` is what it actually cost.
-///
-/// Reading `rows_scanned` is how the two are told apart, so both paths report it honestly
-/// rather than one of them reporting a plausible zero.
-///
-/// `exists` keeps its meaning throughout: the template was found. A template that exists
-/// and is not firing is `exists: true, count: 0` - already distinct from `exists: false`,
-/// and distinguished the same way.
-/// Errors an execution can end on. A `StoreError` is the storage layer failing; a
-/// `BucketError` is the query asking for more chart than anyone can read, which is the
-/// client's to fix and not the server's.
+/// Errors an execution can end on: a `StoreError` is the storage layer failing, a
+/// `BucketError` is the client's to fix.
 #[derive(Debug, Error)]
 pub enum ExecError {
     #[error(transparent)]
@@ -1591,12 +1197,8 @@ pub fn execute(
     execute_until(trie, stores, query, &Stop::default())
 }
 
-/// `execute`, for a caller that may stop wanting the answer: a server, whose request
-/// can time out, lose its client, or be cut off by a shutdown.
-///
-/// Once `stop` is set the query ends with `StoreError::Stopped` at the next row group
-/// its scan would have read, or the next template (`store::Stop`), and whatever it had
-/// counted or kept goes with it: a stopped query has no partial answer.
+/// `execute` for a caller that may stop wanting the answer; once `stop` is set the query
+/// ends with `StoreError::Stopped`, and a stopped query has no partial answer.
 pub fn execute_until(
     trie: &Trie,
     stores: &StoreManager,
@@ -1606,9 +1208,8 @@ pub fn execute_until(
     answer(trie, stores, query, Newest::new(query.limit), stop)
 }
 
-/// `execute`, handed the heap a fetch keeps its rows in. There is one such heap for a
-/// query, made for the query's limit; a test hands over one that is offered every row, to
-/// hold the answer to what it is when no store asks before it builds a row.
+/// `execute`, handed the heap a fetch keeps its rows in, so a test can hand over one that
+/// is offered every row.
 fn answer(
     trie: &Trie,
     stores: &StoreManager,
@@ -1620,12 +1221,8 @@ fn answer(
     let mut opts = query.scan_options();
     opts.stop = stop.clone();
     let started = Instant::now();
-    // **One snapshot of every planned template**, and nothing read outside it: see
-    // `Snapshot`. Planned again if a load published between the plan and the snapshot - its
-    // new templates can have joined the catalog after the plan was made, and a snapshot
-    // holding the load's rows of the planned templates but not of those would count part of
-    // it. A publish is a load's commit, so this goes round again once per commit that lands
-    // in that gap, and no more.
+    // One snapshot of every planned template (`Snapshot`). Planned again if a load published
+    // between the plan and the snapshot, so a load's rows are counted whole or not at all.
     let (plan, snapshot) = loop {
         let before = stores.generation();
         let plan = plan(trie, query);
@@ -1658,9 +1255,8 @@ fn answer(
         _ => (None, Vec::new()),
     };
     let bucket_ns = width.map(width_nanos);
-    // Every template has a time source, so a matched template is a time axis.
-    // With no template matched there is no axis to fill in and the answer carries no
-    // buckets - `exists: false`, the first of the two empty answers.
+    // Every template has a time source, so a matched template is a time axis; with none
+    // matched the answer carries no buckets - `exists: false`.
     let timed = !plan.leaves.is_empty();
     let mut tally = Tally::new();
 
@@ -1673,11 +1269,8 @@ fn answer(
         opts.ts_column = Some(leaf.template.time_column.clone());
         opts.text_columns = leaf.template.text_columns.clone();
 
-        // **Column pruning**: every term the scan is handed was made from a `Match` of
-        // `leaf.residual`, and a term's key is the column it reads. Those keys, the group
-        // keys and the timestamp column are all any mode but `Fetch` reads, so a store may
-        // skip the rest. `Fetch` returns whole rows and names nothing - empty is every
-        // column.
+        // Column pruning: any mode but `Fetch` reads only the residual keys, the group keys and
+        // the time columns, so a store may skip the rest. Empty is every column.
         opts.columns = match &query.mode {
             QueryMode::Fetch => Vec::new(),
             _ => {
@@ -1692,12 +1285,8 @@ fn answer(
             }
         };
 
-        // The store's own limit stops the read once `limit` rows have matched. Not used
-        // for `Fetch`, and a disk store does not change that: rows are in arrival order
-        // *within* a partition as much as within a `Vec`, so stopping at the first `limit`
-        // matches returns the oldest of them under an order that promises the newest.
-        // `Newest` bounds the memory instead, and what partitioning buys is one level up -
-        // whole days skipped before they are opened, through `wants_partition`.
+        // The store's own limit is not used for `Fetch`: rows are in arrival order within a
+        // partition, so the first `limit` matches are not the newest. `Newest` bounds the memory.
         opts.limit = if exists_only { 1 } else { 0 };
 
         let id = leaf.template_id;
@@ -1753,17 +1342,10 @@ fn answer(
         )?;
     }
     // Rows in the answer, which for every mode but `Fetch` is none: `count` is what those
-    // modes return and it is its own field. This used to be a second copy of `count`,
-    // which was harmless while nothing could make the two differ - a limit can, and
-    // `truncated` is only readable next to a `rows_returned` that means what it says.
+    // modes return and it is its own field.
     result.meta.rows_returned = result.rows.len() as u64;
-    // The limit dropped rows that matched. Only `Fetch` can reach this: the other modes
-    // return no rows, so `Query::new` normalised their limit away.
-    //
-    // Counted against `count`, which is every row matching the pattern and window on every
-    // page - it is not reduced by the cursor. That is the point: page 7 of 483 still says
-    // how many rows there are in total, so a limit is a statement about this response and
-    // never about the answer.
+    // The limit dropped rows that matched; only `Fetch` can reach this. Counted against
+    // `count`, which the cursor does not reduce: a limit is a statement about this response.
     result.meta.truncated =
         query.mode == QueryMode::Fetch && result.meta.rows_returned < result.count;
     result.meta.limit_source = query.limit_source;
@@ -1773,7 +1355,7 @@ fn answer(
 }
 
 /// One residual term as the scan holds it: its key, and its text read through the ladder
-/// here - once for the leaf, where it used to be read again for every row.
+/// here, once for the leaf.
 fn term(m: &Match) -> Term {
     match &m.value {
         MatchValue::Any => Term::any(m.key.clone()),
@@ -1781,21 +1363,8 @@ fn term(m: &Match) -> Term {
     }
 }
 
-/// Does a stored value satisfy `KEY=VALUE`?
-///
-/// The contract, shared verbatim with the reference scanner - a differential test is only
-/// worth running if both sides are answering the same question.
-///
-/// Two readings of the term's text, because a `Row` holds `ColValue` and not the raw line.
-/// A `Datetime` column kept nanoseconds and threw the text away, so `ts=2024-01-15T10:30:00Z`
-/// can only be matched by putting the flag through the same ladder the value went through.
-/// The string reading comes first so a JSON string `"149.00"` is matched by its own text
-/// rather than by the float it would infer to.
-///
-/// **The contract as it is said, not as a scan asks it.** Both readings are made on every
-/// call, so a scan asks `store::Term::matches` instead - this, with the readings made once
-/// when the term is. The oracle calls this one, and a test holds the two equal on every
-/// value either can be handed.
+/// Whether a stored value satisfies `KEY=VALUE`, by its own text first and then through
+/// the inference ladder: the contract the oracle calls and `store::Term::matches` is held to.
 pub fn value_matches(want: &MatchValue, stored: &ColValue) -> bool {
     match want {
         MatchValue::Any => !matches!(stored, ColValue::Null),
@@ -1805,13 +1374,8 @@ pub fn value_matches(want: &MatchValue, stored: &ColValue) -> bool {
     }
 }
 
-/// A row's group label, one value per column key, in the order the keys were written.
-///
-/// Missing and null share one label: neither is a value, and splitting them would put two
-/// labels on one absent column. Shared verbatim with the oracle, as `value_matches` is -
-/// which label a row gets is a contract both sides must land on, not a mechanism worth
-/// reimplementing. The bucket is *not* here, for the opposite reason: see the note at the
-/// top of `reference::naive`.
+/// A row's group label, one value per column key in the order written; missing and null
+/// share one label, and the oracle shares this function.
 pub fn group_values(row: &Row, keys: &[String]) -> Vec<String> {
     keys.iter()
         .map(|key| {
@@ -1823,12 +1387,8 @@ pub fn group_values(row: &Row, keys: &[String]) -> Vec<String> {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────────
 
-/// The bucket arithmetic, which the CLI surface can only reach one query at a time.
-///
-/// The properties below hold for *any* range and width, so they are checked over hundreds
-/// of them rather than over a corpus somebody thought of - a boundary-alignment bug does
-/// not produce an error, it produces a plausible chart with the bars in the wrong places,
-/// and no hand-written case is likely to be the one that notices.
+/// The bucket arithmetic, which the CLI surface can only reach one query at a time: its
+/// properties hold for any range and width, so they are checked over generated ones.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1848,9 +1408,8 @@ mod tests {
         assert_eq!(promoted.get("a=b.event"), Some(&"login"));
     }
 
-    /// A leaf a build before the escape merged: the label `event=login` is also one of
-    /// its columns, so some of its rows have no `event` at all. The path settles nothing
-    /// there and the scan reads the column.
+    /// A leaf whose label `event=login` is also one of its columns, as old on-disk data can
+    /// hold: the path settles nothing there and the scan reads the column.
     #[test]
     fn a_label_that_is_also_a_column_settles_nothing() {
         let path = ["event=login".to_string()];
@@ -1941,9 +1500,8 @@ mod tests {
         )
     }
 
-    /// **A query told to stop has no answer, in any mode; one never told has the answer
-    /// it always had.** The stop is asked before the first template is read, so a query
-    /// told before it began reads nothing.
+    /// A query told to stop has no answer, in any mode; the stop is asked before the first
+    /// template is read, so a query told before it began reads nothing.
     #[test]
     fn a_query_told_to_stop_ends_with_no_answer() {
         let db = db();
@@ -1970,9 +1528,7 @@ mod tests {
     }
 
     /// A load that publishes between a query's plan and its snapshot can have added a
-    /// template the plan never saw - its rows in the snapshot for the planned templates, and
-    /// not for that one. The query sees the publish count move and plans again, so the new
-    /// template is in the answer.
+    /// template the plan never saw; the query sees the generation move and plans again.
     #[test]
     fn a_publish_between_the_plan_and_the_snapshot_plans_again() {
         use kibbr_storage::store::{
@@ -2054,11 +1610,8 @@ mod tests {
         QueryMode::GroupBy(vec![GroupKey::Time(Duration::from_secs(width))])
     }
 
-    /// The property, over randomised ranges and widths.
-    ///
-    /// Both endpoints are snapped to a multiple of the width, which is what makes
-    /// `ceil(range / width)` the exact bucket count rather than an approximation of it -
-    /// an unaligned range straddles a boundary at each end and touches one bucket more.
+    /// The property, over randomised ranges and widths. Both endpoints are snapped to the
+    /// width, which is what makes `ceil(range / width)` the exact bucket count.
     #[test]
     fn buckets_sum_to_the_count_and_tile_the_range() {
         let db = db();
@@ -2106,10 +1659,8 @@ mod tests {
                 "{case}: wrong number of buckets"
             );
 
-            // Contiguous multiples of the width, starting at the range's own edge. This
-            // is the assertion an alignment bug fails: a floor against the query start
-            // instead of the epoch still tiles the range, but not at the same places a
-            // neighbouring query tiles it.
+            // Contiguous multiples of the width from the range's own edge: a floor against the
+            // query start still tiles the range, but not where a neighbouring query tiles it.
             for (n, group) in grouped.groups.iter().enumerate() {
                 let start = lo + w * n as i64;
                 assert_eq!(
@@ -2226,9 +1777,8 @@ mod tests {
         );
     }
 
-    /// Every template has a time axis: one with no time column is on arrival
-    /// time, which is `now` and outside a window over 1970 - so the buckets are there,
-    /// zero-filled across the window, and the count is zero.
+    /// A template with no time column is on arrival time, which is `now` and outside the
+    /// window: the buckets are there, zero-filled, and the count is zero.
     #[test]
     fn a_template_with_no_ts_column_is_on_arrival_time() {
         let db = db();
@@ -2253,7 +1803,7 @@ mod tests {
     }
 
     /// With no window the seven rows on arrival time are counted, and they land in the
-    /// bucket their arrival falls in - no row is without a bucket any more.
+    /// bucket their arrival falls in.
     #[test]
     fn rows_on_arrival_time_are_bucketed_at_their_arrival() {
         let db = db();
@@ -2322,9 +1872,8 @@ mod tests {
                 if start != i64::MIN {
                     assert_eq!(start.rem_euclid(width), 0, "{at} at {width}");
                 }
-                // The bucket contains its instant: it is at or below `at`, and the next
-                // boundary is above it. Both ends of the range are the exceptions, where
-                // the arithmetic saturates rather than leaving the representable range.
+                // The bucket contains its instant, except at both ends of the range, where the
+                // arithmetic saturates rather than leaving the representable range.
                 assert!(start <= at || start == i64::MIN, "{at} at {width}");
                 let end = start.saturating_add(width);
                 assert!(
@@ -2351,9 +1900,8 @@ mod tests {
         q
     }
 
-    /// Three pairs of patterns that `Query::tokens` cannot tell apart - joined by the NUL
-    /// the guard once put between them, each pair is the same bytes - and that are two
-    /// queries all the same. Each has to refuse a cursor of the other.
+    /// Three pairs of patterns that `Query::tokens` cannot tell apart and that are two
+    /// queries all the same: each has to refuse a cursor of the other.
     #[test]
     fn the_guard_tells_apart_patterns_that_print_the_same_tokens() {
         let pairs = [
@@ -2392,9 +1940,8 @@ mod tests {
         }
     }
 
-    /// The spelling reads back: every term's key, tag and value sit where the lengths
-    /// before them say, and what is left is the order's name. An encoding that reads back
-    /// one way is one that no second pattern shares.
+    /// The spelling reads back to the pattern, and an encoding that reads back one way is
+    /// one that no second pattern shares.
     #[test]
     fn the_guard_spelling_reads_back_to_the_pattern() {
         fn word(bytes: &mut &[u8]) -> usize {
@@ -2467,9 +2014,8 @@ mod tests {
         assert_eq!(capped.meta.next_cursor, None);
     }
 
-    /// `Newest` at every limit around the number of rows offered, and at both ends of
-    /// `usize`: the best `keep` rows, and a next page exactly when a row was left over
-    /// and the page is not empty.
+    /// `Newest` at every limit around the number of rows offered and at both ends of `usize`:
+    /// the best `keep` rows, and a next page exactly when a row was left over.
     #[test]
     fn the_page_heap_keeps_the_limit_and_one_more_at_any_limit() {
         const OFFERED: usize = 3;
@@ -2495,9 +2041,8 @@ mod tests {
         tokens.iter().map(|token| token.to_string()).collect()
     }
 
-    /// Paths that are the same bytes once a NUL is put after each token, and are different
-    /// key sets all the same: each pair is two leaves and has to be two keys. And a path
-    /// with no NUL in it has the key it always had, so no stored row changed places.
+    /// Paths that are the same bytes once a NUL is put after each token are different key
+    /// sets and need two keys; a path with no NUL keeps its key, so no stored row moves.
     #[test]
     fn a_leaf_key_tells_apart_paths_that_join_to_the_same_bytes() {
         for (one, other) in [
@@ -2557,13 +2102,8 @@ mod tests {
         assert_eq!(nanos_of(at(EPOCH)), ns(EPOCH));
     }
 
-    /// A term read through the ladder once gives `value_matches`' answer for every value
-    /// it can be put to: each value the pool ingests, as the ladder typed it and as the
-    /// text it would be in a column since widened, and null - against every text of the
-    /// pool as a term, and `*`.
-    ///
-    /// `value_matches` is the contract and the oracle's side of every differential; the
-    /// scan no longer calls it. This is what says the scan's side is the same question.
+    /// A term read through the ladder once gives `value_matches`' answer for every value it
+    /// can be put to: this is what says the scan's side asks the oracle's question.
     #[test]
     fn a_term_read_once_matches_what_value_matches_does() {
         use kibbr_storage::store::pool;
@@ -2610,24 +2150,8 @@ mod tests {
         );
     }
 
-    /// **What filtering on columns stands on.** A term put to a decoded column selects
-    /// the rows `value_matches` says yes to when it is put to each row as a scan would
-    /// have built and rendered it - on generated columns of every type and every mix of
-    /// types, for every term of the pool, in a column that is still its own type and in
-    /// one that is now text.
-    ///
-    /// Two hundred seeded rounds. Each draws up to three hundred values of one key from
-    /// one, two or three kinds - one type in one spelling, two that share a piece or take
-    /// one each, three that leave the smaller ones as text - with nulls in a third of the
-    /// rounds, one kind in the majority in half, and in a few a single value of each
-    /// kind, which a writer stores once. It makes them a row group the way the store
-    /// does: lines through the parser, rows through the builder.
-    ///
-    /// The expected side is the scan as it was: the chunk decoded to cells by
-    /// `read::chunk`, each row's cell put in a `Row` with what its line wrote, the row
-    /// rendered, and `value_matches` asked of what it then holds. It touches neither the
-    /// typed decoder nor `Term`. The other side is the typed decoder and `Term`, twice:
-    /// by typed compare (`hits`), and by each row printed and asked (`hits_by_row`).
+    /// What filtering on columns stands on: a term put to a decoded column selects the rows
+    /// `value_matches` selects from rendered rows, over generated columns of every type.
     #[test]
     fn a_term_put_to_a_column_selects_the_rows_value_matches_does() {
         use kibbr_storage::store::columns::{hits, hits_by_row, Sel};
@@ -2741,9 +2265,8 @@ mod tests {
                         rendered.as_ref().unwrap_or(&row).get("v").cloned()
                     })
                     .collect();
-                // `value_matches` runs the ladder on the term's text at every call, and a
-                // round holds a few dozen values over hundreds of rows: it is asked once
-                // for each value that differs, which is all it can tell apart.
+                // `value_matches` runs the ladder on the term's text at every call, so it is asked
+                // once for each value that differs, which is all it can tell apart.
                 let mut distinct: Vec<&ColValue> = Vec::new();
                 let which: Vec<Option<usize>> = seen
                     .iter()
@@ -2799,9 +2322,8 @@ mod tests {
                 }
             }
         }
-        // Not agreement on nothing: a piece of every type matched terms by the thousand,
-        // as its own type and as text; columns of one piece and of two; nulls; and pieces
-        // that are one value stored once.
+        // Not agreement on nothing: a piece of every type matched terms, as its own type and as
+        // text; columns of one piece and of two; nulls; and pieces that are one value stored once.
         let kinds: Vec<&str> = matched.keys().copied().collect();
         assert_eq!(
             kinds,
@@ -2821,11 +2343,8 @@ mod tests {
         assert!(constants > 20, "{constants} constant pieces");
     }
 
-    /// A day of two templates for both stores. One has a time column whose dates come in
-    /// two spellings and as epoch seconds, and are missing from one line in eleven, which
-    /// then goes by its arrival time; a `when` that is a date until a line says `N/A` -
-    /// so it is text by the time anything is asked - and a `status` that is a number, a
-    /// word or a null. The other has no time of its own.
+    /// A day of two templates for both stores: one with a time column in several spellings
+    /// and sometimes missing, a `when` that widens to text and a mixed `status`; one untimed.
     fn two_store_lines() -> Vec<String> {
         two_templates(900, 1)
     }
@@ -2865,9 +2384,8 @@ mod tests {
         out
     }
 
-    /// The lines through `db::ingest_line` into a trie and a store of their own.
-    /// `flush_after`: a tick once that many lines are in, so that a disk store holds the
-    /// lines before it in row groups and the rest in memory.
+    /// The lines through `db::ingest_line` into a trie and a store of their own, with a tick
+    /// after `flush_after` lines so that a disk store holds row groups and rows in memory.
     fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) -> db::Db {
         let schema = kibbr_storage::trie::Schema::default();
         let trie = Trie::new().with_time_columns(schema.time_columns.clone());
@@ -2887,19 +2405,8 @@ mod tests {
         }
     }
 
-    /// **A count, a grouping and a fetch answer from columns what they answer from rows.**
-    ///
-    /// The same lines go into the memory store, which holds rows and asks each rendered
-    /// row its terms, and into a disk store whose row groups close at a hundred and
-    /// twenty-eight rows, flushed two thirds of the way in: so the disk store answers from
-    /// columns for most rows and from rows not yet written for the rest. Every mode is
-    /// asked of both, with terms on a word, on a number in a column that also holds words,
-    /// on a null, on a date by each of its spellings and on a key only one template has,
-    /// with a window and without. What the two answer must be equal: the count, the rows
-    /// and their order, the groups, whether the answer was cut, and the cursor.
-    ///
-    /// A count on disk builds no row and a grouping builds a row of the columns it reads,
-    /// so this is also what holds those two to the whole row the memory store reads.
+    /// A count, a grouping and a fetch answer from columns what they answer from rows: every
+    /// mode is asked of the memory store and of a part-flushed disk store, and must agree.
     #[test]
     fn a_count_a_grouping_and_a_fetch_answer_from_columns_what_they_answer_from_rows() {
         use kibbr_storage::store::{DiskOptions, RowGroupLimits};
@@ -3092,9 +2599,8 @@ mod tests {
     /// in the order it held them, then the rows and the rank to resume after.
     type Page = (Vec<Rank>, Vec<Row>, Option<Rank>);
 
-    /// Rows offered to one heap, each as a template's key, the row's position and time,
-    /// and the row; and how many the fetch refused. With `ask`, the fetch is asked about
-    /// each row first, as a row that lies in its day, and handed it only on a yes.
+    /// Rows offered to one heap, and how many the fetch refused. With `ask`, the fetch is
+    /// asked about each row first, as a row that lies in its day, and handed it only on a yes.
     fn offered(
         rows: &[(u64, u64, Option<i64>, Row)],
         keep: Option<usize>,
@@ -3121,24 +2627,8 @@ mod tests {
         ((held, rows, next), refused)
     }
 
-    /// **Asking first changes no page**, while no two rows carry one `Rank`.
-    ///
-    /// Rows of up to three templates, with few instants among them so that many share a
-    /// time and none shares a whole `Rank`, are offered to a fetch three ways: every row
-    /// handed over; each row asked about first, in the same order; and asked about first
-    /// in a shuffled order. For every limit - none, zero, one, a few, more than there are
-    /// rows, and the greatest a client can write - and from every cursor a page ends on
-    /// or a row could be: the rows and the cursor are the same all three ways.
-    ///
-    /// And in the same order **the heap itself is left the same**, rank for rank and
-    /// place for place. That is the property the fetch leans on once rows can tie: a row
-    /// it refuses is one the heap would have pushed and popped at once, and such a push
-    /// and pop puts every row back where it was. The standard library does not promise
-    /// that; this is where it is held.
-    ///
-    /// It draws no two equal `Rank`s on purpose. With two, which of them is kept depends
-    /// on the order of offers, and the shuffled half would fail for a reason that is no
-    /// defect: that case is the next test's.
+    /// Asking first changes no page, and leaves the heap itself the same, while no two rows
+    /// carry one `Rank` - a property the standard library does not promise and this holds.
     #[test]
     fn a_fetch_asked_first_keeps_the_rows_it_keeps_when_handed_every_row() {
         let (mut pages, mut refused, mut shared) = (0usize, 0usize, 0usize);
@@ -3206,11 +2696,8 @@ mod tests {
         );
     }
 
-    /// One day of one template in a model of a store that keeps days: the day, the
-    /// newest time stored in it, and its rows in storage order, each with the time the
-    /// row shows when it is read. That time is the row's stored time in a healthy store,
-    /// and can be no time or another day's where a store is read otherwise than it was
-    /// written.
+    /// One day of one template in a model of a store that keeps days: the newest time stored
+    /// in it, and its rows in storage order with the time each shows when read.
     struct ModelDay {
         day: i64,
         newest: Option<i64>,
@@ -3229,11 +2716,8 @@ mod tests {
         AskedAsIfPlaced,
     }
 
-    /// One page of a fetch over the model, driven as a disk leaf drives its visitor: a
-    /// leaf after a leaf, each asked once whether it wants to be asked first; its days
-    /// newest first, each offered through `wants_partition` and, when declined, skipped -
-    /// or read all the same under `reads_declined`, as a day is that has a term to ask;
-    /// its rows first to last, each at its position in its day.
+    /// One page of a fetch over the model, driven as a disk leaf drives its visitor; a day
+    /// declined by `wants_partition` is skipped, or read all the same under `reads_declined`.
     fn page_of(
         leaves: &[(u64, Vec<ModelDay>)],
         keep: Option<usize>,
@@ -3319,26 +2803,8 @@ mod tests {
         }
     }
 
-    /// **Asking first changes no page when rows tie either**, because the fetch stops
-    /// asking at the first row whose time is not in its day.
-    ///
-    /// Two rows of one template carry one `Rank` only when they hold one position in two
-    /// different days and show one time, so that one of them shows a time that is not in
-    /// the day it is stored under - which a store written and read under one setting
-    /// never holds, and one read under a narrower epoch window can. Which of two such
-    /// rows a page serves is then decided by where the heap's equal rows happen to lie,
-    /// and that is moved by every push, one that is popped at once among them.
-    ///
-    /// So over a model of such a store - up to three templates, up to three days each,
-    /// rows of few instants, and in half the sets rows that show no time or another
-    /// day's - every page is followed to the end through its cursors with every row
-    /// handed over, and again with each row asked about first. **The heap, the rows and
-    /// the cursor of every page are equal.** The third run asks first without looking at
-    /// whether a row is in its day, and its pages are not equal: that is what the look
-    /// is for, and what makes the equality above more than agreement on nothing.
-    ///
-    /// The four rows written out first are the smallest case there is: two days of two
-    /// rows that show no time, behind one row that shows its own.
+    /// Asking first changes no page when rows tie either, because the fetch stops asking at
+    /// the first row whose time is not in its day; the third run does not look, and differs.
     #[test]
     fn a_fetch_stops_asking_at_the_first_row_that_is_not_in_its_day() {
         let none = |_: i64| None;
@@ -3428,9 +2894,8 @@ mod tests {
                 }
             }
         }
-        // Thousands of pages, hundreds of sets with tied rows; pages that move when the
-        // fetch does not look, and none of them in a store whose rows are all in their
-        // days.
+        // Not agreement on nothing: sets with tied rows, pages that move when the fetch does not
+        // look, and none of them in a store whose rows are all in their days.
         assert!(pages > 20_000 && tied_sets > 300, "{pages} {tied_sets}");
         assert!(moved > 20 && moved_healthy == 0, "{moved} {moved_healthy}");
     }
@@ -3456,10 +2921,8 @@ mod tests {
         }
     }
 
-    /// Rows as an answer shows them: each key under the name it is shown by, with the
-    /// JSON its line wrote. A disk row holds a null arrival time where its row group has
-    /// that column for another row's sake, and an answer leaves it out; so two stores'
-    /// rows are compared as they are shown and not as they are held.
+    /// Rows as an answer shows them: a disk row can hold a null arrival time an answer leaves
+    /// out, so two stores' rows are compared as they are shown and not as they are held.
     fn shown(rows: &[Row]) -> Vec<BTreeMap<String, Option<serde_json::Value>>> {
         rows.iter()
             .map(|row| {
@@ -3471,9 +2934,8 @@ mod tests {
             .collect()
     }
 
-    /// Every page of a fetch, first to last, each asked with the cursor the one before
-    /// ended on. `limit` is the caller's and `max_rows` the server's backstop; `run`
-    /// answers one query.
+    /// Every page of a fetch, first to last, each asked with the cursor the one before ended
+    /// on. `limit` is the caller's and `max_rows` the server's backstop.
     fn pages(
         db: &db::Db,
         pattern: &[Match],
@@ -3541,21 +3003,8 @@ mod tests {
         execute(&db.trie, &db.stores, q).expect("the query answers")
     }
 
-    /// **A fetch pages through columns as it pages through rows.**
-    ///
-    /// The same lines in the memory store and in a disk store whose row groups close at
-    /// sixty-four rows, flushed two thirds of the way in. Every four lines of the timed
-    /// template share one second, and the lines of the other share their arrival time,
-    /// so most rows are told from their neighbours by position alone: a position counted
-    /// wrong across a row group's end, or across the stored rows' end, would hand a page
-    /// the wrong one of them.
-    ///
-    /// The memory store is handed every row and is never asked about one. The disk store
-    /// asks before it builds a row, in row groups and in memory. Each fetch is followed
-    /// to its last page in both - with a limit of none of the rows, one, two, seven, more
-    /// than there are, and with no limit under the server's own - and page for page the
-    /// rows, the count, whether the page was cut and the cursor are equal. And over the
-    /// pages of one fetch every row that matched is served once.
+    /// A fetch pages through columns as it pages through rows: most rows here are told apart
+    /// by position alone, so a position counted wrong across a row group's end shows up.
     #[test]
     fn a_fetch_pages_through_columns_as_it_pages_through_rows() {
         use kibbr_storage::store::{DiskOptions, RowGroupLimits};
@@ -3650,28 +3099,8 @@ mod tests {
         }
     }
 
-    /// **Rows that tie across two days page as they did before a store could ask.**
-    ///
-    /// The state in which two rows carry one `Rank`, made in one process. A template
-    /// whose time column has become text is given, by hand, three rows in each of two
-    /// days whose time is an instant and whose line is said to have written it as ten
-    /// digits the ladder does not read as one: seconds of the year 2112, past the epoch
-    /// window. So each is filed under the day of its instant and, in a column that shows
-    /// a date as the text it arrived as, shows no time; and the rows at one position of
-    /// the two days are one `Rank`. It is what ten digits stored as an instant become
-    /// when a later process reads them under a narrower window. Around them are rows that
-    /// are in their days: a newer day, read first, an older one, and a second template.
-    ///
-    /// With the rows in memory, and again with them written to row groups - where the
-    /// writer keeps each as the instant and its digits - a fetch of one, two and three
-    /// rows a page, with a term and with none, is followed to its end as the engine runs
-    /// it and as it ran before a store could ask: a heap that is offered every row. Page
-    /// for page they are equal.
-    ///
-    /// And driven directly, the first template's scan is asked first, refuses rows of
-    /// its newest day, is told of a row that is not in its day, and from that row on
-    /// refuses nothing; and the second template's scan, which comes after it, is not
-    /// asked first at all. One row out of its day turns the asking off for the query.
+    /// Rows that tie across two days page the same whether or not a store asks first: one
+    /// row out of its day turns the asking off for the rest of the query.
     #[test]
     fn rows_that_tie_across_two_days_page_as_they_did_before_a_store_could_ask() {
         use kibbr_storage::store::{DiskOptions, FlushKind};
@@ -3733,9 +3162,8 @@ mod tests {
         );
         assert!(!tied.residual.is_empty() && !other.residual.is_empty());
 
-        // By hand, into the first template: a row stored under the day of its instant,
-        // in a column that shows it as the digits it is said to have arrived as. Two
-        // days of August 2112, ten hours into each.
+        // By hand, into the first template: a row stored under the day of its instant, in a
+        // column that shows it as the digits it is said to have arrived as.
         let adrift_days = [52_083i64, 52_084];
         let adrift_at = |day: i64, k: i64| day * DAY + 36_000 + k;
         for day in adrift_days {
@@ -3871,14 +3299,8 @@ mod tests {
 
     // ── A scan shared between threads ──────────────────────────────────────────────
 
-    /// Three templates over two days for a store whose row groups close at two rows:
-    /// the lines to write out, seven row groups a template and day, and the lines to
-    /// hold in memory behind them afterwards.
-    ///
-    /// Two templates are timed, and written at the same seconds as each other, two lines
-    /// to a second: rows a time cannot tell apart, in one leaf and across two. The third
-    /// is the one of `rows_that_tie_across_two_days_page_as_they_did_before_a_store_could_ask`:
-    /// its time column is text, and `adrift` goes into it by hand.
+    /// Three templates over two days for a store whose row groups close at two rows. Two are
+    /// timed and tie on their seconds; the third's time column is text and takes `adrift`.
     fn three_templates() -> (Vec<String>, Vec<String>) {
         let mut rng = Rng::new(31);
         let mut line = |day: i64, n: i64| {
@@ -3905,9 +3327,8 @@ mod tests {
                 in_memory.extend(line(day, n));
             }
         }
-        // The third template after the other two, so that a query reads it last: the
-        // first of its rows that is not in its day ends the asking for the rest of a
-        // fetch, and a scan that is not asked first has nothing to share out.
+        // The third template after the other two, so that a query reads it last: its first row
+        // out of its day ends the asking for the rest of a fetch.
         stored.push(r#"{"ts":"2024-01-15T10:00:00Z","v":"old"}"#.to_string());
         // What makes its time column text.
         stored.push(r#"{"ts":"N/A","v":"undated"}"#.to_string());
@@ -3921,10 +3342,8 @@ mod tests {
         (stored, in_memory)
     }
 
-    /// Into the template whose time column is text, by hand: five rows in each of two
-    /// days of 2112 whose time is an instant and whose line is said to have written it
-    /// as ten digits the ladder does not read as one. Each shows no time, so the rows at
-    /// one position of the two days are one `Rank`.
+    /// Into the template whose time column is text, by hand: rows in two days of 2112 that
+    /// show no time, so the rows at one position of the two days are one `Rank`.
     fn adrift(stores: &StoreManager, template_id: u64) {
         for day in [52_083i64, 52_084] {
             for k in 0..5 {
@@ -3968,9 +3387,8 @@ mod tests {
         )
     }
 
-    /// A directory another store wrote, opened again: the templates of `known` learnt
-    /// without a row of them stored, every template's leaf opened on the row groups the
-    /// directory holds, and then `in_memory` ingested and left unwritten.
+    /// A directory another store wrote, opened again: the templates of `known` learnt, every
+    /// leaf opened on the row groups it holds, and `in_memory` ingested and left unwritten.
     fn reopened(
         dir: &Scratch,
         options: kibbr_storage::store::DiskOptions,
@@ -4020,25 +3438,8 @@ mod tests {
         )
     }
 
-    /// **The same questions two hundred times, with every scan shared between threads:
-    /// one answer, and one set of counters.**
-    ///
-    /// One directory - three templates, two days, seven row groups a template and day,
-    /// and rows of one `Rank` in two days of the third - is opened twice with the same
-    /// rows put in memory behind what it holds: once by a store with no scan threads,
-    /// and once by a store that shares every run of two row groups between four. Each
-    /// question is asked of the first once, and of the second two hundred times: a
-    /// count, a count under a window that prunes, a count by a term; a fetch a row a
-    /// page, five rows a page and at the server's own page size, each followed by its
-    /// cursor to its last page, open and through the rows that tie; a grouping by a
-    /// column and by the hour and a column; and whether a row exists, in a window that
-    /// has one and in one that has none.
-    ///
-    /// Every answer of the second must be the first's whole, but for how long it took:
-    /// whether a template exists, the count, the rows in their order, the groups in
-    /// theirs, the templates, whether it was cut, the cursor, and all seven counters.
-    /// Which thread chose a row group's rows, and which finished first, is different
-    /// from one of the two hundred to the next, and nothing a caller can read may be.
+    /// The same questions two hundred times with every scan shared between threads: one
+    /// answer and one set of counters, whichever thread chose a row group's rows.
     #[test]
     fn the_same_questions_answer_the_same_every_time_with_their_scans_shared_out() {
         use kibbr_storage::store::{DiskOptions, FlushKind, RowGroupLimits};
@@ -4218,9 +3619,8 @@ mod tests {
                 each_time = Some(shared_out / (time + 1));
             }
             let each_time = each_time.take().expect("asked at least once");
-            // Not agreement between two scans in turn: runs of row groups were shared
-            // out for every question but the count of every row, which decodes nothing,
-            // and the two that stop at their first row.
+            // Not agreement between two scans in turn: runs of row groups were shared out for every
+            // question but the count of every row and the two that stop at their first row.
             let in_turn_only = *said == "a count" || said.starts_with("whether");
             assert_eq!(each_time == 0, in_turn_only, "{said}: {each_time}");
             // And not agreement on nothing.
@@ -4245,9 +3645,8 @@ mod tests {
                     assert!(first.len() > 20, "{} pages", first.len());
                 }
                 "a fetch through the rows that tie, a row a page" => {
-                    // A cursor cannot stand between two rows of one `Rank`: a page that
-                    // ends on one of a pair is followed by the page after both. So the
-                    // nineteen rows are fewer pages than rows, here as in turn.
+                    // A cursor cannot stand between two rows of one `Rank`: a page that ends on one
+                    // of a pair is followed by the page after both, so there are fewer pages than rows.
                     assert_eq!(first[0].count, 19);
                     assert!(first.len() < 19, "{} pages", first.len());
                     let tied = first
@@ -4269,9 +3668,8 @@ mod tests {
             }
         }
 
-        // The rows that tie were themselves read shared out, and are still told apart
-        // from rows in their days: driven by hand, the scan of their template shares its
-        // runs out, and asks about each position of the two days twice with no time.
+        // The rows that tie were themselves read shared out, and are still told apart from rows
+        // in their days: the scan asks about each position of the two days twice with no time.
         let leaves = plan(
             &shared.trie,
             &asking(&[any("v")], QueryMode::Fetch, (None, None)),
@@ -4354,10 +3752,8 @@ mod tests {
         Ok((id, is_new))
     }
 
-    /// One pattern planned from the index and by the walk, and the two held equal: the
-    /// same leaves in the same order, each the same template with the same terms left to
-    /// the scan, and the same count of skipped root subtrees. The index's plan is handed
-    /// back.
+    /// One pattern planned from the index and by the walk, and the two held equal: leaves,
+    /// order, residual terms and the count of skipped root subtrees. Hands back the index's.
     fn both(trie: &Trie, terms: &[Match]) -> Plan {
         let q = counting(terms);
         let indexed = plan(trie, &q);
@@ -4408,12 +3804,8 @@ mod tests {
         Trie::from_catalog("data", records, &mut |_| {}).expect("the records replay")
     }
 
-    /// A line holding `event` and the literal key its promoted token is spelled as: the
-    /// label `event=login` is then one of the leaf's own columns, so the path settles
-    /// nothing and a term on `event` is the scan's. The leaf's own filter would keep it
-    /// for any value of `event`; the root filter never opens it for another value, and
-    /// neither does the plan. Asked for its own value or for any, it is planned with the
-    /// term left to the scan.
+    /// A line holding `event` and the literal key its promoted token is spelled as: the path
+    /// settles nothing, and neither the root filter nor the plan opens it for another value.
     #[test]
     fn a_template_under_a_root_edge_of_another_value_is_not_planned() {
         let trie = Trie::new();
@@ -4438,9 +3830,8 @@ mod tests {
         assert_eq!(planned.skipped, 1);
     }
 
-    /// The same leaf as a build from before `=` was escaped in a key's token left it, and
-    /// as a replay brings it back: one label, `event=login`, and the columns `event` and
-    /// `event=login`.
+    /// The same leaf as a replay of an old catalog brings it back: one label, `event=login`,
+    /// and the columns `event` and `event=login`.
     #[test]
     fn a_replayed_leaf_whose_label_is_its_column_is_not_planned_for_another_value() {
         let trie = replayed(&[
@@ -4459,11 +3850,8 @@ mod tests {
         assert_eq!(planned.leaves[0].residual, [term]);
     }
 
-    /// A path no build writes and a replay accepts: two promoted tokens of one key. The
-    /// path's last token speaks for the key, and the root's edge is the first, so an
-    /// exact term plans the template for neither value - for the second the root edge is
-    /// another value's, for the first the leaf holds the second. Odd, and the walk's
-    /// answer; a plan read from the index gives it too.
+    /// A path no build writes and a replay accepts: two promoted tokens of one key. An exact
+    /// term plans the template for neither value - the walk's answer, and the index's too.
     #[test]
     fn a_replayed_path_with_two_values_of_one_key_is_planned_for_neither() {
         let trie = replayed(&[
@@ -4490,10 +3878,8 @@ mod tests {
         assert!(any.leaves[0].residual.is_empty());
     }
 
-    /// A line refused after its nodes were made leaves a root edge with no template under
-    /// it. A walk counts that edge among the subtrees it skips, so the plan does: the
-    /// count is read at the root, and the index, which never heard of the line, could not
-    /// give it.
+    /// A line refused after its nodes were made leaves a root edge with no template under it,
+    /// which a walk counts as skipped - so the plan reads the count at the root.
     #[test]
     fn a_refused_lines_root_edge_is_counted_as_skipped() {
         let trie = Trie::new();
@@ -4541,9 +3927,8 @@ mod tests {
         assert_eq!(before.leaves[0].template.text_columns, ["event"]);
     }
 
-    /// A column added to a leaf that exists is a key its template is planned by from then
-    /// on. The leaf is one from before `=` was escaped: its label reads as a promoted
-    /// `event` and its one column is the literal key, until a line with `event` reaches it.
+    /// A column added to a leaf that exists is a key its template is planned by from then on.
+    /// The leaf is an old one whose label reads as a promoted `event` but is a literal key.
     #[test]
     fn a_column_added_to_a_leaf_is_a_key_its_template_is_planned_by() {
         let trie = replayed(&[
@@ -4562,11 +3947,8 @@ mod tests {
         assert_eq!(trie.keys_agree(), Ok(()));
     }
 
-    /// A column added to a leaf can be the key its path holds a value for, and the path
-    /// then settles that key where it settled nothing before: a template whose record
-    /// reached the catalog without that key's column record, and then a line of it. The
-    /// template is made again whole, so a term on the key is answered by the path from
-    /// then on and is not left to the scan.
+    /// A column added to a leaf can be the key its path holds a value for: the template is
+    /// made again whole, so the path answers a term on the key from then on.
     #[test]
     fn a_column_added_to_a_leaf_can_be_one_its_path_settles() {
         let trie = replayed(&[
@@ -4612,9 +3994,8 @@ mod tests {
         assert!(both(&trie, &[wants("event", "login")]).leaves.is_empty());
     }
 
-    /// The shapes a pattern takes, on one small trie: several terms, one key twice, a
-    /// wildcard, a key no template has alone and beside a key some have, and a promoted
-    /// key asked for a value no template holds.
+    /// The shapes a pattern takes, on one small trie: several terms, one key twice, a wildcard,
+    /// a key no template has, and a promoted key asked for a value no template holds.
     #[test]
     fn the_shapes_of_a_pattern_plan_as_the_walk_plans_them() {
         let trie = Trie::new();
@@ -4628,9 +4009,8 @@ mod tests {
             taken(&trie, text).expect("a new template");
         }
 
-        // The shorter list is read and the other merged against it. The path of the
-        // first settles `event`; the last holds its `event` in its rows, so both terms
-        // are the scan's there.
+        // The shorter list is read and the other merged against it. The first's path settles
+        // `event`; the last holds its `event` in its rows, so both terms are the scan's there.
         let terms = [wants("level", "error"), wants("event", "login")];
         let planned = both(&trie, &terms);
         assert_eq!(ids_of(&planned), [101, 105]);
@@ -4669,9 +4049,8 @@ mod tests {
         assert_eq!(none.skipped, 2);
     }
 
-    /// What `event` is given in a generated line, as JSON: words that are promoted into
-    /// the path, and values that are not - a number, a word with a space, forty-one
-    /// bytes, the empty string, null.
+    /// What `event` is given in a generated line, as JSON: words that are promoted into the
+    /// path, and values that are not.
     const EVENT_VALUES: [&str; 9] = [
         r#""login""#,
         r#""logout""#,
@@ -4684,18 +4063,8 @@ mod tests {
         "null",
     ];
 
-    /// One generated line, and the values its `event`s took added to `seen`.
-    ///
-    /// Member names from a small alphabet, so that key sets overlap from line to line,
-    /// with the spellings a key index could get wrong in it: `a` and `x` hold a nested
-    /// `event`, which is promoted as `event` is; `a=b`, `event=x`, `event=login` and
-    /// `event=` read as promoted tokens and are keys; `a.b` and `k\` are escaped when
-    /// rendered; and the empty name. The other values widen a column from line to line:
-    /// a number then a word, a null then a value.
-    ///
-    /// **And the line the walk's two filters differ on, made on purpose**: for a share of
-    /// the lines with an `event`, whatever value it took, the line also holds the literal
-    /// key `event=<that value>`. Its promoted label is then one of its own columns.
+    /// One generated line, with the values its `event`s took added to `seen`. Key sets overlap,
+    /// and some lines hold the literal key `event=<value>` the walk's two filters differ on.
     fn generated_line(rng: &mut Rng, seen: &mut Vec<String>) -> String {
         const NAMES: [&str; 14] = [
             "event",
@@ -4748,11 +4117,8 @@ mod tests {
         format!("{{{}}}", members.join(","))
     }
 
-    /// Catalog records for one to four templates, including what `ingest` never writes
-    /// and a replay accepts: a label that is also a column, two promoted tokens of one
-    /// key on one path, tokens out of walk order, a column that is not on the path, a
-    /// template with no column record, a second record under one id, and a second
-    /// template on one path (two templates of no tokens are both the root).
+    /// Catalog records for one to four templates, including what `ingest` never writes and a
+    /// replay accepts: a label that is also a column, two promoted tokens of one key, and more.
     fn generated_records(rng: &mut Rng) -> Vec<kibbr_storage::catalog::Record> {
         use kibbr_storage::catalog::Token;
         const KEYS: [&str; 10] = [
@@ -4813,13 +4179,8 @@ mod tests {
         out
     }
 
-    /// A pattern of no term to three, and now and then one key twice. Half the keys are
-    /// columns the trie holds, so that most patterns reach a template; the rest are from
-    /// a list as a query spells a column, most of them `event`'s, with some no line
-    /// renders and one no template has. A term asks for any value, for a value some
-    /// line's `event` took - some *other* line's, as often as not, which is what finds a
-    /// template under a root edge of another value - or for a value from a list no path
-    /// need hold.
+    /// A pattern of no term to three. Half the keys are columns the trie holds, and a value is
+    /// often some *other* line's `event`, which finds a template under another root edge.
     fn generated_pattern(rng: &mut Rng, held: &[String], seen: &[String]) -> Vec<Match> {
         const KEYS: [&str; 18] = [
             "event",
@@ -4870,15 +4231,8 @@ mod tests {
         terms
     }
 
-    /// Generated tries, built every way a trie is built, with four generated patterns put
-    /// to each after every line and every record: `ask` is handed the trie and the
-    /// pattern.
-    ///
-    /// Lines through `Trie::ingest`; that trie replayed from its own catalog records; on
-    /// one seed in four, that trie saved and read back as a `trie.json`, which is the
-    /// only way to `Trie::restored` (each save is two fsyncs, so not on every seed); and
-    /// generated records through `Trie::from_catalog`, replayed again from the start for
-    /// each record added.
+    /// Generated tries, built every way a trie is built - ingest, replay, `trie.json`, and
+    /// catalog records - with four generated patterns put to each after every line and record.
     fn over_generated_tries(name: &str, seeds: u64, mut ask: impl FnMut(&Trie, &Query)) {
         let now = chrono::Utc::now();
         let dir =
@@ -4928,11 +4282,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// **The plan read from the key index is the plan the walk makes**: the same leaves
-    /// in the same order - each the same template, path, time column and text columns,
-    /// with the same terms left to the scan - and the same count of skipped root
-    /// subtrees. On generated tries after every line and record, with the index itself
-    /// held to the nodes at each.
+    /// The plan read from the key index is the plan the walk makes, on generated tries after
+    /// every line and record, with the index itself held to the nodes at each.
     #[test]
     fn the_plan_read_from_the_index_is_the_walks_plan_on_generated_tries() {
         let (mut asked, mut chose, mut skipped, mut scanned) = (0u64, 0u64, 0u64, 0u64);
@@ -4960,11 +4311,8 @@ mod tests {
         );
     }
 
-    /// The generator above is what holds the root filter in the plan, and it holds it
-    /// only while it goes on making the tries the walk's two filters differ on. So the
-    /// same tries and patterns are put to the choice with the root filter left out, and
-    /// that has to differ from the walk somewhere - by planning templates the walk never
-    /// opens. If a change to the generator loses those tries, this is the test that fails.
+    /// Holds the generator to making tries the walk's two filters differ on: the choice with
+    /// the root filter left out has to differ from the walk somewhere.
     #[test]
     fn the_generated_tries_tell_a_plan_without_the_root_filter_from_the_walk() {
         let (mut asked, mut differs) = (0u64, 0u64);
@@ -4990,17 +4338,8 @@ mod tests {
         );
     }
 
-    /// One thread ingests - new templates, widenings, and new values of `event`, each a
-    /// new root edge - while two plan beside it, each plan made from the index and by the
-    /// walk.
-    ///
-    /// The two are compared only on what the writer did not move in between, and each
-    /// half by what moves it: the leaves when the index took no `put` from before the
-    /// first plan to after the second, the count of skipped root subtrees when the root
-    /// has the edges it had. Both comparisons have to have been made, so the test cannot
-    /// pass by never comparing. And always: a plan's ids ascend, the empty pattern never
-    /// loses a template it planned before, and the writer finds each template it has just
-    /// made in the next plan it asks for.
+    /// One thread ingests while two plan beside it, from the index and by the walk; the two
+    /// are compared only on what the writer did not move, and both comparisons must be made.
     #[test]
     fn plans_made_beside_inserts_are_the_walks_plans() {
         use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -5025,10 +4364,8 @@ mod tests {
                 let _done = Done(&done);
                 let mut rng = Rng::new(21);
                 for n in 0..600u64 {
-                    // More values of `event` as it goes, so new root edges keep coming; a
-                    // field from a small set, so new templates come under old edges too;
-                    // and `n` a number in most lines and a word in some, so a template
-                    // made with the number widens on the word.
+                    // More values of `event` so new root edges keep coming, a small-set field so new
+                    // templates come under old edges, and `n` sometimes a word so a template widens.
                     let event = rng.below(1 + n / 8);
                     let field = rng.below(6);
                     let number = if rng.chance(20) { r#""word""# } else { "7" };
@@ -5076,9 +4413,8 @@ mod tests {
                         let finished = done.load(Ordering::Acquire);
                         for terms in &patterns {
                             let q = counting(terms);
-                            // Two statements, the root first: the index's guard lives to
-                            // the end of the statement that took it, and no node's lock is
-                            // waited for while it is held.
+                            // Two statements, the root first: the index's guard lives to the end of its
+                            // statement, and no node's lock is waited for while it is held.
                             let edges = root_edges(&trie);
                             let edits = trie.keys().edits();
                             let indexed = plan(&trie, &q);
@@ -5151,10 +4487,8 @@ mod tests {
         plan(trie, &query)
     }
 
-    /// The trie's write rule, as a plan sees it: a template whose record the catalog
-    /// refused is nowhere a plan looks, and a widening it refused leaves the plan the
-    /// columns as they were. The trie's own half of this is
-    /// `trie::tests::a_failed_append_creates_no_template`.
+    /// The trie's write rule, as a plan sees it: a template the catalog refused is not
+    /// planned, and a refused widening leaves the plan the columns as they were.
     #[test]
     fn a_plan_holds_nothing_the_catalog_refused() {
         use kibbr_storage::catalog::{self, Catalog};
@@ -5194,9 +4528,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A poisoned key index still answers plans: a template taken through the poisoned
-    /// lock is planned, and a widening of it shows in the next plan. The trie's own half
-    /// is `trie::tests::a_poisoned_key_index_still_takes_templates_and_answers_plans`.
+    /// A poisoned key index still answers plans: a template taken through the poisoned lock
+    /// is planned, and a widening of it shows in the next plan.
     #[test]
     fn a_plan_reads_through_a_poisoned_key_index() {
         let parsed =

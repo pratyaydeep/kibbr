@@ -4,19 +4,12 @@
 /// Default page size for an unlimited `MATCH`.
 pub const DEFAULT_MAX_ROWS: usize = 10_000;
 
-/// Default ceiling on the buckets a `GROUP BY time(...)` may emit.
-///
-/// `SINCE 30d GROUP BY time(1s)` is 2.6M buckets. The query is refused rather than
-/// truncated: a chart missing its tail looks like data, where a refusal looks like a
-/// refusal.
+/// Default ceiling on the buckets a `GROUP BY time(...)` may emit; past it the query is
+/// refused, not truncated, because a chart missing its tail looks like data.
 pub const DEFAULT_MAX_BUCKETS: usize = 10_000;
 
-/// Default ceiling on the groups a bucketed `GROUP BY` may emit.
-///
-/// A second key multiplies the bucket count by the number of distinct labels it has, so
-/// the bucket cap alone does not bound the answer: 10,000 buckets against 800 hosts is
-/// 8,000,000 groups. Only bucketed grouping is measured against this - a plain
-/// `GROUP BY user_id` emits one row per user and always did.
+/// Default ceiling on the groups a bucketed `GROUP BY` may emit, since a second key
+/// multiplies the bucket count by its distinct labels.
 pub const DEFAULT_MAX_GROUPS: usize = 100_000;
 
 /// What a query may not exceed, carried on the `Query` itself so the engine reads the

@@ -1,46 +1,8 @@
 //! TrieQL: a query string in, the `Query` the engine already executes out.
 //!
-//! The grammar below and nothing else: no operators, no boolean combinators, no ORDER BY.
-//! Adding any of them is a decision in its own right, not a convenience to be smuggled in
-//! here.
-//!
-//! ```text
-//! query        = verb "LOG" json_pattern time_clause? group_clause? limit_clause? after_clause?
-//! verb         = "MATCH" | "COUNT"
-//! json_pattern = "{" (pair ("," pair)*)? "}"
-//! pair         = string ":" (string | "*")
-//! time_clause  = "SINCE" duration | "BETWEEN" datetime "AND" datetime
-//! group_clause = "GROUP" "BY" group_key ("," group_key)*
-//! group_key    = key | "time" "(" duration ")"
-//! limit_clause = "LIMIT" number
-//! after_clause = "AFTER" string
-//! duration     = number ("s" | "m" | "h" | "d")
-//! ```
-//!
-//! `limit_clause` and `after_clause` were added deliberately. `ScanOptions` has a `limit`
-//! that nothing in the grammar could reach, and a limit with no way to ask for the next
-//! page is a way of hiding rows rather than of paging them. The two arrived together for
-//! that reason.
-//!
-//! Still no ORDER BY: the order is fixed at newest-first (`engine::Rank`), and a LIMIT with
-//! no defined order would have been the worse half to add first. Still no OFFSET either -
-//! `AFTER` is the keyset form, and the reasoning is on `engine::Cursor`.
-//!
-//! `time(...)` buckets the answer by the timestamp instead of by a column, and is the one
-//! group key that is computed rather than read. It takes the same `duration` `SINCE` does,
-//! parsed by the same function: `SINCE 5m` and `time(5m)` reading differently would be the
-//! drift `scripts/check/parser_equivalence.sh` exists to prevent.
-//!
-//! `key` and `datetime` are left unspelled above: both are a bare run of characters, or
-//! the same text quoted. Keywords ignore case; the duration's unit does not, because the
-//! grammar spells it out and `--since` reads it the same way.
-//!
-//! No verb reaches `QueryMode::Exists` - the grammar has two and neither is it, so the
-//! flag stays the only way to ask. That gap is the grammar's, not this file's to close.
-//!
-//! Nothing here may panic. Every offset comes out of `char_indices`, so no index lands
-//! inside a character; no production recurses, so no input is deep enough to reach the
-//! stack.
+//! The TrieQL grammar and nothing else; adding an operator is a decision in its own right.
+//! Nothing here may panic: every offset comes out of `char_indices` and no production
+//! recurses.
 
 use std::time::{Duration, SystemTime};
 
@@ -57,11 +19,10 @@ pub struct Parsed {
     pub matches: Vec<Match>,
     pub mode: QueryMode,
     pub time: TimeRange,
-    /// `None` = no `LIMIT` clause, which is every matching row. Not 0-for-absent: `LIMIT 0`
-    /// is a thing a user can write, and it has to mean "no rows" rather than "no limit".
+    /// `None` = no `LIMIT` clause, because `LIMIT 0` is writable and has to mean "no rows".
     pub limit: Option<usize>,
-    /// The `AFTER` cursor, still text. Decoded by `query::build`, which is where the
-    /// `Query` it has to be checked against exists.
+    /// The `AFTER` cursor, still text: `query::build` decodes it, where the `Query` it is
+    /// checked against exists.
     pub after: Option<String>,
 }
 
@@ -102,12 +63,7 @@ struct Token {
 }
 
 /// Characters that end a bare word. `:` is absent on purpose: an RFC 3339 datetime is one
-/// word and holds two of them, and no production needs a colon to end a word - the key
-/// before the colon in a pair is a quoted string, which ends at its own closing quote.
-///
-/// The parentheses joined it with `time(...)`. Nothing else in the grammar spells one - a
-/// datetime cannot hold one and a duration cannot - and a group key that does can still be
-/// written quoted, which is the escape the `key` production already had.
+/// word and holds two of them.
 const DELIMS: [char; 7] = ['{', '}', '(', ')', ',', '"', '*'];
 
 fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
@@ -350,9 +306,8 @@ impl<'a> Parser<'a> {
         loop {
             let at = self.pos();
             let key = self.group_key()?;
-            // Two time axes is well-formed under the grammar and means nothing: the
-            // buckets of the second would nest inside the first, and the zero-fill has one
-            // axis to fill. Refused here rather than answered with something plausible.
+            // Two time axes is well-formed under the grammar and means nothing: the zero-fill has
+            // one axis to fill.
             if matches!(key, GroupKey::Time(_))
                 && keys.iter().any(|k| matches!(k, GroupKey::Time(_)))
             {
@@ -365,12 +320,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `key | "time" "(" duration ")"`.
-    ///
-    /// The bucket is a bare `time` *followed by a parenthesis*, and nothing else. A quoted
-    /// `"time"` is the column of that name, and so is a bare one with no `(` after it -
-    /// the grammar lists two alternatives, so they stay two things, exactly as `*` and
-    /// `"*"` do in `pair`.
+    /// The bucket is a bare `time` followed by a parenthesis; a quoted `"time"`, or a bare
+    /// one with no `(`, is the column of that name.
     fn group_key(&mut self) -> Result<GroupKey, ParseError> {
         let is_bucket = matches!(self.peek(), Tok::Word(w) if w.eq_ignore_ascii_case("time"))
             && self.peek_at(1) == &Tok::LParen;
@@ -408,12 +359,8 @@ impl<'a> Parser<'a> {
             .map_err(|_| ParseError::new(self.src, pos, Kind::BadLimit))
     }
 
-    /// `"AFTER" string`. Last, because it is the one clause whose operand came out of a
-    /// previous answer rather than out of the writer's head.
-    ///
-    /// The cursor is only shape-checked here - `engine::Cursor::decode` says whether it is
-    /// a cursor at all. Whether it is a cursor for *this* query is `Cursor::check`, and
-    /// that needs the built `Query`, which does not exist yet.
+    /// `"AFTER" string`. Only shape-checked here: whether it is a cursor for *this* query is
+    /// `Cursor::check`, which needs the built `Query`.
     fn after_clause(&mut self) -> Result<Option<String>, ParseError> {
         if !self.eat_keyword("AFTER") {
             return Ok(None);
@@ -551,12 +498,8 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// `number ("s" | "m" | "h" | "d")`.
-///
-/// The unit is case-sensitive where the keywords are not. It is not a keyword: it is the
-/// tail of a literal, the grammar spells it in lower case, and `--since` on the flag
-/// surface reads it the same way - two surfaces that answer differently is the one thing
-/// `scripts/check/parser_equivalence.sh` exists to prevent.
+/// The unit is case-sensitive where the keywords are not: it is the tail of a literal, and
+/// `--since` reads it the same way (`scripts/check/parser_equivalence.sh`).
 fn duration(src: &str, text: &str, pos: usize) -> Result<Duration, ParseError> {
     let bad = || ParseError::new(src, pos, Kind::BadDuration);
     // By character, not by `len() - 1`: `len` is bytes, and an index inside a multibyte
@@ -605,13 +548,8 @@ fn clip(s: &str) -> String {
     out
 }
 
-/// How a character that does not render is written instead, or `None` for one that does.
-///
-/// Without this a leading BOM comes back as `expected \`MATCH\` or \`COUNT\`, found
-/// \`COUNT\`` - the parser quoting the writer's own word back at them as the thing that
-/// was wrong with it. The same goes for a NUL, a zero-width space, or a bidi override.
-/// The three that ordinary text holds stay one column wide, because the caret below the
-/// excerpt has to line up with what is printed above it.
+/// How a character that does not render is written instead, so a leading BOM is not quoted
+/// back as a word that looks correct; `\n`, `\r` and `\t` stay one column for the caret.
 fn visible(c: char) -> Option<String> {
     match c {
         '\n' | '\r' | '\t' => Some(" ".to_string()),
@@ -654,11 +592,8 @@ pub enum Kind {
     TwoTimeBuckets,
 }
 
-/// A parse failure and where in the query it was.
-///
-/// `pos` is a byte offset in `0..=src.len()`; the one-past-the-end value is "at the end of
-/// the query", which is where an input that simply stopped early failed. The excerpt is
-/// cut at construction rather than holding the query, because the query may be a megabyte.
+/// A parse failure and the byte offset in `0..=src.len()` it was at; the excerpt is cut at
+/// construction because the query may be a megabyte.
 #[derive(Debug)]
 pub struct ParseError {
     pub pos: usize,
@@ -671,18 +606,15 @@ pub struct ParseError {
 impl ParseError {
     fn new(src: &str, pos: usize, kind: Kind) -> Self {
         const WINDOW: usize = 36;
-        // Every caller passes an offset off a token, so every one is already a character
-        // boundary. Clamped anyway: the slicing below is the one place in this file that
-        // could panic, and "never panics" should hold by construction rather than by a
-        // reading of who calls it.
+        // Clamped although every caller passes a character boundary: the slicing below is the
+        // one place in this file that could panic.
         let mut pos = pos.min(src.len());
         while !src.is_char_boundary(pos) {
             pos -= 1;
         }
 
-        // Both edges walk characters, so neither splits one - and both walk at most
-        // `WINDOW` of them, so rendering an error in a megabyte query costs the window
-        // rather than the query.
+        // Both edges walk at most `WINDOW` characters, so neither splits one and an error in a
+        // megabyte query costs the window.
         let start = src[..pos]
             .char_indices()
             .rev()
@@ -749,13 +681,8 @@ impl std::error::Error for ParseError {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────────
 
-/// The inputs the CLI surface cannot carry: a NUL byte, which `argv` cannot hold, and a
-/// megabyte, which is larger than `ARG_MAX`. Everything else is in `tests/trieql.rs`,
-/// against the binary.
-/// `now - d`, or no lower bound at all when the subtraction leaves the representable
-/// range: `SystemTime - Duration` panics on overflow, and `1000000000000d` is a duration
-/// a user is entitled to write on either surface. A window reaching further back than
-/// time can be expressed is an open one, which is what `None` already means.
+/// `now - d`, or `None` (an open window) when the subtraction leaves the representable
+/// range, because `SystemTime - Duration` panics on overflow.
 pub fn ago(now: SystemTime, d: Duration) -> Option<SystemTime> {
     now.checked_sub(d)
 }
@@ -799,9 +726,8 @@ mod tests {
         survives(&r#"\u"#.repeat(500_000));
     }
 
-    /// A deterministic sweep over strings built from the characters the grammar cares
-    /// about, which is where a hand-written corpus stops finding anything: the failure
-    /// this is looking for is a panic, so every input is its own assertion.
+    /// A deterministic sweep over the characters the grammar cares about: the failure this is
+    /// looking for is a panic, so every input is its own assertion.
     #[test]
     fn a_hundred_thousand_random_queries_return() {
         const ALPHABET: [&str; 26] = [
@@ -865,9 +791,8 @@ mod tests {
         );
     }
 
-    /// The two alternatives of `pair`'s value, which the flag surface cannot tell apart:
-    /// `--match k=*` is always the wildcard, so `Exact("*")` is a value only TrieQL can
-    /// ask for. Both render as `k=*` in `--explain`, so this is checked on the parse.
+    /// The flag surface cannot tell these apart: `--match k=*` is always the wildcard, so
+    /// `Exact("*")` is a value only TrieQL can ask for.
     #[test]
     fn a_quoted_star_is_a_value_not_the_wildcard() {
         let any = parse(r#"COUNT LOG {"a": *}"#, now()).unwrap_or_else(|e| panic!("{e}"));
@@ -1001,9 +926,8 @@ mod tests {
             keys("count log {} since 6h group by TIME(2d)"),
             vec![GroupKey::Time(Duration::from_secs(172_800))]
         );
-        // A bare `time` with nothing after it, and a quoted one with a parenthesis after
-        // it: both name the column. The second is the escape a writer needs for a column
-        // that really is called `time`.
+        // A bare `time` with nothing after it and a quoted one before a parenthesis both name
+        // the column: the second is the escape for a column that really is called `time`.
         assert_eq!(
             keys("COUNT LOG {} GROUP BY time"),
             vec![GroupKey::Column("time".to_string())]
