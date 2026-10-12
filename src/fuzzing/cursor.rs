@@ -1,73 +1,8 @@
-//! The `AFTER` cursor (`engine::Cursor`), held to what a cursor is: a token a client hands
-//! back is untrusted input on the query path, so decoding one never panics, and a token
-//! that is not a cursor of the query it arrives with is refused with an error and never
-//! resolved to a position.
-//!
-//! **What a cursor can and cannot promise.** The token is `v3.` and 29 bytes as hex: a
-//! `Rank` - the last row a page handed out - and a four-byte guard. The guard is
-//! `Cursor::guard`, an unkeyed FNV-1a hash of the pattern's terms folded to 32 bits, and
-//! the engine says of it "a guard against a mistake, not against an attacker". So a client
-//! that knows its own pattern can write a token the query accepts, at any rank it likes,
-//! and nothing in the token says the rank was ever a row. That is by design and the spec
-//! asks for no more: a cursor is a keyset position, and every `Rank` is a well-defined cut
-//! in a total order. What is held here is therefore the strongest thing that is true:
-//!
-//! - a token decodes if and only if it is `v3.` followed by exactly 58 hex digits, and it
-//!   decodes to exactly the rank and guard those digits spell - no truncation, no trailing
-//!   byte, no other version and no other alphabet gets through;
-//! - a token is accepted by a query if and only if its guard is that query's, where "that
-//!   query" is the pattern and nothing else: the window and the limit are deliberately
-//!   outside the guard (`Cursor::guard` says why), so one pattern's cursor is good under
-//!   any window or limit and refused under every other pattern;
-//! - an accepted token, real or forged, resolves to **a suffix of the answer the query
-//!   gives with no cursor**: the rows ranked strictly after it, in the same order, cut at
-//!   the limit - never a row before it, never a row the query does not match, never a row
-//!   twice - and following `next_cursor` from there walks the rest of that suffix and ends.
-//!
-//! **Decoding is not one-to-one, and the harness says exactly how far it is not.** Three
-//! kinds of token decode to a cursor that another token also decodes to: upper-case hex, a
-//! timestamp flag byte other than `00` or `01` (any non-zero byte reads as "present"), and
-//! timestamp bytes under an absent flag (ignored). `canonical` spells that out, and a token
-//! that decodes has to re-encode to its canonical spelling - so any fourth way for two
-//! tokens to name one position fails here.
-//!
-//! **How the bytes are read.** Four header bytes pick the surface - one of four modes, one
-//! of `PATTERNS`, one of `LIMITS`, one of `WINDOWS`. In three modes the rest is the token:
-//! as text; as edits to a cursor the engine really issued (truncate, overwrite, flip,
-//! insert, delete, swap in another pattern's guard); or as the 29 raw bytes, hex-encoded
-//! here, so the fuzzer mutates a rank as integers and not as digits it has to keep valid.
-//! Every token then goes both ways a client can send it: quoted into a TrieQL string,
-//! through `query::from_trieql` as `POST /query` and `--query` do, and as `--after` beside
-//! the flags, through `query::build`; and from there into `engine::execute` over a fixed
-//! in-memory store. A refusal is rendered as the server renders it, because the sentence
-//! quotes the token back and a token is whatever the client sent.
-//!
-//! A fourth mode turns it round: the token is a cursor the engine issued and the *query*
-//! is the input, as text (`foreign`). Six fixed patterns cannot say what "another query"
-//! is - only that those six differ - so there the fuzzer writes the other query. A pattern
-//! that is not the cursor's own has to refuse it, the cursor's own pattern written another
-//! way has to take it under whatever window and limit came with it, and a `GROUP BY`
-//! answers as if it were not there.
-//!
-//! **The one way two patterns may share a guard.** Four bytes of hash meet by accident
-//! once in 2^32 pairs, and the engine accepts that. What it does not get to do is hash the
-//! *same bytes* for two different patterns, because then the guard is not a hash of the
-//! pattern at all and no width would have told them apart. `foreign` fails on that and on
-//! nothing else: a pair with equal guards and different bytes behind them is the accident,
-//! and is let through. The pairs most likely to spell the same bytes are made here rather
-//! than waited for (`twin`).
-//!
-//! **What the answers are compared against.** Not the engine: the fixture's lines are
-//! ranked here from their own text (`Fixture::build`), each query's full order is worked
-//! out from that, and the engine is first shown to issue exactly those cursors
-//! (`Fixture::proves`) before any fuzz input is read against them. A window the input
-//! wrote is the one thing taken from the engine - which rows it admits, never where they
-//! sit: the windowed answer has to fall in the order worked out here (`Fixture::resumes`).
-//!
-//! Nothing here reads a clock, a file or a socket. `now` is fixed, the store is the
-//! in-memory one and is built once, and the largest thing allocated is a query string -
-//! the input, at most three bytes for each of its own where it was not UTF-8, and a
-//! constant - so the fuzzer's `-malloc_limit_mb` measures the decoder and not the harness.
+//! The `AFTER` cursor (`engine::Cursor`), held to what a cursor is: a token a client
+//! hands back is untrusted, so decoding never panics, a token that is not a cursor of its
+//! query is refused, and an accepted one, real or forged, resolves to a suffix of the
+//! query's own answer. Answers are compared against an order worked out here from the
+//! fixture's lines, not the engine's; nothing reads a clock, a file or a socket.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -84,14 +19,12 @@ use kibbr_engine::engine::{self, Cursor, CursorError, Match, MatchValue, Query, 
 use kibbr_engine::trieql::Kind;
 use kibbr_storage::db::{self, Db};
 
-/// 2024-01-16T00:00:00Z: the instant every query is built against, and the arrival time
-/// of every fixture line. The day after the lines' own timestamps, so `SINCE 1d` is a
-/// window with rows on both sides of its edge.
+/// 2024-01-16T00:00:00Z: the instant every query is built against, and the arrival time of
+/// every fixture line - the day after their timestamps, so `SINCE 1d` has rows both sides.
 const NOW_SECS: i64 = 1_705_363_200;
 
-/// The cursor's layout, written again rather than read off the engine: a version, a dot,
-/// and `[1 present][8 ts][8 leaf][8 seq][4 guard]` big-endian as hex. If the engine's
-/// layout moves and its version does not, this is where it shows.
+/// The cursor's layout, written again rather than read off the engine: if the
+/// engine's layout moves and its version does not, this is where it shows.
 const VERSION: &str = "v3";
 const BYTES: usize = 1 + 8 + 8 + 8 + 4;
 const GUARD_AT: usize = BYTES - 4;
@@ -100,9 +33,8 @@ const GUARD_AT: usize = BYTES - 4;
 /// the fixture and issues cursors as a caller's own limit does.
 const BACKSTOP: usize = 4;
 
-/// The bucket caps are small for the same reason the fixture is: `foreign` runs whatever
-/// `GROUP BY` the input wrote, and the fixture's rows span 1969 to 2024, so the defaults
-/// would let one input zero-fill ten thousand buckets to say nothing about a cursor.
+/// The bucket caps are small because `foreign` runs whatever `GROUP BY` the input wrote,
+/// and the defaults would let one input zero-fill buckets to say nothing about a cursor.
 const LIMITS_CONFIG: Limits = Limits {
     max_rows: BACKSTOP,
     max_buckets: 64,
@@ -168,16 +100,8 @@ const fn keyed(at: &'static str, level: &'static str, more: &'static str) -> Lin
     }
 }
 
-/// Five key sets, and the cases a cursor has to split correctly: rows sharing one
-/// timestamp inside a leaf (only `seq` separates them), rows sharing one across leaves
-/// (only the leaf key does), a row that arrived after rows newer than it, an instant
-/// before 1970, and lines with no time of their own, which all take the arrival time and
-/// so all tie at the head of the order.
-///
-/// The last two share an instant and are two templates whose key sets are the same bytes
-/// once a NUL is put after each key: the one key `a\0b`, and the two keys `a` and `b`.
-/// Only the leaf key separates them, and a leaf key that hashed those bytes gave both rows
-/// one rank - so that a page stopping on the first never reached the second.
+/// The cases a cursor has to split correctly: ties inside a leaf, ties across leaves, a
+/// late arrival, an instant before 1970, untimed lines, and a NUL in a key.
 const LINES: &[Line] = &[
     line(Some("2024-01-15T10:00:00Z"), "ERROR", "tick", None),
     line(Some("2024-01-15T10:00:05Z"), "INFO", "tick", None),
@@ -240,9 +164,8 @@ struct Pattern {
     terms: &'static [(&'static str, Option<&'static str>)],
 }
 
-/// The queries a cursor can belong to. "The same query" is the same pattern, so these
-/// are six different ones - including one that matches no template at all, whose answer
-/// is empty and whose guard is as good as any other's.
+/// The queries a cursor can belong to: six different patterns, including one that matches
+/// no template, whose answer is empty and whose guard is as good as any other's.
 const PATTERNS: &[Pattern] = &[
     Pattern {
         text: "{}",
@@ -357,13 +280,8 @@ fn fixture() -> &'static Fixture {
 }
 
 impl Fixture {
-    /// The store, and the order worked out from the lines alone.
-    ///
-    /// A row's rank is its effective time, its leaf's key, and how many lines of that
-    /// leaf came before it - the row order, as the in-memory store counts it. The leaf key is
-    /// `engine::leaf_key` over the line's own walk tokens, called rather than written
-    /// again for the reason the oracle calls it: which number a key set hashes to is a
-    /// contract. Everything else is read off `LINES`.
+    /// The store, and the order worked out from the lines alone. Only `engine::leaf_key` is
+    /// called and not written again: which number a key set hashes to is a contract.
     fn build() -> Self {
         let now = DateTime::from_timestamp(NOW_SECS, 0).expect("a representable instant");
         let lines: Vec<String> = LINES.iter().enumerate().map(|(n, l)| l.json(n)).collect();
@@ -440,17 +358,8 @@ impl Fixture {
         fixture
     }
 
-    /// What does not depend on the input, checked once before any input is read.
-    ///
-    /// First that the order above is the engine's: every pattern, window and page size is
-    /// paged from the top to the end, and each page and each `next_cursor` has to be the
-    /// one worked out here. After this a disagreement on a fuzz input is about the cursor
-    /// it carried, and the `issued` tokens are cursors the engine really handed out.
-    ///
-    /// Then the three refusals the spec names, over every real cursor rather than over
-    /// whichever the fuzzer reaches: its own pattern takes it under any window and limit;
-    /// every other pattern refuses it as a foreign query's; and every truncation of it is
-    /// refused as not a cursor.
+    /// What does not depend on the input, checked once: the order above is the engine's, and
+    /// every real cursor is taken by its own pattern, refused by the others and by truncation.
     fn proves(&self) {
         assert_eq!(
             self.orders[0][0].len(),
@@ -533,16 +442,8 @@ impl Fixture {
             .unwrap_or_else(|e| panic!("`{src}` is refused: {e:?}"))
     }
 
-    /// Run `query` and every page after it, and hold each to the order worked out in
-    /// `build`.
-    ///
-    /// `after` is the cursor `query` carries. The answer has to begin at the first row
-    /// ranked strictly after it - which is a place in the order whether or not any row
-    /// has that rank, so a forged rank between two rows, before the first or past the
-    /// last is held to the same rule as a real one. From there every page is the next
-    /// `limit` rows, `count` and `truncated` are about the whole answer and not the page,
-    /// and a `next_cursor` is present exactly when rows remain, is the canonical token of
-    /// the page's last row, and is taken back by the same query.
+    /// Run `query` and every page after it, and hold each to the order worked out in `build`.
+    /// `after` is a place in that order whether or not any row has that rank, forged or real.
     fn pages(&self, p: usize, w: usize, limit: Option<usize>, query: Query, after: Option<Cursor>) {
         let order = &self.orders[p][w];
         let size = limit.unwrap_or(BACKSTOP);
@@ -586,15 +487,8 @@ impl Fixture {
         panic!("paging `{}` did not end", PATTERNS[p].text);
     }
 
-    /// The same rule as `pages`, for a query the input wrote: pattern `p` in other words,
-    /// under a window and a limit that are not in any table here.
-    ///
-    /// The window is whatever `alone` - the query with no cursor - resolved it to, so its
-    /// arithmetic is not done twice. The answer with no cursor and no limit is asked of the
-    /// engine once and held to the order worked out in `build`: a window may leave rows
-    /// out and may not move one. `query` is `alone` resumed after `cursor`, and has to
-    /// return what is left of that answer past the cursor's rank, a page at a time, to the
-    /// end. `src` is `alone` as text, to write each next page from.
+    /// The same rule as `pages`, for a query the input wrote: pattern `p` in other words. The
+    /// window is whatever `alone` resolved it to: it may leave rows out and may not move one.
     fn resumes(&self, p: usize, alone: &Query, query: Query, cursor: Cursor, src: &str) {
         let whole = Query::new(
             alone.matches.clone(),
@@ -656,9 +550,8 @@ impl Fixture {
         panic!("paging `{src}` did not end");
     }
 
-    /// A cursor of pattern `p` that the engine issued, chosen by `pick`. The pattern that
-    /// matches no template has an empty answer and so no page ever stopped in it; what
-    /// stands in is its own guard on the rank of a row it does not hold.
+    /// A cursor of pattern `p` that the engine issued, chosen by `pick`; the pattern with an
+    /// empty answer gets its own guard on the rank of a row it does not hold.
     fn cursor_of(&self, p: usize, pick: usize) -> String {
         let count = self.issued.iter().filter(|(own, _)| *own == p).count();
         if count == 0 {
@@ -743,11 +636,8 @@ fn shape(text: &str) -> Shape {
     Shape::Cursor(bytes)
 }
 
-/// The rank and guard 29 decoded bytes name, and the one token that should spell them.
-///
-/// The three ways a token is not its own canonical spelling are all here and nowhere
-/// else: `shape` took either case of hex, any non-zero flag byte means the timestamp is
-/// present, and under a zero flag the timestamp's eight bytes are not read.
+/// The rank and guard 29 decoded bytes name, and the one token that should spell them:
+/// either case of hex, any non-zero flag byte and unread timestamp bytes all fold here.
 fn canonical(bytes: &[u8; BYTES]) -> (Rank, u32, String) {
     let word = |at: usize| {
         let mut buf = [0u8; 8];
@@ -791,10 +681,8 @@ fn source(
     (src, quote)
 }
 
-/// ` AFTER "<text>"` on the end of a query, and where its opening quote landed.
-///
-/// The cursor is written as a TrieQL string, so the two characters a string escapes are
-/// escaped; every other character, a newline or a NUL included, stands for itself there.
+/// ` AFTER "<text>"` on the end of a query, and where its opening quote landed; only the
+/// two characters a TrieQL string escapes are escaped.
 fn resume(src: &mut String, text: &str) -> usize {
     src.push_str(" AFTER ");
     let quote = src.len();
@@ -809,9 +697,8 @@ fn resume(src: &mut String, text: &str) -> usize {
     quote
 }
 
-/// The query `source` writes, as the flag surface is handed it: `--match` once per term,
-/// `--since` or `--between`, `--limit`, and the token as `--after` - which takes it as it
-/// stands, with nothing to escape.
+/// The query `source` writes, as the flag surface is handed it; `--after` takes the token
+/// as it stands, with nothing to escape.
 fn flags(mode: QueryMode, p: usize, w: usize, limit: Option<usize>, after: &str) -> Args {
     let fetching = mode == QueryMode::Fetch;
     let window = &WINDOWS[w];
@@ -850,9 +737,8 @@ pub fn run(data: &[u8]) {
     let limit = LIMITS[header(2) % LIMITS.len()];
     let w = header(3) % WINDOWS.len();
     let payload = data.get(4..).unwrap_or(&[]);
-    // A token reaches the decoder as a `&str` on both surfaces - out of a JSON body or
-    // out of `argv` - so bytes that are not UTF-8 are decoded lossily rather than
-    // skipped, which keeps a byte-level mutation of a cursor alive as a token.
+    // A token reaches the decoder as a `&str` on both surfaces, so bytes that are not UTF-8
+    // are decoded lossily, which keeps a byte-level mutation of a cursor alive as a token.
     let text = match header(0) % 4 {
         0 => String::from_utf8_lossy(payload).into_owned(),
         1 => edited(fx, payload),
@@ -863,8 +749,7 @@ pub fn run(data: &[u8]) {
 }
 
 /// A cursor the engine issued, with the input's edits applied: the first byte picks the
-/// cursor - any pattern's, so it may be foreign to the query it is then sent to - and
-/// each three bytes after it are one edit.
+/// cursor, any pattern's, and each three bytes after it are one edit.
 fn edited(fx: &Fixture, payload: &[u8]) -> String {
     let (pick, edits) = payload.split_first().unwrap_or((&0, &[]));
     let (_, real) = &fx.issued[usize::from(*pick) % fx.issued.len()];
@@ -907,9 +792,8 @@ fn edited(fx: &Fixture, payload: &[u8]) -> String {
     String::from_utf8_lossy(&text).into_owned()
 }
 
-/// A well-formed token from raw bytes: 29 of them, short inputs padded with zeros, and a
-/// flag byte after. Bit 0 writes the query's own guard over the last four - the forgery
-/// the guard does not stop - and bit 1 spells the hex in upper case.
+/// A well-formed token from raw bytes, so the fuzzer mutates a rank as integers. Bit 0 of
+/// the flag byte writes the query's own guard - the forgery the guard does not stop.
 fn forged(fx: &Fixture, p: usize, payload: &[u8]) -> String {
     let mut bytes = [0u8; BYTES];
     for (slot, b) in bytes.iter_mut().zip(payload) {
@@ -941,10 +825,8 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
         (_, Err(e)) => panic!("`{text}` was refused for the wrong reason: {e}"),
     };
 
-    // The same text as a query. The modes that return no rows first: they have nothing to
-    // page, so `Query::new` drops the cursor and its guard is never asked - but the
-    // parser still has to refuse text that is not a cursor at all, and a cursor that is
-    // dropped must not move the answer.
+    // The modes that return no rows first: `Query::new` drops the cursor unread, but the
+    // parser must still refuse text that is not one, and a dropped one must not move the answer.
     let total = fx.orders[p][0].len() as u64;
     let (src, quote) = source(QueryMode::Count, p, 0, None, Some(text));
     match (query::from_trieql(&src, fx.now, LIMITS_CONFIG), &cursor) {
@@ -1085,10 +967,8 @@ fn refused_at(src: &str, e: &CliError, quote: usize) {
     assert!(e.pos < src.len(), "`{src}`: the error is outside the query");
 }
 
-/// The refusal as `POST /query` answers it and as the CLI prints it: `error::chain`, one
-/// string. It quotes the client's text back - the version a token claimed, an excerpt of
-/// the query - so it is built from untrusted input like everything else here, and it is
-/// held to being a sentence and to costing no more than the query plus a constant.
+/// The refusal as `POST /query` answers it and the CLI prints it. It quotes the client's
+/// text back, so it is held to being a sentence and to costing the query plus a constant.
 fn rendered(src: &str, e: &CliError) {
     let line = error::chain(e);
     assert!(!line.is_empty(), "`{src}` was refused with nothing said");
@@ -1100,23 +980,8 @@ fn rendered(src: &str, e: &CliError) {
     );
 }
 
-/// A cursor the engine issued for pattern `p`, sent back with a query the input wrote.
-///
-/// The first payload byte picks the cursor and the rest is everything after `MATCH LOG`:
-/// a pattern, and whatever clauses follow it. Read once with no cursor, to know what the
-/// client asked, and once with ` AFTER "<cursor>"` on the end.
-///
-/// - It is not a query: nothing is held but that neither reading panics.
-/// - It groups: the cursor is dropped unread and the answer is the one without it.
-/// - Its pattern is `p`'s, term for term, however it was spelled: the cursor is taken,
-///   and resumes that query's own order (`Fixture::resumes`).
-/// - Its pattern is any other: the cursor is refused as a foreign query's. The exception
-///   is the module's - two patterns whose guards meet by accident - and it is told apart
-///   from a guard that never looked: `spelled` is what the guard hashes, and two patterns
-///   that spell the same bytes share a guard at any width.
-///
-/// The top two bits of the first byte ask for one thing more of a pattern that was read:
-/// its `twin`, which has to refuse a cursor of the pattern it was made from (`confused`).
+/// A cursor the engine issued for pattern `p`, sent back with a query the input wrote: `p`
+/// respelled takes it, any other pattern refuses it, a `GROUP BY` drops it unread.
 fn foreign(fx: &Fixture, p: usize, payload: &[u8]) {
     let (pick, written) = payload.split_first().unwrap_or((&0, &[]));
     let written = String::from_utf8_lossy(written);
@@ -1200,17 +1065,8 @@ fn foreign(fx: &Fixture, p: usize, payload: &[u8]) {
     told_apart(own, &alone, &with);
 }
 
-/// The pattern the input wrote against its `twin`: a second pattern, made from the first
-/// by one of the three rewrites a term-by-term spelling could lose, sent a cursor of the
-/// first.
-///
-/// `foreign` already holds every pattern the input writes to refusing the fixture's
-/// cursors, but a fuzzer does not find the one neighbour that matters by changing bytes -
-/// a quoted star for a bare one, a NUL where two terms met - and the six fixture patterns
-/// hold one wildcard and no `=` between them. So the neighbour is made here, from
-/// whatever pattern arrived, and written back out as a query: the cursor is `alone`'s own,
-/// minted the one way a cursor is (`Query::cursor_at`) at the rank of a fixture row, and
-/// the twin has to refuse it at the door.
+/// The pattern the input wrote against its `twin`, sent a cursor of the first. A fuzzer
+/// does not find the one neighbour that matters by changing bytes, so it is made here.
 fn confused(fx: &Fixture, alone: &Query, bare: &str, pick: u8) {
     let Some(twin) = twin(&alone.matches, pick >> 6) else {
         return;
@@ -1236,15 +1092,8 @@ fn confused(fx: &Fixture, alone: &Query, bare: &str, pick: u8) {
     }
 }
 
-/// A pattern that is not `matches` and that a spelling of terms as `key=value` with a
-/// NUL between them cannot tell from it, or `None` where this rewrite has nothing to move:
-///
-/// 1. every wildcard becomes the quoted star and every quoted star the wildcard - two
-///    things by the grammar, `key=*` both;
-/// 2. the first two terms become one, whose value runs on through the NUL into the second
-///    term's key and value;
-/// 3. the first `=` inside a key or a value changes sides, so the key ends one `=` earlier
-///    or one later.
+/// A pattern that is not `matches` and that a spelling of terms as `key=value` with a NUL
+/// between them cannot tell from it, or `None` where the rewrite has nothing to move.
 fn twin(matches: &[Match], rewrite: u8) -> Option<Vec<Match>> {
     let spell = |value: &MatchValue| match value {
         MatchValue::Any => "*".to_string(),
@@ -1317,9 +1166,8 @@ fn pattern_text(matches: &[Match]) -> String {
     format!("{{{}}}", terms.join(", "))
 }
 
-/// Two different patterns with one guard: `with` is the second, carrying a cursor of the
-/// first, and it was taken. Fails unless the two are different to the guard as well -
-/// different bytes that hashed alike, which is the accident the module names.
+/// Two different patterns with one guard, the second having taken a cursor of the first:
+/// fails unless they are different bytes that hashed alike, which is the accepted accident.
 fn told_apart(issued_by: &Query, taken_by: &Query, with: &str) {
     assert!(
         spelled(issued_by) != spelled(taken_by),
@@ -1330,19 +1178,14 @@ fn told_apart(issued_by: &Query, taken_by: &Query, with: &str) {
     );
 }
 
-/// The bytes `Cursor::guard` hashes of a pattern, so that two patterns sharing a guard
-/// can be asked whether they were ever different to it. Taken from the engine and not
-/// written again: a second copy would say what the guard ought to hash, and the question
-/// is what it does.
+/// The bytes `Cursor::guard` hashes of a pattern, taken from the engine and not written
+/// again: a second copy would say what the guard ought to hash, not what it does.
 fn spelled(query: &Query) -> Vec<u8> {
     Cursor::spelling(query)
 }
 
-/// `Cursor::guard` of a query, held to being the hash of `spelled` and of nothing else:
-/// FNV-1a over those bytes, folded to 32 bits, worked out again here. `told_apart` lets two
-/// patterns share a guard when their spellings differ, and that is only an answer if the
-/// spelling is what was hashed - a guard that hashed other bytes could spell two patterns
-/// apart and still hand one the other's cursor.
+/// `Cursor::guard` of a query, held to being FNV-1a over `spelled`, folded to 32 bits:
+/// `told_apart` is only an answer if the spelling is what was hashed.
 fn guard_of(query: &Query) -> u32 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in spelled(query) {
@@ -1359,11 +1202,8 @@ fn guard_of(query: &Query) -> u32 {
     guard
 }
 
-/// The text pasted between the quotes with nothing escaped, as a client building the
-/// query by concatenation sends it. A quote in the text then ends the string early and a
-/// backslash starts an escape, so what reaches the decoder is some other text - and
-/// whatever the parser makes of it, a query that comes out with a cursor has one of its
-/// own, and resolves as any other does.
+/// The text pasted between the quotes with nothing escaped, as a client concatenating
+/// sends it: whatever the parser makes of it, a cursor that comes out resolves as any other.
 fn unquoted(fx: &Fixture, text: &str, p: usize) {
     if !text.contains(['"', '\\']) {
         return;

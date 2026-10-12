@@ -1,48 +1,8 @@
 //! `gen-logs --profile farm`: one simulated day of a small estate's logs.
-//!
-//! The hostile profile (`gen.rs`) exists to break the parser, and it is unlike real
-//! traffic in four measured ways, each of which bent a storage result: lines spread
-//! evenly over its shapes, every shape writing to 31 days at once, timestamps in random
-//! order, and no key ever carrying two types. On top of that it is mostly random ids, so
-//! `gzip -9` gets it to only 0.23x. This profile is built the other way round:
-//!
-//! * ten services, each written the way its logger writes: its own field names, its own
-//!   name and form for the time field, its own level scheme, fields in a fixed order
-//! * a request crosses services, so its id recurs in the edge, gateway, auth, payment and
-//!   database lines, and a user, a device and a client address recur across a session; a
-//!   page brings its assets, from the same client with the page as referer
-//! * users, products, paths, search terms and user agents come from skewed pools, and
-//!   call sites fire at very different rates, so a few templates carry most of the volume
-//! * one day, emitted in time order, under a daily curve, a few bursts, a gateway rollout
-//!   and one incident in which payments' error rate and one pgbouncer template's volume
-//!   jump, and the gateway starts logging timeouts; probes, stats and cron keep their own
-//!   clocks
-//! * optional fields and nested objects at realistic rates, a configurable rate of dirty
-//!   values on five named keys, and ten-digit ids that are not timestamps
-//!
-//! `--dirty-rate` lands on these, each the kind of fault a real stream has - an upstream
-//! that sent nothing, a placeholder, a writer on another version:
-//!
-//! ```text
-//!   auth      user_id      Int64    ->  "" or "N/A"
-//!   payments  amount       Float64  ->  "" or "N/A"
-//!   worker    duration_ms  Int64    ->  "" or "N/A"
-//!   dbproxy   rows         Int64    ->  "" or "N/A"
-//!   notifier  template     String   ->  a number
-//! ```
-//!
-//! Two more keys carry two types at any rate, because the software they imitate does: the
-//! access log writes `-` for an upstream it never reached and a comma list when it tried
-//! two, as nginx does, and some SQLSTATE codes are all digits (`57014`) and some are not
-//! (`08P01`). So does payments' `spanId`: a random hex id is now and then all digits, as a
-//! real one is, and reads as a number.
-//!
-//! No two lines are equal, by construction rather than by luck: every line names its
-//! host, no two pods share a name, every line carries a millisecond-precise time, and no
-//! host is given two lines in the same millisecond.
-//!
-//! Every draw is integer arithmetic on `Rng`, never a floating-point library call, so a
-//! seed means the same bytes on every platform.
+//! Built the other way round from the hostile profile: ten services each written as its
+//! logger writes, request ids crossing services, skewed pools, one day in time order with
+//! an incident, and dirty values on five named keys. No two lines are equal by
+//! construction, and every draw is integer arithmetic on `Rng`, so a seed means the same bytes.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet, VecDeque};
@@ -67,7 +27,7 @@ pub struct Options {
 
 pub const MAX_SERVICES: usize = 10;
 
-/// The most lines one farm run writes. A minute is planned whole before it is written, so
+/// The most lines one farm run writes: a minute is planned whole before it is written, so
 /// memory is about a 1,440th of the run, and hosts are counted in `u16`.
 pub const MAX_LINES: u64 = 1_000_000_000;
 pub const DEFAULT_DAY: &str = "2024-01-15";
@@ -92,9 +52,8 @@ enum Svc {
     Cache,
 }
 
-/// `--services N` keeps the first N: the core of a request's path, then the access log in
-/// front of it, then what runs beside it. The gateway comes first so that a small N still
-/// has a door and something behind it; the access log arrives at N = 6.
+/// `--services N` keeps the first N. The gateway comes first so that a small N still has a
+/// door and something behind it; the access log arrives at N = 6.
 const SERVICES: [Svc; MAX_SERVICES] = [
     Svc::Gateway,
     Svc::Auth,
@@ -307,10 +266,8 @@ fn latency(rng: &mut Rng, lo_ms: i64, hi_ms: i64) -> i64 {
 
 // ---- tables --------------------------------------------------------------------------
 
-/// Every browser and app a person arrives with: families times versions times devices,
-/// newest versions and commonest devices first, and one of them fixed per user - about
-/// 1,200 strings. A flat dozen made the two user-agent columns, the largest in the file
-/// by raw bytes, look ten times more compressible than a real day's.
+/// Every browser and app a person arrives with: families times versions times devices, one
+/// fixed per user. A flat dozen made the user-agent columns far too compressible.
 fn human_agents() -> Vec<(u64, String, bool)> {
     const CHROME: [u32; 13] = [
         121, 120, 119, 118, 117, 116, 115, 114, 113, 112, 111, 110, 109,
@@ -520,9 +477,8 @@ fn human_agents() -> Vec<(u64, String, bool)> {
     out
 }
 
-/// Search terms: a head of short common queries, then a long tail of one-offs - three
-/// words, a size, a brand, a typo, a product number - so the column has singletons, as a
-/// real site search's does.
+/// Search terms: a head of short common queries, then a long tail of one-offs, so the
+/// column has singletons, as a real site search's does.
 fn search_terms(rng: &mut Rng) -> Vec<String> {
     const BRANDS: [&str; 8] = [
         "acme",
@@ -1093,11 +1049,8 @@ enum Src {
     Storm,
 }
 
-/// Shares of the day's lines, in per mille. Probes and housekeeping do not follow the
-/// daily curve; everything a person causes does.
-///
-/// `Storm` is the incident's own: pgbouncer dropping every client that waited too long,
-/// a template that is silent all day and then among the busiest while it lasts.
+/// Shares of the day's lines, in per mille. Probes and housekeeping do not follow the daily
+/// curve; `Storm` is the incident's own, silent all day and then among the busiest.
 const SOURCES: &[(Src, u64)] = &[
     (Src::Web, 784),
     (Src::Probe, 85),
@@ -1459,9 +1412,8 @@ impl Farm {
                 }
                 over[k] = got - need;
             }
-            // Then give each chain its start, and hand the lines out in time order. Cron
-            // fires on the minute; probes and stats come round on a steady period, each
-            // chain evenly spaced through the minute; everything else arrives at random.
+            // Then give each chain its start, and hand the lines out in time order. Cron fires on
+            // the minute, probes and stats on a steady period; everything else arrives at random.
             let mut per_source = vec![0i64; sources.len()];
             for (k, _, _) in &chains {
                 per_source[*k] += 1;
@@ -1519,9 +1471,8 @@ impl Farm {
         Ok(())
     }
 
-    /// The millisecond this line is stamped with: its chain's start plus its offset, moved
-    /// on past any millisecond its host already has. That is what makes every line
-    /// distinct - two lines of one host differ in time, two hosts differ in name.
+    /// The millisecond this line is stamped with, moved on past any its host already has: two
+    /// lines of one host differ in time, two hosts in name, so every line is distinct.
     fn place(&mut self, line: &Line, start: i64) -> i64 {
         let svc = line.svc.idx() as u8;
         let mut t = start + line.dt;
@@ -1649,9 +1600,8 @@ impl Farm {
         self.hosts[svc.idx()][host as usize].clone()
     }
 
-    /// A numeric field that sometimes arrives as `""` or `"N/A"`. The draws happen
-    /// whether or not the fault does, so `--dirty-rate` changes those values and nothing
-    /// else in the file.
+    /// A numeric field that sometimes arrives as `""` or `"N/A"`. The draws happen whether or
+    /// not the fault does, so `--dirty-rate` changes those values and nothing else.
     fn dirty_num(&mut self, clean: V) -> V {
         let hit = self.rng.below(1_000_000) < self.dirty_ppm;
         let empty = self.rng.chance(50);
@@ -2028,9 +1978,8 @@ impl Farm {
             lat = (waited + self.rng.between(1, 4)) * 10 + self.rng.below(10) as i64;
         }
 
-        // A baseline of failures all day, not only in the incident: an upstream that
-        // resets, a client that hangs up, a handler that panics. Each is a rare template
-        // of its own that no overlap rule would fold into the common one.
+        // A baseline of failures all day, not only in the incident. Each is a rare template of
+        // its own that no overlap rule would fold into the common one.
         let fault = self.rng.below(100_000);
         let (event, level, err, stack) = if timed_out {
             lat = GATEWAY_TIMEOUT_MS * 10 + self.rng.between(5, 90);
@@ -2152,9 +2101,8 @@ impl Farm {
         }
     }
 
-    /// The size of a response, from what was asked for: a static file is the same size
-    /// every time it is sent, a product the same give or take a few percent, an error
-    /// page one size per status, and a 204 or 304 nothing at all.
+    /// The size of a response, from what was asked for: a static file is the same size every
+    /// time, an error page one size per status, and a 204 or 304 nothing at all.
     fn body_bytes(&mut self, uri: &str, status: i64, range: (i64, i64)) -> i64 {
         if status == 204 || status == 304 || status == 499 {
             return 0;
@@ -2186,9 +2134,8 @@ impl Farm {
         base + base * self.rng.between(-30, 30) / 1000
     }
 
-    /// What a browser fetches after an HTML page: the bundle if it does not hold it yet,
-    /// then the page's images. Same client, same referer, a few hundred milliseconds -
-    /// the runs of equal address, agent and referer an access log is made of.
+    /// What a browser fetches after an HTML page: the bundle if it does not hold it, then the
+    /// images - the runs of equal address, agent and referer an access log is made of.
     fn page_assets(
         &mut self,
         lines: &mut Vec<Line>,
@@ -2364,10 +2311,8 @@ impl Farm {
 
     // ---- the gateway -----------------------------------------------------------------
 
-    /// Go, with an ECS encoder: `log.level` and `ecs.version` are flat member names with a
-    /// dot in them, everything else nests. Durations are the encoder's float
-    /// milliseconds to the nanosecond. The rollout's new pods also log the TLS version, so
-    /// every gateway call site gains a template halfway through the day.
+    /// Go, with an ECS encoder: `log.level` and `ecs.version` are flat names with a dot in
+    /// them. The rollout's new pods also log the TLS version: a new template per call site.
     fn gw_line(
         &mut self,
         dt: i64,
@@ -2689,9 +2634,8 @@ impl Farm {
 
     // ---- payments --------------------------------------------------------------------
 
-    /// logstash-logback-encoder: `@timestamp` with an offset, `@version`, the MDC fields
-    /// by their Java names. `ids` is the request id and the span id payments logs it under -
-    /// one span for everything one request makes it log.
+    /// logstash-logback-encoder: `@timestamp` with an offset, `@version`, the MDC fields by
+    /// their Java names. `ids` is the request id and the one span payments logs it under.
     #[allow(clippy::too_many_arguments)]
     fn pay_line(
         &mut self,
@@ -3107,9 +3051,8 @@ impl Farm {
 
     // ---- worker ----------------------------------------------------------------------
 
-    /// A queued job from `job_started` to its end, retried up to three times. Returns
-    /// when it ended and whether it succeeded. Logged by a Go consumer on log15's level
-    /// names, which really are four letters: `eror`, `dbug`.
+    /// A queued job from `job_started` to its end; returns when it ended and whether it
+    /// succeeded. Logged on log15's level names, which really are four letters: `eror`, `dbug`.
     #[allow(clippy::too_many_arguments)]
     fn job(
         &mut self,
@@ -3349,9 +3292,8 @@ impl Farm {
 
     // ---- database proxy --------------------------------------------------------------
 
-    /// One statement through pgbouncer: its timing to the microsecond, as Postgres prints
-    /// it, the role and pod it came from, and the request id the application put in
-    /// `application_name`. Logged when the statement ends; returns that offset.
+    /// One statement through pgbouncer, timed to the microsecond as Postgres prints it, with
+    /// the request id in `application_name`. Logged when it ends; returns that offset.
     #[allow(clippy::too_many_arguments)]
     fn db(
         &mut self,
@@ -3515,8 +3457,7 @@ impl Farm {
     }
 
     /// structlog: `event` is the call site's name and every filter the user set is a key.
-    /// Filters come as the sets a search page offers, not as independent coins - five
-    /// coins made one call site half of the day's templates.
+    /// Filters come as the sets a search page offers; independent coins explode the templates.
     #[allow(clippy::too_many_arguments)]
     fn search(
         &mut self,
@@ -3611,9 +3552,8 @@ impl Farm {
 
     // ---- probes, cron and housekeeping ------------------------------------------------
 
-    /// Kubelet health checks, flat through the day and nearly identical to each other. Round
-    /// robin over every probed pod, so each is hit on a steady period, as `periodSeconds`
-    /// does; the period itself follows `--lines`, since the quota does.
+    /// Kubelet health checks, flat through the day: round robin over every probed pod, so each
+    /// is hit on a steady period, as `periodSeconds` does; the period follows `--lines`.
     fn plan_probe(&mut self, mi: &Minute) -> Vec<Line> {
         let gateways = self.gw_pods;
         let edges = if self.is_on(Svc::Edge) {
@@ -4117,10 +4057,8 @@ impl Farm {
 
     // ---- the access log --------------------------------------------------------------
 
-    /// nginx, `log_format json escape=json`: every value a string, `-` for what is
-    /// missing, a comma list when more than one upstream was tried. Logged when the
-    /// response ends, so `dt` is also the request time. The last edge host still runs last
-    /// year's format, without the request id, the protocol or the upstream address.
+    /// nginx, `log_format json escape=json`: every value a string, `-` for what is missing.
+    /// Logged when the response ends; the last edge host still runs last year's format.
     #[allow(clippy::too_many_arguments)]
     fn edge(
         &mut self,
@@ -4318,9 +4256,8 @@ mod tests {
         })
     }
 
-    /// A line is unique only if its host is. These seeds each drew one pod name twice
-    /// before names were checked - 561810 wrote the same search health check twice at
-    /// five million lines - and 6 and 11 do at the largest size, where pods are most.
+    /// A line is unique only if its host is: these seeds each drew one pod name twice when
+    /// names were unchecked.
     #[test]
     fn no_two_pods_share_a_name() {
         for (seed, lines) in [

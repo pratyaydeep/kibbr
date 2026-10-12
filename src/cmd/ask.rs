@@ -1,14 +1,8 @@
 //! `kibbr templates`, `kibbr stats` and `kibbr health`: what a running server answers
-//! `GET /templates`, `GET /stats` and `GET /health` with, asked for and printed.
-//!
-//! `health` is the one a machine runs: the image's `HEALTHCHECK`, which has no curl to
-//! ask with. It prints a word and exits 0 while the server answers `"ok":true`.
-//!
-//! Both were HTTP only. They stay the server's to answer - the row counts and the
-//! counters are in its memory, and a second process opening the directory would be
-//! refused its `LOCK` - so these are two requests and what to do with the answers: a
-//! table or a line a number for a person, or with `--json` the body as the server sent
-//! it, for whatever reads it next.
+//! `GET /templates`, `GET /stats` and `GET /health` with, asked for and printed. They
+//! stay the server's to answer - the numbers are in its memory, and a second process
+//! opening the directory would be refused its `LOCK`. `health` is the one a machine
+//! runs: the image's `HEALTHCHECK`, which has no curl to ask with.
 
 use std::io::Write;
 use std::net::SocketAddr;
@@ -25,15 +19,14 @@ use kibbr_core::fmt::commas;
 /// How long a server is given to answer. Both answers are built from memory.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long `health` gives it: under the five seconds the image's `HEALTHCHECK` waits
-/// before it calls the check itself failed, so that a server that does not answer is
-/// said by this command, with its reason, and not by a kill.
+/// How long `health` gives it: under the five seconds the image's `HEALTHCHECK` waits, so
+/// a server that does not answer is said by this command, with its reason, not by a kill.
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Error)]
 pub enum AskError {
-    /// Nothing answered. Says where the address came from, since the remedy differs: a
-    /// stale `LOCK` is a server that is gone, and the default is one never started here.
+    /// Nothing answered; says where the address came from, since the remedy differs for a
+    /// stale `LOCK` and for the default.
     #[error(
         "no server answered at {address} ({found}): {source}. `templates`, `stats` and \
          `health` ask a running `kibbr serve`; --addr names one, or --data-dir the directory \
@@ -74,12 +67,8 @@ pub struct Server {
     pub found: String,
 }
 
-/// Which server: `--addr`; or the one holding the data directory, whose `LOCK` says
-/// where it listens - a server on `--port 0` is found no other way; or, with neither,
-/// the address a server here would listen on by its settings.
-///
-/// The `LOCK` is read and not taken: this writes nothing, and taking it would refuse a
-/// server that was starting.
+/// Which server: `--addr`, or the one whose `LOCK` in the data directory says where it
+/// listens, or the address in the settings; the `LOCK` is read and never taken.
 pub fn server(
     file: &File,
     addr: Option<String>,
@@ -147,13 +136,8 @@ fn get_within(
     Ok((text, read))
 }
 
-/// `kibbr health`: `ok`, or `degraded` and why, while the server answers `/health` with
-/// `"ok":true`; an error, and so a non-zero exit, when it does not answer, answers
-/// another status, or answers something else.
-///
-/// **A degraded server is a healthy one here, as it is to `/health`**: it cannot write,
-/// it still answers queries, and restarting it does not empty a disk. What this command
-/// exits on is what an orchestrator should restart for - a process that does not answer.
+/// `kibbr health`: `ok`, or `degraded` and why, and an error only when the server does
+/// not answer `"ok":true` - what an orchestrator should restart for.
 pub fn health<W: Write>(out: &mut W, server: &Server, json: bool) -> Result<(), CliError> {
     let (text, answer) = get_within(server, "/health", HEALTH_TIMEOUT)?;
     if answer["ok"] != Value::Bool(true) {
@@ -256,9 +240,8 @@ pub fn stats<W: Write>(out: &mut W, server: &Server, json: bool) -> Result<(), C
     write!(out, "{}", stats_lines(&answer)).map_err(CliError::Write)
 }
 
-/// The answer flattened: `ingest.lines_read  1204`, in the order the server wrote it.
-/// Nothing is renamed, rounded or left out, so a name here is the path to the same
-/// value in `--json` and in `GET /stats`.
+/// The answer flattened, nothing renamed, rounded or left out, so a name here is the
+/// path to the same value in `--json` and in `GET /stats`.
 fn stats_lines(answer: &Value) -> String {
     fn walk(name: String, value: &Value, lines: &mut Vec<(String, String)>) {
         match value {
@@ -295,8 +278,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// **The table is the answer's templates, a line each, and what the answer does not
-    /// hold is a dash.**
     #[test]
     fn the_table_lists_each_template_and_dashes_what_is_missing() {
         let answer = json!({"count": 2, "templates": [
@@ -317,7 +298,6 @@ mod tests {
         );
     }
 
-    /// **Every value is a line under its path, in the server's order, as it was sent.**
     #[test]
     fn stats_are_a_line_a_value_under_its_dotted_name() {
         let answer = json!({
@@ -336,8 +316,6 @@ mod tests {
         );
     }
 
-    /// **Health is the server's status as a word, with what is wrong after it when
-    /// something is.**
     #[test]
     fn health_is_a_word_and_then_what_is_wrong() {
         assert_eq!(health_line(&json!({"ok": true, "status": "ok"})), "ok");
@@ -348,10 +326,8 @@ mod tests {
         assert_eq!(health_line(&json!({"ok": true})), "ok");
     }
 
-    /// **`--addr` is the server asked, whatever the directory says; and with no `--addr`
-    /// it is the one whose `LOCK` the directory holds.** The address of the settings,
-    /// under both, is `tests/operations.rs`'s: it reads a variable, which is the
-    /// process's and not one test's.
+    /// The address of the settings is `tests/operations.rs`'s: it reads a variable, which is
+    /// the process's and not one test's.
     #[test]
     fn the_server_is_addr_and_then_the_one_the_directory_names() {
         let none = std::env::temp_dir().join(format!("kibbr-ask-none-{}", std::process::id()));

@@ -1,20 +1,7 @@
-//! The generator. Hostile data on demand, reproducible from `--seed`.
-//!
-//! What it deliberately produces, because these are the cases hand-written fixtures
-//! do not surface:
-//!
-//! * nested objects, at several depths
-//! * optional fields present on some lines of a template and absent on others
-//! * ten-digit integers that ARE Unix timestamps (`ts_unix`) and ten-digit integers
-//!   that are NOT (`order_id`), drawn across the whole ten-digit range - the ones naming
-//!   a moment inside the epoch window are indistinguishable to rule 2, which is the
-//!   point, and the ones outside it make `order_id` a column of two types, which no
-//!   hand-written fixture produces either
-//! * unicode string values, including CJK, emoji, RTL and combining accents
-//! * empty strings
-//! * explicit JSON nulls, which are a different thing from an absent key
-//! * arrays, which flattening refuses to descend into
-//! * field order shuffled per line, so the fingerprint has to earn its stability
+//! The generator: hostile data on demand, reproducible from `--seed`.
+//! It produces what hand-written fixtures do not surface: nesting, optional fields,
+//! ten-digit integers that are and are not timestamps, unicode, empty strings, nulls,
+//! arrays, and field order shuffled per line.
 
 use std::io::Write;
 
@@ -350,7 +337,6 @@ fn value_for(gen: Gen, rng: &mut Rng) -> Value {
 
 /// Hand-rolled so the output is fixed by the seed alone.
 fn rfc3339(secs: i64) -> String {
-    // Days since the Unix epoch, then a civil date from the days count.
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);
@@ -389,9 +375,8 @@ fn uuid(rng: &mut Rng) -> String {
     )
 }
 
-/// Insert a dotted path into a nested object, creating intermediate objects.
-/// A non-object already sitting at an intermediate segment is left alone and the
-/// insertion is dropped; the generator never produces that collision.
+/// Insert a dotted path into a nested object, creating intermediate objects. A non-object
+/// at an intermediate segment drops the insertion; the generator never produces one.
 fn insert_path(root: &mut Map<String, Value>, path: &str, value: Value) {
     let mut segments = path.split('.').peekable();
     let mut cur = root;
@@ -410,7 +395,7 @@ fn insert_path(root: &mut Map<String, Value>, path: &str, value: Value) {
     }
 }
 
-/// Write `lines` NDJSON records. Byte-identical for a given `(lines, templates, seed)`.
+/// Write `lines` NDJSON records, byte-identical for a given `(lines, templates, seed)`.
 pub fn generate<W: Write>(
     out: &mut W,
     lines: u64,
@@ -491,9 +476,8 @@ pub fn gen_logs<W: Write>(
             if lines > farm::MAX_LINES {
                 return Err(GenError::TooManyLines(farm::MAX_LINES));
             }
-            // Ten characters, 1970 to 9999: every time form the farm writes - RFC 3339 with
-            // a four-digit year, epoch seconds and milliseconds - is valid on that range
-            // and on no wider one.
+            // Ten characters, 1970 to 9999: the range on which every time form the farm writes
+            // is valid.
             let day_text = day.unwrap_or_else(|| farm::DEFAULT_DAY.to_string());
             let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("a valid date");
             let last = chrono::NaiveDate::from_ymd_opt(9999, 12, 31).expect("a valid date");

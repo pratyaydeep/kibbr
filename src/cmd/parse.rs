@@ -16,10 +16,8 @@ use kibbr_core::types::{ColValue, ColumnType};
 const MIN_KEY_WIDTH: usize = 11;
 const TYPE_WIDTH: usize = 9;
 
-/// A bad line is reported against its number and stepped over; only a failure of the
-/// stream itself ends the run - one malformed line 400 out of 500 must not fail the other
-/// 499. Rejections are still counted, and a run that rejected anything exits non-zero:
-/// carrying on is not the same as calling it a success.
+/// Print each line's fingerprint and typed values; a bad line is reported and stepped
+/// over, and a run that rejected anything still exits non-zero.
 pub fn run<R: BufRead, W: Write>(
     mut input: R,
     out: &mut W,
@@ -45,15 +43,13 @@ pub fn run<R: BufRead, W: Write>(
         })?;
         match read {
             Line::Eof => break,
-            // A framing fault, reported and stepped over like a syntax one. `--limit`
-            // cannot stand in for the cap: it counts printed records, and a stream that
-            // never writes a newline prints none, so the run had no output and no end.
+            // A framing fault, reported and stepped over like a syntax one. `--limit` cannot
+            // stand in for the cap: a stream with no newline prints no record to count.
             Line::TooLong => {
                 read_lines += 1;
                 rejected += 1;
                 // Flushed and reported before the skip, never after: the skip may be the
-                // last thing this process does, and a rejection nobody saw is the bug
-                // being fixed.
+                // last thing this process does.
                 out.flush().map_err(CliError::Write)?;
                 crate::error::report(&DetectorError::new(
                     read_lines as usize,
@@ -81,10 +77,8 @@ pub fn run<R: BufRead, W: Write>(
         let line_no = read_lines as usize;
         let line = strip_bom(strip_eol(&raw));
 
-        // Blank means blank as text: bytes that do not decode are a bad line, not a blank
-        // one, and fall through to be rejected as such. Checked after the mark is
-        // stripped, so a line holding nothing but one counts as blank rather than being
-        // rejected for the marker it carried.
+        // Blank means blank as text: bytes that do not decode are a bad line. Checked after
+        // the mark is stripped, so a line holding nothing but one counts as blank.
         if std::str::from_utf8(line).is_ok_and(|s| s.trim().is_empty()) {
             skipped_blank += 1;
             continue;
@@ -94,9 +88,8 @@ pub fn run<R: BufRead, W: Write>(
             Ok(parsed) => parsed,
             Err(e) => {
                 rejected += 1;
-                // Flush first: stdout is block-buffered when piped and stderr is not,
-                // so without this the rejections all arrive before the records they
-                // sit between, and the line numbers appear to be out of order.
+                // Flush first: stdout is block-buffered when piped and stderr is not, so
+                // without this the rejections all arrive before the records they sit between.
                 out.flush().map_err(CliError::Write)?;
                 // stderr, so the rejection never lands in the middle of the NDJSON
                 // that `--json` promises on stdout.
@@ -143,11 +136,8 @@ pub fn run<R: BufRead, W: Write>(
     Ok(())
 }
 
-/// The parsed row as NDJSON - one `ParsedLog` per line, for anything downstream of a human.
-///
-/// `ParsedLog` stores its maps as `HashMap`, whose iteration order is not stable between
-/// runs, so every map here is emitted in `keys` order instead: two runs over the same
-/// input produce the same bytes, and a diff means a real change.
+/// The parsed row as NDJSON, every map emitted in `keys` order: `HashMap` order is not
+/// stable between runs, and a diff must mean a real change.
 fn render_json<W: Write>(
     parsed: &kibbr_core::flatten::ParsedLog,
     out: &mut W,
@@ -181,9 +171,8 @@ fn render_json<W: Write>(
     writeln!(out, "{record}").map_err(CliError::Write)
 }
 
-/// `line_no` is the physical line, the same number a rejection is reported against.
-/// Numbering by how many records had been printed would put two different schemes in one
-/// stream as soon as a line is skipped or rejected.
+/// `line_no` is the physical line, the same number a rejection is reported against, so
+/// one stream never holds two numbering schemes.
 fn render<W: Write>(
     parsed: &kibbr_core::flatten::ParsedLog,
     line_no: usize,
@@ -225,9 +214,8 @@ fn render<W: Write>(
     Ok(())
 }
 
-/// The raw text, plus whatever the ladder turned it into when the two differ. A ten-digit
-/// order ID showing `1700000000  (= 2023-11-14T22:13:20Z)` is the rule-2 trade made
-/// visible instead of buried.
+/// The raw text, plus whatever the ladder turned it into when the two differ: the epoch
+/// rule's trade made visible instead of buried.
 fn display_value(ty: Option<ColumnType>, value: &ColValue, raw: &str) -> String {
     match (ty, value) {
         (_, ColValue::Null) => "null".to_string(),

@@ -1,69 +1,8 @@
-//! The v3 segment reader: one `.col` file's bytes through every way the store reads one -
-//! the unsealed walk that recovery runs (`file::walk`), the sealed open through trailer and
-//! footer (`file::sealed`, which is `file::open_sealed` without the file), and each row
-//! group's header, chunks and copy through `file::Reader` - what a query reads and what
-//! compaction copies - over `read::header` and `read::chunk`. A query reads a chunk's
-//! stored bytes through `Reader::stored` and decodes them with `column::Column`, the typed
-//! decoder that prints no cell until one is asked for; both are driven here beside
-//! `Reader::chunks` and `read::chunk`, and held to them.
-//!
-//! What it is held to, over sealed and unsealed files alike: it never panics; it never
-//! reads outside the file, and never asks for bytes the file does not have; a length is
-//! compared with what remains before anything is allocated from it; it refuses every type,
-//! encoding, compression, layout, form field, flag and required kind it does not know; a
-//! chunk it decodes is one cell a row; every offset it reports - in an index or in an
-//! error - is inside the file; and what the walk keeps, sealed as recovery seals it, opens
-//! through its footer as the same row groups and reads back whole.
-//!
-//! **Two ways in, chosen by the first byte**, because a CRC stands between every mutated
-//! byte and the decoder behind it - a frame's over its payload, a chunk's over its bytes -
-//! and a fuzzer does not guess a CRC:
-//!
-//! - any first byte but `0xfb`: the input is the whole bytes of a `.col` file, read as it
-//!   is. A fixture of this kind is a file `xxd` shows as the dumps in `testdata/v3/` do.
-//! - `0xfb`: the rest is instructions (`build`) that this module makes into a file,
-//!   putting the lengths and checksums right itself, so that a changed header field,
-//!   directory byte, form or chunk body reaches the code that checks it and is not a
-//!   tear. Each length and checksum it works out can still be made to lie, one bit at a
-//!   time, by the instruction's knob.
-//!
-//! **How "refuses what it does not know" is held.** A header, a schema record or a footer
-//! the reader accepts is written out again from what the reader says it holds, and must
-//! be the bytes that were read: a byte the reader took without looking at it, or took for
-//! another value, does not come back. Beside that, each accepted field is held to
-//! the format's tables as they are said again here, not borrowed from the reader. A
-//! chunk's body has no second spelling to compare - its cells are values, not bytes - so
-//! a body the reader decoded is read here a second time from the layout
-//! (`hold_body`): every bitmap, length, word list and value in its place, nothing left
-//! over, and no byte that is not one of the values its field may hold.
-//!
-//! **The second decoder.** `column::Column` walks the same layout as `read::chunk` and
-//! must take and refuse the same chunks (`hold_column`). Where `read::chunk` decoded, the
-//! typed decoder decodes and prints every row as the same cell. Where `read::chunk`
-//! refused, the typed decoder refuses the chunk or refuses to print one of its rows - it
-//! leaves to printing what only printing finds - and names a place inside the file.
-//!
-//! **Memory.** Under the fuzzer `-malloc_limit_mb=512` is the judge of what one
-//! allocation may take, as it is for every target. A chunk is decoded into one cell a row,
-//! and an all-null chunk or a constant stores no bytes that vouch for its rows, so the row
-//! count is a length nothing in the file can be compared with. It is held to `MAX_ROWS`
-//! instead - what every writer closes a row group at - in a header and in a footer entry
-//! alike (`hold_header`, `hold_index`), and a chunk's cells to what one allocation may
-//! take (`hold_cells`), so the rule is held on stable too, where no allocator judges.
-//!
-//! One length is allocated from before the bytes vouch for it, by design: a compressed
-//! chunk's `body_len`, which the format holds to 256MiB and to nothing in the file. That is
-//! under the limit, so the allocator does not judge it; the number is held here
-//! (`hold_dir`), and nothing in this module can see whether a frame of twenty bytes made
-//! the reader take all of it. The sealed reads are another matter: the buffer a read
-//! fills is the allocation, so one the file cannot fill is caught as a read (`inside`).
-//!
-//! **What is not read.** A file past `MAX_FILE`; and, within one reading of a file, the
-//! chunks after `WORK` cells have been decoded - a file of a hundred full row groups is
-//! lawful and slow, and says nothing a file of ten does not. Recovery's
-//! truncation and its write are not run: the walk they act on is, the footer they append
-//! is appended here in memory, and what it asks of a file that ends inside its header
-//! (`file::cut_in_header`) is asked of every input that short.
+//! The v3 segment reader: one `.col` file's bytes through every way the store reads
+//! one - the unsealed walk, the sealed open, and each row group through `file::Reader` and
+//! `column::Column`. It never panics, never reads outside the file, and refuses what it
+//! does not know. A first byte of `0xfb` makes the rest instructions (`build`) with lengths
+//! and CRCs put right, since a fuzzer does not guess a CRC.
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::mem::size_of;
@@ -145,7 +84,7 @@ fn check(file: &[u8]) {
 
 // ── What a reading may spend ───────────────────────────────────────────────────────
 
-/// A reading that stopped without a verdict: see "What is not read".
+/// A reading that stopped without a verdict, past `WORK` cells.
 struct Declined;
 
 /// Whether a chunk of `rows` rows is still within the cells this reading decodes.
@@ -242,10 +181,8 @@ fn frame_at(file: &[u8], at: usize) -> Option<(&[u8], usize)> {
     mine
 }
 
-/// A file that ends inside its header, as recovery judges it before it writes an empty
-/// file in its place: the start of a v3 header and nothing else is a file a
-/// crash cut, and anything else is refused - by name when its first bytes say another
-/// build wrote it.
+/// A file that ends inside its header, as recovery judges it: the start of a v3
+/// header and nothing else is a file a crash cut, and anything else is refused.
 fn cut_in_header(file: &[u8]) {
     let head = [MAGIC[0], MAGIC[1], MAGIC[2], MAGIC[3], VERSION, 0, 0, 0];
     let n = file.len().min(head.len());
@@ -275,9 +212,8 @@ fn cut_in_header(file: &[u8]) {
 
 // ── The unsealed walk ──────────────────────────────────────────────────────────────
 
-/// The file walked from byte 24 as recovery walks it, here, every chunk decoded and held to
-/// what a chunk must be - and then `file::walk` held to the same answer. What the walk kept
-/// and where it stopped, or `None` when it refused the file or the reading was declined.
+/// The file walked from byte 24 as recovery walks it, here, and `file::walk` held to the same
+/// answer: what it kept and where it stopped, or `None` when refused or declined.
 fn unsealed(file: &[u8]) -> Option<(Index, usize)> {
     let path = Path::new(NAME);
     let mine = match header(file) {
@@ -525,9 +461,7 @@ fn hold_dir(dir: &ChunkDir) {
         dir.compression
     );
     // `body_len` is a field only a compressed chunk has, and the one a reader allocates
-    // from before it decompresses. A chunk stored as it is has `stored_len` alone, which
-    // a header cannot hold to anything: the bytes that remain are the file's, and the
-    // walk and `Reader::chunks` hold it to those.
+    // from before it decompresses; a stored chunk's `stored_len` is held by the walk.
     if dir.compression == NO_COMPRESSION {
         assert_eq!(
             dir.body_len, dir.stored_len,
@@ -651,9 +585,8 @@ fn piece_bytes(piece: &PieceDir) -> Vec<u8> {
 
 // ── What a decoded chunk holds ─────────────────────────────────────────────────────
 
-/// A chunk the reader decoded: one cell a row, nulls where the layout has them and
-/// nowhere else, each value of its piece's type, and a zstd frame that is the whole of
-/// what was stored and holds what `body_len` says.
+/// A chunk the reader decoded: one cell a row, nulls where the layout has them, each value
+/// of its piece's type, and a zstd frame that is the whole of what was stored.
 fn hold_cells(dir: &ChunkDir, rows: u32, stored: &[u8], cells: &[Cell]) {
     assert_eq!(
         cells.len(),
@@ -742,13 +675,8 @@ struct Chunk<'a> {
     at: u64,
 }
 
-/// The typed decoder over a chunk `read::chunk` has judged. `cells` is what `read::chunk`
-/// decoded, or `None` where it refused; `len` is the file's length.
-///
-/// With cells: the chunk decodes, reads over its own bytes and over no others, and every
-/// row prints as its cell - alone, through a memo, and out of the memo a second time.
-/// With none: the chunk is refused, or one of its rows is. A refusal names a place inside
-/// the file either way.
+/// The typed decoder over a chunk `read::chunk` has judged: with `cells` every row prints
+/// as its cell, with `None` the chunk or one of its rows is refused, inside the file.
 fn hold_column(chunk: &Chunk<'_>, len: usize, cells: Option<&[Cell]>) {
     let rows = chunk.rows as usize;
     let column = match Column::decode(chunk.stored, chunk.at, chunk.dir, rows) {
@@ -842,9 +770,8 @@ fn bitmap<'a>(rest: &mut &'a [u8], n: usize, what: &str) -> (&'a [u8], usize) {
     (map, map.iter().map(|b| b.count_ones() as usize).sum())
 }
 
-/// The body of a chunk the reader decoded, read a second time from its layout: the presence
-/// bitmap, the selector and piece A's length where the layout has them, and each piece
-/// its own bytes, used up exactly.
+/// The body of a chunk the reader decoded, read a second time from its layout,
+/// each piece's bytes used up exactly.
 fn hold_body(dir: &ChunkDir, rows: usize, body: &[u8]) {
     let Some(a) = dir.a else {
         assert!(body.is_empty(), "an all-null chunk with a body");
@@ -874,9 +801,8 @@ fn hold_body(dir: &ChunkDir, rows: usize, body: &[u8]) {
     }
 }
 
-/// One piece of `n` rows the reader decoded, read from its layout: the kind bitmap
-/// and the digits bytes when its form has them, then the values as its encoding lays
-/// them out - each a value its type may hold - and no byte after the last.
+/// One piece of `n` rows the reader decoded, read from its layout: each value one
+/// its type may hold, and no byte after the last.
 fn hold_values(piece: &PieceDir, bytes: &[u8], n: usize) {
     assert!(n > 0, "a piece of no rows");
     let mut rest = bytes;
@@ -992,9 +918,8 @@ fn hold_leb128(rest: &mut &[u8]) {
 
 // ── The sealed open ────────────────────────────────────────────────────────────────
 
-/// Where `len` bytes at `offset` start in the file. The reader allocates its buffer
-/// before it asks for the bytes, so a request the file cannot meet is a length that was
-/// used before anything compared it with what remains.
+/// Where `len` bytes at `offset` start in the file. The reader allocates its buffer first,
+/// so a request the file cannot meet is a length used before anything compared it.
 fn inside(file: &[u8], offset: u64, len: usize) -> usize {
     let fits = usize::try_from(offset)
         .ok()
@@ -1033,10 +958,8 @@ impl Seek for Mem<'_> {
     }
 }
 
-/// The file opened through its trailer and footer, and every row group its index lists
-/// read through `file::Reader`: the index, when the file is sealed and nothing refused
-/// it. With `kept`, the file is one recovery made, so it must be sealed and every row
-/// group in it must read.
+/// The file opened through its trailer and footer, and every row group its index lists read
+/// through `file::Reader`. With `kept` it is one recovery made, so all of it must read.
 fn sealed(file: &[u8], kept: bool) -> Option<Index> {
     let path = Path::new(NAME);
     let opened = file::sealed(path, file.len() as u64, |offset, buf| {
@@ -1161,8 +1084,7 @@ fn sealed(file: &[u8], kept: bool) -> Option<Index> {
 }
 
 /// A row group as `Reader::copy` gave it: the header frame with its schema renumbered and
-/// nothing else changed, its CRC put right, and the chunk area the header measures, byte
-/// for byte.
+/// its CRC put right, and the chunk area the header measures, byte for byte.
 fn hold_copy(file: &[u8], area: usize, header: &Header, payload: &[u8], copied: &RowGroup) {
     let mut renumbered = payload.to_vec();
     renumbered[9..13].copy_from_slice(&RENUMBERED.to_le_bytes());
@@ -1186,10 +1108,8 @@ fn hold_copy(file: &[u8], area: usize, header: &Header, payload: &[u8], copied: 
     );
 }
 
-/// An index the sealed open gave, held to the footer's rules: the trailer points at a whole
-/// footer frame that ends where the trailer begins; the footer is the one spelling of the
-/// index, up to parts a reader steps over; and every entry is a frame's worth of bytes
-/// between the header and the footer, in file order, none over the next.
+/// An index the sealed open gave, held to the footer's rules: the footer is the
+/// one spelling of the index, and every entry lies between header and footer, in file order.
 fn hold_index(file: &[u8], index: &Index) {
     assert!(
         file.len() >= HEADER_LEN + TRAILER_LEN,
@@ -1271,9 +1191,8 @@ fn hold_index(file: &[u8], index: &Index) {
     }
 }
 
-/// What recovery sealed is what the walk kept: the same schemas and row groups. A chunk
-/// area's length is not in a footer, so an index opened through one measures it up to the
-/// next row group, which is never less.
+/// What recovery sealed is what the walk kept. A chunk area's length is not in a footer,
+/// so an index opened through one measures it up to the next row group, never less.
 fn same_rows(sealed: Option<Index>, walked: &Index) {
     let sealed = sealed.expect("a file recovery sealed opens as sealed");
     assert!(
@@ -1351,30 +1270,8 @@ fn knob(knob: u8, field: u8, honest: u32) -> u32 {
     }
 }
 
-/// A v3 file from instructions: a header, then whatever each instruction appends.
-///
-/// ```text
-/// 0  frame      [2] len  [len] payload      framed: its length and CRC are worked out
-/// 1  row group  see `group`                 a header frame and the chunk area after it
-/// 2  trailer                                the last frame's length, then 'KBBR'
-/// 3  bytes      [2] len  [len] bytes        appended as they are
-/// 6  seal       [1] flags                   the footer of what was built, and its trailer
-/// ```
-///
-/// An instruction's number is taken modulo 8, and 4, 5 and 7 are 0, 1 and 3 again. A
-/// schema record, a footer, an optional frame and a frame of a kind nobody assigned are
-/// all instruction 0: a footer given that way says whatever the input says.
-///
-/// **The seal is the footer of what the builder put in the file**, not of what a reader
-/// would keep of it: every schema record and every row group so far, at the offsets they
-/// were written, whether or not the row group's header, lengths or chunks hold. A walk
-/// stops at such a row group as at a tear, or refuses it; the sealed open has no such
-/// stop, and goes on to read the header, the chunks and the copy of a row group nothing
-/// vouches for but its footer entry. Without it a changed row group moves everything
-/// after it, and a footer given as bytes points nowhere. Bit 0 of the flags is the
-/// footer's finished flag.
-///
-/// The file stops growing once it is past `MAX_FILE`, which `check` does not read.
+/// A v3 file from instructions: a header, then whatever each instruction appends. The seal
+/// is the footer of what was built, kept or not, so a changed row group still has an entry.
 fn build(feed: &[u8]) -> Vec<u8> {
     let mut feed = Feed { bytes: feed };
     let mut out = file::header_bytes(&FILE_ID).to_vec();
@@ -1421,27 +1318,8 @@ fn columns_of(payload: &[u8]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// One row group: its header frame and its chunk area, every length and checksum between
-/// them worked out from the bytes given. The length of the header frame.
-///
-/// ```text
-/// [1]   flags      bit 0: write a schema record of this many columns first, and name it
-/// [57]  the header's fields from template_id to last, as they are
-/// [1]   columns, modulo 33; per column:
-///         [1] layout  [1] compression
-///         [1] knob    bit 7: with compression 1, the body is what is given, compressed
-///                     here; bits 0-1: 1, 2 or 3 turns one bit of stored_len, stored_crc
-///                     or body_len; bits 2-6: which bit
-///         [1] len, modulo 32  [len] the pieces: type, encoding and form, as they are
-///         [2] len  [len] the chunk's bytes
-/// [1]   sections, modulo 5; per section:
-///         [1] kind  [1] column  [1] len  [len] bytes
-/// [1]   knob       bits 0-1: 1 turns one bit of chunks_len; bits 2-6: which bit
-/// ```
-///
-/// `chunks_len` is what the directory's lengths add up to, as the header requires - so a
-/// `stored_len` made to lie is carried into it, and the header that holds the lie is one
-/// a reader accepts and then has to hold against the bytes that are there.
+/// One row group: its header frame and its chunk area, every length and checksum worked
+/// out from the bytes given, or made to lie by a knob. Returns the header frame's length.
 fn group(feed: &mut Feed<'_>, out: &mut Vec<u8>, index: &mut Index) -> usize {
     let flags = feed.byte();
     let mut fixed = [0u8; FIXED];
@@ -1561,10 +1439,8 @@ mod tests {
         std::fs::read(path).expect("a test vector")
     }
 
-    /// A file as the instructions that build it: each row group as instruction 1, each
-    /// other frame as instruction 0, a trailer as instruction 2 and whatever is left as
-    /// instruction 3. With `squeeze`, a zstd chunk is given as its body, for `build` to
-    /// compress, and the file is left unsealed, since its footer's offsets no longer hold.
+    /// A file as the instructions that build it. With `squeeze`, a zstd chunk is given as its
+    /// body and the file is left unsealed, since its footer's offsets no longer hold.
     fn instructions(file: &[u8], squeeze: bool) -> Vec<u8> {
         let run = |out: &mut Vec<u8>, bytes: &[u8]| {
             out.extend_from_slice(
@@ -1742,10 +1618,8 @@ mod tests {
         )
     }
 
-    /// One row group whose column `v` holds every spelling a form names, and so both
-    /// pieces, a kind bitmap and text; one of forty rows of words, numbers and times, so a
-    /// word list, variable-length integers and differences are each long enough for zstd
-    /// to have something to do; and one of three hundred distinct words.
+    /// Every spelling a form names in one column, then rows enough that a word list, varints
+    /// and differences give zstd something to do, then three hundred distinct words.
     fn spellings() -> Vec<u8> {
         let values = [
             r#""0045000012""#,

@@ -1,14 +1,8 @@
-//! `kibbr query`. Flags or TrieQL in, `QueryResult` out.
-//!
-//! Two ways in and one `Query` out. The flags construct it directly; a TrieQL string goes
-//! through `trieql` and arrives at the same struct, carrying nothing the flags could not
-//! also say. That is what makes `--reference` and `scripts/check/parser_equivalence.sh` honest -
-//! every path builds the one struct, so a differential compares answers, not plumbing.
-//!
-//! The grammar reaches every part of a `Query`: `LIMIT` and `AFTER` are in it, so `--limit`
-//! and `--after` are exclusive with a TrieQL string the way `--since` already is. Only the
-//! output flags - `--format`, `--explain`, `--reference` - stay flags on both surfaces,
-//! because none of them changes the answer.
+//! `kibbr query`. Flags or TrieQL in, `QueryResult` out. Both ways in build the one
+//! `Query`, which is what makes `--reference` and
+//! `scripts/check/parser_equivalence.sh` honest: a differential compares answers, not
+//! plumbing. Only the output flags - `--format`, `--explain`, `--reference` - stay flags
+//! on both surfaces, because none of them changes the answer.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -78,16 +72,14 @@ pub struct Args {
 }
 
 pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(), CliError> {
-    // One instant for the query *and* for every line's arrival: a `SINCE` is
-    // relative to it, and a row on arrival time sits at it. The engine and the oracle
-    // read the same `now`, which is what lets `scripts/check/agree.sh` compare their rows.
+    // One instant for the query *and* for every line's arrival, read by the engine and
+    // the oracle alike, which is what lets `scripts/check/agree.sh` compare their rows.
     let now = Utc::now();
     let schema = &args.schema;
     let query = build(args, now)?;
 
-    // `--explain` executes nothing, so it never asks for rows. The load is still O(lines)
-    // because there is no persisted trie yet - what is constant is `Plan::duration`, which
-    // is what the plan line reports.
+    // `--explain` executes nothing, so it never asks for rows; the plan line reports
+    // `Plan::duration`, not the load.
     if args.explain {
         let db = db::load(input, false, now, schema)?;
         note(db.stats);
@@ -112,9 +104,8 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     }
 }
 
-/// stderr, so it never lands in the JSON on stdout. The answer stands - it just does not
-/// cover the lines that could not be read, and an operator should not have to infer that
-/// from a row count.
+/// stderr, so it never lands in the JSON on stdout: the answer does not cover the lines
+/// that could not be read, and an operator should not have to infer that from a row count.
 fn note(stats: db::LoadStats) {
     if stats.rejected > 0 {
         eprintln!(
@@ -128,16 +119,11 @@ fn note(stats: db::LoadStats) {
 
 // ── Text and flags to a Query ──────────────────────────────────────────────────────
 
-/// `now` is a parameter, not a call: `--since` and `SINCE` are both relative to it, and a
-/// caller that wants a reproducible answer needs to be able to fix it. Both surfaces take
-/// the same one, which is what lets `scripts/check/parser_equivalence.sh` compare them at all.
-///
-/// Visible to the crate so that `fuzzing::cursor` can hand `--after` a token at a fixed
-/// `now`, without a file to load: `run` is the only other caller.
+/// `now` is a parameter, not a call, so a caller can fix it and both surfaces take the
+/// same one. Visible to the crate so `fuzzing::cursor` can hand `--after` a token.
 pub(crate) fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
-    // TrieQL builds the same `Query` the flags do and then stops: the output flags are not
-    // in the grammar and do not change the answer. Both routes end at `Query::new`, which
-    // is the one place the limit's default and its per-mode meaning are decided.
+    // TrieQL builds the same `Query` the flags do. Both routes end at `Query::new`, the
+    // one place the limit's default and its per-mode meaning are decided.
     if let Some(text) = &args.trieql {
         return from_trieql(text, now, args.limits);
     }
@@ -148,9 +134,8 @@ pub(crate) fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> 
         .map(|arg| parse_match(arg))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // clap keeps the four verbs mutually exclusive, so the order here only settles which
-    // arm reads which flag. `--count` and no verb at all land together: counting is the
-    // cheapest thing a bare query can mean.
+    // clap keeps the four verbs mutually exclusive. `--count` and no verb at all land
+    // together: counting is the cheapest thing a bare query can mean.
     let mode = match (&args.group_by, args.fetch, args.exists, args.count) {
         (Some(keys), ..) => QueryMode::GroupBy(group_keys(keys)?),
         (None, true, ..) => QueryMode::Fetch,
@@ -230,11 +215,8 @@ fn parse_match(arg: &str) -> Result<Match, QueryError> {
     })
 }
 
-/// `--group-by KEY[,KEY]`, where a key may be `time(<duration>)`.
-///
-/// The flag surface reaches the bucket too. The two surfaces build one `Query`
-/// (see the module header), and a clause TrieQL can say and the flags cannot is a clause
-/// `scripts/check/parser_equivalence.sh` stops covering the moment it is added.
+/// `--group-by KEY[,KEY]`, where a key may be `time(<duration>)`: a clause TrieQL can
+/// say and the flags cannot is one `scripts/check/parser_equivalence.sh` stops covering.
 fn group_keys(spec: &str) -> Result<Vec<GroupKey>, QueryError> {
     let bad = || QueryError::EmptyGroupKey {
         arg: spec.to_string(),
@@ -280,16 +262,8 @@ fn parse_duration(text: &str) -> Result<Duration, QueryError> {
     })
 }
 
-/// The grammar's `duration`, and the only reading of one in the crate.
-///
-/// `--since 1h`, `SINCE 1h`, `--group-by 'time(1h)'` and `GROUP BY time(1h)` all land
-/// here. It used to be written twice, once per surface, which is exactly the drift
-/// `scripts/check/parser_equivalence.sh` exists to catch - each surface still wraps the `None`
-/// in its own error, because a flag names itself and a query string names a byte offset.
-///
-/// By character, not by `len() - 1`: `len` is bytes and slicing at an index inside a
-/// multibyte character panics. This reads a flag value straight off the command line, and
-/// no input may make it panic.
+/// The grammar's `duration` and the only reading of one in the crate, split by character
+/// so that no flag value with a multibyte ending can make it panic.
 pub(crate) fn duration_of(text: &str) -> Option<Duration> {
     let (at, unit) = text.char_indices().next_back()?;
     let n: u64 = text[..at].parse().ok()?;
@@ -311,18 +285,8 @@ fn parse_datetime(text: &str) -> Result<DateTime<Utc>, QueryError> {
         })
 }
 
-/// A window edge as RFC 3339 - the inverse of `system_time`, and fallible where that one
-/// is not.
-///
-/// Separate from `fmt::rfc3339`, which takes the `i64` nanoseconds a stored `Datetime`
-/// always is and so cannot fail. A window edge is not stored and not bounded by that: it
-/// comes off `--between` or out of `now - SINCE`, and reaches years no count of
-/// nanoseconds can address.
-///
-/// `SystemTime` reaches far further than `DateTime<Utc>` does and chrono's `From` panics
-/// rather than saying so - which `SINCE 1000000000000d` is enough to reach. A window edge
-/// with no RFC 3339 spelling is still a window edge the engine can compare against, so it
-/// is named rather than rejected.
+/// A window edge as RFC 3339 - the inverse of `system_time`. An edge chrono cannot
+/// spell is named `out of range` rather than left to chrono's `From`, which panics.
 fn edge_text(t: SystemTime) -> String {
     let stamp = match t.duration_since(UNIX_EPOCH) {
         Ok(d) => i64::try_from(d.as_secs())
@@ -350,11 +314,8 @@ fn edge_text(t: SystemTime) -> String {
 
 // ── Output ─────────────────────────────────────────────────────────────────────────
 
-/// The plan, and nothing executed.
-///
-/// Each line names the step it reports - `walk`, `scan`, `pruned`, `limit` - rather than
-/// numbering them. A number told a reader which half of the source to open, not what the
-/// query is about to do, and an operator reading a plan wants the second.
+/// The plan, and nothing executed. Each line names the step it reports rather than
+/// numbering it: an operator wants what the query is about to do.
 fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliError> {
     let tokens: Vec<String> = query.tokens().iter().map(|t| format!("{t:?}")).collect();
     // A wildcard over a wide dimension selects hundreds of leaves, and a plan nobody can
@@ -414,9 +375,8 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
         )
         .map_err(CliError::Write)?;
     }
-    // The limit and the order belong on the plan, not only in `kibbr explain`: a limit
-    // that is `Query::new`'s default rather than the operator's is the one they most need
-    // to see before the query runs, and the order is what decides which rows it keeps.
+    // The limit and the order belong on the plan: a limit that is `Query::new`'s default
+    // is the one an operator most needs to see before the query runs.
     if let Some(width) = query.bucket_width() {
         writeln!(out, "  buckets  {}", bucket_text(query, width)).map_err(CliError::Write)?;
     }
@@ -448,14 +408,8 @@ fn explain<W: Write>(out: &mut W, query: &Query, plan: &Plan) -> Result<(), CliE
     .map_err(CliError::Write)
 }
 
-/// `kibbr explain '<trieql>'` - what the parser made of the string, and nothing else.
-///
-/// Ideally this would print the execution plan, but a plan needs a trie and this command
-/// takes no file: nothing persists a trie yet, so the only one that exists is the one
-/// `kibbr query <file>` builds for the length of a run. `query --explain` is the half
-/// that plans; this one reports the `Query` the text denotes, which is the whole of what
-/// the parser is answerable for. Persisting the trie would let this grow the plan without
-/// the parser changing.
+/// `kibbr explain '<trieql>'`: the `Query` the text denotes and nothing else, since a
+/// plan needs a trie and this command takes no file.
 pub fn describe<W: Write>(out: &mut W, text: &str, limits: Limits) -> Result<(), CliError> {
     let now = Utc::now();
     let parsed = trieql::parse(text, now)?;
@@ -467,15 +421,13 @@ pub fn describe<W: Write>(out: &mut W, text: &str, limits: Limits) -> Result<(),
         parsed.time,
         parsed.limit,
         // Not decoded against a `Query` here: `kibbr explain` takes no file, so there is
-        // no answer for a cursor to be a page of. `AFTER`'s shape was checked by the
-        // parser; whether it belongs to this query is `query --explain`'s to say.
+        // no answer for a cursor to be a page of.
         None,
         system_time(now),
         limits,
     );
-    // The same refusal `query` makes, at the same point: `kibbr explain` is where an
-    // operator checks a query before running it, and a plan for a query that will be
-    // refused is not the answer they came for.
+    // The same refusal `query` makes: a plan for a query that will be refused is not the
+    // answer an operator came for.
     engine::check_buckets(&query).map_err(engine::ExecError::from)?;
     writeln!(out, "query:").map_err(CliError::Write)?;
     writeln!(out, "  mode     {}", mode_text(&query.mode)).map_err(CliError::Write)?;
@@ -497,19 +449,14 @@ pub fn describe<W: Write>(out: &mut W, text: &str, limits: Limits) -> Result<(),
 /// and it is not in the grammar for a reader to have inferred from the query.
 const ORDER_TEXT: &str = "ts descending (newest first); rows with no ts last, in insertion order";
 
-/// The time axis, on the plan and before it runs.
-///
-/// Where the boundaries fall is the thing an operator cannot see from the query text, and
-/// the thing that makes two overlapping charts comparable - so the plan says it rather
-/// than leaving it to be inferred from the answer. A query with no window has no count to
-/// give here: the span comes from the rows, and `--explain` has read none.
+/// The time axis, on the plan: where the bucket boundaries fall is what an operator
+/// cannot see from the query text.
 fn bucket_text(query: &Query, width: std::time::Duration) -> String {
     let w = duration_text(width);
     let count = match engine::planned_buckets(query) {
         Some(n) => format!("{} buckets of {w}", commas(n)),
         // No window edge to count from: the span comes from the rows, and this has read
-        // none. Naming the width is still worth a line - it is what the answer will be
-        // shaped by.
+        // none.
         None => format!("{w} buckets over whatever range the rows cover"),
     };
     let permitted = match query.limits.max_buckets {
@@ -559,11 +506,8 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
     }
 
     match &query.mode {
-        // Two answers, because `--exists` asks two questions (see `engine::execute`).
-        // Without a window, `rows scanned: 0` is the mode's whole point: the answer came
-        // off the trie walk having opened nothing. With one, the extra column is the
-        // question actually asked - "is this firing?" - and `rows scanned` is what
-        // stopping on the first matching row cost.
+        // Two answers, because `--exists` asks two questions (see `engine::execute`): with
+        // no window the walk opened nothing, with one a matching row was looked for.
         QueryMode::Exists => writeln!(
             out,
             "exists  true{}   (templates matched: {} → {}, rows scanned: {}, {})",
@@ -591,9 +535,8 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
         QueryMode::Fetch => {
             let rows = canonical(result);
             render_rows(out, &rows)?;
-            // `count` is every row that matched and `rows_returned` is how many came back.
-            // A limit that quietly printed the smaller number and called it the answer is
-            // how someone concludes there were 10 errors when there were 40,000.
+            // `count` is every row that matched and `rows_returned` is how many came back; a
+            // limit must not print the smaller number as the answer.
             if result.meta.truncated {
                 writeln!(
                     out,
@@ -635,37 +578,16 @@ fn table<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(
     Ok(())
 }
 
-/// One compact line, so a differential script can diff two runs without a JSON parser.
-///
-/// Keys are sorted everywhere - `Row` is a `HashMap` and `groups` arrives already
-/// ordered, because a result that serialises differently each run is not comparable to
-/// anything.
+/// One compact line, keys sorted, so a differential script can diff two runs without a
+/// JSON parser.
 fn json<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
     let body = result_json(query, result);
     writeln!(out, "{body}").map_err(CliError::Write)
 }
 
-/// One JSON object per line and nothing else on stdout.
-///
-/// The envelope `--format json` prints - `exists`, `count`, `meta` - has no place in a
-/// stream whose every line is a record, so none of it is here. The output feeds straight
-/// back into `kibbr query -`, and into anything else that reads NDJSON: a row goes
-/// through `row_json`, so a `Datetime` leaves as RFC 3339 and comes back as one.
-///
-/// The two empty answers stay apart on stderr. "No such template" prints no lines and
-/// says so there; "that template exists and nothing matched" prints no lines and says
-/// nothing. Neither puts an odd-shaped object in the middle of a stream something
-/// downstream is parsing row by row.
-///
-/// **This does not stream, and it is not a memory mitigation.** Every row is ranked into a
-/// `Vec<Row>` before the first line is written, so the format changes the encoding and not
-/// the memory - measured rather than argued: peak RSS grows with the row count here, where
-/// a streaming writer's would not (`scripts/measure/backstop_rss.sh`). Nor could it: newest-first
-/// over a file needs the last row read before the first row out. The server's day
-/// partitions are ordered and can be walked descending; a flat file cannot. So the bound
-/// here is the backstop and paging, which is why an unlimited fetch gets a cursor.
-///
-/// `next_cursor` goes to stderr because it is not a record.
+/// One JSON object per line and nothing else on stdout, so it feeds back into
+/// `kibbr query -`; what is not a record goes to stderr. Not a stream: every row is ranked
+/// before the first is written (`scripts/measure/backstop_rss.sh`).
 fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<(), CliError> {
     if !result.exists {
         eprintln!(
@@ -678,10 +600,8 @@ fn ndjson<W: Write>(out: &mut W, query: &Query, result: &QueryResult) -> Result<
     // Every mode prints its own records rather than only `Fetch` printing anything: a
     // format flag that silently emits nothing for three of the four modes is a trap.
     match &query.mode {
-        // Under a window the mode answers "is this firing?", so the record carries that
-        // and not only the template's existence. Without one there is no such answer to
-        // give - the walk read nothing - and inventing a `matched: false` would read as
-        // "checked, and no", which is the one thing it does not mean.
+        // Under a window the mode answers "is this firing?", so the record carries that.
+        // Without one, a `matched: false` would read as "checked, and no".
         QueryMode::Exists if query.time.is_open() => {
             line(out, &serde_json::json!({ "exists": true }))?
         }
@@ -721,12 +641,8 @@ fn line<W: Write>(out: &mut W, value: &Value) -> Result<(), CliError> {
     writeln!(out, "{value}").map_err(CliError::Write)
 }
 
-/// One group as its cells, in the order the keys were written, with the count last.
-///
-/// The bucket is pulled from `Group::bucket` and every other cell from `values` in turn,
-/// so `GROUP BY level, time(5m)` prints its columns in that order rather than in one this
-/// function chose. An unplaceable row's bucket reads `(null)` - the same spelling a
-/// missing column value gets, and for the same reason: absence is not a value.
+/// One group as its cells, in the order the keys were written, with the count last. An
+/// unplaceable row's bucket reads `(null)`: absence is not a value.
 fn group_cells(keys: &[GroupKey], group: &Group) -> Vec<String> {
     let mut values = group.values.iter();
     let mut cells: Vec<String> = keys

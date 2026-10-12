@@ -1,15 +1,6 @@
 [workspace]
-# Five crates, each allowed to name only the ones under it:
-#
-#   kibbr (this one: the command line - the commands, and how their settings are resolved)
-#     -> kibbr-server   (the HTTP server, as a library, and the loads and compactions it
-#                        runs)
-#     -> kibbr-engine   (plan and execute a query; TrieQL)
-#     -> kibbr-storage  (the trie and its catalog, the day files, the write-ahead log,
-#                        the write path that puts a line into them, and the lock on a
-#                        data directory)
-#     -> kibbr-core     (a line into keys, types and a fingerprint)
-#
+# Five crates, each allowed to name only the ones under it: kibbr -> kibbr-server ->
+# kibbr-engine -> kibbr-storage -> kibbr-core.
 # fuzz/ is a workspace of its own, so `cargo build` here never builds a fuzzer.
 members = ["crates/kibbr-core", "crates/kibbr-storage", "crates/kibbr-engine", "crates/kibbr-server"]
 exclude = ["fuzz", "lab-rs"]
@@ -30,54 +21,28 @@ kibbr-server = { path = "crates/kibbr-server" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
-# CRC-32C for every frame, chunk and log record. Takes the CPU's CRC instruction (SSE 4.2,
-# ARMv8) where there is one, which a hand-written table does not.
+# CRC-32C for every frame, chunk and log record, on the CPU's CRC instruction where there is one.
 crc32c = "0.6.8"
-# Default features, so the inflater is `miniz_oxide` - pure Rust, no C toolchain in the
-# build and nothing new to audit for memory safety on a path that decodes hostile input.
+# Default features, so the inflater is pure-Rust `miniz_oxide`: no C where hostile input is decoded.
 flate2 = "1.1"
-# The global allocator, in place of the system's - why is at `#[global_allocator]` in
-# src/main.rs. C under the hood, like zstd.
+# The global allocator - why is at `#[global_allocator]` in src/main.rs.
 mimalloc = "0.1.52"
-# Two things std has no call for. `statvfs`: compaction writes a day a second time beside
-# the files it reads, and asks how much room the volume has before it writes a byte. And a
-# child process's CPU time, with this process's own to check it against: `kibbr bench`
-# divides the rows a server scanned by the CPU-seconds it used, and that server is a child
-# (`proc_pid_rusage` and the Mach timebase on macOS, `sysconf` for `/proc`'s tick on Linux,
-# `getrusage`). Already in the build under tokio and mimalloc; named here because src/
-# calls it.
+# `statvfs` before a compaction writes, and a child's CPU time for `kibbr bench`: std has neither.
 libc = "0.2"
-# `Frame` and `SizeHint`, the two types the `Body` trait's methods are written in: the
-# server puts a body of its own around each request's, to know whether it was read to its
-# end, and axum hands on the trait without them. Already in the build under axum and
-# hyper; named here because the server crate implements the trait.
+# `Frame` and `SizeHint`, for the body the server wraps a request's in to know it was read whole.
 http-body = "1"
-# The threads a query chooses a day's rows on beside its own: one small pool, owned by
-# the disk store of a server and started by the first query that has a use for it
-# (crates/kibbr-storage/src/store/fan.rs, the only file that names this crate). A scope on that pool and
-# nothing else of rayon's - not its global pool, which is made on first use and shared
-# with whatever calls it next, and not `par_iter`, whose caller sleeps while the pool
-# works: here the thread that asked takes row groups too, so a pool that is given no
-# core costs a query a wait and not its answer. Entered only from a thread that may
-# block: a query is on a `spawn_blocking` thread before it reaches the store.
+# A scope on one small pool the disk store owns, for a query's scan threads - never the global pool.
 rayon = "1.12.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
-# The settings file, `--config`: parsed into the same structs the flags and variables
-# fill (src/config.rs). The parser and serde only - nothing here writes TOML.
+# The settings file, `--config` (src/config.rs): the parser and serde only, nothing writes TOML.
 toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"] }
-# The process's own log: every lifecycle line, warning and error is a `tracing` event -
-# the server crate's and the storage crate's among them, which only emit - and one
-# subscriber in the binary (src/logs.rs) writes each as a line of text or of JSON. The macros and the core only - no attribute macro, so no syn in the build.
+# The process's own log, written by one subscriber (src/logs.rs); no attribute macro, so no syn.
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 tokio-util = "0.7.19"
-# zstd, for the bulk door's zstd inputs and `bench-storage`'s zstd -19, and for the
-# compressed chunks and finished files to come, whose levels 3 and 9 only libzstd has - a
-# pure-Rust encoder stops short of them. C under the hood, unlike flate2's inflater: the
-# difference is what it reads. `/ingest` decodes bodies from the network and stays gzip on
-# miniz_oxide; this decodes an operator's own files, and the format's own bytes.
+# For the bulk door's zstd inputs, `bench-storage` and compressed chunks; C, as high levels need.
 zstd = { version = "0.13", default-features = false }
 
 [package]
@@ -108,9 +73,7 @@ tokio-util.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
-# The samples and the failure hooks the storage crate's own tests are built on, for the
-# tests here that hold a server to the same ones.
+# The storage crate's samples and failure hooks, for the tests here that hold a server to them.
 kibbr-storage = { workspace = true, features = ["test-support"] }
-# The `/ingest` tests build the gzip bodies they post, including the bomb. Shelling out to
-# `gzip(1)` would make the corpus depend on whichever one is on the machine.
+# The `/ingest` tests build their own gzip bodies, the bomb included, not the machine's `gzip(1)`.
 flate2.workspace = true

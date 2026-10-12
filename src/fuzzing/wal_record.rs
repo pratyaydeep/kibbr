@@ -1,63 +1,24 @@
-//! The write-ahead log's reader: one segment's bytes through `wal::read_segment`, which is
-//! the loop `Wal::replay` runs over every segment, and under it the header `Wal::open`
-//! reads first, the frame reader, the zstd batch a frame holds and the records in a batch.
-//!
-//! What it is held to: it never panics; it never reads outside the bytes it was given;
-//! what it allocates is bounded by what those bytes can hold; every offset it reports is
-//! inside the segment; a record it hands over is one the batch holds, where the batch
-//! says it is; and a segment cut at its torn end reads as it did before the cut.
-//!
-//! **The reader is held to a second reader, written here from the format and from none of
-//! its code** (`expected`). The rules above are true of a reader that hands over nothing,
-//! and of one that takes a frame of a kind it does not know, a batch shorter than its
-//! frame says, a header of another version, or a frame of positions already read once it
-//! has stepped over damage: none of those panics and none reads past an end. So the
-//! header, a frame, a batch and its records are each said a second time below, in the
-//! words of the layout at the top of wal.rs and of `replay`'s and `resync`'s own comments,
-//! and a read of the fuzzer's own bytes has to come to the same end, the same records and
-//! the same counts. Only zstd and the CRC are shared: what a frame decompresses to is
-//! zstd's to say.
-//!
-//! **Every input is read four ways**, because three checksums stand between a mutated byte
-//! and the code behind them - the header's, a frame's, a record's - and a fuzzer does not
-//! guess a CRC:
-//!
-//! 1. as it is: the whole bytes of one segment file;
-//! 2. as a segment whose header and frame checksums are put right first, so that a change
-//!    to a frame's contents reaches the batch reader and zstd and is not a tear;
-//! 3. as one batch before compression, read by `wal::records` and then written into a
-//!    segment of its own, which has to read back as exactly those records;
-//! 4. as that batch with its records' checksums put right.
-//!
-//! And its first 28 bytes are read as a header, as they are and with the checksum put
-//! right, so that a version, a reserved byte or a stream id the reader should refuse gets
-//! as far as the check that refuses it.
-//!
-//! **What is not read.** A frame may claim a batch of up to `wal::MAX_RAW`, a gibibyte
-//! and sixteen mebibytes, and the reader asks zstd for that much room before a byte is
-//! decompressed: a claim held to the documented bound and not to the bytes that remain.
-//! Under the fuzzer's 512MB allocation limit that would end every run at the first such
-//! frame, so a segment holding a whole frame that claims more than `FRAME_RAW`, or whole
-//! frames that claim more than `SEGMENT_RAW` between them, is left alone: `claimed` finds
-//! them before the reader is called. Below those bounds the limit is the fuzzer's to hold.
+//! The write-ahead log's reader: one segment's bytes through
+//! `wal::read_segment`, held to a second reader written here from the format and none of
+//! its code (`expected`). Every input is read as it is and with its checksums put right,
+//! as a segment and as a batch, since a fuzzer does not guess a CRC. A segment whose
+//! frames claim more than `FRAME_RAW` or `SEGMENT_RAW` is not read: the fuzzer caps memory.
 
 use std::path::Path;
 
 use kibbr_storage::frame;
 use kibbr_storage::wal::{self, Record, Scanned, WalError};
 
-/// The most one frame may claim to decompress to and still be read here. The reader
-/// allocates the claim, and then up to six times it for the records, so this keeps one
-/// frame under 32MiB of the fuzzer's 512.
+/// The most one frame may claim to decompress to and still be read here: the reader
+/// allocates the claim before a byte is decompressed, under the fuzzer's allocation limit.
 const FRAME_RAW: usize = 4 * 1024 * 1024;
 
 /// And the most every whole frame in one segment may claim between them: what bounds how
 /// long one input can take, not how much it can hold at once.
 const SEGMENT_RAW: usize = 16 * 1024 * 1024;
 
-/// A record before its line, as the format has it: `crc`, `seq`, `template_id`,
-/// `received_at`, `len`. Said again here and not borrowed from the reader, which is what
-/// it is checked against.
+/// A record before its line, said again here and not borrowed from the reader,
+/// which is what it is checked against.
 const RECORD: usize = 32;
 
 /// What a record costs its batch besides its line: its header, and its time.
@@ -96,9 +57,7 @@ fn u64_at(bytes: &[u8], at: usize) -> u64 {
 
 // ── The format, a second time ──────────────────────────────────────────────────────
 
-/// A segment's `(stream, base)` when its first 28 bytes are a header this build reads:
-/// the magic, version 1, three zero bytes, a stream that is not 0, and the checksum of
-/// the 24 bytes before it.
+/// A segment's `(stream, base)` when its first 28 bytes are a header this build reads.
 fn header_of(bytes: &[u8]) -> Option<(u64, u64)> {
     let header = bytes.get(..wal::HEADER_LEN)?;
     let (stream, base) = (u64_at(header, 8), u64_at(header, 16));
@@ -110,9 +69,8 @@ fn header_of(bytes: &[u8]) -> Option<(u64, u64)> {
     reads.then_some((stream, base))
 }
 
-/// The whole frame that begins at `at`, as its payload and the offset just past it: eight
-/// bytes of length and checksum, a length that is not 0 and fits in what is left, and a
-/// checksum that holds.
+/// The whole frame that begins at `at`, as its payload and the offset just past it; `None`
+/// where the length or the checksum does not hold.
 fn frame_at(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
     let head = bytes.get(at..)?.get(..frame::HEADER)?;
     let len = u32_at(head, 0) as usize;
@@ -124,9 +82,8 @@ fn frame_at(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
     (frame::crc32c(payload) == u32_at(head, 4)).then_some((payload, start + len))
 }
 
-/// The batch a frame's payload holds: the batch's kind, a length inside the reader's
-/// bound, and zstd that decompresses to exactly that length. `None` is a frame the reader
-/// has to refuse.
+/// The batch a frame's payload holds, of the batch's kind and decompressing to exactly
+/// the length it says; `None` is a frame the reader has to refuse.
 fn batch_in(payload: &[u8]) -> Option<Vec<u8>> {
     if payload.len() < 5 || payload[0] != wal::KIND_BATCH {
         return None;
@@ -144,9 +101,8 @@ fn batch_in(payload: &[u8]) -> Option<Vec<u8>> {
     (raw.len() == says).then_some(raw)
 }
 
-/// A batch's records: a count, that many times, and that many records back to back, each
-/// with a checksum that holds, using the batch up exactly. `None` is a batch the reader
-/// has to refuse. Nothing is set aside for the count before the records are there.
+/// A batch's records, each with a checksum that holds, using the batch up exactly; `None`
+/// is a batch the reader has to refuse.
 fn records_in(raw: &[u8]) -> Option<Vec<Record<'_>>> {
     let count = u32_at(raw.get(..4)?, 0) as usize;
     let times = raw.get(4..)?.get(..count.checked_mul(8)?)?;
@@ -171,9 +127,8 @@ fn records_in(raw: &[u8]) -> Option<Vec<Record<'_>>> {
     rest.is_empty().then_some(out)
 }
 
-/// Where the next frame begins at or after `from`, as `resync`'s comment has it: a whole
-/// frame of the batch's kind whose batch begins with zstd's magic and reads, and whose
-/// first record is above `after`. A batch of no records is not one.
+/// Where the next frame begins at or after `from`, as `resync`'s comment has it: one that
+/// reads and whose first record is above `after`. A batch of no records is not one.
 fn next_frame(bytes: &[u8], from: usize, after: u64) -> Option<usize> {
     (from..bytes.len()).find(|at| {
         // The kind and the magic first, which spares a checksum at nearly every offset.
@@ -191,11 +146,8 @@ fn next_frame(bytes: &[u8], from: usize, after: u64) -> Option<usize> {
     })
 }
 
-/// What reading `bytes` has to come to, by `replay`'s comment: frames one after another
-/// from the header; bytes that are not a frame stepped over when a frame follows them and
-/// the segment's torn end when none does; a whole frame that does not read refused where
-/// it begins; positions that only grow; and the records at or behind the checkpoint
-/// counted and kept back.
+/// What reading `bytes` has to come to, by `replay`'s comment: damage stepped over
+/// when a frame follows it, the torn end when none does, a whole unreadable frame refused.
 fn expected(bytes: &[u8], checkpoint: u64, before: Before) -> Read {
     let (mut found, mut lost) = before;
     let mut read = Read {
@@ -255,10 +207,8 @@ fn expected(bytes: &[u8], checkpoint: u64, before: Before) -> Read {
 
 // ── A header ───────────────────────────────────────────────────────────────────────
 
-/// `wal::read_header` reads the headers the format says it reads and no others, and
-/// reads the stream and the base out of where they are: over `data` as it is, over its
-/// first 28 bytes alone, which is all `Wal::open` reads of a file, and over those with
-/// their checksum put right.
+/// `wal::read_header` reads the headers the format says it reads and no others: over `data`
+/// as it is, over its first 28 bytes alone, and over those with their checksum put right.
 fn header(data: &[u8]) {
     let agrees = |bytes: &[u8]| match (wal::read_header(bytes), header_of(bytes)) {
         (Ok(said), Some(holds)) => assert_eq!(said, holds, "a header's stream and base"),
@@ -369,10 +319,8 @@ fn read(bytes: &[u8], checkpoint: u64, before: Before) -> Read {
     }
 }
 
-/// What the whole frames in `bytes` claim their batches decompress to, added up - at
-/// every offset, because the reader looks for a frame at every offset once it has met
-/// bytes that are not one. `None` when that is more than is read here: see the top of
-/// this file.
+/// What the whole frames in `bytes` claim to decompress to, added up at every offset, as
+/// the reader looks at every offset after damage. `None` when more than is read here.
 fn claimed(bytes: &[u8]) -> Option<usize> {
     let mut total = 0usize;
     for at in wal::HEADER_LEN..bytes.len() {
@@ -399,16 +347,8 @@ fn claimed(bytes: &[u8]) -> Option<usize> {
     Some(total)
 }
 
-/// Read `bytes` as `Wal::open` and then `Wal::replay` would, and hold what comes back to
-/// everything that has to be true of any segment. Returns the read, for a caller that
-/// knows more about these bytes than that; `None` for bytes the reader is never given.
-///
-/// `every_way` is for a segment nothing else here knows the contents of - the fuzzer's
-/// own input, and the one frame around its batch: held to the second reader, and read
-/// again cut at where it stopped, past a checkpoint, and as a later segment of a replay.
-/// The segments `as_batch` builds from that frame are read once and held to what
-/// `as_batch` built them to be, which keeps one input to a few dozen reads: every read
-/// is a zstd context made and dropped for each frame, and that is most of what one costs.
+/// Read `bytes` as `Wal::open` then `Wal::replay` would; `None` for bytes the reader is
+/// never given. `every_way` adds the second reader and the re-reads, for unknown contents.
 fn as_segment(bytes: &[u8], every_way: bool) -> Option<Read> {
     // `open` reads the header before `replay` reads anything, and a segment whose header
     // will not read is removed or stops the start: its frames are never looked at.
@@ -483,12 +423,8 @@ fn as_segment(bytes: &[u8], every_way: bool) -> Option<Read> {
         );
     }
 
-    // A segment is seldom the first a replay reads: what was counted before it is added
-    // to and never begun again, and the last position read before it is one its records
-    // have to be above. Which of the two the last position is put at is the input's to
-    // pick, by its length: at the segment's first record, which is then a position a
-    // second time, or just under it, where the segment reads as it did and what was
-    // found is what was there plus what it holds.
+    // A segment is seldom the first a replay reads: earlier counts are added to, and its
+    // records must be above the last position, put at or just under its first by the input.
     let first = whole.records.first().map_or(1, |r| r.0);
     let under = bytes.len().is_multiple_of(2) || whole.records.is_empty();
     let before = (
@@ -620,11 +556,8 @@ fn hold(bytes: &[u8], read: &Read, claimed: usize) {
     }
 }
 
-/// `data` as a segment with its checksums put right: the header a writer would have
-/// written for the stream and base `data` names, and each frame's checksum for as far as
-/// one frame's length leads to the next. What follows the first length that does not fit
-/// is left as it is - a torn end, or a stretch with whole frames after it. `None` when
-/// that is `data` as it stands, or when there is not a header's worth of it.
+/// `data` as a segment with its header and frame checksums put right, as far as one frame's
+/// length leads to the next. `None` when that is `data` as it stands, or under a header.
 fn sealed_segment(data: &[u8]) -> Option<Vec<u8>> {
     if data.len() < wal::HEADER_LEN {
         return None;
@@ -690,9 +623,8 @@ fn as_batch(data: &[u8]) {
     if data.len() > FRAME_RAW / 4 {
         return;
     }
-    // The reader takes the batches the format says are batches and no others, and every
-    // record it returns is the one at that place in `data`: its line is those bytes of
-    // the batch and no copy of them.
+    // The reader takes the batches the format says are batches and no others, and a
+    // record's line is those bytes of the batch and no copy of them.
     let records = match (wal::records(data), records_in(data)) {
         (Ok(said), Some(holds)) => {
             assert_eq!(said, holds, "a batch's records");
@@ -847,10 +779,8 @@ fn as_batch(data: &[u8]) {
         "a gap between two frames"
     );
 
-    // The other way round, the frame after the gap holds positions under the ones
-    // already read. It is not a frame to go on from, so the gap and it are the torn end.
-    // Unless a frame was found inside it: a line may hold bytes that read as one, and
-    // then all that is asked is what `as_segment` asks of any segment.
+    // The other way round the later frame holds positions already read, so the gap and it
+    // are the torn end - unless a line holds bytes that read as a frame.
     let back = segment_of(&[&later, &[0u8; 8], &whole]);
     let Some(read) = as_segment(&back, false) else {
         return;

@@ -1,49 +1,8 @@
 //! The `record_log` target: the one record reader under `catalog.log` and `manifest.log`
-//! (the catalog and the manifest), held to what the format promises about bytes nobody
-//! vouched for.
-//!
-//! The input is the whole of a log file, and it is read as both files, because the framing
-//! is one and a catalog's records are a manifest's unknown kinds. What is asserted:
-//!
-//! - **The frames are the ones a second reader finds.** `walk` below reads the framing from
-//!   its description, with a CRC table of its own, and `frame::read_all` must agree with
-//!   it frame for frame: the same payloads, each one inside the input, and the same tear -
-//!   which is at most the input's length and always a boundary reached over intact frames.
-//! - **A tear is where the file ends.** Cut at the tear, the same records come back and
-//!   nothing is torn; cut inside any frame, the frames before it come back and the tear is
-//!   that frame's first byte; framing the payloads again spells the input up to the tear.
-//! - **A record is what its payload says.** A payload read as a record is one JSON object
-//!   of a kind the file has, and writing the record back spells each field as the payload
-//!   did. Anything else whose CRC holds is skipped, as an unknown kind or as malformed, and
-//!   never ends the read.
-//! - **A record is read on its own.** Each frame read alone is what it was read as in the
-//!   file, at its offset.
-//! - **What startup does with the records does not panic either**: the trie rebuilt from
-//!   a catalog's, whose next template id is one no record names, and the live set, the
-//!   load ids and the published paths from a manifest's.
-//! - **What the writer writes, the reader reads.** Every check above holds of a reader
-//!   that skips every record it is given, so one mode builds records, writes them as the
-//!   two files' writers do and asks for the same records back, in order, none skipped.
-//!
-//! **Five ways to read the input**, chosen by its first byte, because a mutated byte under
-//! a CRC is a tear and nothing behind the frame reader would ever be reached:
-//!
-//! ```text
-//! byte       the rest is
-//! % 4 == 0   the file, as it is
-//! % 4 == 1   payloads, one a line, framed here with their true length and CRC
-//! % 4 == 2   the same, then what follows the last newline unframed - a tail - and one
-//!            whole frame after it, which a reader that steps over a tear would read
-//! % 4 == 3   payloads, one a line, each given a kind neither file knows: a known kind
-//!            spelled nearly right, or the line's own
-//! % 8 == 4   choices: which records to build, written by the writers into one file
-//! ```
-//!
-//! The fifth takes half of the first's bytes and none of the seeds': they start with an
-//! ASCII `0` to `4`, which is its own mode under either rule.
-//!
-//! Nothing here allocates more than a few times the input, so the fuzzer's malloc limit
-//! is a limit on the reader.
+//!, held to what the format promises about bytes nobody vouched for. The
+//! input is read as both files, against a second frame reader written here (`walk`). The
+//! first byte picks one of five ways to read it, because a mutated byte under a CRC is
+//! a tear and nothing behind the frame reader would be reached.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
@@ -71,14 +30,12 @@ const MANIFEST_KINDS: [&str; 4] = ["add", "seal", "remove", "replace"];
 /// the harness keeping its own copies small and not a limit of the format.
 const MAX_INPUT: usize = 1 << 20;
 
-/// The trie is rebuilt only from catalogs naming at most this many tokens. A template's
-/// path is one node a token and the trie walks it by recursion, so a deeper one is a
-/// question about the stack and about `trie.rs`, which is not this target's subject.
+/// The trie is rebuilt only from catalogs naming at most this many tokens: the trie walks
+/// a path by recursion, so a deeper one is a question about the stack, not this target's.
 const MAX_TOKENS: usize = 512;
 
-/// How many frames of one file are read a second time, alone or cut short. Each is a
-/// read of its own by both readers, and most of a run's time; which ones are taken moves
-/// with the file's length, so every frame of a file is taken in some input near it.
+/// How many frames of one file are read a second time, alone or cut short. Which ones
+/// moves with the file's length, so every frame is taken in some input near it.
 const SAMPLED: usize = 4;
 
 /// The most records the fifth mode builds. A template here has at most three tokens, so
@@ -117,9 +74,8 @@ pub fn run(data: &[u8]) {
             let mut file = framed(payloads.iter().copied());
             let whole = file.len();
             file.extend_from_slice(tail);
-            // One whole frame past the tail. A tail that is not whole frames is where the
-            // file ends, and this is what a reader that looked for the next frame beyond
-            // it would find; `check_frames` holds the reader to stopping.
+            // One whole frame past the tail: what a reader that looked for the next frame beyond
+            // a tear would find; `check_frames` holds the reader to stopping.
             let beyond = payloads.first().copied().unwrap_or(b"{}");
             file.extend_from_slice(&framed([beyond].into_iter()));
             let seen = check_file(&file);
@@ -339,9 +295,8 @@ fn check_frames(bytes: &[u8]) -> (Vec<Range<usize>>, Option<usize>) {
         }
     }
 
-    // A frame is asked for at any offset, not only from the start - a v3 file's and a
-    // log segment's are - and what is there is what the framing says is there: inside a
-    // frame, usually a tear, and never a read that leaves the input.
+    // A frame is asked for at any offset, not only from the start - a v3 file's and a log
+    // segment's are - and what is there is what the framing says, never a read past the input.
     let len = bytes.len();
     let inside_frames = sampled(bytes, &frames).map(|(_, range)| range.start);
     for at in [
@@ -446,10 +401,8 @@ fn sampled<'a>(
         .step_by(step)
 }
 
-/// A known kind spelled nearly right, which is a kind neither file knows: in another case,
-/// with a space, a letter short or long, with the other separator, or as the next
-/// version's. `pick` chooses which. A reader that matched kinds any more loosely than
-/// byte for byte takes one of these for a record.
+/// A known kind spelled nearly right, which is a kind neither file knows; `pick` chooses
+/// how. A reader that matched kinds more loosely than byte for byte takes one for a record.
 fn nearly(kind: &str, pick: usize) -> String {
     let near = match pick % 8 {
         0 => kind.to_ascii_uppercase(),
@@ -471,10 +424,8 @@ fn nearly(kind: &str, pick: usize) -> String {
     }
 }
 
-/// A line as a payload of a kind neither file knows, and the kind. A line that is a JSON
-/// object keeps its fields, so a known record's whole shape under a kind spelled nearly
-/// right is tried, the spelling chosen by the line's length; a kind the line already has
-/// is kept when it is unknown to both.
+/// A line as a payload of a kind neither file knows, and the kind. A JSON object keeps
+/// its fields, so a known record's whole shape under a kind spelled nearly right is tried.
 fn of_an_unknown_kind(line: &[u8]) -> (String, Vec<u8>) {
     let mut object = match serde_json::from_slice::<Value>(line) {
         Ok(Value::Object(object)) => object,
@@ -509,10 +460,8 @@ fn defaulted(key: &str, value: &Value) -> bool {
     }
 }
 
-/// Whether everything `written` holds, `said` holds too, spelled the same way: an object
-/// for an object, an array of the same length for an array, the same string, number or
-/// bool. `loose` names the keys of this object held only to being strings - the times,
-/// which the writer spells one way and a reader takes several.
+/// Whether everything `written` holds, `said` holds too, spelled the same way. `loose`
+/// names the keys held only to being strings: the times, which a reader takes several ways.
 fn says(written: &Value, said: &Value, loose: &[&str]) -> bool {
     match (written, said) {
         (Value::Object(written), Value::Object(said)) => {
@@ -529,13 +478,8 @@ fn says(written: &Value, said: &Value, loose: &[&str]) -> bool {
     }
 }
 
-/// A record against the payload it was read from.
-///
-/// The payload is one JSON object, at every level, which a reader derived from
-/// the record's type does not hold to by itself. The record can be written, what is
-/// written reads back as the same record, and each field written is the field the payload
-/// spelled: a reader that took one shape for another, or a value for a different one, has
-/// invented a record nobody wrote.
+/// A record against the payload it was read from: written back, each field is the one the
+/// payload spelled, or the reader has invented a record nobody wrote.
 fn check_written_back<T>(reader: &str, at: usize, record: &T, said: Option<&Value>, loose: &[&str])
 where
     T: Serialize + DeserializeOwned + PartialEq + Debug,
@@ -594,14 +538,8 @@ fn dropped<'a>(written: &Value, said: &Value, fields: &[&'a str]) -> Option<&'a 
     })
 }
 
-/// A field the payload gives a value that the record, written back, does not have.
-///
-/// `says` holds what was read to the payload; this holds the payload to what was read,
-/// for the fields a reader could drop and still return a record: a `replace` read without
-/// its `wal` brings a replaced day back on the next replay, an `add` read without its
-/// `source` is a load that can be run twice, and a file read without its `rows` is one
-/// startup has no count for. Only the fields the two sections name, because a key they do
-/// not name is one the reader is right to pass over.
+/// A field the payload gives a value that the record, written back, does not have: the
+/// fields a reader could drop and still return a record, with startup the worse for it.
 fn lost(written: &Value, said: &Value) -> Option<String> {
     let kind = written.get("kind").and_then(Value::as_str).unwrap_or("");
     if let Some(field) = dropped(written, said, optional(kind)) {
@@ -728,10 +666,8 @@ fn check_catalog(
     outcomes
 }
 
-/// What a start does with a catalog's records: the trie, rebuilt. Any records at all are
-/// a trie and never a failed start, the id the next template takes is one no template
-/// record names, the time sources it hands back to be made durable name templates the
-/// catalog holds, and with those appended a second start asks for none.
+/// What a start does with a catalog's records: the trie, rebuilt, never a failed start.
+/// The next id is one no record names, and after the backfill a second start asks for none.
 fn check_rebuild(records: &[catalog::Record]) {
     let mut ids = BTreeSet::new();
     let mut tokens = 0usize;
@@ -762,18 +698,13 @@ fn check_rebuild(records: &[catalog::Record]) {
         "catalog: {templates} templates from {} template ids",
         ids.len()
     );
-    // What a plan reads in place of the nodes is built beside them, one template at a
-    // time, and has to be the nodes' whatever records they were built from. Asserted
-    // here and not left to the trie's own check, which only a debug build makes.
+    // The key index a plan reads in place of the nodes has to be the nodes'. Asserted here
+    // and not left to the trie's own check, which only a debug build makes.
     if let Err(why) = trie.keys_agree() {
         panic!("catalog: the key index a plan reads is not the rebuilt trie's: {why}");
     }
-    // Each id the next templates take is above every id a template record names and
-    // above the one before it, until there is none left to take: never an id twice. A
-    // counter that wraps is no panic in a release build, and only this sees it. Every id
-    // named and not only the ones held: a record skipped for its path is still in the
-    // file, and a template given its id is the second record under it, which the next
-    // start does not keep. `u64::MAX` alone is left out, the one id that is never given.
+    // The next ids are above every id a template record names, held or skipped: never an
+    // id twice. A counter that wraps is no panic in a release build, and only this sees it.
     let held: BTreeSet<u64> = trie
         .all_leaves()
         .iter()
@@ -902,10 +833,8 @@ fn check_manifest(
     outcomes
 }
 
-/// Whether `text` is `len` of the hex digits the writers write: `0` to `9` and `a` to
-/// `f`. Not a sign, which a number read by radix takes, and not a capital: no build has
-/// written one, and a start matches a file to its id by the text `hex` writes, so a
-/// reader that took `0A` for `0a` would name a file no start can find.
+/// Whether `text` is `len` of the hex digits the writers write, no sign and no capital: a
+/// start matches a file to its id by that text, so `0A` for `0a` names a file none can find.
 fn written_hex(text: &str, len: usize) -> bool {
     text.len() == len
         && text
@@ -957,9 +886,8 @@ fn check_source(source: &str) -> Option<u64> {
     load
 }
 
-/// What a start does with a manifest's records: the live set, the loads and where each
-/// load's files are looked for. The live set is worked out a second way here - the last
-/// word on a path, a `replace` retiring before it adds - and the two must agree.
+/// What a start does with a manifest's records: the live set, the loads and each load's
+/// paths. The live set is worked out a second way here, and the two must agree.
 fn check_live(records: &[manifest::Record]) {
     let mut last: BTreeMap<&str, Option<&FileRecord>> = BTreeMap::new();
     let mut stepped = BTreeMap::new();
@@ -985,9 +913,8 @@ fn check_live(records: &[manifest::Record]) {
             check_file_id(&file.file_id);
             last.insert(&file.path, Some(file));
         }
-        // The load that published a path is the one named by the last record to add it;
-        // a record that adds it under no load takes it from the load that had it, and a
-        // `seal` adds nothing.
+        // The load that published a path is the one named by the last record to add it; added
+        // under no load it is taken from the load that had it, and a `seal` adds nothing.
         let load = source.and_then(|source| check_source(source));
         if !matches!(record, manifest::Record::Seal { .. }) {
             for file in named {
@@ -1209,15 +1136,8 @@ impl Choices<'_> {
     }
 }
 
-/// The fifth mode: records built from the input, written as `Catalog::append` and
-/// `Manifest::append` write them - `serde_json::to_vec`, then `frame::frame` - into one
-/// file, and read back by both readers.
-///
-/// Each reader returns its own records, equal and in order, and skips the other's as an
-/// unknown kind by its name: nothing malformed, nothing torn. A file id reads back as the
-/// sixteen bytes it was spelled from, and the loads are the ones the sources were made
-/// from. This is the one mode in which a reader that refuses a record it should take is
-/// caught, whatever it refuses it for: a type, a `null`, a number at the end of the range.
+/// The fifth mode: records built from the input, written as the two files' writers write
+/// them and read back. The one mode that catches a reader refusing a record it should take.
 fn check_written(choices: &[u8]) {
     let mut choices = Choices { bytes: choices };
     let mut ids = Vec::new();

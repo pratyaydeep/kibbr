@@ -1,21 +1,8 @@
 //! Configuration: flags, `KIBBR__` variables and the file, resolved into what a command
-//! runs on. For `serve` that is the server crate's `Settings` (`settings`), plus what
-//! only this binary has - its own log, and the epoch window, which is the process's.
-//!
-//! The values are declared where they are read. `Limits` is what a *query* may not exceed
-//! and both surfaces carry it - the CLI and the server disagreeing about a backstop would
-//! make the same query mean two things; `ApiLimits` is what a *request* may not exceed,
-//! and only the server has requests; `Storage` is where rows go, which only the server
-//! has too - the CLI rebuilds its database from an input file per invocation and has
-//! nothing to keep. This module is where each comes from.
-//!
-//! **Where a setting comes from, for every one of them: flag > environment > file >
-//! default.** The file is the one `--config` names, on any command; with no `--config`
-//! there is no file. A key's variable is `KIBBR__`, its section and its name in capitals -
-//! `[storage] base_path` is `KIBBR__STORAGE__BASE_PATH` - so the file's keys are the
-//! names the variables already had, and a duration that was a whole number of
-//! milliseconds under a name ending `_ms` is one in the file too. The one duration that
-//! arrived with the file, `[api] shutdown_deadline`, is spelled `"25s"`.
+//! runs on. The values are declared where they are read; this module is where each comes
+//! from. For every setting: flag > environment > file > default, the file being the one
+//! `--config` names, and a key's variable being `KIBBR__`, its section and its name in
+//! capitals - `[storage] base_path` is `KIBBR__STORAGE__BASE_PATH`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -25,15 +12,13 @@ use thiserror::Error;
 
 use kibbr_core::infer::EpochWindow;
 
-// The two groups of settings the crates below this one read: the query limits ride on
-// every `Query`, and the time columns are the trie's. They are declared where they are
-// read; this module is still where they are loaded and what the commands name them by.
+// The two groups of settings the crates below this one read, declared where they are
+// read; this module is where they are loaded and what the commands name them by.
 pub use kibbr_engine::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
 pub use kibbr_storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
 
-// What a server runs on is declared in the server crate, where it is read: the two
-// groups below, their defaults and the `Settings` they are fields of. This module is
-// still where each is loaded and what the commands name them by.
+// What a server runs on is declared in the server crate, where it is read; this module
+// is where each is loaded and what the commands name them by.
 pub use kibbr_server::settings::{
     default_ingest_concurrency, duration_words, ApiLimits, Banner, Settings, Storage,
     DEFAULT_COMPACT_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS, DEFAULT_HOST,
@@ -42,12 +27,8 @@ pub use kibbr_server::settings::{
 };
 pub use kibbr_server::DEFAULT_PORT;
 
-/// The longest that wait may be set to: thirty seconds.
-///
-/// A body can be kept waiting twice - at the door, and then for room in the write-ahead
-/// log - and each wait is at most the setting. Two of thirty seconds are a minute, which
-/// leaves the other minute of the two after which an ordinary shipper gives up for the
-/// parse, the log's flush and the store.
+/// The longest that wait may be set to: a body can wait twice, at the door and for the
+/// log, and the two together must leave an ordinary shipper's patience room for the rest.
 pub const MAX_INGEST_WAIT_MS: usize = 30_000;
 
 
@@ -56,30 +37,12 @@ fn cores() -> usize {
     std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
 }
 
-/// Half the cores, and no more than four: what one query may choose rows on. Half
-/// leaves the other half to the runtime and the ingest path. Four is as many fast cores
-/// as the machine this was measured on has; more than four was not measured on this scan.
-///
-/// **The four stays, with the file here to change it.** It is the four performance cores
-/// of the machine this is developed and measured on (eight cores, four of them fast); the
-/// cloud run has eight alike and passes `--threads 8` - `serve`'s `--scan-threads` under
-/// its short name - or sets `[query] scan_threads = 8`. A default that followed the core
-/// count there would be a default nothing here has measured.
-///
-/// **What four costs, in replays on eight cores, four of them fast; `kibbr bench` has
-/// not yet taken it.** A count over 433,000 rows of one day answers in 2.1 to 2.5 ms
-/// where one thread takes 4.5, and a fetch of the newest 500 rows of a million in 41 ms
-/// where one takes 45. The same count uses 14 to 34% more CPU than on one thread when it
-/// is asked of a server that has been idle (its rows per CPU-second fall 12 to 25%), and
-/// 10% more of one that is busy with such counts (a fall of 9%): about 3 points of that
-/// are the wake-ups, and the rest is what cores that have just been woken charge for the
-/// same work. Two threads keep about half of each gain for about half of that cost,
-/// which is what `--scan-threads 2` buys.
+/// Half the cores, and no more than four: what one query may choose rows on. Half leaves
+/// the rest to the runtime and ingest; past four was not measured, and the file can raise it.
 fn default_scan_threads() -> usize {
     (cores() / 2).clamp(1, 4)
 }
 
-/// Environment variable for the max_rows configuration.
 const MAX_ROWS_ENV: &str = "KIBBR__QUERY__MAX_ROWS";
 const MAX_BUCKETS_ENV: &str = "KIBBR__QUERY__MAX_BUCKETS";
 const MAX_GROUPS_ENV: &str = "KIBBR__QUERY__MAX_GROUPS";
@@ -109,10 +72,8 @@ const TIME_COLUMNS_ENV: &str = "KIBBR__SCHEMA__TIME_COLUMNS";
 const EPOCH_WINDOW_ENV: &str = "KIBBR__SCHEMA__EPOCH_WINDOW";
 
 
-/// Where `serve` keeps day partitions when nothing says otherwise.
-///
-/// Relative, and beside the process rather than under `/var/lib`: a default that needs
-/// root to create is a default that fails on the first run on a laptop.
+/// Where `serve` keeps day partitions when nothing says otherwise: relative, since a
+/// default that needs root to create fails on the first run on a laptop.
 pub const DEFAULT_DATA_DIR: &str = "kibbr-data";
 /// The trie snapshot, inside the data directory so one path moves both.
 pub const TRIE_FILE_NAME: &str = "trie.json";
@@ -122,28 +83,26 @@ pub enum ConfigError {
     #[error("{var}=`{value}` is not a whole number")]
     BadEnv { var: &'static str, value: String },
 
-    /// Zero permits is not "no limit", it is a server that refuses everything. The other
-    /// limits here read 0 as "off", so this one has to say why it does not.
+    /// Zero permits is not "no limit" as the other limits' 0 is: it is a server that refuses
+    /// everything.
     #[error("ingest concurrency must be at least 1; 0 would refuse every /ingest body")]
     NoIngestPermits,
 
-    /// Above the line cap, `LineTooLong` becomes reachable over HTTP and a shipper's batch
-    /// silently changes meaning. Refused rather than clamped: an operator who asked for
-    /// 256 MiB should be told they did not get it.
+    /// Above the line cap `LineTooLong` becomes reachable over HTTP; refused rather than
+    /// clamped, so an operator who asked for more is told they did not get it.
     #[error(
         "max decompressed bytes ({asked}) is above the {limit} byte line limit; a body \
          cannot hold a line longer than that, so the extra capacity is unreachable"
     )]
     DecompressedAboveLineCap { asked: usize, limit: usize },
 
-    /// Every other limit here reads 0 as "off". This one cannot: a zero interval is not
-    /// "never flush", it is a task that wakes with no delay and burns a core.
+    /// This limit cannot read 0 as "off": a zero interval is not "never flush", it is a task
+    /// that wakes with no delay and burns a core.
     #[error("flush interval must be at least 1ms; 0 would spin the flush task")]
     NoFlushInterval,
 
-    /// And this one cannot read 0 as "off" either: with no segment allowed open there is
-    /// nowhere for a row group to go, so every flush would seal an empty file and the
-    /// buffer would never drain.
+    /// Cannot read 0 as "off" either: with no segment allowed open there is nowhere for a
+    /// row group to go, and the buffer would never drain.
     #[error("max open segments must be at least 1; 0 would leave nowhere for a row group to go")]
     NoOpenSegments,
 
@@ -157,10 +116,8 @@ pub enum ConfigError {
     #[error("batch size must be at least 1 line; 0 would let a flush of the write-ahead log take nothing")]
     NoBatch,
 
-    /// Refused rather than clamped, for the reason `DecompressedAboveLineCap` is. A pool of
-    /// 511 threads on eight cores ran a scan at four times its CPU and no faster, and one of
-    /// 99,999 held the first query that needed it for sixteen seconds while the system
-    /// refused its threads - with every answer still right, so nothing said so.
+    /// Refused rather than clamped, for the reason `DecompressedAboveLineCap` is: threads past
+    /// the cores cost CPU and waits while every answer stays right, so nothing would say so.
     #[error(
         "scan threads ({asked}) is above the {cores} core(s) this machine has; the threads \
          past that would only take turns on the same cores"
@@ -194,8 +151,8 @@ pub enum ConfigError {
         source: std::io::Error,
     },
 
-    /// `--config` named a file that could not be read. Never skipped: a server started
-    /// with a file it did not read runs under defaults its operator believes they changed.
+    /// `--config` named a file that could not be read, never skipped: a server would run
+    /// under defaults its operator believes they changed.
     #[error("--config {path}: {source}")]
     FileRead {
         path: String,
@@ -203,16 +160,13 @@ pub enum ConfigError {
         source: std::io::Error,
     },
 
-    /// The file is not TOML, or holds a key this build has no setting for, or a value of
-    /// the wrong kind. The parser's own message, which names the line and the keys the
-    /// section has. A key is refused and not skipped for the reason an unreadable
-    /// variable is: its writer believes it is in force.
+    /// The file is not TOML, or holds an unknown key or a value of the wrong kind; refused
+    /// and not skipped, because its writer believes it is in force.
     #[error("--config {path}: {detail}")]
     FileSyntax { path: String, detail: String },
 
-    /// A setting that is not a whole number - an address, a duration, a log level - and
-    /// could not be read as what it is. `name` is where it was written: the variable, or
-    /// the file's section and key.
+    /// A setting that is not a whole number and could not be read as what it is; `name` is
+    /// the variable, or the file's section and key.
     #[error("{name} `{value}`: {reason}")]
     BadSetting {
         name: String,
@@ -223,20 +177,8 @@ pub enum ConfigError {
 
 // ── The file ───────────────────────────────────────────────────────────────────────
 
-/// What `--config` named, as it was read: every key optional, and every key a setting
-/// this build has.
-///
-/// One struct a section and one field a key, each `None` where the file does not say.
-/// The loaders below read a field only after the flag and the variable have both said
-/// nothing, so a file never overrides either and an absent file is this struct's
-/// default.
-///
-/// **A key that is not below is refused** (`deny_unknown_fields`), with the line it is on
-/// and the keys its section has. The design was written before most of these were
-/// built and names some that never were - `wal_dir`, `[cold_tier]`,
-/// the Elasticsearch address, the merge threshold, the promoted keys: a file that sets
-/// one is told so, where a key read and dropped would be a setting its writer believes
-/// is in force.
+/// What `--config` named, as it was read: every key optional, and a key this build has
+/// no setting for refused, since its writer would believe it is in force.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct File {
@@ -323,10 +265,8 @@ pub struct LogKeys {
 }
 
 impl File {
-    /// The file `--config` named, or - with none named - no file: every key absent.
-    ///
-    /// There is no path this looks at unasked. A `kibbr.toml` picked up from whatever
-    /// directory a command was run in would be a setting nobody typed.
+    /// The file `--config` named, or with none named no file: no path is looked at unasked,
+    /// since a `kibbr.toml` picked up from the working directory is a setting nobody typed.
     pub fn read(path: Option<&Path>) -> Result<Self, ConfigError> {
         let Some(path) = path else {
             return Ok(Self::default());
@@ -341,15 +281,14 @@ impl File {
         })
     }
 
-    /// The file's text, read. The error is the parser's own message.
+    /// The file's text, read, with the parser's own message as the error.
     pub fn parse(text: &str) -> Result<Self, String> {
         toml::from_str(text).map_err(|e| e.to_string().trim_end().to_string())
     }
 }
 
-/// A duration as the file and its variable spell one: a whole number and `ms`, `s`, `m`
-/// or `h`, with nothing between - `"25s"`, `"500ms"`. The unit is not optional: a bare
-/// `25` would be seconds to one reader and milliseconds to the next.
+/// A duration as the file and its variable spell one - a whole number and `ms`, `s`, `m`
+/// or `h` - the unit required, since a bare `25` reads as seconds or as milliseconds.
 pub fn parse_duration(text: &str) -> Result<Duration, String> {
     let text = text.trim();
     let digits = text.bytes().take_while(u8::is_ascii_digit).count();
@@ -426,7 +365,7 @@ pub fn listen(
     ))
 }
 
-/// How loud kibbr's own log is. The levels are `tracing`'s.
+/// How loud kibbr's own log is, in `tracing`'s levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum LogLevel {
     Trace,
@@ -452,9 +391,8 @@ pub struct Log {
 }
 
 impl Default for Log {
-    /// `info`, as text. Text and not JSON by default, where the design's sample file
-    /// says `json`: the lines a terminal, the scripts and `kibbr bench` read off a
-    /// server's stderr are the text ones, and a container says `format = "json"` once.
+    /// `info`, as text - not the `json` of the design's sample file: the lines a
+    /// terminal, the scripts and `kibbr bench` read off a server's stderr are the text ones.
     fn default() -> Self {
         Self {
             level: LogLevel::Info,
@@ -509,9 +447,8 @@ pub fn log(
     Ok(Log { level, format })
 }
 
-/// Which key names may carry a template's time: flag > environment > file > default.
-/// The variable is comma-separated; blanks are dropped so a trailing comma is not an
-/// empty column name.
+/// Which key names may carry a template's time: flag > environment > file > default, the
+/// variable comma-separated with blanks dropped.
 pub fn schema(file: &File, time_columns: Option<Vec<String>>) -> Schema {
     let from_env = || {
         std::env::var(TIME_COLUMNS_ENV).ok().map(|text| {
@@ -531,19 +468,12 @@ pub fn schema(file: &File, time_columns: Option<Vec<String>>) -> Schema {
 }
 
 /// The window ten or thirteen digits must name a moment inside to be read as a timestamp:
-/// environment > file > default. The variable is two RFC 3339 instants, comma-separated -
-/// neither contains a comma - and the file's key is a list of the two; the window runs
-/// from the first up to but not including the second.
-///
-/// Not a field of `Schema`, because the ladder cannot be handed one: it is a free function
-/// the flattener, the store and the engine all call. `main` installs this once for the
-/// process instead, before any command types a value.
+/// environment > file > default, installed once by `main` for the process.
 pub fn epoch_window(file: &File) -> Result<EpochWindow, ConfigError> {
     let (var, text, ends): (&'static str, String, Vec<String>) =
         match std::env::var_os(EPOCH_WINDOW_ENV) {
-            // Unset is absence; anything else is a window an operator believes is in
-            // force, so a value that is not even UTF-8 is an error rather than a silent
-            // fall back to the file or the default.
+            // Unset is absence; anything else is a window an operator believes is in force,
+            // so a value that is not UTF-8 is an error rather than a silent fall back.
             Some(raw) => {
                 let text = raw.to_string_lossy().into_owned();
                 if raw.to_str().is_none() {
@@ -577,12 +507,8 @@ pub fn epoch_window(file: &File) -> Result<EpochWindow, ConfigError> {
         .ok_or_else(|| bad("the start is not before the end, so the window is empty".into()))
 }
 
-/// How `Storage` is loaded: flag > environment > file > default.
-///
-/// The struct is the server crate's - it is what a server runs on - and what resolves it
-/// is this module's. A trait, because an inherent `impl` cannot be written here for a
-/// type of another crate; `Storage` is its one implementor, and each method is described
-/// where it is written, below.
+/// How `Storage` is loaded - flag > environment > file > default - as a trait because
+/// an inherent `impl` cannot be written here for the server crate's type.
 pub trait LoadStorage: Sized {
     #[allow(clippy::too_many_arguments)]
     fn load(
@@ -615,11 +541,8 @@ pub trait LoadStorage: Sized {
 }
 
 impl LoadStorage for Storage {
-    /// The same four rules as the other two, over the storage settings.
-    ///
-    /// `durable` is the `--storage` choice rather than a path being present, so that
-    /// `--storage memory --data-dir /x` is a clear instruction and not a contradiction
-    /// resolved by whichever flag the code happened to read first.
+    /// The same four rules, over the storage settings; `durable` is the `--storage` choice,
+    /// so `--storage memory --data-dir /x` is an instruction and not a contradiction.
     #[allow(clippy::too_many_arguments)]
     fn load(
         file: &File,
@@ -642,9 +565,8 @@ impl LoadStorage for Storage {
             return Err(ConfigError::NoFlushInterval);
         }
         let flush_interval = Duration::from_millis(flush_ms as u64);
-        // Floored at the flush interval rather than refused below it: the tick is what
-        // asks whether the timeout has expired, so a shorter one cannot be honoured and
-        // pretending otherwise would put a number in `/stats` that nothing implements.
+        // Floored at the flush interval rather than refused below it: the tick is what asks
+        // whether the timeout has expired, so a shorter one cannot be honoured.
         let row_group_ms = resolve(
             row_group_ms,
             ROW_GROUP_TIMEOUT_ENV,
@@ -686,10 +608,8 @@ impl LoadStorage for Storage {
             kibbr_storage::store::DEFAULT_MAX_BUFFER_BYTES,
             "max buffer bytes",
         )?;
-        // The default here, and the variable not read: only `serve` looks for days that
-        // are due, and it resolves its flag over the variable in `with_compact_interval` -
-        // read here, a malformed variable would refuse the flag that overrides it, and
-        // every command that never looks.
+        // The default here, and the variable not read: only `serve` looks for due days, and
+        // read here a malformed variable would refuse every command that never looks.
         let compact_interval = Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64);
 
         // The defaults here too, for the reason the compaction interval's is: only `serve`
@@ -698,9 +618,8 @@ impl LoadStorage for Storage {
         let wal_batch_lines = kibbr_storage::wal::DEFAULT_BATCH_LINES;
         let wal_queue_bytes = kibbr_storage::wal::DEFAULT_QUEUE_BYTES;
 
-        // No scan threads here, for the same reason again: only `serve` answers a query
-        // from a disk store, and it asks for its threads in `with_scan`. A load and a
-        // compaction start none.
+        // No scan threads here, for the same reason again: only `serve` answers a query from
+        // a disk store, and it asks for its threads in `with_scan`.
         let scan_threads = 0;
         let scan_fan_rows = kibbr_storage::store::DEFAULT_FAN_ROWS;
 
@@ -723,10 +642,8 @@ impl LoadStorage for Storage {
         }
 
         let base = Self::base_named(file, data_dir);
-        // Created and canonicalised now, before a line is accepted: an unwritable data
-        // directory should stop the process at startup, where an operator is watching,
-        // rather than at the first flush tick half a minute later. Absolute afterwards, so
-        // nothing that changes the working directory can move the database.
+        // Created and canonicalised now: an unwritable data directory should stop the process
+        // at startup, and absolute so nothing that changes the working directory moves it.
         std::fs::create_dir_all(&base).map_err(|source| ConfigError::BadDataDir {
             path: base.display().to_string(),
             source,
@@ -753,20 +670,15 @@ impl LoadStorage for Storage {
         })
     }
 
-    /// The data directory a command was pointed at - flag > environment > file > default - as it
-    /// was named, and **without creating it**. `load` creates what this names, which is
-    /// right for a command that fills a directory; one that only works on a directory
-    /// already there asks this first, so a mistyped path is refused and not made.
+    /// The data directory a command was pointed at, as named and **without creating it**, so
+    /// a command that only works on a directory already there refuses a mistyped path.
     fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf {
         resolve_path(data_dir, BASE_PATH_ENV, file.storage.base_path.as_ref())
             .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR))
     }
 
     /// How often `serve` looks for a day that is due: `--compact-interval-ms` >
-    /// environment > default. Apart from `load` because only `serve` has the flag and
-    /// only `serve` looks: a ninth positional `None` at every other caller would say
-    /// nothing, and the variable is read here so that the flag, when given, is never
-    /// refused for a variable it overrides.
+    /// environment > default; apart from `load` so the flag is never refused for a variable.
     fn with_compact_interval(
         mut self,
         file: &File,
@@ -783,9 +695,7 @@ impl LoadStorage for Storage {
     }
 
     /// How `serve` writes its write-ahead log: `--wal-segment-bytes`, `--batch-size` and
-    /// `--wal-queue-bytes`, each over its variable, over the default. Apart from `load`
-    /// for the reason `with_compact_interval` is: only `serve` has the flags, and only
-    /// `serve` writes one.
+    /// `--wal-queue-bytes`, each over its variable, over the default; only `serve` writes one.
     fn with_wal(
         mut self,
         file: &File,
@@ -831,11 +741,8 @@ impl LoadStorage for Storage {
         Ok(self)
     }
 
-    /// What a server's queries may use: `--scan-threads` and `--scan-fan-rows`, each over
-    /// its variable, over the default. Apart from `load` for the reason `with_wal` is:
-    /// only `serve` answers a query from a disk store, so only it has the flags, and a
-    /// load or a compaction starts no scan thread. More threads than the machine has
-    /// cores are refused; 0 and 1 are both "the query's own thread and no other".
+    /// What a server's queries may use: `--scan-threads` and `--scan-fan-rows`, each over its
+    /// variable, over the default; more threads than cores are refused, 0 and 1 both mean none.
     fn with_scan(
         mut self,
         file: &File,
@@ -975,9 +882,7 @@ impl LoadApiLimits for ApiLimits {
     }
 
     /// How long `serve` keeps a body waiting before it sheds it: `--ingest-wait-ms` >
-    /// environment > default. Apart from `load` for the reason `Storage::with_wal` is:
-    /// only `serve` has the flag. Zero is taken - wait for nothing, shed at once - and
-    /// more than `MAX_INGEST_WAIT_MS` is refused.
+    /// environment > default; zero sheds at once, more than `MAX_INGEST_WAIT_MS` is refused.
     fn with_ingest_wait(
         mut self,
         file: &File,
@@ -1000,9 +905,7 @@ impl LoadApiLimits for ApiLimits {
     }
 
     /// How long a stopping `serve` gives the requests in flight: `--shutdown-deadline` >
-    /// environment > `[api] shutdown_deadline` > 25 seconds. Apart from `load` for the
-    /// reason `with_ingest_wait` is. A duration of zero, in any unit, is no deadline:
-    /// every request is waited for, as it was before there was one.
+    /// environment > `[api] shutdown_deadline` > 25 seconds; zero is no deadline.
     fn with_shutdown_deadline(
         mut self,
         file: &File,
@@ -1020,8 +923,7 @@ impl LoadApiLimits for ApiLimits {
     }
 
     /// How long `serve` gives one request: `--request-timeout` > environment > `[api]
-    /// request_timeout` > 30 seconds. Apart from `load` for the reason `with_ingest_wait`
-    /// is. A duration of zero, in any unit, is no timeout, as it was before there was one.
+    /// request_timeout` > 30 seconds; zero is no timeout.
     fn with_request_timeout(
         mut self,
         file: &File,
@@ -1072,14 +974,8 @@ pub struct ServeFlags {
     pub time_columns: Option<Vec<String>>,
 }
 
-/// What `kibbr serve` runs on: every flag over its variable, over the file, over the
-/// default - the one place the server's `Settings` is made from them. `log` is this
-/// binary's own setting and already resolved; the server is told only how to say it has
-/// started, since as JSON that is an event and as text a paragraph.
-///
-/// In the order the settings were always resolved in, so the first one that is refused
-/// is the one that was: the address, the query limits, the request limits, the storage -
-/// whose directory is made here - and the schema.
+/// What `kibbr serve` runs on: the one place the server's `Settings` is made, in a fixed
+/// order so the first setting refused is always the same one.
 pub fn settings(file: &File, flags: ServeFlags, log: Log) -> Result<Settings, ConfigError> {
     let (host, port) = listen(file, flags.host, flags.port)?;
     Ok(Settings {
@@ -1173,11 +1069,8 @@ fn env_usize(var: &'static str) -> Result<Option<usize>, ConfigError> {
 mod tests {
     use super::*;
 
-    /// Variables as a test found them, cleared for it and put back when it ends.
-    ///
-    /// **And one such test at a time.** The variables are the process's, and a test that
-    /// reads every key of a file with none set cannot run beside one that sets a
-    /// variable to see it win; each holds this for as long as it has them cleared.
+    /// Variables as a test found them, cleared for it and put back when it ends - one such
+    /// test at a time, because the variables are the process's.
     struct Cleared(
         Vec<(&'static str, Option<String>)>,
         #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
@@ -1210,9 +1103,6 @@ mod tests {
         }
     }
 
-    /// **What a server's queries may use is the flag, or else the variable, or else the
-    /// default; and more threads than the machine has cores are refused.**
-    ///
     /// One test, because the variables are the process's: nothing else in this crate's
     /// tests reads these two, and this sets and clears them in turn.
     #[test]
@@ -1307,16 +1197,8 @@ mod tests {
         assert_eq!((options.scan_threads, options.fan_rows), (1, 12));
     }
 
-    /// **How long a body may be kept waiting, and how much may wait on the log, are each
-    /// the flag, or else the variable, or else what they were before they could be set.**
-    /// A wait of nothing is taken; one past thirty seconds is refused and not clamped. A
-    /// bound of nothing on the log is refused: every body after the first would be one
-    /// too many.
-    ///
-    /// One test for the two, because the variables are the process's: nothing else in
-    /// this crate's tests reads them, or the five beside them that the functions asked
-    /// here read as well - cleared too, so that a shell with one of those set to
-    /// something unreadable does not fail a test of these two.
+    /// One test for the two, because the variables are the process's; the five beside them
+    /// are cleared too, so a shell with one set to something unreadable does not fail this.
     #[test]
     fn the_ingest_wait_and_the_logs_bound_are_the_flag_then_the_variable_then_the_default() {
         let _cleared = Cleared::of(&[
@@ -1436,9 +1318,6 @@ mod tests {
         LOG_FORMAT_ENV,
     ];
 
-    /// **A setting is the flag, or else the variable, or else the file, or else the
-    /// default** - the file under both of the others, and over nothing but the default.
-    ///
     /// On the query limits, whose three variables no other test of this crate sets.
     #[test]
     fn a_setting_is_the_flag_then_the_variable_then_the_file_then_the_default() {
@@ -1478,8 +1357,8 @@ mod tests {
         );
     }
 
-    /// **Every key of the file reaches the setting it names.** One file holding all of
-    /// them, each at a value that is not its default, read with no flag and no variable.
+    /// One file holding all of them, each at a value that is not its default, read with no
+    /// flag and no variable.
     #[test]
     fn every_key_of_the_file_reaches_its_setting() {
         let _cleared = Cleared::of(FILE_VARS);
@@ -1593,10 +1472,8 @@ format = "json"
         );
     }
 
-    /// **A key this build has no setting for is refused, by name and by line** - a key
-    /// the design names and nothing implements among them - and so is a section, and a
-    /// value of the wrong kind. Read and dropped, each would be a setting its writer
-    /// believes is in force.
+    /// Read and dropped, a key the design names and nothing implements would be a setting its
+    /// writer believes is in force.
     #[test]
     fn a_key_with_no_setting_behind_it_is_refused() {
         for (text, says) in [
@@ -1635,7 +1512,6 @@ format = "json"
         ));
     }
 
-    /// **A duration is a whole number and a unit, and reads back as it was written.**
     #[test]
     fn a_duration_is_a_whole_number_and_a_unit() {
         for (text, millis) in [
@@ -1671,8 +1547,7 @@ format = "json"
         assert_eq!(duration_words(Duration::ZERO), "0s");
     }
 
-    /// **The shutdown deadline is 25 seconds unless something says otherwise; zero is no
-    /// deadline; and one that cannot be read is an error that says where it was written.**
+    /// One that cannot be read is an error that says where it was written.
     #[test]
     fn the_shutdown_deadline_is_25s_by_default_and_none_at_zero() {
         let _cleared = Cleared::of(&[SHUTDOWN_DEADLINE_ENV]);
@@ -1730,9 +1605,7 @@ format = "json"
         );
     }
 
-    /// **A request is given 30 seconds unless something says otherwise; zero is no
-    /// timeout; flag > variable > file; and one that cannot be read is an error that says
-    /// where it was written.**
+    /// One that cannot be read is an error that says where it was written.
     #[test]
     fn the_request_timeout_is_30s_by_default_and_none_at_zero() {
         let _cleared = Cleared::of(&[REQUEST_TIMEOUT_ENV]);
@@ -1788,8 +1661,6 @@ format = "json"
         );
     }
 
-    /// **An address or a log setting that cannot be read is an error that names where it
-    /// was written and what it may be.**
     #[test]
     fn an_address_or_a_log_setting_that_cannot_be_read_says_where_it_was_written() {
         let _cleared = Cleared::of(&[NATIVE_ADDR_ENV, LOG_LEVEL_ENV, LOG_FORMAT_ENV]);

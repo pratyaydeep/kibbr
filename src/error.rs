@@ -35,11 +35,8 @@ pub enum GenError {
     Write(#[source] std::io::Error),
 }
 
-/// A `kibbr query` flag that could not be turned into a `Query`.
-///
-/// Flag-level only: nothing here carries a byte position, because a flag value is its own
-/// unit and quoting it whole says where it was. TrieQL's failures are
-/// `trieql::ParseError`, which does carry one.
+/// A `kibbr query` flag that could not be turned into a `Query`, with no byte position
+/// because the flag value is quoted whole.
 #[derive(Debug, Error)]
 pub enum QueryError {
     #[error("--match `{arg}`: expected KEY=VALUE")]
@@ -68,11 +65,7 @@ pub enum QueryError {
 }
 
 
-/// Errors surfaced by the CLI itself.
-///
-/// A malformed line is not one of these - it is a `DetectorError`, reported against its
-/// line and stepped over. What reaches here ends the run: the input could not be read,
-/// stdout could not be written, or the run finished having rejected something.
+/// Errors that end the run; a malformed line is a `DetectorError`, reported and stepped over.
 #[derive(Debug, Error)]
 pub enum CliError {
     #[error("reading {path}: {source}")]
@@ -88,14 +81,8 @@ pub enum CliError {
     #[error("{count} of {total} lines rejected")]
     RejectedLines { count: u64, total: u64 },
 
-    /// No newline within `MAX_SKIP_BYTES` of an over-long line, so the input is not
-    /// newline-delimited and there is no next line to carry on to.
-    ///
-    /// Fatal, where `LineTooLong` is not, and the difference is whether anything is left
-    /// to isolate. A long line among short ones is one bad line, and one bad line must
-    /// not cost the others; a hundred megabytes with no `\n` in it is not lines at all -
-    /// most likely a binary file handed to `parse`, or a producer writing no terminators.
-    /// Reading on would consume the whole input to reach an answer that cannot arrive.
+    /// No newline within `MAX_SKIP_BYTES` of an over-long line: fatal where `LineTooLong`
+    /// is not, because the input is not lines and there is no next one to carry on to.
     #[error(
         "line {line}: no newline in the {scanned} bytes after the {limit} byte line limit \
          - the input does not look like newline-delimited JSON"
@@ -106,8 +93,7 @@ pub enum CliError {
         limit: usize,
     },
 
-    /// What ended a read of lines below any command: the read loop's own error
-    /// (`db::ReadError`), printed as the sentence it wrote.
+    /// What ended a read of lines below any command: the read loop's own error (`db::ReadError`).
     #[error(transparent)]
     Input(#[from] kibbr_storage::db::ReadError),
 
@@ -128,10 +114,8 @@ pub enum CliError {
     #[error(transparent)]
     Trieql(#[from] kibbr_engine::trieql::ParseError),
 
-    // Transparent for the reason `Trieql` is: `report` walks the source chain, so a
-    // wrapper prints the same sentence twice. No `--after:` prefix either - the flag
-    // surface and `AFTER` both land here, and naming one of them would be wrong half the
-    // time. `CursorError`'s own messages say what is wrong with the cursor.
+    // Transparent for the reason `Trieql` is. No `--after:` prefix either - the flag and
+    // `AFTER` both land here, and naming one of them would be wrong half the time.
     #[error(transparent)]
     Cursor(#[from] kibbr_engine::engine::CursorError),
 
@@ -143,8 +127,8 @@ pub enum CliError {
     #[error(transparent)]
     Exec(#[from] kibbr_engine::engine::ExecError),
 
-    /// What a server could not start or finish with, and what a TrieQL string is refused
-    /// with: the server crate's own error, printed as the sentence it wrote.
+    /// What a server could not start or finish with, or refused a TrieQL string with: the
+    /// server crate's own error.
     #[error(transparent)]
     Serve(kibbr_server::Error),
     #[error(transparent)]
@@ -158,10 +142,8 @@ pub enum CliError {
 }
 
 impl From<kibbr_server::Error> for CliError {
-    /// The engine's own errors, which the server crate carries through as themselves, are
-    /// the same errors here: a TrieQL string refused by `kibbr query` and by `POST /query`
-    /// is one failure, and it is the variant it always was. Everything else is the
-    /// server's.
+    /// The engine's errors the server crate carries through stay the variants they always
+    /// were, so a TrieQL string refused by `kibbr query` and by `POST /query` is one failure.
     fn from(e: kibbr_server::Error) -> Self {
         use kibbr_server::Error;
         match e {

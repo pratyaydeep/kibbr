@@ -1,35 +1,8 @@
-//! `kibbr bench-storage <file>`: what a file costs to store, by one command.
-//!
-//! Every storage number before this went through `POST /ingest` and a hand-run `du`, so no
-//! two were measured the same way. This loads the file through the bulk door into a
-//! scratch data directory - full row groups, the way a closed day is stored - and prints,
-//! beside the raw bytes and the two compressors an operator would otherwise reach for:
-//!
-//! - **Kibbr's total**: every data file, the catalog and the manifest - everything the
-//!   directory needs to answer a query, and nothing it does not (`LOCK` is a few bytes of
-//!   hint, `staging/` is empty after a commit).
-//! - **Where the data files' bytes go**: column data, row group headers, schema records,
-//!   footers and file headers - found by walking each file's frames, so the parts add up to
-//!   the files exactly. The per-row-group overhead is the number compaction exists for.
-//! - **Bytes and disk blocks**: what a file holds, and what it takes on this disk once
-//!   rounded up to whole blocks - the 4KB per file that made one file per template a day
-//!   cost more than its data.
-//!
-//! `gzip -9` and `zstd -19` are computed in this process, with flate2 and libzstd at those
-//! levels, and written to the scratch directory so their blocks are measured like the rest.
-//! With `--es`, the same lines are indexed into a scratch Elasticsearch index - one shard,
-//! no replica, force-merged to one segment so the number does not depend on when it was
-//! read - and its primary store size is printed beside the rest.
-//!
-//! **Then the same lines as a live day, before and after compaction.** A file through the
-//! bulk door is stored the way compaction leaves a day, so the table above cannot say what
-//! compaction saves. A second scratch directory takes the lines through the live door,
-//! flushed 1,440 times over the file, or once a line if it has fewer - a day that arrives
-//! evenly, flushed once a minute - and is measured as that leaves it: many short row
-//! groups, each with a header of its own. Every day in it is then compacted by the call
-//! `kibbr compact` makes, and it is measured again. The two totals are printed with the
-//! same parts as the first, and the second as a share of the first in bytes, files and
-//! row groups.
+//! `kibbr bench-storage <file>`: what a file costs to store, by one command, so every
+//! storage number is measured the same way. The file goes through the bulk door into a
+//! scratch directory and is printed beside the raw bytes, `gzip -9`, `zstd -19` and, with
+//! `--es`, Elasticsearch. The same lines then go through the live door as a day flushed once
+//! a minute, measured before and after compaction: the bulk door alone cannot show that.
 
 use std::collections::BTreeSet;
 use std::fs::{self, File};
@@ -123,8 +96,7 @@ fn parts_of(path: &Path) -> Result<Parts, LoadError> {
                 match payload[0] {
                     KIND_SCHEMA => parts.schemas += frame,
                     KIND_ROW_GROUP => {
-                        // kind, template, schema, rows, min, max, source, stream, first,
-                        // last - then the chunk area's length.
+                        // The fields before the chunk area's length.
                         const CHUNKS_LEN_AT: usize = 1 + 8 + 4 + 4 + 8 + 8 + 1 + 8 + 8 + 8;
                         let len = payload
                             .get(CHUNKS_LEN_AT..CHUNKS_LEN_AT + 4)
@@ -158,9 +130,8 @@ struct Held {
     total: Size,
 }
 
-/// Measure a data directory no process has open. **Only once its stores are dropped**: a
-/// file a compaction replaced is unlinked when the last reader lets go of it, and a walk
-/// before that counts the day twice.
+/// Measure a data directory no process has open. Only once its stores are dropped: a file
+/// a compaction replaced is unlinked when its last reader lets go, and would count twice.
 fn held(data: &Path, block: u64) -> Result<Held, LoadError> {
     let io_at = |path: &Path| {
         let path = path.to_path_buf();
@@ -544,14 +515,8 @@ fn measure(
 /// into.
 const FLUSHES_A_DAY: u64 = 24 * 60;
 
-/// How many of a day's flushes are behind line `at` of `lines`, counted from 1: flush `k`
-/// falls after line `ceil(k * lines / 1,440)`.
-///
-/// **Placed by share of the file, not every so-many lines.** A flush every
-/// `ceil(lines / 1,440)` lines makes 1,440 of them only when the lines divide evenly: one
-/// line more and it is every second line, 721 flushes, and half the row group headers
-/// compaction is being measured against. This makes exactly 1,440 for any file of at least
-/// that many lines, and one a line for a shorter one.
+/// How many of a day's flushes are behind line `at` of `lines`, counted from 1. Placed by
+/// share of the file, so any file of at least that many lines gets exactly `FLUSHES_A_DAY`.
 fn flushes_due(at: u64, lines: u64) -> u64 {
     at.saturating_mul(FLUSHES_A_DAY) / lines.max(1)
 }
@@ -579,24 +544,8 @@ fn written(flush: FlushSummary) -> Result<(), LoadError> {
     )))
 }
 
-/// Put the input through the live door into a data directory of its own, measure it,
-/// compact every day it holds and measure it again.
-///
-/// **A day that arrives evenly, flushed once a minute.** The lines are cut into 1,440
-/// runs as near equal as whole lines allow - one line each when there are fewer - and
-/// every buffer is closed after each, however few rows it holds: what a server is left
-/// with after a day whose templates each see a few rows a minute, and the case compaction
-/// exists for. It is counted in lines and not left to a clock: a timeout measures how fast
-/// this machine read the file, and the same file would give other row groups on every run.
-///
-/// **Each measurement is of a closed directory.** A file compaction replaced is unlinked
-/// when its last reader lets go, so the stores are dropped before either walk - and
-/// opened again between the two, as `kibbr compact` alone would find them.
-///
-/// **It can fail where the bulk door did not**, on what is the disk's and not the
-/// file's: a flush that cannot write, or a volume without room for a day a second time
-/// beside the two reserves compaction keeps free. The caller says so over the table it has
-/// already printed.
+/// The input through the live door, measured, compacted and measured again. Flushes are
+/// counted in lines, not left to a clock, so a file gives the same row groups every run.
 fn live_day(
     args: &Args,
     schema: &Schema,
@@ -626,14 +575,12 @@ fn live_day(
 
     let lock = kibbr_storage::lock::DataLock::acquire(data)?;
     let (trie, stores) = kibbr_server::open_durable(&storage, schema).map_err(CliError::from)?;
-    // One arrival time for the whole file, as the bulk door gives it one: a row with no
-    // time of its own is filed under it, and a clock read per line could split the file
-    // over midnight.
+    // One arrival time for the whole file, as the bulk door gives it one: a clock read per
+    // line could split the file over midnight.
     let now = chrono::Utc::now();
     let started = Instant::now();
-    // Compared against the flushes already behind, and not against a line number: a
-    // flush that falls after a line this is never called for - a blank one, one that does
-    // not parse - is made at the next line that is.
+    // Compared against the flushes already behind, not a line number: a flush that falls after
+    // a blank or unparsed line is made at the next line that reaches this.
     let (mut behind, mut flushes) = (0u64, 0u64);
     let stats = db::read_lines(
         BufReader::new(load::open_decoded(&args.input)?),

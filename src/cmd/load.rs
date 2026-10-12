@@ -1,12 +1,7 @@
-//! `kibbr load` - the command.
-//!
-//! The load itself is the server crate's (`kibbr_server::load`): the inputs, the arrival
-//! check, the staging and the one manifest record. What is here is who runs it and what
-//! it prints.
-//!
-//! **Who holds `LOCK` decides where the load runs**, because one process writes the
-//! catalog and the manifest: a server holding the directory is asked to run it
-//! (`POST /load`) and polled; with none, the command takes the lock and runs it alone.
+//! `kibbr load` - the command: who runs it and what it prints. The load itself is the
+//! server crate's (`kibbr_server::load`). Who holds `LOCK` decides where it runs, because
+//! one process writes the catalog and the manifest: a server holding the directory is
+//! asked (`POST /load`) and polled; with none, the command takes the lock and runs alone.
 
 use std::fs;
 use std::io;
@@ -20,9 +15,8 @@ pub use kibbr_server::load::*;
 
 use crate::config::LoadStorage as _;
 
-/// What `kibbr load` can fail with that the load itself cannot: the server that holds
-/// the data directory, asked to run it. Carried in the load's own error as its `Caller`,
-/// so a command has one error to return and each still prints its own sentence.
+/// What `kibbr load` can fail with that the load itself cannot - the server asked to run
+/// it - carried in the load's own error as its `Caller`.
 #[derive(Debug, Error)]
 pub enum Asked {
     /// The server that holds the data directory ran the load, and it failed there.
@@ -70,15 +64,8 @@ pub(crate) const SERVER_STARTING_WAIT: Duration = Duration::from_secs(30);
 /// How often a client asks a server how its load is going.
 pub(crate) const POLL: Duration = Duration::from_millis(100);
 
-/// Run `kibbr load`: alone, if no process holds the data directory; otherwise as a
-/// client of the server that does.
-///
-/// **Who holds `LOCK` decides where the load runs**, because one process writes the
-/// catalog and the manifest. A server is asked to run the load - its trie already has the
-/// catalog's every template, and its leaves take the load's rows the moment it commits.
-/// With no server, the command takes the lock and opens the directory exactly as a
-/// server's start would, recovery included, so an interrupted load is finished or undone
-/// here too.
+/// Run `kibbr load` alone if no process holds the data directory, otherwise as a client of
+/// the server that does: one process writes the catalog and the manifest.
 pub fn command(
     args: Args,
     storage: crate::config::Storage,
@@ -202,10 +189,7 @@ fn alone(
 }
 
 /// The load run by the server that holds the directory: asked over HTTP, then polled.
-///
-/// The inputs are resolved here - the command line's directories, and its standard input,
-/// spooled to a temporary file - and sent as absolute paths: the server reads them itself,
-/// on the same machine, since it holds a lock on a directory here.
+/// Inputs are sent as absolute paths, since the server reads them itself on this machine.
 fn client(
     address: &str,
     token: &str,
@@ -221,8 +205,7 @@ fn client(
         );
     }
     // Spooled inside the data directory's `staging/`, which the server can read because it
-    // owns it - a temporary directory of the client's may be one the server cannot see - and
-    // which the server's next start clears if this client is killed before it removes it.
+    // owns it, and which its next start clears if this client is killed.
     let staging = base.join(kibbr_storage::store::disk::STAGING_DIR);
     let spool = staging.join(format!(
         "stdin-{}-{}.spool",

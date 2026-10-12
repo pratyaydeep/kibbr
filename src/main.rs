@@ -14,10 +14,8 @@ use tokio_util::sync::CancellationToken;
 
 use error::CliError;
 
-/// mimalloc in place of the system allocator. On macOS arm64 the server aborted inside
-/// libmalloc - "pointer being freed was not allocated" - at three unrelated free sites, with
-/// no `unsafe` in src/ and a clean AddressSanitizer run, which left the allocator itself as
-/// the suspect. This takes it out of the picture.
+/// mimalloc in place of the system allocator, which aborted inside libmalloc on macOS
+/// arm64 with no `unsafe` in src/ and a clean AddressSanitizer run.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -126,9 +124,8 @@ enum Command {
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
 
-        // The three below are properties of the server rather than of a query, so they
-        // are here and not on `query`/`explain`: a file has no wire, no encoding and no
-        // second caller competing for the machine.
+        // The three below are properties of the server, not of a query: a file has no wire, no
+        // encoding and no second caller competing for the machine.
         /// The largest `/ingest` body accepted, measured on the wire *before* any
         /// decompression. Overrides `KIBBR__API__MAX_BODY_BYTES`.
         #[arg(long, value_name = "BYTES")]
@@ -465,10 +462,8 @@ enum Command {
             ]
         )]
         table: Vec<PathBuf>,
-        // What a run starts as a child, once a run: build the trie of 10,000 templates,
-        // time `--samples` plans of each shape, print them as one JSON line. Hidden,
-        // because its line is read by the bench and not by a person - though it is also
-        // the answer, by hand, to whether the plan step is over a millisecond.
+        // What a run starts as a child, once a run. Hidden, because its one JSON line is read
+        // by the bench and not by a person.
         #[arg(
             long,
             hide = true,
@@ -567,10 +562,8 @@ enum Command {
         #[arg(long = "match", value_name = "KEY=VALUE")]
         matches: Vec<String>,
 
-        // The four verbs are mutually exclusive. Spelled out rather than put in an
-        // `ArgGroup`, which rejects the pair but reports it as one flag repeated -
-        // clap names a group's first member, so `--count --fetch` came back as
-        // "--count cannot be used multiple times".
+        // The four verbs are mutually exclusive. Spelled out rather than put in an `ArgGroup`,
+        // which reports the pair as its first member repeated.
         /// How many rows match. The default when no other verb is given.
         #[arg(long, conflicts_with_all = ["fetch", "exists", "group_by"])]
         count: bool,
@@ -637,9 +630,8 @@ enum Command {
     },
 }
 
-/// Spelled out as a flag rather than inferred from whether `--data-dir` was given, so
-/// that `--storage memory --data-dir /x` reads as an instruction and not as a
-/// contradiction settled by whichever the code looked at first.
+/// A flag rather than inferred from `--data-dir`, so that `--storage memory --data-dir /x`
+/// reads as an instruction and not as a contradiction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum StorageKind {
     Disk,
@@ -658,9 +650,8 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode, CliError> {
-    // The file first, and for every command alike: one that cannot be read, or holds a
-    // key this build has no setting for, stops the process before anything is done under
-    // settings its writer did not ask for.
+    // The file first, and for every command alike: a bad one stops the process before
+    // anything is done under settings its writer did not ask for.
     let file = config::File::read(cli.config.as_deref())?;
     let file = &file;
     // Then the log, so that everything after this line is said the way it was asked for.
@@ -690,10 +681,8 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         .map_err(CliError::from),
         Command::Parse { input, limit, json } => parse::cli(&input, &mut out, limit, json),
         Command::Demo { input, full } => demo::cli(&input, &mut out, full),
-        // Resolve, run, and the report into an exit code: the server is a library
-        // (`kibbr_server`), and this arm is its command line. Writes nothing to `out`: the
-        // banner and the lifecycle log are events, which `logs` writes to stderr, and
-        // everything else this command produces leaves over HTTP.
+        // The server is a library (`kibbr_server`), and this arm is its command line. Writes
+        // nothing to `out`: the banner and the lifecycle log go to stderr through `logs`.
         Command::Serve {
             host,
             port,
@@ -928,14 +917,8 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
     }
 }
 
-/// What `kibbr serve` exits with, from how the server's run ended.
-///
-/// **0 for every run that ended in a report**, the one whose requests were cut off at
-/// the shutdown deadline included. The exit code is the last thing a process says, and a
-/// stop that got this far has lost nothing: every acknowledged line is in the
-/// write-ahead log, and an orchestrator told otherwise would be told a lie. A server
-/// that could not start, or could not finish, is an error and not a report, and that is
-/// the 1.
+/// What `kibbr serve` exits with: 0 for every run that ended in a report, the deadline's
+/// cut included, because every acknowledged line is in the write-ahead log.
 fn exit_code(report: &kibbr_server::Report) -> ExitCode {
     // Every field named, so that one added to the report is looked at here.
     let kibbr_server::Report { addr: _, cut: _ } = report;

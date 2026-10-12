@@ -1,22 +1,8 @@
-//! kibbr's own log: every lifecycle line, warning and error of the process is a
-//! `tracing` event, and the one subscriber here writes each to stderr as a line - of
-//! text, as the lines always were, or of JSON.
-//!
-//! **As text a line is what it was before there was a subscriber:** `kibbr: ` and the
-//! sentence, with `WARN` or `ERROR` before a warning's or an error's. Scripts and tests
-//! read those lines off a server's stderr, and `kibbr bench` reads the banner - which is
-//! an event too, the server crate's, and the one that is written bare: its message is
-//! the paragraph. As JSON a line is one object - `ts`, `level`, `target`, `msg`, then any
-//! fields the event carries - for whatever collects a container's stderr.
-//!
-//! **A command's data is not a log line.** What `query`, `parse`, `explain`, `gen-logs`
-//! and the rest print on stdout is theirs, and so is what a command says to the person
-//! who ran it about its input - a rejected line by its number, `demo`'s timing, `bench`'s
-//! progress. Those are stderr as they were, in either format.
-//!
-//! A subscriber of our own rather than `tracing-subscriber`: there are no spans here, the
-//! text line has to be byte for byte the one it replaces, and a write that fails has to
-//! be dropped and not panic - see `write`.
+//! kibbr's own log: every lifecycle line, warning and error is a `tracing` event, and the
+//! one subscriber here writes each to stderr as a line of text or of JSON. As text a line
+//! stays byte for byte what scripts, tests and `kibbr bench` read off a server's stderr.
+//! A command's data on stdout is not a log line. A subscriber of our own rather than
+//! `tracing-subscriber`: a write that fails has to be dropped and not panic - see `write`.
 
 use std::fmt;
 use std::io::Write;
@@ -32,8 +18,8 @@ use crate::config::{Log, LogFormat, LogLevel};
 /// install nothing, and in a process that failed before it had read its settings.
 static INSTALLED: OnceLock<Log> = OnceLock::new();
 
-/// Start writing the process's log as `log` says. Once: a second call changes nothing,
-/// since a process has one stderr and one answer to how it is written.
+/// Start writing the process's log as `log` says, once, since a process has one stderr
+/// and one answer to how it is written.
 pub fn install(log: Log) {
     if INSTALLED.set(log).is_ok() {
         // An error only where a global subscriber is already set, and nothing here sets
@@ -42,17 +28,15 @@ pub fn install(log: Log) {
     }
 }
 
-/// Whether log lines are JSON. What `failed` asks: as text an error is the lines it
-/// always was, and as JSON it has to be one event like every other line.
+/// Whether log lines are JSON, which `failed` asks so an error is one event like any other.
 pub fn json() -> bool {
     INSTALLED
         .get()
         .is_some_and(|log| log.format == LogFormat::Json)
 }
 
-/// What ended the command: the error and every cause under it. As text, the lines
-/// `error::report` always printed; as JSON, one `error` event with the chain as its
-/// message, so that a collector reading objects is not handed a sentence.
+/// Report what ended the command, the error and every cause under it: `error::report`'s
+/// lines as text, one `error` event as JSON.
 pub fn failed(e: &(dyn std::error::Error + 'static)) {
     if json() {
         tracing::error!("{}", crate::error::chain(e));
@@ -61,11 +45,8 @@ pub fn failed(e: &(dyn std::error::Error + 'static)) {
     }
 }
 
-/// One line to stderr. **A line that cannot be written is dropped**: `eprintln!` panics
-/// when stderr is gone - the collector at the other end of the pipe went away - and an
-/// event is written from the flush task, from the write-ahead log's thread and from the
-/// threads a load and a compaction run on. The panic would end the work for want of
-/// somewhere to say it was being done.
+/// One line to stderr, dropped if it cannot be written: `eprintln!` panics when stderr is
+/// gone, and that would end the work for want of somewhere to say it was being done.
 fn write(line: &str) {
     let _ = writeln!(std::io::stderr().lock(), "{line}");
 }
@@ -116,9 +97,8 @@ struct Lines {
 }
 
 impl Lines {
-    /// Whether an event is the server's banner as a paragraph, which is written as it is
-    /// (`kibbr_server::BANNER`). Only as text: as JSON the server is asked for an event
-    /// like any other (`config::settings`), and one under this target would be one too.
+    /// Whether an event is the server's banner (`kibbr_server::BANNER`), written bare as
+    /// text; as JSON it is an event like any other.
     fn banner(&self, metadata: &Metadata<'_>) -> bool {
         self.log.format == LogFormat::Text && metadata.target() == kibbr_server::BANNER
     }
@@ -167,9 +147,8 @@ impl Visit for Read {
 }
 
 impl tracing::Subscriber for Lines {
-    /// At or above the level - and the server's banner at any level: its paragraph was
-    /// printed whatever `--log-level` said, while it was printed and not an event, and
-    /// it is the one place a person is told what survives a stop.
+    /// At or above the level - and the server's banner at any level: it is the one place a
+    /// person is told what survives a stop.
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         self.banner(metadata) || *metadata.level() <= level_of(self.log.level)
     }
@@ -220,9 +199,7 @@ impl tracing::Subscriber for Lines {
 mod tests {
     use super::*;
 
-    /// **As text, a line is the line that was written before there was a subscriber**:
-    /// the sentence after `kibbr: `, and `WARN` or `ERROR` before a warning's or an
-    /// error's. What the scripts and the tests read off a server's stderr.
+    /// What the scripts and the tests read off a server's stderr.
     #[test]
     fn a_text_line_is_the_line_it_always_was() {
         assert_eq!(text_line(Level::INFO, "exit 0"), "kibbr: exit 0");
@@ -240,8 +217,7 @@ mod tests {
         );
     }
 
-    /// **As JSON, a line is one object on one line**, whatever the sentence holds - a
-    /// quote, a newline, a path with a backslash - with the line's own four keys first
+    /// One object on one line whatever the sentence holds, the line's own four keys first
     /// and never replaced by a field of the same name.
     #[test]
     fn a_json_line_is_one_object_on_one_line() {
@@ -263,7 +239,6 @@ mod tests {
         assert_eq!(keys, ["ts", "level", "target", "msg", "requests"]);
     }
 
-    /// **A level lets through itself and everything louder.**
     #[test]
     fn a_level_lets_through_itself_and_what_is_louder() {
         let passes = |set: LogLevel, event: Level| event <= level_of(set);

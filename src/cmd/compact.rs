@@ -1,18 +1,8 @@
-//! `kibbr compact` - the command.
-//!
-//! The rebuild itself is the store's (`store::disk::compact`), and which days a run takes,
-//! what it reports and what a server keeps of the compactions it runs are the server
-//! crate's (`kibbr_server::compact`). What is here is who runs it and what it prints.
-//!
-//! **Who holds `LOCK` decides where it runs**, as for `kibbr load` and for the same reason:
-//! one process writes the manifest. A server holding the directory is asked to compact
-//! (`POST /compact`) and polled; with none, the command takes the lock, opens the directory
-//! as a server's start would - recovery included, so a file a crash left unsealed is sealed
-//! before anything reads it - and compacts alone.
-//!
-//! **A day, or every day that is due.** `--day` compacts that day now, whatever its age.
-//! Without it the run takes the days the store says are due - each the day after its last
-//! live row - and none being due is a run that did what it was asked.
+//! `kibbr compact` - the command: who runs it and what it prints. The rebuild is the
+//! store's (`store::disk::compact`) and the run the server crate's
+//! (`kibbr_server::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
+//! one process writes the manifest, so a server holding the directory is asked
+//! (`POST /compact`), and with none the command takes the lock and compacts alone.
 
 use std::io;
 use std::path::Path;
@@ -33,8 +23,8 @@ pub enum CompactError {
     Input(String),
     #[error(transparent)]
     Store(#[from] StoreError),
-    /// A run over the due days carries on past a day that fails - one bad day does not keep
-    /// the others small - and each failure is said as it happens, so this is the count.
+    /// The count of due days that failed: a run carries on past a bad day, and each failure
+    /// is said as it happens.
     #[error(
         "{failed} of the {of} day(s) that were due could not be compacted; each is reported above"
     )]
@@ -70,25 +60,14 @@ impl From<kibbr_storage::lock::LockError> for CompactError {
 pub struct Args {
     pub day: Option<String>,
     pub threads: Option<usize>,
-    /// Whether `--segment-max-bytes` was given: the size itself is in the storage settings,
-    /// and this is only to say so when a server's own will be used instead.
+    /// Whether `--segment-max-bytes` was given, only to say so when a server's own size will
+    /// be used instead.
     pub segment_max_bytes: Option<usize>,
     pub json: bool,
 }
 
-/// What `kibbr compact` refuses before anything is created, locked or asked: a `--day`
-/// that is not a day, and a path that is not a kibbr data directory. Returns the day.
-///
-/// **Nothing here writes, and it runs before the storage settings are loaded**, because
-/// loading them creates the directory they name. A compaction makes nothing new: pointed
-/// at a mistyped path it would otherwise create a database there, find no day due and exit
-/// 0 for ever - and pointed at a directory of someone else's files, open it as a start
-/// does, which deletes whatever under `data/` the manifest it has just created does not
-/// name.
-///
-/// **`manifest.log` is what makes a directory one of kibbr's**: every start writes it
-/// before a row is taken. A directory from before there was one is refused by its own
-/// message, by `refuse_other_versions`.
+/// What `kibbr compact` refuses before the storage settings are loaded, which would create
+/// the directory: a `--day` that is not a day, and a path with no `manifest.log`.
 pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactError> {
     // Refused here as well as by a server, so a client's mistake fails before it is sent.
     let day =
@@ -108,12 +87,8 @@ pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactEr
     Ok(day)
 }
 
-/// Run `kibbr compact`: alone, if no process holds the data directory; otherwise as a
-/// client of the server that does. The same rule, the same wait for a server still
-/// starting and the same refusals as `load::command`.
-///
-/// `day` is what `precheck` made of `args.day`, and the directory is one `precheck`
-/// passed: the caller runs it before it loads `storage`.
+/// Run `kibbr compact` alone if no process holds the data directory, otherwise as a client
+/// of the server that does, by the same rule as `load::command`.
 pub fn command(
     args: Args,
     day: Option<i64>,
@@ -155,13 +130,8 @@ pub fn command(
     }
 }
 
-/// What a run leaves on standard output: a line a day, or the one JSON object. A run with
-/// no day due prints nothing as lines - there is no day to say it of - and `"days":[]` as
-/// JSON.
-///
-/// **A run that failed prints the days it did finish**, and nothing when there were none: a
-/// day compacted before another failed is compacted, and the exit code alone would not say
-/// which.
+/// What a run leaves on standard output: a line a day, or the one JSON object. A run that
+/// failed still prints the days it finished, which the exit code alone would not say.
 fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<(), CompactError> {
     if !report.ok && report.days.is_empty() {
         return Ok(());
@@ -355,8 +325,6 @@ pub fn cli(
 mod tests {
     use super::*;
 
-    /// A run with no day due prints nothing as lines - there is no day to say it of - and
-    /// the one object, its days empty, as JSON.
     #[test]
     fn a_run_with_no_day_due_prints_nothing_as_lines_and_no_days_as_json() {
         let mut out = Vec::new();
@@ -382,9 +350,8 @@ mod tests {
         assert_eq!(out, b"{\"ok\":true,\"days\":[]}\n");
     }
 
-    /// While a compaction runs alone, `LOCK` says so - and says `load` too, which is what
-    /// a second command gives up on at once rather than taking the holder for a server
-    /// still starting and waiting thirty seconds for its address.
+    /// `LOCK` says `load` too, so a second command gives up at once rather than waiting for
+    /// a server still starting.
     #[test]
     fn a_compaction_alone_says_so_in_lock_and_a_second_command_is_refused_at_once() {
         let dir = std::env::temp_dir().join(format!("kibbr-compact-lock-{}", std::process::id()));

@@ -1,23 +1,8 @@
-//! The oracle. Every line, a closure, a counter. Obviously correct, hopelessly slow,
-//! never ships.
-//!
-//! It shares the *contract* with the engine - `value_matches` and how a `Row` is built
-//! from a line - because a differential test in which the two sides answer different
-//! questions finds nothing. It shares none of the *mechanism*: no trie, no walk order, no
-//! leaves, no pruning, no plan, and its own arithmetic for the time window. Sharing that
-//! comparison too was tried and reverted: it made `[since, until)` unfalsifiable, because
-//! a mutation to the one rule moved both answers together.
-//!
-//! **The time source and the read-back of a widened date column are worked out here
-//! independently, not taken from the engine.** An oracle that shares a rule shares its
-//! bugs: the worst query bug this codebase has had - the time column was the literal
-//! name `ts`, so 41.6% of measured rows were invisible to every time-range query -
-//! passed every differential, because this file was written to the same "no `ts`, no
-//! time" rule the engine was. So: a template's time source is decided by the *first
-//! line of that template in file order*, from the configured list, by this file's own
-//! reading of the rule; a row's effective time is worked out here; the system column is
-//! added here; and a `Datetime` in a column whose joined type is `String` is rendered
-//! back through its own rung here. None of it calls the engine or the store.
+//! The oracle: every line, a closure, a counter; obviously correct, never ships.
+//! It shares the contract with the engine (`value_matches`, how a `Row` is built) and
+//! none of the mechanism, or a mutation to one rule would move both answers together.
+//! The time source, the window arithmetic and the read-back of a widened date column are
+//! worked out here independently: an oracle that shares a rule shares its bugs.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -63,10 +48,7 @@ fn source_of(line: &ParsedLog, time_columns: &[String]) -> Source {
 }
 
 /// The effective time of one line, and whether the row needs the system column.
-///
-/// The time column's value where the ladder read it as a `Datetime`; otherwise the
-/// arrival time, which for the CLI is the instant the query was built against - every
-/// line of the file arrived "now", the same `now` `db::load` stamps.
+/// Arrival is `query.now`: for the CLI every line of the file arrived at that instant.
 fn effective(line: &ParsedLog, source: &Source, arrival: i64) -> (i64, bool) {
     if let Source::Column(name) = source {
         if let Some(t) = line.typed_values.get(name) {
@@ -89,11 +71,8 @@ pub fn run(
     let started = std::time::Instant::now();
     let arrival = nanos(query.now);
 
-    // Per template, in file order: the first line decides the time source, and every
-    // line folds its types into the column types - `types::join`, applied here by this
-    // file's own reading of the rule, so a column whose join is `String` renders its
-    // stored datetimes back as text. Both are facts about the template, settled before
-    // any row is read.
+    // Facts about the template, settled before any row is read: the first line decides
+    // the time source, and every line folds its types into the column types.
     let mut sources: HashMap<u64, Source> = HashMap::new();
     let mut col_types: HashMap<(u64, String), Option<ColumnType>> = HashMap::new();
     for line in lines {
@@ -109,9 +88,8 @@ pub fn run(
         }
     }
 
-    // Brute force: a template exists when some line has the pattern's keys and
-    // agrees with it on the keys that line promoted into the fingerprint. Nothing about
-    // rows, timestamps or the terms the trie cannot settle.
+    // Brute force: a template exists when some line has the pattern's keys and agrees with
+    // it on the keys that line promoted into the fingerprint.
     let known = |line: &ParsedLog| {
         query.matches.iter().all(|m| {
             line.keys.contains(&m.key)
@@ -137,29 +115,20 @@ pub fn run(
         },
         ..QueryResult::default()
     };
-    // `--exists` with no window is the template question and reads no line, the same
-    // short-circuit `engine::execute` takes. With a window it is the "is this firing?"
-    // question and has to look, so it falls through to the loop below and stops on the
-    // first row that lands inside.
+    // `--exists` with no window is the template question and reads no line; with a window
+    // it has to look, and the loop below stops on the first row inside.
     let exists_only = query.mode == QueryMode::Exists;
     if exists_only && query.time.is_open() {
         result.meta.duration = started.elapsed();
         return Ok(result);
     }
 
-    // `engine::Rank`'s tiebreak. Two parts, both for rows a timestamp cannot separate:
-    //
-    // - the leaf's key, from `engine::leaf_key`. Called rather than reimplemented, unlike
-    //   the window arithmetic: which number a key set hashes to is a contract, and two
-    //   independent hashes agreeing on it would be luck rather than evidence.
-    // - insertion order within a template, which is file order seen from this side and the
-    //   ingest ordinal seen from the engine's. Counted over every line of the template, not
-    //   over the ones that matched - the engine numbers rows when they land.
+    // `engine::Rank`'s tiebreak: `engine::leaf_key`, called because which number a key set
+    // hashes to is contract, then file order over every line of the template.
     let mut seq: HashMap<u64, u64> = HashMap::new();
     let mut ranked: Vec<(Rank, Row)> = Vec::new();
-    // The group keys, split the way the engine splits them - which is contract, not
-    // mechanism: both sides have to agree on what the clause named. Everything the bucket
-    // arithmetic below does with the width is this file's own.
+    // The group keys, split the way the engine splits them: what the clause named is
+    // contract, not mechanism.
     let (width, columns) = match &query.mode {
         QueryMode::GroupBy(keys) => split_keys(keys),
         _ => (None, Vec::new()),
@@ -227,10 +196,8 @@ pub fn run(
     }
 
     if query.mode == QueryMode::Fetch {
-        // Sort the whole thing and take the front, then look at what is left to know
-        // whether there is another page. The oracle is allowed to be the hopelessly slow
-        // one - `engine::Newest` is where the bounded version lives, and an oracle that
-        // shared it would stop being an independent answer.
+        // Sort everything and take the front: an oracle that shared `engine::Newest`'s bounded
+        // version would stop being an independent answer.
         ranked.sort_by_key(|(rank, _)| *rank);
         if let Some(n) = query.limit {
             if ranked.len() > n {
@@ -260,13 +227,8 @@ pub fn run(
     Ok(result)
 }
 
-/// A timestamp's bucket start, worked out from scratch.
-///
-/// Written again rather than calling `engine::bucket_of`, for the reason `in_window` is:
-/// where a boundary falls is exactly what `scripts/check/agree.sh` is checking, and a mutation
-/// to one flooring rule must not move both answers together. Where the engine floors with
-/// `div_euclid`, this counts whole widths from the epoch and steps back one for an instant
-/// before it - the same rule, reached a different way.
+/// A timestamp's bucket start, written again rather than calling `engine::bucket_of`: a
+/// mutation to one flooring rule must not move both answers together.
 fn floor_to(ns: i64, width: Duration) -> i64 {
     let w = i64::try_from(width.as_nanos()).unwrap_or(i64::MAX).max(1);
     let whole = ns / w;
@@ -350,8 +312,7 @@ fn fill(
     groups
 }
 
-/// An instant inside `[since, until)`, worked out from scratch. Every row has one now
-/// now, so nothing here is outside every window by construction any more.
+/// An instant inside `[since, until)`, worked out from scratch.
 fn in_window(ns: i64, query: &Query) -> bool {
     if query.time.is_open() {
         return true;

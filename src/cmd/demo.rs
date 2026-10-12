@@ -1,14 +1,7 @@
-//! `kibbr demo` - build the trie over a file and print it as an ASCII tree.
-//!
-//! The tree is the observable surface of the trie. A non-branching run of edges prints on
-//! one line joined by `→`; `●` marks a leaf, and the column list under it carries the
-//! types the join settled on. Every key on the path appears again in that list, because
-//! the path *is* the key set - the repetition is the point, not an artifact.
-//!
-//! Everything on stdout is a function of the input lines as a set: children are stored
-//! sorted, columns are sorted by name, and the join is commutative, so a different input
-//! order produces the same bytes. The one number that cannot be - how long the run took -
-//! goes to stderr, outside the artifact whose byte-identity is what the demo is judged by.
+//! `kibbr demo` - build the trie over a file and print it as an ASCII tree, the
+//! observable surface of the trie. Everything on stdout is a function of the input lines
+//! as a set, so a different input order produces the same bytes; the one number that
+//! cannot be - how long the run took - goes to stderr.
 
 use std::io::{BufRead, Write};
 use std::sync::atomic::Ordering;
@@ -33,22 +26,18 @@ const GUTTER_LAST: &str = "    ";
 /// The column list hangs one gutter width past the line it belongs to.
 const COLUMN_INDENT: &str = "    ";
 
-/// A subtree holding more than this many templates is summarised rather than printed.
-/// Six `event=` subtrees of 144 templates each are the file, not a view of it; the handful
-/// of shapes that do not branch on `event` are what an operator came to see. `--full`
-/// prints all of it.
+/// A subtree holding more than this many templates is summarised rather than printed:
+/// the shapes that do not branch on `event` are what an operator came to see.
 const COLLAPSE_ABOVE: usize = 8;
 
 /// Blank columns between the widest summarised label in a sibling group and its `…`.
 const ELLIPSIS_PAD: usize = 4;
 
-/// Where a column list wraps, counting the gutter. Wide enough that the eight-key
-/// templates `--seed 42` produces take two lines rather than eight.
+/// Where a column list wraps, counting the gutter.
 const WRAP: usize = 88;
 
-/// A column that has been seen but has only ever held nulls. Not `Str`: an unknown type
-/// and a column of strings are not the same fact, which is why `ColumnType` has no `Null`
-/// variant to print here.
+/// A column that has only ever held nulls. Not `Str`: an unknown type and a column of
+/// strings are not the same fact.
 const UNKNOWN_TYPE: &str = "?";
 
 pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Result<(), CliError> {
@@ -75,8 +64,7 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
                 read_lines += 1;
                 rejected += 1;
                 // Flushed and reported before the skip, never after: the skip may be the
-                // last thing this process does, and a rejection nobody saw is the bug
-                // being fixed.
+                // last thing this process does.
                 out.flush().map_err(CliError::Write)?;
                 crate::error::report(&DetectorError::new(
                     read_lines as usize,
@@ -326,9 +314,8 @@ fn render_children<W: Write>(
     Ok(())
 }
 
-/// Collapse a non-branching run of edges onto one line. A run stops at a leaf even when
-/// that leaf has children of its own: the leaf has a template id and a column list to
-/// print, and they belong beside their own label.
+/// Collapse a non-branching run of edges onto one line. A run stops at a leaf, whose
+/// template id and column list belong beside their own label.
 fn run_of(view: &View) -> (String, &View) {
     let mut labels = vec![view.label.as_str()];
     let mut end = view;

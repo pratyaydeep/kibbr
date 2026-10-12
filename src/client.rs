@@ -1,11 +1,7 @@
 //! The least HTTP/1.1 client that `kibbr load`, `kibbr compact` and `bench-storage --es`
-//! need: one request per connection, a body in, a status and a body out.
-//!
-//! Hand-written over `TcpStream` rather than a client crate because its callers ask
-//! for so little - a JSON post to a server on this machine, and a few Elasticsearch calls -
-//! and the tests already speak HTTP this way. `Connection: close` and reading to EOF is the
-//! whole framing on the way out; on the way back a chunked body is undone, because an
-//! Elasticsearch behind a proxy may send one.
+//! need: one request per connection, a body in, a status and a body out. Hand-written
+//! over `TcpStream` because its callers ask for so little. A chunked answer is undone,
+//! because an Elasticsearch behind a proxy may send one.
 
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -19,8 +15,8 @@ pub struct Url {
     pub prefix: String,
 }
 
-/// An `http://` URL split for `request`. `https://` is refused by name: this client speaks
-/// plain HTTP, and a TLS endpoint would otherwise fail as an unreadable status line.
+/// An `http://` URL split for `request`; `https://` is refused by name, since a TLS
+/// endpoint would otherwise fail as an unreadable status line.
 pub fn parse_url(url: &str) -> Result<Url, String> {
     let rest = url
         .strip_prefix("http://")
