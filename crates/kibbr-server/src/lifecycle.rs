@@ -4,29 +4,39 @@ use super::*;
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────────────
 
-/// Build the runtime and run the server until a signal cancels it.
+/// How a server's run ended, once it has stopped and wound down: what `run` returns.
 ///
-/// The runtime is built here rather than by putting `#[tokio::main]` on `main`, because
-/// every other subcommand is synchronous and none of them should pay for a thread pool
-/// to parse a file.
-pub fn run(
-    host: &str,
-    port: u16,
-    limits: Limits,
-    api: ApiLimits,
-    storage: Storage,
-    schema: Schema,
-) -> Result<(), CliError> {
+/// **A stop that got this far lost nothing**, whichever way it went: every line a body
+/// was told `200` for is in the write-ahead log (`shutdown_sequence`). So there is no
+/// failure in here - a server that could not start, or could not finish, is an `Error` -
+/// and what is here is what a caller cannot learn any other way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Report {
+    /// Where it listened: the port the system gave, where the settings asked for 0.
+    pub addr: SocketAddr,
+    /// Whether the shutdown deadline passed with requests still in flight, each then
+    /// answered 503 where it stood and let go. The wind-down ran either way.
+    pub cut: bool,
+}
+
+/// Build the runtime and run the server until `cancel` is cancelled - by the caller, or
+/// by SIGTERM or SIGINT, which cancel the same token.
+///
+/// The runtime is built here rather than handed in, because it is the server's: its
+/// blocking pool is sized by the settings, and what outlives it is decided below. A
+/// caller is synchronous - every other command of the binary is, and none of them should
+/// pay for a thread pool to parse a file - and a test runs this on a thread of its own.
+pub fn run(settings: Settings, cancel: CancellationToken) -> Result<Report> {
     // The scan threads' last owner. Declared before the runtime, so let go after it: the
-    // pool's own `Drop` then runs here, on the main thread, when no runtime thread exists
-    // and no `async fn` is on the stack (see `store::fan`).
+    // pool's own `Drop` then runs here, on the calling thread, when no runtime thread
+    // exists and no `async fn` is on the stack (see `store::fan`).
     let scan: OnceLock<Arc<Fan>> = OnceLock::new();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .max_blocking_threads(ingest_bodies(&api) + OTHER_BLOCKING_THREADS)
+        .max_blocking_threads(ingest_bodies(&settings.api) + OTHER_BLOCKING_THREADS)
         .build()
-        .map_err(ServeError::Runtime)?;
-    let cut = runtime.block_on(serve(host, port, limits, api, storage, schema, &scan))?;
+        .map_err(Error::Runtime)?;
+    let report = runtime.block_on(serve(settings, cancel, &scan))?;
     // Dropping a runtime waits for every thread of its blocking pool, for as long as
     // each takes. After a stop that cut requests off, one may be a query's: its scan
     // has been told to stop and does, at its next row group - but a thread that is
@@ -34,21 +44,26 @@ pub fn run(
     // answers, is not asked again. The wind-down is done and the directory's lock let
     // go by now, and a query writes nothing, so such a thread is given a moment and
     // then left for the exit.
-    if cut {
+    if report.cut {
         runtime.shutdown_timeout(CUT_OFF_GRACE);
     }
-    Ok(())
+    Ok(report)
 }
 
 async fn serve(
-    host: &str,
-    port: u16,
-    limits: Limits,
-    api: ApiLimits,
-    storage: Storage,
-    schema: Schema,
+    settings: Settings,
+    token: CancellationToken,
     scan: &OnceLock<Arc<Fan>>,
-) -> Result<bool, ServeError> {
+) -> Result<Report> {
+    let Settings {
+        host,
+        port,
+        limits,
+        api,
+        storage,
+        schema,
+        banner: how,
+    } = settings;
     // Read-only, so it runs before the lock and the port: a data directory holding a
     // segment from another format version is not served at all, and nothing is listening
     // when the process exits over it. Everything that writes - catalog recovery, segment
@@ -61,8 +76,8 @@ async fn serve(
     // manifest over the other's records. Held until this function returns.
     let mut lock = match storage.base_path.as_deref() {
         Some(base) => {
-            let mut lock = crate::lock::DataLock::acquire(base)?;
-            let _ = lock.announce(&crate::lock::Holder::server(None, None));
+            let mut lock = kibbr_storage::lock::DataLock::acquire(base)?;
+            let _ = lock.announce(&kibbr_storage::lock::Holder::server(None, None));
             Some(lock)
         }
         None => None,
@@ -71,20 +86,20 @@ async fn serve(
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .map_err(|source| ServeError::Bind {
+        .map_err(|source| Error::Bind {
             addr: addr.clone(),
             source,
         })?;
     let bound: SocketAddr = listener
         .local_addr()
-        .map_err(|source| ServeError::Bind { addr, source })?;
+        .map_err(|source| Error::Bind { addr, source })?;
 
     // Written to `LOCK` beside the address: a `/load` shows it or is refused. See lock.rs.
     let load_token = match &lock {
         Some(_) => Some(
             kibbr_storage::store::v3::file::new_file_id()
                 .map(|id| kibbr_storage::store::manifest::hex(&id))
-                .map_err(|e| ServeError::Storage {
+                .map_err(|e| Error::Storage {
                     detail: format!("drawing the load token: {e}"),
                 })?,
         ),
@@ -112,19 +127,19 @@ async fn serve(
         } else {
             bound
         };
-        let holder = crate::lock::Holder::server(Some(reach.to_string()), load_token);
+        let holder = kibbr_storage::lock::Holder::server(Some(reach.to_string()), load_token);
         if let Err(e) = lock.announce(&holder) {
             log_warn(&format!(
                 "{e}; `kibbr load` and `kibbr compact` will not find this server"
             ));
         }
     }
-    let token = CancellationToken::new();
     // Installed before the banner: a server that cannot hear SIGTERM will be killed by
-    // the SIGKILL that follows it, and a deploy is a bad place to discover that.
+    // the SIGKILL that follows it, and a deploy is a bad place to discover that. The
+    // token is the caller's, so a signal and the caller stop the server the same way.
     let signals = signals(token.clone())?;
 
-    banner(bound, &server);
+    banner(bound, &server, how);
     tokio::spawn(signals);
 
     // The clock the stores deliberately do not own. Held rather than detached: a tick
@@ -170,7 +185,7 @@ async fn serve(
     };
     let left = tokio::select! {
         served = &mut serving => {
-            served.map_err(ServeError::Serve)?;
+            served.map_err(Error::Serve)?;
             None
         }
         () = past_deadline => Some(server.in_flight.load(Ordering::Relaxed)),
@@ -185,11 +200,11 @@ async fn serve(
         log_warn(&format!(
             "shutdown deadline - {left} request(s) still in flight after {}; each is \
              answered 503 and let go",
-            crate::config::duration_words(server.api.shutdown_deadline.unwrap_or_default())
+            crate::settings::duration_words(server.api.shutdown_deadline.unwrap_or_default())
         ));
         server.cut_off.cancel();
         match tokio::time::timeout(CUT_OFF_GRACE, &mut serving).await {
-            Ok(served) => served.map_err(ServeError::Serve)?,
+            Ok(served) => served.map_err(Error::Serve)?,
             Err(_) => {
                 log_warn("shutdown deadline - a connection did not take its answer; left open")
             }
@@ -222,7 +237,7 @@ async fn serve(
     let result = shutdown_sequence(&server, cut);
     drop(lock);
     // Whether requests were cut off: `run` then does not wait on their threads.
-    result.map(|()| cut)
+    result.map(|()| Report { addr: bound, cut })
 }
 
 /// Ask every store whether a row group is due, every interval, until the token is
@@ -348,15 +363,15 @@ pub(super) fn move_checkpoint(server: &Server) -> Option<wal::Advanced> {
 ///
 /// Returns the future rather than spawning it, so a handler that could not be installed
 /// is an error at startup instead of a task that quietly never fires.
-fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output = ()>, ServeError> {
+fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output = ()>, Error> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut term = signal(SignalKind::terminate()).map_err(|source| ServeError::Signal {
+        let mut term = signal(SignalKind::terminate()).map_err(|source| Error::Signal {
             signal: "SIGTERM",
             source,
         })?;
-        let mut int = signal(SignalKind::interrupt()).map_err(|source| ServeError::Signal {
+        let mut int = signal(SignalKind::interrupt()).map_err(|source| Error::Signal {
             signal: "SIGINT",
             source,
         })?;
@@ -395,7 +410,7 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
 /// in the write-ahead log, so a final flush that fails - or a `SIGKILL` that lands halfway
 /// through - costs the next start a replay and nothing else. The flush is still done: a
 /// clean stop then leaves every row in a sealed file and nothing to read back.
-fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), ServeError> {
+fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
     log(if cut {
         "in-flight requests cut off at the shutdown deadline"
     } else {
@@ -580,17 +595,23 @@ fn ingest_line(server: &Server) -> String {
 
 /// The startup banner.
 ///
-/// stderr, and not stdout, so that `kibbr serve >/dev/null` still prints the paragraph
-/// about losing data. A warning a redirect can silence is a warning that will be silenced
-/// by the first person who pipes the process into a log file, and this is something to
-/// say rather than hide.
+/// The binary writes it to stderr, and not stdout, so that `kibbr serve >/dev/null` still
+/// prints the paragraph about losing data. A warning a redirect can silence is a warning
+/// that will be silenced by the first person who pipes the process into a log file, and
+/// this is something to say rather than hide.
 ///
-/// **As JSON it is one event and not a paragraph**: a collector reading an object a line
-/// is given the address and the settings an alert would be written on as fields, and
-/// the one sentence that must not be lost - storage in memory - as a warning of its own.
-fn banner(addr: SocketAddr, server: &Server) {
+/// **An event like every other line this crate says**, under a target of its own
+/// (`BANNER`): the subscriber that writes lines of text writes this one bare, so the
+/// paragraph is the bytes it was while it was printed here, and a test that holds no
+/// subscriber hears nothing.
+///
+/// **Asked for as `Banner::Event` it is one event and not a paragraph**: a collector
+/// reading an object a line is given the address and the settings an alert would be
+/// written on as fields, and the one sentence that must not be lost - storage in memory -
+/// as a warning of its own.
+fn banner(addr: SocketAddr, server: &Server, how: Banner) {
     let limits = server.limits;
-    if crate::logs::json() {
+    if how == Banner::Event {
         let data_dir = server.storage.base_path.as_ref();
         tracing::info!(
             addr = %addr,
@@ -714,7 +735,7 @@ fn banner(addr: SocketAddr, server: &Server) {
                 "  requests    answered within {} or timed out: 408 for a body that has not\n\
                  \x20             arrived, 504 for a query, whose scan is stopped. Not an\n\
                  \x20             /ingest body read whole (--request-timeout).",
-                crate::config::duration_words(timeout)
+                crate::settings::duration_words(timeout)
             ),
             None => "  requests    given as long as they take (--request-timeout 0s)."
                 .to_string(),
@@ -724,7 +745,7 @@ fn banner(addr: SocketAddr, server: &Server) {
             Some(deadline) => format!(
                 "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first; one\n\
                  \x20             still in flight {} later is answered 503 and let go.",
-                crate::config::duration_words(deadline)
+                crate::settings::duration_words(deadline)
             ),
             None => "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first,\n\
                      \x20             however long they take (--shutdown-deadline 0s)."
@@ -732,17 +753,18 @@ fn banner(addr: SocketAddr, server: &Server) {
         },
         String::new(),
     ];
-    eprintln!("{}", lines.join("\n"));
+    tracing::info!(target: BANNER, "{}", lines.join("\n"));
 }
 
-/// One lifecycle line: an `info` event of the process's log. stderr for the reason the
-/// banner is there - these are logs, and this surface's data goes out over HTTP.
+/// One lifecycle line: an `info` event of the process's log. The binary's subscriber
+/// writes it to stderr for the reason the banner is there - these are logs, and this
+/// surface's data goes out over HTTP.
 ///
-/// **A line that cannot be written is dropped, as `error::report` drops one**
-/// (`logs::write`). `eprintln!` panics when stderr is gone - the log collector at the
-/// other end of the pipe went away - and this is called from the flush task and from
-/// the threads a load and a compaction run on: the panic would end the work for want of
-/// somewhere to say it was being done.
+/// **An event, and never `eprintln!`**, which panics when stderr is gone - the log
+/// collector at the other end of the pipe went away - and this is called from the flush
+/// task and from the threads a load and a compaction run on: the panic would end the work
+/// for want of somewhere to say it was being done. A subscriber drops a line it cannot
+/// write.
 pub(super) fn log(message: &str) {
     tracing::info!("{message}");
 }

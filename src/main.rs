@@ -1,6 +1,6 @@
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-use kibbr::cmd::{ask, bench, bench_storage, compact, demo, load, parse, query, serve};
+use kibbr::cmd::{ask, bench, bench_storage, compact, demo, load, parse, query};
 use kibbr::gen::{self, Profile};
 use kibbr::{config, error, logs};
 use kibbr_core::infer;
@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use tokio_util::sync::CancellationToken;
 
 use error::CliError;
 
@@ -648,7 +649,7 @@ enum StorageKind {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             logs::failed(&e);
             ExitCode::FAILURE
@@ -656,20 +657,23 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<(), CliError> {
+fn run(cli: Cli) -> Result<ExitCode, CliError> {
     // The file first, and for every command alike: one that cannot be read, or holds a
     // key this build has no setting for, stops the process before anything is done under
     // settings its writer did not ask for.
     let file = config::File::read(cli.config.as_deref())?;
     let file = &file;
     // Then the log, so that everything after this line is said the way it was asked for.
-    logs::install(config::log(file, cli.log_level, cli.log_format)?);
+    let log = config::log(file, cli.log_level, cli.log_format)?;
+    logs::install(log);
     // Before any command types a value, and for every command alike: a bad window stops
     // the process here rather than after it has typed lines under the default.
     infer::set_epoch_window(config::epoch_window(file)?);
 
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
+    // What every command but `serve` ends on once it has not failed.
+    let mut code = ExitCode::SUCCESS;
 
     let result = match cli.command {
         Command::GenLogs {
@@ -686,8 +690,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
         .map_err(CliError::from),
         Command::Parse { input, limit, json } => parse::cli(&input, &mut out, limit, json),
         Command::Demo { input, full } => demo::cli(&input, &mut out, full),
-        // Writes nothing to `out`: the banner and the lifecycle log are stderr (see
-        // `serve::banner`), and everything else this command produces leaves over HTTP.
+        // Resolve, run, and the report into an exit code: the server is a library
+        // (`kibbr_server`), and this arm is its command line. Writes nothing to `out`: the
+        // banner and the lifecycle log are events, which `logs` writes to stderr, and
+        // everything else this command produces leaves over HTTP.
         Command::Serve {
             host,
             port,
@@ -716,36 +722,40 @@ fn run(cli: Cli) -> Result<(), CliError> {
             scan_fan_rows,
             time_columns,
         } => {
-            let (host, port) = config::listen(file, host, port)?;
-            serve::run(
-                &host,
+            let flags = config::ServeFlags {
+                host,
                 port,
-                config::limits(file, max_rows, max_buckets, max_groups)?,
-                config::ApiLimits::load(
-                    file,
-                    max_body_bytes,
-                    max_decompressed_bytes,
-                    ingest_concurrency,
-                )?
-                .with_ingest_wait(file, ingest_wait_ms)?
-                .with_shutdown_deadline(file, shutdown_deadline)?
-                .with_request_timeout(file, request_timeout)?,
-                config::Storage::load(
-                    file,
-                    storage == StorageKind::Disk,
-                    data_dir,
-                    trie_file,
-                    flush_interval_ms,
-                    row_group_timeout_ms,
-                    max_open_segments,
-                    segment_max_bytes,
-                    max_buffer_bytes,
-                )?
-                .with_compact_interval(file, compact_interval_ms)?
-                .with_wal(file, wal_segment_bytes, batch_size, wal_queue_bytes)?
-                .with_scan(file, scan_threads, scan_fan_rows)?,
-                config::schema(file, time_columns),
-            )
+                max_rows,
+                max_buckets,
+                max_groups,
+                max_body_bytes,
+                max_decompressed_bytes,
+                ingest_concurrency,
+                ingest_wait_ms,
+                shutdown_deadline,
+                request_timeout,
+                memory: storage == StorageKind::Memory,
+                data_dir,
+                trie_file,
+                flush_interval_ms,
+                row_group_timeout_ms,
+                wal_segment_bytes,
+                batch_size,
+                wal_queue_bytes,
+                max_open_segments,
+                segment_max_bytes,
+                max_buffer_bytes,
+                compact_interval_ms,
+                scan_threads,
+                scan_fan_rows,
+                time_columns,
+            };
+            let settings = config::settings(file, flags, log)?;
+            // Nothing here cancels the token: a server started from the command line is
+            // stopped by SIGTERM or SIGINT, which it hears for itself.
+            let report = kibbr_server::run(settings, CancellationToken::new())?;
+            code = exit_code(&report);
+            Ok(())
         }
         Command::Load {
             inputs,
@@ -908,14 +918,28 @@ fn run(cli: Cli) -> Result<(), CliError> {
 
     // A closed downstream pipe (`| head`) is how the command ends, not a failure.
     match result {
-        Err(e) if is_broken_pipe(&e) => return Ok(()),
+        Err(e) if is_broken_pipe(&e) => return Ok(code),
         other => other?,
     }
     match out.flush() {
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(code),
         Err(e) => Err(CliError::Write(e)),
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(code),
     }
+}
+
+/// What `kibbr serve` exits with, from how the server's run ended.
+///
+/// **0 for every run that ended in a report**, the one whose requests were cut off at
+/// the shutdown deadline included. The exit code is the last thing a process says, and a
+/// stop that got this far has lost nothing: every acknowledged line is in the
+/// write-ahead log, and an orchestrator told otherwise would be told a lie. A server
+/// that could not start, or could not finish, is an error and not a report, and that is
+/// the 1.
+fn exit_code(report: &kibbr_server::Report) -> ExitCode {
+    // Every field named, so that one added to the report is looked at here.
+    let kibbr_server::Report { addr: _, cut: _ } = report;
+    ExitCode::SUCCESS
 }
 
 /// `bench --runs`: an odd count, so that the median of the runs is one of them and not a

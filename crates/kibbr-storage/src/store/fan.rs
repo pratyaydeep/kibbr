@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
         // Every crate's sources, named from the workspace's root: the handlers this is
-        // about are in the binary crate, two directories up, and not in this one.
+        // about are in the server crate, beside this one, and not in it.
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut files = Vec::new();
         sources(&root, &root.join("src"), &mut files);
@@ -235,7 +235,7 @@ mod tests {
         }
         assert!(files.len() > 40, "{} source files", files.len());
         assert!(
-            files.iter().any(|(name, _)| name == "src/cmd/serve/handlers.rs"),
+            files.iter().any(|(name, _)| name == "crates/kibbr-server/src/handlers.rs"),
             "the server's handlers are among the files read"
         );
         let holding = |word: &str| -> Vec<&str> {

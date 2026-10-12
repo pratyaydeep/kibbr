@@ -1,4 +1,12 @@
-//! `kibbr serve` - the native HTTP surface, on :7700.
+//! The server, as a library: `run` is given a `Settings` and a token to stop it by, and
+//! serves the native HTTP surface until the token is cancelled or a signal arrives.
+//!
+//! Nothing here reads a flag, an environment variable or a settings file, and nothing
+//! here writes to stderr: what the server has to say is a `tracing` event, for whoever
+//! holds the subscriber. The binary is the command line around this - `kibbr serve`
+//! resolves its settings, calls `run` and turns the `Report` into an exit code - and the
+//! same crate is what `kibbr load` and `kibbr compact` open a data directory through
+//! when no server holds it (`open_durable`, `load`, `compact`).
 //!
 //! One `Trie` and one `StoreManager`, held for the life of the process, wrapped in the
 //! five endpoints below. Nothing here knows how a line becomes a row: `/query` builds the
@@ -52,11 +60,7 @@ use tokio_util::sync::CancellationToken;
 
 use std::path::Path;
 
-use crate::cmd::compact;
-use crate::config::{ApiLimits, Limits, Schema, Storage};
-use crate::error::{self, CliError, DetectorError, DetectorErrorKind, IngestError, ServeError};
-use crate::cmd::load;
-use crate::cmd::query;
+use crate::error::{DetectorError, DetectorErrorKind, IngestError};
 use kibbr_core::fmt::{commas, rfc3339_at};
 use kibbr_engine::engine;
 use kibbr_storage::catalog::{Catalog, CatalogError};
@@ -396,7 +400,7 @@ impl Server {
         storage: Storage,
         schema: Schema,
         load_token: Option<String>,
-    ) -> Result<Self, ServeError> {
+    ) -> Result<Self, Error> {
         let (trie, stores, wal, held, replayed) = match storage.base_path.as_deref() {
             Some(base) => {
                 let restored = restore(&storage, &schema, true)?;
@@ -508,10 +512,10 @@ impl Server {
 /// it was made, which holds none.
 ///
 /// The caller holds the directory's `LOCK`: recovery writes.
-pub(crate) fn open_durable(
+pub fn open_durable(
     storage: &Storage,
     schema: &Schema,
-) -> Result<(Trie, StoreManager), ServeError> {
+) -> Result<(Trie, StoreManager), Error> {
     let restored = restore(storage, schema, false)?;
     Ok((restored.trie, restored.stores))
 }
@@ -528,9 +532,9 @@ struct Restored {
 
 /// `apply`: whether the lines the log holds are stored - a server's start - or only
 /// counted.
-fn restore(storage: &Storage, schema: &Schema, apply: bool) -> Result<Restored, ServeError> {
+fn restore(storage: &Storage, schema: &Schema, apply: bool) -> Result<Restored, Error> {
     let Some(base) = storage.base_path.clone() else {
-        return Err(ServeError::Storage {
+        return Err(Error::Storage {
             detail: "no data directory".to_string(),
         });
     };
@@ -655,7 +659,7 @@ fn replay(
     wal: &Wal,
     held: &Held,
     apply: bool,
-) -> Result<Replayed, ServeError> {
+) -> Result<Replayed, Error> {
     let began = Instant::now();
     let Some(disk) = stores.disk_store() else {
         return Ok(Replayed::default());
@@ -989,16 +993,16 @@ impl Held {
 /// A store that will not open, as the error startup exits on. An earlier layout or another
 /// format version is not a disk that failed; it is a disk holding something this build
 /// must not read, and it is named.
-fn storage_fatal(e: StoreError) -> ServeError {
+fn storage_fatal(e: StoreError) -> Error {
     match e {
-        StoreError::LegacyLayout { path } => ServeError::LegacyLayout { path },
+        StoreError::LegacyLayout { path } => Error::LegacyLayout { path },
         StoreError::Format(kibbr_storage::store::v3::FormatError::Version { path, found }) => {
-            ServeError::SegmentVersion { path, found }
+            Error::SegmentVersion { path, found }
         }
         StoreError::Format(kibbr_storage::store::v3::FormatError::PreRename { path }) => {
-            ServeError::PreRename { path }
+            Error::PreRename { path }
         }
-        e => ServeError::Storage {
+        e => Error::Storage {
             detail: error::chain(&e),
         },
     }
@@ -1022,12 +1026,12 @@ fn open_catalog(
     trie_file: Option<&Path>,
     data_dir: &str,
     schema: &Schema,
-) -> Result<Trie, ServeError> {
+) -> Result<Trie, Error> {
     let path = kibbr_storage::catalog::path_in(base);
     let existed = path.exists();
     let mut warn = |message: String| log_warn(&format!("catalog.log - {message}"));
-    fn storage_error(e: &(dyn std::error::Error + 'static)) -> ServeError {
-        ServeError::Storage {
+    fn storage_error(e: &(dyn std::error::Error + 'static)) -> Error {
+        Error::Storage {
             detail: error::chain(e),
         }
     }
@@ -1129,15 +1133,22 @@ impl Drop for InFlight {
     }
 }
 
+pub mod compact;
 mod compaction;
+mod error;
 mod handlers;
 mod ingest;
 mod lifecycle;
+pub mod load;
+pub mod query;
 mod routes;
+pub mod settings;
 #[cfg(test)]
 mod tests;
 
-pub use lifecycle::run;
+pub use error::{Error, Result};
+pub use lifecycle::{run, Report};
+pub use settings::{ApiLimits, Banner, Limits, Schema, Settings, Storage, BANNER};
 
 use compaction::*;
 use handlers::*;

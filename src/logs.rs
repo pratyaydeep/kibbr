@@ -4,9 +4,10 @@
 //!
 //! **As text a line is what it was before there was a subscriber:** `kibbr: ` and the
 //! sentence, with `WARN` or `ERROR` before a warning's or an error's. Scripts and tests
-//! read those lines off a server's stderr, and `kibbr bench` reads the banner. As JSON a
-//! line is one object - `ts`, `level`, `target`, `msg`, then any fields the event
-//! carries - for whatever collects a container's stderr.
+//! read those lines off a server's stderr, and `kibbr bench` reads the banner - which is
+//! an event too, the server crate's, and the one that is written bare: its message is
+//! the paragraph. As JSON a line is one object - `ts`, `level`, `target`, `msg`, then any
+//! fields the event carries - for whatever collects a container's stderr.
 //!
 //! **A command's data is not a log line.** What `query`, `parse`, `explain`, `gen-logs`
 //! and the rest print on stdout is theirs, and so is what a command says to the person
@@ -41,8 +42,8 @@ pub fn install(log: Log) {
     }
 }
 
-/// Whether log lines are JSON. What the banner asks: as text it is a paragraph for a
-/// person, and as JSON it has to be one event like every other line.
+/// Whether log lines are JSON. What `failed` asks: as text an error is the lines it
+/// always was, and as JSON it has to be one event like every other line.
 pub fn json() -> bool {
     INSTALLED
         .get()
@@ -114,6 +115,15 @@ struct Lines {
     log: Log,
 }
 
+impl Lines {
+    /// Whether an event is the server's banner as a paragraph, which is written as it is
+    /// (`kibbr_server::BANNER`). Only as text: as JSON the server is asked for an event
+    /// like any other (`config::settings`), and one under this target would be one too.
+    fn banner(&self, metadata: &Metadata<'_>) -> bool {
+        self.log.format == LogFormat::Text && metadata.target() == kibbr_server::BANNER
+    }
+}
+
 /// An event's message, and its other fields as JSON values.
 #[derive(Default)]
 struct Read {
@@ -157,12 +167,17 @@ impl Visit for Read {
 }
 
 impl tracing::Subscriber for Lines {
+    /// At or above the level - and the server's banner at any level: its paragraph was
+    /// printed whatever `--log-level` said, while it was printed and not an event, and
+    /// it is the one place a person is told what survives a stop.
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        *metadata.level() <= level_of(self.log.level)
+        self.banner(metadata) || *metadata.level() <= level_of(self.log.level)
     }
 
+    /// Never under `info`, which is the banner's: a hint under it would drop that event
+    /// before `enabled` was asked. What is written is still what `enabled` passes.
     fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
-        Some(level_of(self.log.level).into())
+        Some(level_of(self.log.level).max(Level::INFO).into())
     }
 
     fn event(&self, event: &Event<'_>) {
@@ -170,6 +185,8 @@ impl tracing::Subscriber for Lines {
         event.record(&mut read);
         let metadata = event.metadata();
         match self.log.format {
+            // Already the paragraph: no `kibbr: ` before it, and nothing after.
+            LogFormat::Text if self.banner(metadata) => write(&read.message),
             LogFormat::Text => write(&text_line(*metadata.level(), &read.message)),
             LogFormat::Json => {
                 let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);

@@ -91,11 +91,11 @@ pub fn server(
             found: "--addr".to_string(),
         });
     }
-    let base = config::Storage::base_named(file, data_dir);
-    if let Some(address) = crate::lock::holder(&base).and_then(|holder| holder.address) {
+    let base = <config::Storage as config::LoadStorage>::base_named(file, data_dir);
+    if let Some(address) = kibbr_storage::lock::holder(&base).and_then(|holder| holder.address) {
         return Ok(Server {
             address,
-            found: format!("from {}", base.join(crate::lock::LOCK_FILE).display()),
+            found: format!("from {}", base.join(kibbr_storage::lock::LOCK_FILE).display()),
         });
     }
     let (host, port) = config::listen(file, None, None)?;
@@ -363,7 +363,7 @@ mod tests {
         let held = std::env::temp_dir().join(format!("kibbr-ask-held-{}", std::process::id()));
         std::fs::create_dir_all(&held).expect("mkdir");
         std::fs::write(
-            held.join(crate::lock::LOCK_FILE),
+            held.join(kibbr_storage::lock::LOCK_FILE),
             r#"{"pid":1,"address":"127.0.0.1:40123"}"#,
         )
         .expect("a LOCK");

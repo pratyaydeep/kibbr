@@ -448,7 +448,7 @@ impl Server {
     /// unread body behind it, kept for as long as the wait - and that needs a number. It
     /// is the places, so there are never more bodies outside the door than may be inside.
     pub(super) fn line_max(&self) -> Option<usize> {
-        let default = Duration::from_millis(crate::config::DEFAULT_INGEST_WAIT_MS as u64);
+        let default = Duration::from_millis(crate::settings::DEFAULT_INGEST_WAIT_MS as u64);
         (self.api.ingest_wait > default).then(|| ingest_bodies(&self.api))
     }
 

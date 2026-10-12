@@ -1,14 +1,17 @@
 [workspace]
-# Four crates, each allowed to name only the ones under it:
+# Five crates, each allowed to name only the ones under it:
 #
-#   kibbr (this one: the commands, the HTTP server, the settings)
+#   kibbr (this one: the command line - the commands, and how their settings are resolved)
+#     -> kibbr-server   (the HTTP server, as a library, and the loads and compactions it
+#                        runs)
 #     -> kibbr-engine   (plan and execute a query; TrieQL)
 #     -> kibbr-storage  (the trie and its catalog, the day files, the write-ahead log,
-#                        and the write path that puts a line into them)
+#                        the write path that puts a line into them, and the lock on a
+#                        data directory)
 #     -> kibbr-core     (a line into keys, types and a fingerprint)
 #
 # fuzz/ is a workspace of its own, so `cargo build` here never builds a fuzzer.
-members = ["crates/kibbr-core", "crates/kibbr-storage", "crates/kibbr-engine"]
+members = ["crates/kibbr-core", "crates/kibbr-storage", "crates/kibbr-engine", "crates/kibbr-server"]
 exclude = ["fuzz", "lab-rs"]
 resolver = "2"
 
@@ -23,6 +26,7 @@ repository = "https://github.com/pratyaydeep/kibbr"
 kibbr-core = { path = "crates/kibbr-core" }
 kibbr-storage = { path = "crates/kibbr-storage" }
 kibbr-engine = { path = "crates/kibbr-engine" }
+kibbr-server = { path = "crates/kibbr-server" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -46,7 +50,7 @@ libc = "0.2"
 # `Frame` and `SizeHint`, the two types the `Body` trait's methods are written in: the
 # server puts a body of its own around each request's, to know whether it was read to its
 # end, and axum hands on the trait without them. Already in the build under axum and
-# hyper; named here because src/ now implements the trait.
+# hyper; named here because the server crate implements the trait.
 http-body = "1"
 # The threads a query chooses a day's rows on beside its own: one small pool, owned by
 # the disk store of a server and started by the first query that has a use for it
@@ -63,9 +67,9 @@ thiserror = "2"
 # The settings file, `--config`: parsed into the same structs the flags and variables
 # fill (src/config.rs). The parser and serde only - nothing here writes TOML.
 toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"] }
-# The process's own log: every lifecycle line, warning and error is a `tracing` event,
-# and one subscriber in the binary (src/logs.rs) writes each as a line of text or of
-# JSON. The macros and the core only - no attribute macro, so no syn in the build.
+# The process's own log: every lifecycle line, warning and error is a `tracing` event -
+# the server crate's and the storage crate's among them, which only emit - and one
+# subscriber in the binary (src/logs.rs) writes each as a line of text or of JSON. The macros and the core only - no attribute macro, so no syn in the build.
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 tokio-util = "0.7.19"
@@ -87,19 +91,17 @@ repository.workspace = true
 kibbr-core.workspace = true
 kibbr-storage.workspace = true
 kibbr-engine.workspace = true
-axum.workspace = true
+kibbr-server.workspace = true
 chrono.workspace = true
 clap.workspace = true
 crc32c.workspace = true
 flate2.workspace = true
 mimalloc.workspace = true
 libc.workspace = true
-http-body.workspace = true
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true

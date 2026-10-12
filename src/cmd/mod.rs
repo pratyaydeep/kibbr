@@ -13,7 +13,6 @@ pub mod demo;
 pub mod load;
 pub mod parse;
 pub mod query;
-pub mod serve;
 
 /// The input a command reads: a file by its path, or standard input for `-`.
 fn open(input: &str) -> Result<Box<dyn BufRead>, CliError> {

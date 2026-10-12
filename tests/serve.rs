@@ -1,5 +1,12 @@
-//! `kibbr serve` from outside the binary: every endpoint answers, a body with three bad
-//! lines in it reports exactly those three, and a signal mid-request exits 0.
+//! `kibbr serve` from outside: every endpoint answers, a body with three bad lines in it
+//! reports exactly those three, and a signal mid-request exits 0.
+//!
+//! **Two ways a server is started here.** A test that only asks a server things over
+//! HTTP runs one in this process (`Served`): the server crate's `run`, on a thread, given
+//! the settings the command line would have resolved and a token to stop it by. A test
+//! that needs a process starts the binary (`Server`): one that sends a signal, kills it,
+//! reads its exit code or what it wrote to stderr as it stopped, or starts it again on
+//! the directory it left.
 //!
 //! HTTP is spoken over a bare `TcpStream` rather than through a client crate. The
 //! contract is a status line and a JSON body, and a test that asserts on
@@ -19,12 +26,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use kibbr::config::{self, ServeFlags};
+use tokio_util::sync::CancellationToken;
 
 /// Lines in the ingest body, and the three that are broken.
 const LINES: usize = 500;
 const BAD: [usize; 3] = [137, 400, 461];
 
-// ── A running server ───────────────────────────────────────────────────────────────
+// ── A running server: the binary, as a process ─────────────────────────────────────
 
 struct Server {
     child: Child,
@@ -194,6 +203,170 @@ impl Drop for Server {
         let _ = self.child.wait();
         if let Some(dir) = &self.data_dir {
             let _ = fs::remove_dir_all(dir);
+        }
+    }
+}
+
+// ── A running server: the library, in this process ─────────────────────────────────
+
+/// A server run by `kibbr_server::run` on a thread of this process, for a test that only
+/// asks it things over HTTP: what `Server` is, without the process.
+///
+/// **Its settings are the ones the command line resolves**: `config::settings`, given
+/// the flags a test would have typed, so a default here is the binary's default and a
+/// flag is refused or floored as the binary would.
+///
+/// **It is stopped as a signal stops one** - the token cancelled, the in-flight requests
+/// waited for, the final flush, the checkpoint - and a stop that fails fails the test.
+/// `Server`'s drop is a `kill -9`.
+struct Served {
+    port: u16,
+    data_dir: Option<PathBuf>,
+    /// Everything the server said before it listened: what a start found, and the banner.
+    banner: String,
+    cancel: CancellationToken,
+    run: Option<std::thread::JoinHandle<kibbr_server::Result<kibbr_server::Report>>>,
+}
+
+/// What one thread's events say, each as its message. A server says its start and its
+/// stop on the thread `run` was called on, and the banner is one of those events: this
+/// is how a test hears the port, where the binary's own subscriber writes it to stderr.
+struct Hear(std::sync::Mutex<std::sync::mpsc::Sender<String>>);
+
+impl tracing::Subscriber for Hear {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Message(String);
+        impl tracing::field::Visit for Message {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = format!("{value:?}");
+                }
+            }
+        }
+        let mut message = Message(String::new());
+        event.record(&mut message);
+        // Nobody listens once the banner has been read, and that is not an error.
+        if let Ok(said) = self.0.lock() {
+            let _ = said.send(message.0);
+        }
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+impl Served {
+    /// On a data directory of its own, and whichever port the system gives.
+    fn start() -> Self {
+        Self::start_with(ServeFlags::default())
+    }
+
+    /// The same, with flags as `kibbr serve` takes them. The port and the directory are
+    /// this function's: `--storage memory` is the one way to have no directory.
+    fn start_with(flags: ServeFlags) -> Self {
+        let data_dir = (!flags.memory).then(scratch_dir);
+        let flags = ServeFlags {
+            port: Some(0),
+            data_dir: data_dir.clone(),
+            ..flags
+        };
+        let settings = config::settings(&config::File::default(), flags, config::Log::default())
+            .expect("the flags were refused");
+        let cancel = CancellationToken::new();
+        let (said, heard) = std::sync::mpsc::channel();
+        let run = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                let _hearing = tracing::subscriber::set_default(Hear(std::sync::Mutex::new(said)));
+                kibbr_server::run(settings, cancel)
+            })
+        };
+
+        let mut banner = String::new();
+        let port = loop {
+            // Ends without a banner only when `run` has: the sender is the thread's.
+            let Ok(line) = heard.recv_timeout(std::time::Duration::from_secs(60)) else {
+                panic!(
+                    "no listening line in banner:\n{banner}\nthe run: {:?}",
+                    run.is_finished().then(|| run.join())
+                );
+            };
+            banner.push_str(&line);
+            banner.push('\n');
+            if let Some(at) = line.find("http://127.0.0.1:") {
+                let tail = &line[at + "http://127.0.0.1:".len()..];
+                let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+                break tail[..digits].parse::<u16>().expect("the port");
+            }
+        };
+        // As `Server::start_on` holds the binary's banner to.
+        assert!(
+            banner.contains("max rows"),
+            "banner does not name the backstop:\n{banner}"
+        );
+        assert!(
+            banner.contains("STORAGE IS IN MEMORY") || banner.contains("storage     "),
+            "banner does not say where storage is:\n{banner}"
+        );
+
+        Self {
+            port,
+            data_dir,
+            banner,
+            cancel,
+            run: Some(run),
+        }
+    }
+
+    fn data_dir(&self) -> &Path {
+        self.data_dir
+            .as_deref()
+            .expect("this server was started in memory")
+    }
+
+    fn get(&self, path: &str) -> (u16, String) {
+        request(self.port, "GET", path, b"")
+    }
+
+    fn post(&self, path: &str, body: &[u8]) -> (u16, String) {
+        request(self.port, "POST", path, body)
+    }
+
+    /// A TrieQL query, as `/query` takes it.
+    fn query(&self, q: &str) -> serde_json::Value {
+        let body = serde_json::json!({ "q": q }).to_string();
+        let (status, text) = self.post("/query", body.as_bytes());
+        assert_eq!(status, 200, "query `{q}` answered {status}: {text}");
+        json(&text)
+    }
+}
+
+impl Drop for Served {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        let ended = self.run.take().map(std::thread::JoinHandle::join);
+        if let Some(dir) = &self.data_dir {
+            let _ = fs::remove_dir_all(dir);
+        }
+        // A test that is already failing says why itself.
+        if !std::thread::panicking() {
+            match ended {
+                Some(Ok(Ok(report))) => assert_eq!(report.addr.port(), self.port),
+                other => panic!("the server did not stop cleanly: {other:?}"),
+            }
         }
     }
 }
@@ -371,7 +544,7 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
 
 #[test]
 fn every_endpoint_answers() {
-    let server = Server::start();
+    let server = Served::start();
 
     let (status, headers, body) = request_raw(server.port, "GET", "/", b"");
     assert_eq!(status, 200);
@@ -442,7 +615,7 @@ fn every_endpoint_answers() {
 /// with the line numbers they actually sit on.
 #[test]
 fn three_bad_lines_report_exactly_those_three() {
-    let server = Server::start();
+    let server = Served::start();
     let (status, body) = server.post("/ingest", &corpus());
 
     // 200, not 4xx: the body was accepted and 497 lines of it stored.
@@ -488,7 +661,7 @@ fn three_bad_lines_report_exactly_those_three() {
 /// shape, which a test that only ever sends broken input would never check.
 #[test]
 fn a_clean_body_reports_no_errors() {
-    let server = Server::start();
+    let server = Served::start();
     let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", "200", "--seed", "7"])
         .output()
@@ -505,7 +678,7 @@ fn a_clean_body_reports_no_errors() {
 /// A query that is not a query is a 400 with a message, not a 500 and not a panic.
 #[test]
 fn a_bad_query_is_a_400() {
-    let server = Server::start();
+    let server = Served::start();
 
     for (body, why) in [
         (r#"{"q": "SELECT * FROM logs"}"#, "not TrieQL"),
@@ -589,7 +762,10 @@ fn sigterm_exits_zero() {
 /// caller is one person at one terminal, and this one's is anything that can open a socket.
 #[test]
 fn an_unlimited_query_is_backstopped_and_pages_to_completion() {
-    let server = Server::start_with(&["--max-rows", "50"]);
+    let server = Served::start_with(ServeFlags {
+        max_rows: Some(50),
+        ..ServeFlags::default()
+    });
     let (status, _) = server.post("/ingest", &corpus());
     assert_eq!(status, 200);
 
@@ -636,7 +812,7 @@ fn rows_as_text(result: &serde_json::Value) -> Vec<String> {
 /// a one-line change that nothing else would notice.
 #[test]
 fn the_viewer_fetches_nothing_else() {
-    let server = Server::start();
+    let server = Served::start();
     let (status, _, body) = request_raw(server.port, "GET", "/", b"");
     assert_eq!(status, 200);
 
@@ -675,10 +851,10 @@ fn a_gzipped_body_ingests_identically() {
         "the corpus did not compress, so this test is not testing what it says"
     );
 
-    let plain = Server::start();
+    let plain = Served::start();
     let (plain_status, plain_body) = plain.post("/ingest", &corpus);
 
-    let zipped = Server::start();
+    let zipped = Served::start();
     let (status, _, body) = request_with(
         zipped.port,
         "POST",
@@ -699,7 +875,7 @@ fn a_gzipped_body_ingests_identically() {
 /// `x-gzip` is the same encoding under the name older clients use for it.
 #[test]
 fn x_gzip_is_gzip() {
-    let server = Server::start();
+    let server = Served::start();
     let (status, _, body) = request_with(
         server.port,
         "POST",
@@ -718,7 +894,7 @@ fn x_gzip_is_gzip() {
 /// config into everyone's outage. So each body is followed by a `/health`.
 #[test]
 fn a_corrupt_gzip_body_is_a_400_and_not_a_panic() {
-    let server = Server::start();
+    let server = Served::start();
     let good = gzip(&corpus());
 
     let bodies: [(&str, Vec<u8>); 4] = [
@@ -767,7 +943,7 @@ fn a_corrupt_gzip_body_is_a_400_and_not_a_panic() {
 /// An encoding this server cannot decode is a 415, and the message says what it can.
 #[test]
 fn an_unknown_content_encoding_is_415() {
-    let server = Server::start();
+    let server = Served::start();
     for encoding in ["br", "deflate", "zstd", "gzip, gzip"] {
         let (status, _, body) = request_with(
             server.port,
@@ -800,7 +976,10 @@ fn an_unknown_content_encoding_is_415() {
 /// The wire cap, measured on what arrived.
 #[test]
 fn a_body_over_the_wire_cap_is_413() {
-    let server = Server::start_with(&["--max-body-bytes", "4096"]);
+    let server = Served::start_with(ServeFlags {
+        max_body_bytes: Some(4096),
+        ..ServeFlags::default()
+    });
 
     // `request_early`, because this is the other answer that arrives before the body has
     // finished being sent - see its note on why `Connection: close` loses it.
@@ -827,7 +1006,10 @@ fn a_body_over_the_wire_cap_is_413() {
 /// the second the process allocates until it dies.
 #[test]
 fn a_gzip_bomb_is_refused_while_inflating() {
-    let server = Server::start_with(&["--max-decompressed-bytes", "1048576"]);
+    let server = Served::start_with(ServeFlags {
+        max_decompressed_bytes: Some(1_048_576),
+        ..ServeFlags::default()
+    });
 
     let line = b"{\"event\":\"bomb\",\"pad\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n";
     let mut huge = Vec::with_capacity(8 * 1024 * 1024);
@@ -879,7 +1061,11 @@ fn a_gzip_bomb_is_refused_while_inflating() {
 #[test]
 fn past_capacity_ingest_sheds_with_retry_after() {
     // One permit, and bodies big enough that holding it is measurable.
-    let server = Server::start_with(&["--ingest-concurrency", "1", "--max-body-bytes", "67108864"]);
+    let server = Served::start_with(ServeFlags {
+        ingest_concurrency: Some(1),
+        max_body_bytes: Some(67_108_864),
+        ..ServeFlags::default()
+    });
     let port = server.port;
 
     // Big enough that one body holds the permit for far longer than the 100ms a queued
@@ -947,14 +1133,12 @@ fn past_capacity_ingest_sheds_with_retry_after() {
 /// body is answered one way or the other, and the count of sheds is the count of `503`s.
 #[test]
 fn with_no_wait_a_body_past_capacity_is_shed_at_once() {
-    let server = Server::start_with(&[
-        "--ingest-concurrency",
-        "1",
-        "--ingest-wait-ms",
-        "0",
-        "--max-body-bytes",
-        "67108864",
-    ]);
+    let server = Served::start_with(ServeFlags {
+        ingest_concurrency: Some(1),
+        ingest_wait_ms: Some(0),
+        max_body_bytes: Some(67_108_864),
+        ..ServeFlags::default()
+    });
     let port = server.port;
     let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", "20000", "--seed", "11"])
@@ -1044,7 +1228,7 @@ fn a_wait_past_thirty_seconds_and_a_log_bound_of_nothing_are_refused_at_the_star
 /// that comes with it - as many as may be between the door and their answer.
 #[test]
 fn stats_and_the_banner_say_the_wait_and_the_logs_bound_that_were_resolved() {
-    let server = Server::start();
+    let server = Served::start();
     let stats = json(&server.get("/stats").1);
     assert_eq!(stats["ingest"]["ingest_wait_ms"], 100, "{stats}");
     assert_eq!(
@@ -1067,7 +1251,11 @@ fn stats_and_the_banner_say_the_wait_and_the_logs_bound_that_were_resolved() {
         server.banner
     );
 
-    let server = Server::start_with(&["--ingest-wait-ms", "250", "--wal-queue-bytes", "1048576"]);
+    let server = Served::start_with(ServeFlags {
+        ingest_wait_ms: Some(250),
+        wal_queue_bytes: Some(1_048_576),
+        ..ServeFlags::default()
+    });
     let stats = json(&server.get("/stats").1);
     assert_eq!(stats["ingest"]["ingest_wait_ms"], 250, "{stats}");
     assert_eq!(
@@ -1102,7 +1290,11 @@ fn stats_and_the_banner_say_the_wait_and_the_logs_bound_that_were_resolved() {
 fn bodies_wait_at_the_door_for_the_flush_and_every_one_lands() {
     const BODIES: usize = 50;
     const PER_BODY: usize = 20;
-    let server = Server::start_with(&["--max-buffer-bytes", "1024", "--ingest-wait-ms", "30000"]);
+    let server = Served::start_with(ServeFlags {
+        max_buffer_bytes: Some(1024),
+        ingest_wait_ms: Some(30_000),
+        ..ServeFlags::default()
+    });
     for nth in 0..BODIES {
         let body: String = (0..PER_BODY)
             .map(|n| format!("{{\"ts\": 1705314600, \"n\": {}}}\n", nth * PER_BODY + n))
@@ -1127,13 +1319,13 @@ fn bodies_wait_at_the_door_for_the_flush_and_every_one_lands() {
 
 /// `/stats` waited on until a predicate holds, or the timeout runs out.
 fn wait_for_stats(
-    server: &Server,
+    port: u16,
     what: &str,
     mut ready: impl FnMut(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
     let mut last = serde_json::Value::Null;
     for _ in 0..200 {
-        last = json(&server.get("/stats").1);
+        last = json(&request(port, "GET", "/stats", b"").1);
         if ready(&last) {
             return last;
         }
@@ -1186,7 +1378,7 @@ fn a_store_that_cannot_write_refuses_nothing_and_loses_nothing() {
     // One line, one template, one day. `x` is an integer here.
     let first = br#"{"ts": 1705314600, "x": 1}"#;
     assert_eq!(server.post("/ingest", first).0, 200);
-    let stats = wait_for_stats(&server, "the first line to reach a segment", |s| {
+    let stats = wait_for_stats(server.port, "the first line to reach a segment", |s| {
         s["storage"]["buffered_rows"] == 0
     });
     assert_eq!(stats["storage"]["degraded"], false);
@@ -1200,7 +1392,7 @@ fn a_store_that_cannot_write_refuses_nothing_and_loses_nothing() {
     // The next day, which has no file and needs a directory `data/` will not take.
     let second = br#"{"ts": 1705401001, "x": "N/A"}"#;
     assert_eq!(server.post("/ingest", second).0, 200);
-    let stats = wait_for_stats(&server, "the flush tick to fail", |s| {
+    let stats = wait_for_stats(server.port, "the flush tick to fail", |s| {
         s["storage"]["degraded"] == true
     });
     assert!(
@@ -1328,7 +1520,10 @@ fn a_body_whose_sender_hung_up_keeps_its_place_and_is_stored_whole() {
 /// answer after the parse would have cost gigabytes of memory to refuse.
 #[test]
 fn a_body_past_what_the_log_writes_at_once_is_a_413_and_is_not_parsed() {
-    let server = Server::start_with(&["--max-body-bytes", "100000000"]);
+    let server = Served::start_with(ServeFlags {
+        max_body_bytes: Some(100_000_000),
+        ..ServeFlags::default()
+    });
     let big = b"{}\n".repeat(26_000_000);
     let (status, body) = server.post("/ingest", &big);
     assert_eq!(status, 413, "{body}");
@@ -1399,7 +1594,7 @@ fn a_log_that_cannot_write_refuses_and_the_first_write_clears_it() {
 
     // 2. The directory is writable again, and the next flush tick finds out: the door
     //    opens without a body having to be refused to learn it.
-    let stats = wait_for_stats(&server, "the log to write again", |s| {
+    let stats = wait_for_stats(server.port, "the log to write again", |s| {
         s["storage"]["wal"]["healthy"] == true
     });
     assert!(
@@ -1671,7 +1866,7 @@ fn a_kill_loses_no_acknowledged_line_and_stores_none_twice() {
 
     let server = Server::start_with(&fast);
     assert_eq!(server.post("/ingest", &corpus()).0, 200);
-    wait_for_stats(&server, "every row to reach a row group", |s| {
+    wait_for_stats(server.port, "every row to reach a row group", |s| {
         s["storage"]["buffered_rows"] == 0
     });
     let dir = server.kill();
@@ -1748,11 +1943,15 @@ fn a_kill_loses_no_acknowledged_line_and_stores_none_twice() {
 /// The cap on open segment files is a setting, and `/stats` reports both halves of it.
 #[test]
 fn the_open_segment_cap_is_reported() {
-    let server = Server::start_with(&["--max-open-segments", "4", "--row-group-timeout-ms", "500"]);
+    let server = Served::start_with(ServeFlags {
+        max_open_segments: Some(4),
+        row_group_timeout_ms: Some(500),
+        ..ServeFlags::default()
+    });
     let (status, _) = server.post("/ingest", &corpus());
     assert_eq!(status, 200);
 
-    let stats = wait_for_stats(&server, "the corpus to reach the disk", |s| {
+    let stats = wait_for_stats(server.port, "the corpus to reach the disk", |s| {
         s["storage"]["buffered_rows"] == 0
     });
     assert_eq!(stats["storage"]["max_open_segments"], 4);
@@ -1775,9 +1974,12 @@ fn the_open_segment_cap_is_reported() {
 /// `files_opened` reported 870 where 16,694 segment files were read.
 #[test]
 fn files_opened_counts_segment_files_and_leaves_opened_takes_the_old_meaning() {
-    let server = Server::start_with(&["--row-group-timeout-ms", "500"]);
+    let server = Served::start_with(ServeFlags {
+        row_group_timeout_ms: Some(500),
+        ..ServeFlags::default()
+    });
     assert_eq!(server.post("/ingest", &corpus()).0, 200);
-    wait_for_stats(&server, "the corpus to reach the disk", |s| {
+    wait_for_stats(server.port, "the corpus to reach the disk", |s| {
         s["storage"]["buffered_rows"] == 0
     });
 
@@ -1977,7 +2179,11 @@ impl Drop for Writable {
 fn a_refusal_that_closes_the_connection_says_so() {
     use std::os::unix::fs::PermissionsExt;
 
-    let server = Server::start_with(&["--wal-segment-bytes", "1", "--flush-interval-ms", "10000"]);
+    let server = Served::start_with(ServeFlags {
+        wal_segment_bytes: Some(1),
+        flush_interval_ms: Some(10_000),
+        ..ServeFlags::default()
+    });
     let line = br#"{"ts": 1705314600, "x": 0}"#;
     assert_eq!(server.post("/ingest", line).0, 200);
     let wal = server.data_dir().join("wal");
@@ -2051,7 +2257,10 @@ fn a_refusal_that_closes_the_connection_says_so() {
 /// limit, and then the connection stays open and the answer rightly does not say `close`.
 #[test]
 fn a_kept_connection_is_closed_only_where_the_answer_says_so() {
-    let server = Server::start_with(&["--max-body-bytes", "65536"]);
+    let server = Served::start_with(ServeFlags {
+        max_body_bytes: Some(65_536),
+        ..ServeFlags::default()
+    });
     let small = br#"{"ts": 1705314600, "x": 0}"#;
     let big = lines_of(100 * 1024);
     let far = lines_of(3 * 1024 * 1024);
@@ -2114,7 +2323,7 @@ fn a_kept_connection_is_closed_only_where_the_answer_says_so() {
 /// in place of `keep-alive`, and `keep-alive` wherever the connection is in fact kept.
 #[test]
 fn a_kept_connection_of_http_1_0_is_told_the_same() {
-    let server = Server::start();
+    let server = Served::start();
     let big = lines_of(100 * 1024);
 
     // (method, path, body, status, whether the body is read to its end before the answer)

@@ -1,13 +1,13 @@
-//! Configuration, shared between the CLI and the server so they cannot disagree about
-//! the backstop for an unlimited query.
+//! Configuration: flags, `KIBBR__` variables and the file, resolved into what a command
+//! runs on. For `serve` that is the server crate's `Settings` (`settings`), plus what
+//! only this binary has - its own log, and the epoch window, which is the process's.
 //!
-//! One struct, because the CLI and the server disagreeing about a backstop would make the
-//! same query mean two things.
-//!
-//! Three groups: `Limits` is what a *query* may not exceed and both surfaces carry it;
-//! `ApiLimits` is what a *request* may not exceed, and only the server has requests;
-//! `Storage` is where rows go, which only the server has too - the CLI rebuilds its
-//! database from an input file per invocation and has nothing to keep.
+//! The values are declared where they are read. `Limits` is what a *query* may not exceed
+//! and both surfaces carry it - the CLI and the server disagreeing about a backstop would
+//! make the same query mean two things; `ApiLimits` is what a *request* may not exceed,
+//! and only the server has requests; `Storage` is where rows go, which only the server
+//! has too - the CLI rebuilds its database from an input file per invocation and has
+//! nothing to keep. This module is where each comes from.
 //!
 //! **Where a setting comes from, for every one of them: flag > environment > file >
 //! default.** The file is the one `--config` names, on any command; with no `--config`
@@ -31,53 +31,16 @@ use kibbr_core::infer::EpochWindow;
 pub use kibbr_engine::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
 pub use kibbr_storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
 
-/// The largest `/ingest` body accepted off the wire, 10 MiB.
-///
-/// axum's own 2 MiB is right for a form and wrong for a log shipper: Vector's default
-/// batch is larger, and a 413 on a routine batch reads as kibbr rejecting valid logs. Not
-/// unlimited, because the body is buffered whole and this process cannot spill it.
-///
-/// Measured before decompression, which is the only place it *can* be measured, and the
-/// reason it is not the only cap - see `DEFAULT_MAX_DECOMPRESSED_BYTES`.
-pub const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
-
-/// The largest an `/ingest` body may become once decompressed, 64 MiB.
-///
-/// The wire cap does not bound what the server allocates: a crafted 1 MiB body expands to
-/// gigabytes, passes the wire check by three orders of magnitude - it *is* under 10 MiB -
-/// and the process dies inflating it. So the size is checked twice, and the second check
-/// stops *at* the cap rather than after it.
-///
-/// **Capped at `lines::MAX_LINE_BYTES`, and the ceiling is load bearing.** That constant's
-/// note has the equality: a body cannot exceed the body cap, so a line inside one cannot
-/// exceed `MAX_LINE_BYTES`, so `LineTooLong` is unreachable over HTTP. A larger cap breaks
-/// that, which is why `ApiLimits::load` refuses one rather than quietly accepting it.
-pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = kibbr_core::lines::MAX_LINE_BYTES;
-
-/// How many `/ingest` bodies may be in the parse-and-walk at once: one per core.
-///
-/// CPU-bound work, so the permits say how much of this machine ingest may have, not how
-/// deep a queue is. More permits than cores does not make the server faster - it makes
-/// every request slower and the shipper's timeout closer, which is the failure the bound
-/// exists to prevent.
-///
-/// Falls back to 1 where the core count is unknowable: one permit is slow, not broken,
-/// where a guess of eight on a single core is broken.
-fn default_ingest_concurrency() -> usize {
-    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
-}
-
-/// How long an `/ingest` body is kept waiting, in milliseconds, before it is shed.
-///
-/// What separates a burst from an overload. Two shippers arriving together on a
-/// four-permit server should queue for the millisecond it takes; twenty arriving together
-/// every second is not a burst, and waiting will not fix it.
-///
-/// A setting, and a short one by default: what an operator tunes first is the permit
-/// count, which is the statement about the machine. A longer wait moves the refusal
-/// closer to the shipper's own timeout, which is the outcome the shed exists to avoid -
-/// so the default stays where it was while it was a constant.
-pub const DEFAULT_INGEST_WAIT_MS: usize = 100;
+// What a server runs on is declared in the server crate, where it is read: the two
+// groups below, their defaults and the `Settings` they are fields of. This module is
+// still where each is loaded and what the commands name them by.
+pub use kibbr_server::settings::{
+    default_ingest_concurrency, duration_words, ApiLimits, Banner, Settings, Storage,
+    DEFAULT_COMPACT_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS, DEFAULT_HOST,
+    DEFAULT_INGEST_WAIT_MS, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_DECOMPRESSED_BYTES,
+    DEFAULT_REQUEST_TIMEOUT, DEFAULT_ROW_GROUP_TIMEOUT_MS, DEFAULT_SHUTDOWN_DEADLINE,
+};
+pub use kibbr_server::DEFAULT_PORT;
 
 /// The longest that wait may be set to: thirty seconds.
 ///
@@ -87,39 +50,6 @@ pub const DEFAULT_INGEST_WAIT_MS: usize = 100;
 /// parse, the log's flush and the store.
 pub const MAX_INGEST_WAIT_MS: usize = 30_000;
 
-/// How long after SIGTERM or SIGINT the requests in flight are given to finish: 25
-/// seconds.
-///
-/// Kubernetes sends SIGKILL thirty seconds after its SIGTERM. A stop used to wait for
-/// every connection for as long as it took, so one slow sender - or one that sent half a
-/// body and nothing more - held the final flush, the checkpoint and `trie.json` until
-/// the kill arrived and none of them ran. With the deadline, what is still in flight
-/// then is cut off and the wind-down follows, inside the five seconds that are left:
-/// 200,000 buffered rows stop in a second and a half (`scripts/fault/shutdown_time.sh`).
-/// Nothing acknowledged is lost either way - it is in the write-ahead log - but a stop
-/// that finishes leaves nothing to replay.
-pub const DEFAULT_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(25);
-
-/// How long a request may take from its first line to its answer: 30 seconds.
-///
-/// Two things were unbounded without it. A client that sends a request's headers and
-/// then no body, or half of one, kept its handler waiting for as long as it kept its
-/// socket; and a query kept its thread, its core and every row it had fetched until it
-/// had read the last row group it was asked about, whether or not anyone was still
-/// waiting for the answer - `MATCH LOG {}` with `--max-rows 0` on 1,800,000 rows was two
-/// minutes of that. Now the first is answered `408` and the second `504`, and the
-/// query's scan is told to stop (`store::Stop`): it is not left running.
-///
-/// **An `/ingest` body that has been read whole is not timed out.** Its waits are
-/// `--ingest-wait-ms`'s, and the one after them is the log's flush: a `504` then would
-/// be for lines the log may have taken, and a shipper told so sends them again.
-pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Where `serve` listens when nothing says otherwise. Loopback: an address of every
-/// interface publishes an unauthenticated write endpoint, and that is typed, not
-/// defaulted into.
-pub const DEFAULT_HOST: &str = "127.0.0.1";
-pub use crate::cmd::serve::DEFAULT_PORT;
 
 /// The cores this machine reports; one where it reports none.
 fn cores() -> usize {
@@ -178,32 +108,6 @@ const BATCH_SIZE_ENV: &str = "KIBBR__INGESTOR__BATCH_SIZE";
 const TIME_COLUMNS_ENV: &str = "KIBBR__SCHEMA__TIME_COLUMNS";
 const EPOCH_WINDOW_ENV: &str = "KIBBR__SCHEMA__EPOCH_WINDOW";
 
-/// How often the thresholds that close a row group are checked.
-///
-/// Not a durability interval, and it stopped being one with the segment format: a tick
-/// closes a row group only where a threshold has fired, so a busy leaf is written on the
-/// first tick after 8,192 rows and a quiet one waits for `DEFAULT_ROW_GROUP_TIMEOUT_MS`.
-/// What the tick bounds is how late either can be noticed.
-pub const DEFAULT_FLUSH_INTERVAL_MS: usize = 500;
-
-/// How long a row group may stay open with rows in it: five minutes.
-///
-/// **It was one minute while it was also what a `kill -9` cost.** Every row that waits is
-/// now durable in the write-ahead log, so the wait costs replay time after a crash - a
-/// 10,000-line backlog is back in under a second - and no rows; and a quiet template that
-/// closes a row group every five minutes makes a fifth of the row groups, each of which
-/// pays a header against a few hundred bytes of data. Still a setting: it is also how
-/// much of the log a quiet template holds the checkpoint behind. It cannot go below the
-/// flush interval - the tick is what notices it has expired.
-pub const DEFAULT_ROW_GROUP_TIMEOUT_MS: usize = 300_000;
-
-/// How often a server looks for a day that has ended and compacts it.
-///
-/// A minute, where the flush tick is half a second: a day becomes due once, at the first
-/// look after midnight UTC, and a minute's delay in rebuilding a day nobody is writing
-/// costs nothing. `0` is "off", as it is for the query limits - the look is what is
-/// switched off, and `kibbr compact` still compacts a day when asked.
-pub const DEFAULT_COMPACT_INTERVAL_MS: usize = 60_000;
 
 /// Where `serve` keeps day partitions when nothing says otherwise.
 ///
@@ -464,14 +368,6 @@ pub fn parse_duration(text: &str) -> Result<Duration, String> {
         .ok_or_else(|| "longer than a duration can hold".to_string())
 }
 
-/// A duration as `parse_duration` reads one back: whole seconds as `25s`, and anything
-/// finer in milliseconds.
-pub fn duration_words(d: Duration) -> String {
-    match d.as_millis() {
-        ms if ms % 1000 == 0 => format!("{}s", ms / 1000),
-        ms => format!("{ms}ms"),
-    }
-}
 
 /// A setting that is text: flag > environment > file, each with the name it was written
 /// under, for the error that quotes it.
@@ -681,80 +577,51 @@ pub fn epoch_window(file: &File) -> Result<EpochWindow, ConfigError> {
         .ok_or_else(|| bad("the start is not before the end, so the window is empty".into()))
 }
 
-/// Where rows and the trie snapshot live, and how often the buffer reaches them.
+/// How `Storage` is loaded: flag > environment > file > default.
 ///
-/// `Clone` and not `Copy`, which breaks the pattern the other two config structs set: a
-/// `PathBuf` is an allocation. Worth the break - the alternative is a fixed-size path type
-/// or an interned string, and neither is a thing this needs.
-#[derive(Debug, Clone)]
-pub struct Storage {
-    /// `None` = memory, and everything ingested is lost at exit.
-    pub base_path: Option<PathBuf>,
-    /// `None` exactly when `base_path` is.
-    pub trie_file: Option<PathBuf>,
-    pub flush_interval: Duration,
-    /// What a row group closes on, when no size threshold got there first.
-    pub row_group_timeout: Duration,
-    /// The cap on data files open for writing - one per UTC day being written. Past it,
-    /// the least recently written one is sealed - always safe, because the next row for
-    /// that day opens the next file number.
-    ///
-    /// The number and what goes wrong without it are at `store::DEFAULT_MAX_OPEN_SEGMENTS`.
-    /// What belongs here is why it is a **setting and not a constant**: it is really a
-    /// statement about the process's descriptor limit, which the process does not choose,
-    /// so an operator running under a tight `ulimit -n` has to be able to say so.
-    pub max_open_segments: usize,
-    /// A day's data file is sealed at this size and the next number opened.
-    pub segment_max_bytes: u64,
-    /// Memory every buffer together may hold before the largest are closed early.
-    pub max_buffer_bytes: u64,
-    /// How often a server looks for a day that is due for compaction. Zero is never.
-    pub compact_interval: Duration,
-    /// A segment of the write-ahead log rolls to the next number at this size.
-    pub wal_segment_bytes: u64,
-    /// Where one flush of the write-ahead log stops taking more bodies: once it holds
-    /// this many lines. Not a target and not a wait - a flush takes what has queued - and
-    /// not a bound on a body, which goes in whole.
-    pub wal_batch_lines: usize,
-    /// The most bytes of lines that may be in the write-ahead log and not yet in the
-    /// store: past it a body waits for room, and is then shed.
-    pub wal_queue_bytes: usize,
-    /// Threads one query may choose a day's rows on, its own among them. 0 and 1: its
-    /// own alone. Only a server asks for more (`with_scan`).
-    pub scan_threads: usize,
-    /// A run of row groups holding fewer rows than this is never shared between those
-    /// threads: see `store::DEFAULT_FAN_ROWS`.
-    pub scan_fan_rows: u64,
+/// The struct is the server crate's - it is what a server runs on - and what resolves it
+/// is this module's. A trait, because an inherent `impl` cannot be written here for a
+/// type of another crate; `Storage` is its one implementor, and each method is described
+/// where it is written, below.
+pub trait LoadStorage: Sized {
+    #[allow(clippy::too_many_arguments)]
+    fn load(
+        file: &File,
+        durable: bool,
+        data_dir: Option<PathBuf>,
+        trie_file: Option<PathBuf>,
+        flush_ms: Option<usize>,
+        row_group_ms: Option<usize>,
+        max_open_segments: Option<usize>,
+        segment_max_bytes: Option<usize>,
+        max_buffer_bytes: Option<usize>,
+    ) -> Result<Self, ConfigError>;
+    fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf;
+    fn with_compact_interval(self, file: &File, flag_ms: Option<usize>)
+        -> Result<Self, ConfigError>;
+    fn with_wal(
+        self,
+        file: &File,
+        segment_bytes: Option<usize>,
+        batch_lines: Option<usize>,
+        queue_bytes: Option<usize>,
+    ) -> Result<Self, ConfigError>;
+    fn with_scan(
+        self,
+        file: &File,
+        threads: Option<usize>,
+        fan_rows: Option<usize>,
+    ) -> Result<Self, ConfigError>;
 }
 
-impl Default for Storage {
-    fn default() -> Self {
-        Self {
-            base_path: None,
-            trie_file: None,
-            flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
-            row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
-            max_open_segments: kibbr_storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
-            segment_max_bytes: kibbr_storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
-            max_buffer_bytes: kibbr_storage::store::DEFAULT_MAX_BUFFER_BYTES,
-            compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
-            wal_segment_bytes: kibbr_storage::wal::DEFAULT_SEGMENT_BYTES,
-            wal_batch_lines: kibbr_storage::wal::DEFAULT_BATCH_LINES,
-            wal_queue_bytes: kibbr_storage::wal::DEFAULT_QUEUE_BYTES,
-            scan_threads: 0,
-            scan_fan_rows: kibbr_storage::store::DEFAULT_FAN_ROWS,
-        }
-    }
-}
-
-impl Storage {
+impl LoadStorage for Storage {
     /// The same four rules as the other two, over the storage settings.
     ///
     /// `durable` is the `--storage` choice rather than a path being present, so that
     /// `--storage memory --data-dir /x` is a clear instruction and not a contradiction
     /// resolved by whichever flag the code happened to read first.
     #[allow(clippy::too_many_arguments)]
-    pub fn load(
+    fn load(
         file: &File,
         durable: bool,
         data_dir: Option<PathBuf>,
@@ -890,7 +757,7 @@ impl Storage {
     /// was named, and **without creating it**. `load` creates what this names, which is
     /// right for a command that fills a directory; one that only works on a directory
     /// already there asks this first, so a mistyped path is refused and not made.
-    pub fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf {
+    fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf {
         resolve_path(data_dir, BASE_PATH_ENV, file.storage.base_path.as_ref())
             .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR))
     }
@@ -900,7 +767,7 @@ impl Storage {
     /// only `serve` looks: a ninth positional `None` at every other caller would say
     /// nothing, and the variable is read here so that the flag, when given, is never
     /// refused for a variable it overrides.
-    pub fn with_compact_interval(
+    fn with_compact_interval(
         mut self,
         file: &File,
         flag_ms: Option<usize>,
@@ -919,7 +786,7 @@ impl Storage {
     /// `--wal-queue-bytes`, each over its variable, over the default. Apart from `load`
     /// for the reason `with_compact_interval` is: only `serve` has the flags, and only
     /// `serve` writes one.
-    pub fn with_wal(
+    fn with_wal(
         mut self,
         file: &File,
         segment_bytes: Option<usize>,
@@ -969,7 +836,7 @@ impl Storage {
     /// only `serve` answers a query from a disk store, so only it has the flags, and a
     /// load or a compaction starts no scan thread. More threads than the machine has
     /// cores are refused; 0 and 1 are both "the query's own thread and no other".
-    pub fn with_scan(
+    fn with_scan(
         mut self,
         file: &File,
         threads: Option<usize>,
@@ -995,50 +862,8 @@ impl Storage {
         )? as u64;
         Ok(self)
     }
-
-    /// What the write-ahead log is written with.
-    pub fn wal_options(&self) -> kibbr_storage::wal::Options {
-        kibbr_storage::wal::Options {
-            segment_bytes: self.wal_segment_bytes,
-            batch_lines: self.wal_batch_lines,
-            queue_bytes: self.wal_queue_bytes,
-        }
-    }
-
-    pub fn is_durable(&self) -> bool {
-        self.base_path.is_some()
-    }
-
-    /// The row group thresholds these settings imply. Only the timeout is configurable;
-    /// the two size thresholds are not worth a knob.
-    pub fn row_group_limits(&self) -> kibbr_storage::store::RowGroupLimits {
-        kibbr_storage::store::RowGroupLimits {
-            age: self.row_group_timeout,
-            ..kibbr_storage::store::RowGroupLimits::default()
-        }
-    }
-
-    /// What the disk store is held to.
-    pub fn disk_options(&self) -> kibbr_storage::store::DiskOptions {
-        kibbr_storage::store::DiskOptions {
-            row_groups: self.row_group_limits(),
-            max_open_files: self.max_open_segments,
-            segment_max_bytes: self.segment_max_bytes,
-            max_buffer_bytes: self.max_buffer_bytes,
-            scan_threads: self.scan_threads,
-            fan_rows: self.scan_fan_rows,
-        }
-    }
-
-    /// What a freshly-stamped `LeafMeta` records as its storage path. Documentation
-    /// rather than authority - see `trie::DEFAULT_DATA_DIR`.
-    pub fn data_dir(&self) -> String {
-        self.base_path.as_ref().map_or_else(
-            || kibbr_storage::trie::DEFAULT_DATA_DIR.to_string(),
-            |path| path.display().to_string(),
-        )
-    }
 }
+
 
 /// Flag > environment > file > absent. The same rule as `resolve`, over a path.
 fn resolve_path(
@@ -1050,41 +875,6 @@ fn resolve_path(
         .or_else(|| file.cloned())
 }
 
-/// What a *request* may not exceed. Server-only: a file has no wire, no encoding and no
-/// second caller competing for the machine.
-#[derive(Debug, Clone, Copy)]
-pub struct ApiLimits {
-    /// The largest `/ingest` body accepted, measured on the wire before any decompression.
-    pub max_body_bytes: usize,
-    /// The largest that body may become once decompressed.
-    pub max_decompressed_bytes: usize,
-    /// How many `/ingest` bodies may be in the parse-and-walk at once. Never 0 - `load`
-    /// refuses it rather than starting a process that 503s every request.
-    pub ingest_concurrency: usize,
-    /// How long an `/ingest` body may be kept waiting before it is shed: see
-    /// `DEFAULT_INGEST_WAIT_MS`. Zero waits for nothing.
-    pub ingest_wait: Duration,
-    /// How long after the signal the requests in flight are given before they are cut
-    /// off and the wind-down begins: see `DEFAULT_SHUTDOWN_DEADLINE`. `None` waits for
-    /// every one of them, however long it takes.
-    pub shutdown_deadline: Option<Duration>,
-    /// How long a request may take from its first line to its answer: see
-    /// `DEFAULT_REQUEST_TIMEOUT`. `None` is for as long as it takes.
-    pub request_timeout: Option<Duration>,
-}
-
-impl Default for ApiLimits {
-    fn default() -> Self {
-        Self {
-            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
-            max_decompressed_bytes: DEFAULT_MAX_DECOMPRESSED_BYTES,
-            ingest_concurrency: default_ingest_concurrency(),
-            ingest_wait: Duration::from_millis(DEFAULT_INGEST_WAIT_MS as u64),
-            shutdown_deadline: Some(DEFAULT_SHUTDOWN_DEADLINE),
-            request_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
-        }
-    }
-}
 
 /// The query limits: flag > environment > file > default, one rule for each.
 pub fn limits(
@@ -1115,9 +905,30 @@ pub fn limits(
     })
 }
 
-impl ApiLimits {
+/// How `ApiLimits` is loaded: as `LoadStorage` is, and a trait for the same reason.
+pub trait LoadApiLimits: Sized {
+    fn load(
+        file: &File,
+        max_body_bytes: Option<usize>,
+        max_decompressed_bytes: Option<usize>,
+        ingest_concurrency: Option<usize>,
+    ) -> Result<Self, ConfigError>;
+    fn with_ingest_wait(self, file: &File, flag_ms: Option<usize>) -> Result<Self, ConfigError>;
+    fn with_shutdown_deadline(
+        self,
+        file: &File,
+        flag: Option<Duration>,
+    ) -> Result<Self, ConfigError>;
+    fn with_request_timeout(
+        self,
+        file: &File,
+        flag: Option<Duration>,
+    ) -> Result<Self, ConfigError>;
+}
+
+impl LoadApiLimits for ApiLimits {
     /// The same four rules, over the request limits.
-    pub fn load(
+    fn load(
         file: &File,
         max_body_bytes: Option<usize>,
         max_decompressed_bytes: Option<usize>,
@@ -1167,7 +978,7 @@ impl ApiLimits {
     /// environment > default. Apart from `load` for the reason `Storage::with_wal` is:
     /// only `serve` has the flag. Zero is taken - wait for nothing, shed at once - and
     /// more than `MAX_INGEST_WAIT_MS` is refused.
-    pub fn with_ingest_wait(
+    fn with_ingest_wait(
         mut self,
         file: &File,
         flag_ms: Option<usize>,
@@ -1192,7 +1003,7 @@ impl ApiLimits {
     /// environment > `[api] shutdown_deadline` > 25 seconds. Apart from `load` for the
     /// reason `with_ingest_wait` is. A duration of zero, in any unit, is no deadline:
     /// every request is waited for, as it was before there was one.
-    pub fn with_shutdown_deadline(
+    fn with_shutdown_deadline(
         mut self,
         file: &File,
         flag: Option<Duration>,
@@ -1211,7 +1022,7 @@ impl ApiLimits {
     /// How long `serve` gives one request: `--request-timeout` > environment > `[api]
     /// request_timeout` > 30 seconds. Apart from `load` for the reason `with_ingest_wait`
     /// is. A duration of zero, in any unit, is no timeout, as it was before there was one.
-    pub fn with_request_timeout(
+    fn with_request_timeout(
         mut self,
         file: &File,
         flag: Option<Duration>,
@@ -1226,6 +1037,89 @@ impl ApiLimits {
         self.request_timeout = (!timeout.is_zero()).then_some(timeout);
         Ok(self)
     }
+}
+
+/// `serve`'s own flags, as clap read them: each `None` where the command line did not
+/// say, so that its variable, the file and the default are asked in turn.
+#[derive(Debug, Clone, Default)]
+pub struct ServeFlags {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub max_rows: Option<usize>,
+    pub max_buckets: Option<usize>,
+    pub max_groups: Option<usize>,
+    pub max_body_bytes: Option<usize>,
+    pub max_decompressed_bytes: Option<usize>,
+    pub ingest_concurrency: Option<usize>,
+    pub ingest_wait_ms: Option<usize>,
+    pub shutdown_deadline: Option<Duration>,
+    pub request_timeout: Option<Duration>,
+    /// `--storage memory`: no data directory, whatever else names one.
+    pub memory: bool,
+    pub data_dir: Option<PathBuf>,
+    pub trie_file: Option<PathBuf>,
+    pub flush_interval_ms: Option<usize>,
+    pub row_group_timeout_ms: Option<usize>,
+    pub wal_segment_bytes: Option<usize>,
+    pub batch_size: Option<usize>,
+    pub wal_queue_bytes: Option<usize>,
+    pub max_open_segments: Option<usize>,
+    pub segment_max_bytes: Option<usize>,
+    pub max_buffer_bytes: Option<usize>,
+    pub compact_interval_ms: Option<usize>,
+    pub scan_threads: Option<usize>,
+    pub scan_fan_rows: Option<usize>,
+    pub time_columns: Option<Vec<String>>,
+}
+
+/// What `kibbr serve` runs on: every flag over its variable, over the file, over the
+/// default - the one place the server's `Settings` is made from them. `log` is this
+/// binary's own setting and already resolved; the server is told only how to say it has
+/// started, since as JSON that is an event and as text a paragraph.
+///
+/// In the order the settings were always resolved in, so the first one that is refused
+/// is the one that was: the address, the query limits, the request limits, the storage -
+/// whose directory is made here - and the schema.
+pub fn settings(file: &File, flags: ServeFlags, log: Log) -> Result<Settings, ConfigError> {
+    let (host, port) = listen(file, flags.host, flags.port)?;
+    Ok(Settings {
+        host,
+        port,
+        limits: limits(file, flags.max_rows, flags.max_buckets, flags.max_groups)?,
+        api: ApiLimits::load(
+            file,
+            flags.max_body_bytes,
+            flags.max_decompressed_bytes,
+            flags.ingest_concurrency,
+        )?
+        .with_ingest_wait(file, flags.ingest_wait_ms)?
+        .with_shutdown_deadline(file, flags.shutdown_deadline)?
+        .with_request_timeout(file, flags.request_timeout)?,
+        storage: Storage::load(
+            file,
+            !flags.memory,
+            flags.data_dir,
+            flags.trie_file,
+            flags.flush_interval_ms,
+            flags.row_group_timeout_ms,
+            flags.max_open_segments,
+            flags.segment_max_bytes,
+            flags.max_buffer_bytes,
+        )?
+        .with_compact_interval(file, flags.compact_interval_ms)?
+        .with_wal(
+            file,
+            flags.wal_segment_bytes,
+            flags.batch_size,
+            flags.wal_queue_bytes,
+        )?
+        .with_scan(file, flags.scan_threads, flags.scan_fan_rows)?,
+        schema: schema(file, flags.time_columns),
+        banner: match log.format {
+            LogFormat::Text => Banner::Paragraph,
+            LogFormat::Json => Banner::Event,
+        },
+    })
 }
 
 /// Flag > environment > file > default, over a duration: the flag already one - clap

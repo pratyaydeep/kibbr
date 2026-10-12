@@ -406,7 +406,7 @@ fn cut_off() -> Response {
 /// The answer of a request `api.request_timeout` ran out on: `whole` is whether its body
 /// had been read to its end. See `track`.
 fn timed_out(whole: bool, timeout: Duration) -> Response {
-    let given = crate::config::duration_words(timeout);
+    let given = crate::settings::duration_words(timeout);
     if whole {
         fail(
             StatusCode::GATEWAY_TIMEOUT,

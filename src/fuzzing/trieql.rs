@@ -33,7 +33,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::config::Limits;
-use crate::error::{self, CliError, QueryError};
+use crate::error::{self, CliError};
 use crate::cmd::query;
 use kibbr_engine::engine::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
 use kibbr_engine::trieql::{self, Kind, ParseError, Parsed};
@@ -123,7 +123,7 @@ fn check(src: &str) {
                     other,
                     CliError::Cursor(CursorError::WrongQuery)
                         | CliError::Exec(ExecError::Buckets(_))
-                        | CliError::Query(QueryError::BucketKeyClash)
+                        | CliError::Serve(kibbr_server::Error::BucketKeyClash)
                 ),
                 "{}: parsed, and then refused for something a parsed query cannot be: {other}",
                 shown(src)

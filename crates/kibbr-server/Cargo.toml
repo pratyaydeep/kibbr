@@ -1,0 +1,27 @@
+[package]
+name = "kibbr-server"
+description = "kibbr - the HTTP server, and the loads and compactions it runs"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+kibbr-core.workspace = true
+kibbr-storage.workspace = true
+kibbr-engine.workspace = true
+axum.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+http-body.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+# The samples and the failure hooks the storage crate's own tests are built on, for the
+# tests here that hold a server to the same ones.
+kibbr-storage = { workspace = true, features = ["test-support"] }

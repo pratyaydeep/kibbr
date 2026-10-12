@@ -38,9 +38,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::{Schema, Storage};
+use crate::config::{LoadStorage as _, Schema, Storage};
 use crate::error::{CliError, DetectorErrorKind};
-use crate::cmd::load::{self, LoadError};
+use crate::cmd::load::{self, Asked, LoadError};
 use kibbr_core::fmt::commas;
 use kibbr_storage::db::{self, ReadError, SinkError};
 use kibbr_storage::store::disk::{self, CompactOptions};
@@ -341,9 +341,9 @@ fn measure(
         None,
     )
     .map_err(CliError::from)?;
-    let lock = crate::lock::DataLock::acquire(&data)?;
+    let lock = kibbr_storage::lock::DataLock::acquire(&data)?;
     let (trie, stores) =
-        crate::cmd::serve::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
+        kibbr_server::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
     let opts = load::Options {
         inputs: load::resolve(std::slice::from_ref(&args.input), None)?,
         replace_day: None,
@@ -624,8 +624,8 @@ fn live_day(
     // every buffer that holds a row.
     storage.row_group_timeout = Duration::ZERO;
 
-    let lock = crate::lock::DataLock::acquire(data)?;
-    let (trie, stores) = crate::cmd::serve::open_durable(&storage, schema).map_err(CliError::from)?;
+    let lock = kibbr_storage::lock::DataLock::acquire(data)?;
+    let (trie, stores) = kibbr_server::open_durable(&storage, schema).map_err(CliError::from)?;
     // One arrival time for the whole file, as the bulk door gives it one: a row with no
     // time of its own is filed under it, and a clock read per line could split the file
     // over midnight.
@@ -674,8 +674,8 @@ fn live_day(
         )));
     }
 
-    let lock = crate::lock::DataLock::acquire(data)?;
-    let (trie, stores) = crate::cmd::serve::open_durable(&storage, schema).map_err(CliError::from)?;
+    let lock = kibbr_storage::lock::DataLock::acquire(data)?;
+    let (trie, stores) = kibbr_server::open_durable(&storage, schema).map_err(CliError::from)?;
     let store = stores.disk_store().ok_or(LoadError::NoDisk)?;
     let opts = CompactOptions {
         threads: load::alone_threads(),
@@ -731,23 +731,23 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
             body,
             Duration::from_secs(600),
         )
-        .map_err(|e| LoadError::Server {
+        .map_err(|e| LoadError::from(Asked::Server {
             address: url.address.clone(),
             detail: format!("{method} {path}: {e}"),
-        })?;
+        }))?;
         if status >= 300 {
-            return Err(LoadError::Server {
+            return Err(LoadError::from(Asked::Server {
                 address: url.address.clone(),
                 detail: format!(
                     "{method} {path} answered {status}: {}",
                     String::from_utf8_lossy(&answer[..answer.len().min(500)])
                 ),
-            });
+            }));
         }
-        serde_json::from_slice::<serde_json::Value>(&answer).map_err(|e| LoadError::Server {
+        serde_json::from_slice::<serde_json::Value>(&answer).map_err(|e| LoadError::from(Asked::Server {
             address: url.address.clone(),
             detail: format!("{method} {path}: not JSON ({e})"),
-        })
+        }))
     };
     let settings = br#"{"settings":{"number_of_shards":1,"number_of_replicas":0}}"#;
     call("PUT", at(""), Some(("application/json", settings)))?;
@@ -794,10 +794,10 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
         let stats = call("GET", at("/_stats/store"), None)?;
         let bytes = stats["indices"][&index]["primaries"]["store"]["size_in_bytes"]
             .as_u64()
-            .ok_or_else(|| LoadError::Server {
+            .ok_or_else(|| LoadError::from(Asked::Server {
                 address: url.address.clone(),
                 detail: "no primaries.store.size_in_bytes in its stats".to_string(),
-            })?;
+            }))?;
         Ok((bytes, rejected))
     })();
     let _ = call("DELETE", at(""), None);

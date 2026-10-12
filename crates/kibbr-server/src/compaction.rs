@@ -32,7 +32,7 @@ pub(super) async fn post_compact(
     if server.stores.disk_store().is_none() {
         return fail(
             StatusCode::SERVICE_UNAVAILABLE,
-            &compact::CompactError::NoDisk.to_string(),
+            compact::NO_DISK,
         );
     }
     if let Some(refused) = compact_refused(&server, &headers) {
@@ -154,7 +154,7 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
     let asked = job.map(ending);
     let Some(store) = server.stores.disk_store() else {
         if let Some(asked) = asked {
-            let why = compact::CompactError::NoDisk.to_string();
+            let why = compact::NO_DISK.to_string();
             let state = compact::State::Failed(why, compact::Report::default());
             asked.finish(state, false);
         }

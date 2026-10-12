@@ -607,7 +607,7 @@ files and row groups.
 
 `GET /` is a log viewer. Open <http://127.0.0.1:7700/> after starting the server.
 
-It is one file - `src/cmd/serve/viewer.html`, inline CSS and vanilla JS, compiled into the
+It is one file - `crates/kibbr-server/src/viewer.html`, inline CSS and vanilla JS, compiled into the
 binary with `include_str!`. There is nothing to deploy beside the binary, no build
 step, and no request to anywhere but this server; `tests/serve.rs` asserts the last
 of those rather than trusting it. It is served `no-store`, because a viewer cached
@@ -734,9 +734,9 @@ whatever collects a container's stderr, and at `debug` every request is a line t
 
 ```
 $ kibbr --log-format json serve --storage memory
-{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr::cmd::serve::lifecycle","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"request_timeout_ms":30000,"scan_threads":4}
-{"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr::cmd::serve::lifecycle","msg":"storage is in memory: everything ingested is lost when this process exits"}
-{"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr::cmd::serve::lifecycle","msg":"SIGTERM received - shutting down"}
+{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr_server::lifecycle","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"request_timeout_ms":30000,"scan_threads":4}
+{"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr_server::lifecycle","msg":"storage is in memory: everything ingested is lost when this process exits"}
+{"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr_server::lifecycle","msg":"SIGTERM received - shutting down"}
 ```
 
 What a command prints on stdout - `query`, `parse`, `explain`, `gen-logs` - is the
@@ -862,23 +862,21 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Layout
 
-A workspace of four crates, each naming only the ones under it, and `fuzz/` beside them.
+A workspace of five crates, each naming only the ones under it - `kibbr`, then
+`kibbr-server`, `kibbr-engine`, `kibbr-storage`, `kibbr-core` - and `fuzz/` beside them.
 
 ```
-Cargo.toml                the workspace, and the `kibbr` crate: the binary and its commands
+Cargo.toml                the workspace, and the `kibbr` crate: the binary - the command line
 src/main.rs               the clap definitions and the dispatch
-src/config.rs             the settings: a flag, a `KIBBR__` variable, the `--config` file, a default
+src/config.rs             where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
 src/logs.rs               the process's own log: `tracing` events as lines of text or of JSON
-src/error.rs              thiserror enums of the commands and the server
-src/lock.rs               the LOCK file: one process owns a data directory
+src/error.rs              thiserror enums of the commands, and what ends one
 src/client.rs             the small HTTP client `load`, `compact` and `bench-storage --es` speak
 src/cmd/parse.rs          the `parse` output
 src/cmd/demo.rs           the `demo` tree
-src/cmd/query.rs          the `query` command, and the result JSON both surfaces answer with
-src/cmd/serve/            the HTTP surface, the banner, the shutdown sequence
-src/cmd/serve/viewer.html the log viewer served at `/` - one file, compiled into the binary
-src/cmd/load.rs           `kibbr load` - the bulk door: staging, the load id, the commit
-src/cmd/compact.rs        `kibbr compact` - the command, and a server's compaction jobs
+src/cmd/query.rs          the `query` command: the flags, the table, the plan
+src/cmd/load.rs           `kibbr load` - the command: alone, or asked of the server holding the directory
+src/cmd/compact.rs        `kibbr compact` - the command, the same two ways
 src/cmd/ask.rs            `kibbr templates`, `kibbr stats` and `kibbr health`
 src/cmd/bench_storage.rs  `kibbr bench-storage`
 src/cmd/bench/            `kibbr bench`
@@ -886,10 +884,24 @@ src/gen/                  the generators - `hostile` (mod.rs) and the log farm (
 src/reference/            the brute-force oracle behind `query --reference`
 src/fuzzing/              what each fuzz target holds its subject to
 tests/fixture.rs          outer-surface tests
-tests/serve.rs            the HTTP contract, over a bare TcpStream
+tests/serve.rs            the HTTP contract, over a bare TcpStream - in this process, or of the binary
 Dockerfile                the image: a static binary on distroless, and the `bench` target
 bench/run.sh              `kibbr bench` in a container; bench/results/ holds what it measured
 deploy/                   the Kubernetes manifests and the Vector sinks
+
+crates/kibbr-server/      the server, as a library: needs kibbr-engine, kibbr-storage and kibbr-core
+  src/lib.rs              what the handlers share, and a data directory restored
+  src/settings.rs         `Settings`: every value a server runs on, plain data with a default
+  src/lifecycle.rs        `run` - the runtime, the flush clock, signals, shutdown, the banner
+  src/routes.rs           the router, `/templates`, `/stats`, `/health`, the request timeout
+  src/handlers.rs         `/ingest`'s door, `/query`, `/load`
+  src/ingest.rs           a body's lines into the write-ahead log and the store
+  src/compaction.rs       `/compact`, and the look for a day that is due
+  src/query.rs            a TrieQL string into a query, and the result JSON both surfaces answer with
+  src/load.rs             the bulk door: staging, the load id, the commit
+  src/compact.rs          a compaction's run, and what a server keeps about the ones it runs
+  src/error.rs            what stops a server, and what stops the live door taking a body
+  src/viewer.html         the log viewer served at `/` - one file, compiled in
 
 crates/kibbr-engine/      a query: needs kibbr-storage and kibbr-core
   src/engine.rs           the plan, the scan, the result
@@ -904,6 +916,7 @@ crates/kibbr-storage/     where templates and rows are kept: needs kibbr-core
   src/wal.rs              the write-ahead log: group commit, the one applier, replay, the checkpoint
   src/frame.rs            the framing the catalog, the manifest, the day files and the log share
   src/db.rs               lines to a trie and its stores - the write path
+  src/lock.rs             the LOCK file: one process owns a data directory
 
 crates/kibbr-core/        a line, before anything stores it: needs no other crate
   src/flatten.rs          flattening, fingerprints, the parsed row

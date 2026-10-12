@@ -1635,7 +1635,7 @@ fn the_line_has_no_bound_at_the_default_wait() {
         Arc::new(server.expect("a server in memory"))
     };
     let places = ingest_bodies(&ApiLimits::default());
-    let default = crate::config::DEFAULT_INGEST_WAIT_MS as u64;
+    let default = crate::settings::DEFAULT_INGEST_WAIT_MS as u64;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
