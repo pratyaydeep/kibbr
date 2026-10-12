@@ -1,19 +1,11 @@
 //! The texts and values the filter's tests are run over.
 //!
 //! One list, shared, because the tests that use it hold different pieces of code to the
-//! same contract - a term read once against `engine::value_matches`, a row not rendered
-//! against a rendered one - and a value one of them never tried is a value nothing says
-//! they agree on. Every text is a term a query can ask for and a value a line can carry,
-//! so each is matched against every other: `-0` against `0`, a date against the same
-//! instant in every form the ladder takes, a UUID against itself in another case.
-//!
-//! `KINDS` is the same values, and more of each sort, in lists a generated column is
-//! drawn from: what a term put to a decoded column is held to `engine::value_matches`
-//! over.
+//! same contract, and a value one of them never tried is a value nothing says they agree on.
 
 use crate::store::Row;
 
-/// Term texts, and the JSON strings a line carries. No text is here twice.
+/// Term texts, and the JSON strings a line carries; no text is here twice.
 pub const TEXTS: &[&str] = &[
     // Text built to sit on every rung's edge: the list the decoder's shortcut for plain
     // text is held to the ladder over, in `v3::read`'s tests.
@@ -70,9 +62,8 @@ pub const TEXTS: &[&str] = &[
     "2024-01-15 10:30:00Z",
     "2024-01-15T16:00:00+05:30",
     "2024-01-15T10:30:60Z",
-    // The same instant as epoch seconds and milliseconds, then ten digits that are not
-    // an epoch: a leading zero, and a moment past the window. And the seconds again with
-    // a sign and with a zero before them, which are integers and the digits of no date.
+    // The same instant as epoch seconds and milliseconds, then ten digits that are no epoch,
+    // and the seconds signed and zero-led, which are integers and the digits of no date.
     "1705314600",
     "1705314600000",
     "0946684800",
@@ -91,8 +82,8 @@ pub const TEXTS: &[&str] = &[
     "9223372036854775809",
 ];
 
-/// The JSON a line can carry that is not a string: each of these is also a text above,
-/// so the same characters are ingested quoted and bare. And `null`.
+/// The JSON a line can carry that is not a string, each also a text above so the same
+/// characters are ingested quoted and bare; and `null`.
 pub const LITERALS: &[&str] = &[
     "0",
     "45",
@@ -117,9 +108,8 @@ pub fn written() -> Vec<String> {
         .collect()
 }
 
-/// The row ingest stores for a line whose one key, `v`, holds `json`: through the parser
-/// and `db::row_of`, so the value and what was written beside it are what a store is
-/// handed.
+/// The row ingest stores for a line whose one key, `v`, holds `json`, through the parser
+/// and `db::row_of`.
 pub fn row_of(json: &str) -> Row {
     let line = format!("{{\"v\":{json}}}");
     let parsed = kibbr_core::flatten::parse_line(line.as_bytes(), 1).expect("a line of one key");
@@ -131,12 +121,8 @@ pub fn rows() -> Vec<Row> {
     written().iter().map(|json| row_of(json)).collect()
 }
 
-/// Values as a line writes them, sorted by kind: each list is one type in one spelling,
-/// or text of one sort. A column drawn from one list is one typed piece, as a clean
-/// column is; drawn from two it is two pieces, or one where the two are spellings a piece
-/// keeps row by row; drawn from three it is the largest of them beside text. So a few
-/// draws reach every way a writer lays a column out, with the values the ladder is most
-/// easily wrong about in each.
+/// Values as a line writes them, one type in one spelling per list, so a few draws reach
+/// every way a writer lays a column out.
 pub const KINDS: &[&[&str]] = &[
     // Words.
     &[

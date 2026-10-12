@@ -1,28 +1,8 @@
-//! **The segment builder**: rows of one template in, one encoded row group out.
-//!
-//! It has no clock, no lock and no knowledge of who is calling it. Three callers hand it
-//! rows the same way - closing a live row group, compaction, and the bulk loader - so
-//! there is one encoder and one set of encoder bugs. What it is given is everything it
-//! uses: the template id, the schema's number and column names, the rows, each row's
-//! effective time, and where the rows came from.
-//!
-//! **How a column is written.** Each present value falls in a group: its type and the
-//! form fields that describe its spelling. A value goes into a typed group only if
-//! printing it through that group's form gives back what was ingested - a JSON string byte
-//! for byte, a JSON number as the same value - and every value the ladder typed `String`,
-//! or that no form prints, is in the one String group, as text. A JSON number or bool has
-//! no spelling to describe, so it joins the largest group of its own type (for a
-//! `Datetime`, of its unit) or starts one. One group is one piece. Otherwise piece A is
-//! the largest group, ties to the lower type number and then the lower form bytes; if the
-//! rest are one group that is piece B, and if not they are written as text - in piece B,
-//! or in piece A when A is the String group. A reader never needs this rule, but it is
-//! fixed so the same rows always make the same bytes.
-//!
-//! **How a piece is laid out** is fixed the same way: one value on every row is
-//! stored once, and otherwise each type has its one encoding - a word list for text,
-//! zigzag LEB128 for integers, differences for times, bits for booleans, plain bytes for
-//! the rest. A chunk goes through zstd unless every piece in it is a constant, bits or a
-//! UUID's raw bytes, at the level its caller names: 3 live, 9 for a finished file.
+//! The segment builder: rows of one template in, one encoded row group out.
+//! It has no clock, no lock and no knowledge of its caller, so the live door, compaction
+//! and the bulk loader share one encoder and one set of encoder bugs.
+//! How a column is split into pieces and how a piece is laid out are
+//! fixed, so the same rows always make the same bytes.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -59,11 +39,8 @@ pub enum BuildError {
     Zstd(String, String),
 }
 
-/// How hard zstd works on a row group's chunks. Level 3 where the live door closes a
-/// row group, at about 389MB a second; level 9 where a file is written whole - by a bulk
-/// load, or by compaction - and then read for months, at 87MB a second and 6.8% smaller.
-/// Not 19: 3.6MB a second for another 6%. A frame decodes the same whatever level wrote
-/// it, so the level is not recorded.
+/// How hard zstd works on a row group's chunks: fast where the live door closes one, harder
+/// where a file is written whole and then read for months.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     Live,
@@ -91,10 +68,6 @@ pub struct RowGroup {
 }
 
 /// The sorted, distinct keys of these rows: the schema a row group of them uses.
-///
-/// A row that falls back to arrival time carries `\_received_at` and one with its own
-/// time does not, so one template can use more than one schema; a row group none of whose
-/// rows has a column leaves it out.
 pub fn schema_of<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for row in rows {
@@ -121,14 +94,8 @@ pub fn build(
     Ok(encode(template_id, columns, rows, times, source, level)?.frame(schema_id))
 }
 
-/// A row group with every column encoded and no schema number yet: `build` less the one
-/// field only a file's writer can fill.
-///
-/// **Split off so a flush can encode side by side.** Encoding is nearly all of what a row
-/// group costs, and it needs nothing from the file; the schema number does, and a schema
-/// record has to go into the file before the first row group that names it. So a flush
-/// encodes every row group it has to write at once, on as many threads as it has, and then
-/// numbers and frames them one at a time as it appends them.
+/// A row group with every column encoded and no schema number yet, split off `build` so a
+/// flush can encode on many threads and number them in file order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Encoded {
     template_id: u64,
@@ -152,9 +119,8 @@ pub fn encode(
     if rows.is_empty() {
         return Err(BuildError::NoRows);
     }
-    // What a reader refuses is refused here, before it is written: every caller cuts its
-    // rows at the row group threshold, and one that did not would make a file no start
-    // could read.
+    // What a reader refuses is refused here, before it is written: a file with more rows
+    // to a row group is one no start could read.
     let row_count = u32::try_from(rows.len())
         .ok()
         .filter(|n| *n <= MAX_ROWS)
@@ -199,9 +165,8 @@ pub fn encode(
 }
 
 impl Encoded {
-    /// The row group whole, as schema `schema_id` of its file: the header frame written
-    /// around the directory, and its CRC - which covers the header alone, so framing is
-    /// cheap however large the chunks are.
+    /// The row group whole, as schema `schema_id` of its file; the CRC covers the header
+    /// alone, so framing is cheap however large the chunks are.
     pub fn frame(self, schema_id: u32) -> RowGroup {
         let (source_byte, stream, first, last) = self.source.bytes();
         let mut payload = Vec::with_capacity(64 + self.directory.len());
@@ -251,8 +216,7 @@ enum Val {
 }
 
 /// Which group a value belongs in: the type byte, then the form fields that describe its
-/// spelling - everything but `json_kind` and a digit count that can vary per row.
-/// Ordered, so ties between groups go to the lower bytes.
+/// spelling; ordered, so ties between groups go to the lower bytes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct GroupKey {
     ty: u8,
@@ -425,11 +389,8 @@ fn encode_column(name: &str, rows: &[&Row], level: Level) -> Result<Chunk, Build
     })
 }
 
-/// The one compression a chunk gets: zstd, unless every piece in it is one zstd
-/// has nothing to do for - a constant, which is one value already; bits, which are as
-/// small as booleans get; or a `Uuid`'s sixteen raw bytes, which are random. Everything
-/// else is zstd, a piece of any of those beside it included: one frame over the whole
-/// body.
+/// The one compression a chunk gets: zstd over the whole body, unless every piece is one
+/// zstd has nothing to do for - a constant, bits, or a `Uuid`'s random bytes.
 fn compression_of(pieces: impl IntoIterator<Item = (ColumnType, u8)>) -> u8 {
     let raw = |(ty, encoding): (ColumnType, u8)| match encoding {
         CONSTANT | BITS => true,
@@ -538,8 +499,7 @@ fn digits_of(p: &Present<'_>) -> u8 {
 }
 
 /// The form a piece is written with: its group's spelling fields, the JSON kinds its rows
-/// had, and one digit count for every string row or one byte per row when they differ. A
-/// JSON number has no count; it prints the shortest form.
+/// had, and one digit count for every string row or one byte per row when they differ.
 fn form_of(piece: &Piece, present: &[Present<'_>]) -> Form {
     let rows = piece.members.iter().map(|at| &present[*at]);
     let literals = rows.clone().filter(|p| p.lit).count();
@@ -619,9 +579,8 @@ enum Values<'a> {
 }
 
 impl<'a> Values<'a> {
-    /// The rows' values. A row reaching a String piece from a typed group is text here -
-    /// the JSON it arrived as - so the text fallback is decided in one place. `None` when
-    /// a typed piece holds a row its group did not type, which grouping never does.
+    /// The rows' values; a row reaching a String piece from a typed group is text here, so
+    /// the text fallback is decided in one place.
     fn of(form: &Form, rows: &[&'a Present<'_>]) -> Option<Self> {
         macro_rules! all {
             ($variant:ident, $pat:pat => $out:expr) => {
@@ -679,10 +638,8 @@ impl<'a> Values<'a> {
         }
     }
 
-    /// The one encoding a piece gets: the same value on every row is stored once,
-    /// and anything else is laid out the way its type is - text as a word list. Never
-    /// several tried and the smallest kept: that measured at three times the CPU for 4%
-    /// fewer bytes.
+    /// The one encoding a piece gets: a constant stored once, anything else laid out the way
+    /// its type is - never several tried and the smallest kept.
     fn encoding(&self) -> u8 {
         if self.constant() {
             return CONSTANT;

@@ -16,15 +16,8 @@ use crate::frame::Next;
 use crate::store::{effective_ts, Row};
 use kibbr_core::flatten::parse_line;
 
-/// `read::chunk`, with the typed decoder held to it on the way: what every test here
-/// decodes a chunk through, so that each chunk they build - the ones built to be refused
-/// among them - is read both ways.
-///
-/// The two readers walk one layout and must not drift. `read::chunk` gives cells exactly
-/// when the typed decoder takes the chunk and prints every row of it, and then each row
-/// prints as the cell `read::chunk` made, asked for alone or through a memo. Where
-/// `read::chunk` refuses, the typed decoder refuses the chunk or one of its rows: which,
-/// and in what words, is `read::chunk`'s to say and is what the tests here go on to pin.
+/// `read::chunk`, with the typed decoder held to it on the way, so that each chunk the
+/// tests build is read both ways: the two readers walk one layout and must not drift.
 pub(super) fn chunk_both(
     stored: &[u8],
     at: u64,
@@ -240,7 +233,6 @@ fn a_constant_sits_beside_nulls_and_another_piece() {
 
 // ── Word lists ─────────────────────────────────────────────────────────────────────
 
-/// Text is a word list, compressed with zstd, and reads back as itself.
 #[test]
 fn text_is_stored_as_a_word_list_and_compressed() {
     let methods = ["GET", "POST", "GET", "GET", "DELETE", "POST", "GET"];
@@ -254,9 +246,8 @@ fn text_is_stored_as_a_word_list_and_compressed() {
     round_trips(&lines);
 }
 
-/// An index is one byte up to 256 words, two up to 65,536, and four past that. A row
-/// group holds 8,192 rows and a list no more words than rows, so a file reaches two bytes
-/// and never four: past the row cap the widths are held as the rule alone.
+/// An index is one byte up to 256 words, two up to 65,536; a list holds no more words
+/// than rows, so a file reaches two bytes and never four.
 #[test]
 fn a_word_list_s_indexes_are_as_wide_as_its_words_need() {
     for (words, width) in [(256usize, 1u32), (257, 2), (MAX_ROWS as usize, 2)] {
@@ -633,10 +624,8 @@ fn a_piece_that_stands_for_more_than_a_body_is_refused() {
 
 // ── The row cap ────────────────────────────────────────────────────────────────────
 
-/// A row group holds 8,192 rows and no more. The builder refuses to write one of more,
-/// and a reader refuses a header that claims one where its `row_count` is written, before
-/// a cell is made: what is stored cannot vouch for the count, since an all-null chunk has
-/// no bytes at all and a constant has one value.
+/// A row group holds 8,192 rows and no more: the builder refuses to write one of more,
+/// and a reader refuses a header that claims one before a cell is made.
 #[test]
 fn a_row_group_past_the_row_cap_is_neither_written_nor_read() {
     let full = lines_of(&vec!["null"; MAX_ROWS as usize]);

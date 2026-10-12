@@ -1,26 +1,8 @@
 //! A term, and the time window, put to a decoded column instead of to a row.
 //!
-//! A scan that builds a row for every stored value and then asks the row its question
-//! spends nearly all its time on rows it throws away. The questions are simple - is this
-//! value that one, is this instant in the window - and a decoded column
-//! (`v3::column::Column`) already holds what answers them: integers as integers, a word
-//! list as its few words, an id as its sixteen bytes. So a term is put to the typed
-//! values, once for a piece or once for a word where it can be, and what comes back is
-//! which rows passed: one bit a row (`Sel`). Only those rows are then worth building.
-//!
-//! **What a term means does not move.** `engine::value_matches` says it, about the value
-//! a rendered row holds: the term's text against a string, or what the ladder reads that
-//! text as against anything else. `hits_by_row` is that question by construction - each
-//! row's cell printed as `read::chunk` prints it, and `Term::matches_cell` asked of it.
-//! `hits` is the same answer without the printing, by a compare chosen once for each
-//! piece from the piece's form and the term's two readings. Each compare is argued where
-//! it is made, and all of them are held to `hits_by_row`, and to `value_matches` itself,
-//! by the tests here and in `engine`.
-//!
-//! One thing `hits` does not do that `hits_by_row` does: refuse a value that does not
-//! print. A typed compare never prints, so on a chunk whose bytes pass their CRC and
-//! whose layout holds but which carries, say, text that is not UTF-8, `hits_by_row`
-//! refuses and `hits` answers. On every chunk a writer made the two agree.
+//! Building a row for every stored value is wasted on rows thrown away; a typed compare
+//! answers with one bit a row (`Sel`). Every compare in `hits` is held to `hits_by_row`
+//! and `engine::value_matches`; only `hits_by_row` refuses a value that does not print.
 
 use std::borrow::Cow;
 
@@ -37,16 +19,8 @@ const WORDS: usize = 128;
 // One bit for every row a row group can hold, and no more.
 const _: () = assert!(WORDS * 64 == MAX_ROWS as usize);
 
-/// Which rows of one row group are still in: one bit a row.
-///
-/// A bitmap and not a list of row numbers, because of what is done with it: terms are
-/// ANDed together and with the window, a count is the bits set, a store limit needs the
-/// row of the n-th match, and a fetch walks the matches in row order. It is a kibibyte
-/// held by value, with no allocation.
-///
-/// Bits at and past `rows` are always clear, so two selections of the same rows are equal
-/// exactly when they select the same rows. A row group holds at most 8,192 rows, and a
-/// selection asked for more holds that many.
+/// Which rows of one row group are still in, one bit a row: a bitmap because terms are
+/// ANDed, counted and walked in row order, and bits at and past `rows` are always clear.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Sel {
     bits: [u64; WORDS],
@@ -83,9 +57,8 @@ impl Sel {
         }
     }
 
-    /// The rows whose value `hit` says yes to: `values[r]` is row `r`'s. Sixty-four
-    /// values make one word with no branch on the answer, which is what lets a compare
-    /// over a vector of integers run at the speed of the vector.
+    /// The rows whose value `hit` says yes to. Sixty-four values make one word with no branch
+    /// on the answer, so a compare over a vector runs at the speed of the vector.
     fn of<T>(values: &[T], hit: impl Fn(&T) -> bool) -> Self {
         let mut sel = Self::none(values.len());
         for (word, values) in sel.bits.iter_mut().zip(values.chunks(64)) {
@@ -112,7 +85,7 @@ impl Sel {
         self.rows
     }
 
-    /// Put a row in. A row the selection is not over stays out.
+    /// Put a row in; a row the selection is not over stays out.
     pub fn set(&mut self, row: usize) {
         if row < self.rows {
             self.bits[row / 64] |= 1 << (row % 64);
@@ -178,12 +151,8 @@ impl Sel {
 
 // ── A term over a column ───────────────────────────────────────────────────────────
 
-/// The rows of `column` that `term` matches, by typed compare. `text_column`: the
-/// column's type is now `String`, so a `Datetime` stored in it is compared as the text it
-/// arrived as.
-///
-/// A null matches no term, `*` included, and `*` matches every row that is not one: a
-/// row that is present never decodes to a null, and a date rendered as text is text.
+/// The rows of `column` that `term` matches, by typed compare; under `text_column` a stored
+/// `Datetime` is compared as the text it arrived as, and a null matches no term, `*` included.
 pub fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
     let rows = column.rows();
     let [a, b] = column.pieces()?;
@@ -219,9 +188,8 @@ pub fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad>
     }))
 }
 
-/// The same rows by definition: every row's cell printed as `read::chunk` prints it, and
-/// the term asked of it as it is asked of a value no row was rendered for. What `hits` is
-/// held to, and what a scan may use in its place at the cost of the printing.
+/// The same rows by definition, every row's cell printed as `read::chunk` prints it and
+/// the term asked of it: what `hits` is held to.
 pub fn hits_by_row(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
     let mut sel = Sel::none(column.rows());
     let mut memo = Memo::default();
@@ -244,11 +212,8 @@ struct Asked<'t> {
 }
 
 impl Asked<'_> {
-    /// The values of `piece` the term matches: bit `i` for value `i`.
-    ///
-    /// The compare is chosen here, once, from the piece's form. What a rendered row would
-    /// hold for a value of the piece is fixed by that form - a number, a date, a printed
-    /// id, text - and so is which of the term's two readings can equal it.
+    /// The values of `piece` the term matches, bit `i` for value `i`. The compare is chosen
+    /// once, from the piece's form, which fixes what a rendered row would hold.
     fn of(&self, piece: &PieceRef<'_>) -> Result<Sel, Bad> {
         let n = piece.n;
         let every = |hit: bool| if hit { Sel::all(n) } else { Sel::none(n) };
@@ -287,14 +252,11 @@ impl Asked<'_> {
                 (ValuesRef::Times(_) | ValuesRef::SameTime(_), _) => Sel::none(n),
                 _ => self.printed(piece)?,
             },
-            // In a column that is now text a row holds the text the date arrived as, and
-            // only that text matches. For a date in RFC 3339 that is the row's own print,
-            // made of its fraction digits and its form: printed, and asked.
+            // In a column that is now text a row holds the text the date arrived as, and only that
+            // text matches; an RFC 3339 date is printed, and asked.
             Form::Datetime { unit: RFC3339, .. } => self.printed(piece)?,
-            // For an epoch it is the whole seconds or milliseconds in decimal, bare or
-            // quoted on the line alike. That is the one spelling of a number, so the
-            // term's text must be the one spelling of a number too, and then the texts
-            // are equal exactly when the numbers are.
+            // An epoch is the whole seconds or milliseconds in decimal, the one spelling of a
+            // number, so the texts are equal exactly when the term's text is that spelling too.
             Form::Datetime { unit, .. } => {
                 let whole = self
                     .text
@@ -312,11 +274,8 @@ impl Asked<'_> {
                     _ => self.printed(piece)?,
                 }
             }
-            // A row holds the id printed in the piece's case, which is text: a match is
-            // that print being the term's text. Printing is one-to-one and `uuid_bytes`
-            // undoes it, so the only bytes that can print as the term's text are the ones
-            // its text reads as - and they do only if they print back as it in this
-            // piece's case. Then the compare is sixteen bytes.
+            // A row holds the id printed in the piece's case. Printing is one-to-one, so the term
+            // matches only as the sixteen bytes its text reads as, if they print back as it here.
             Form::Uuid { case } => {
                 let want =
                     uuid_bytes(self.text).filter(|bytes| print_uuid(bytes, case == 1) == self.text);
@@ -331,9 +290,7 @@ impl Asked<'_> {
                     _ => self.printed(piece)?,
                 }
             }
-            // An address, by the same argument, in the piece's spelling: the term's text
-            // read as an address, kept only if it has this family's width and prints back
-            // as itself here.
+            // An address, by the same argument, in the piece's spelling and this family's width.
             Form::Ip { spelling } => {
                 let want = ip_bytes(self.text)
                     .filter(|bytes| print_ip(bytes, spelling).as_deref() == Some(self.text));
@@ -354,14 +311,8 @@ impl Asked<'_> {
     /// another type that no form printed back, kept as the text it arrived as.
     fn of_text(&self, piece: &PieceRef<'_>) -> Result<Sel, Bad> {
         let n = piece.n;
-        // **The term reads as text.** Then only a row that holds a string can match, and
-        // a row of this piece holds a string in two ways: the ladder types its word a
-        // string, and the row holds the word; or the ladder types its word a date in a
-        // column that is now text, and the row holds what was written, which is the word
-        // again. Either way the string is the word, so the rows that match are the rows
-        // whose word is the term's text, byte for byte, and no ladder runs. A row whose
-        // word the ladder types anything else holds no string, and its word is not the
-        // term's text either: the ladder would read the two alike.
+        // The term reads as text: only a row holding a string can match, and that string is its
+        // word, so the compare is byte for byte and no ladder runs.
         if matches!(self.inferred, ColValue::String(_)) {
             let want = self.text.as_bytes();
             return Ok(match &piece.values {
@@ -375,10 +326,8 @@ impl Asked<'_> {
                 _ => self.printed(piece)?,
             });
         }
-        // **The term reads as a number, a date or a bool.** Then a word matches when the
-        // ladder reads it as the same value - a stored `"-0"` is found by `0` - and that
-        // is asked of the word as a row would print it, once for each word and each of
-        // the two kinds of row that can name it.
+        // The term reads as a number, a date or a bool: a word matches when the ladder reads it
+        // as the same value, asked once for each word and each of the two kinds of row.
         let mut sel = Sel::none(n);
         match &piece.values {
             ValuesRef::Words { words, codes } => {
@@ -459,9 +408,8 @@ impl Asked<'_> {
 
 // ── Time over a column ─────────────────────────────────────────────────────────────
 
-/// Each row's instant, as `instant_of` reads the row's cell: what the time window is
-/// asked of. Borrowed from the column when the column is one `Datetime` piece holding
-/// every row, which a time column nearly always is; made otherwise.
+/// Each row's instant, as `instant_of` reads the row's cell, borrowed from the column
+/// when it is one `Datetime` piece holding every row.
 pub struct Instants<'c> {
     /// A row's instant where it has one. Shorter than the rows only when no row has one.
     ns: Cow<'c, [i64]>,
@@ -486,11 +434,8 @@ impl Stamps<'_> {
     }
 }
 
-/// A piece's instants. A `Datetime` is one whatever its form and whatever the column's
-/// type has since become: the window reads the stored value, not the rendered one. Text
-/// is one when the ladder reads it as one, asked of each word as a row would print it. A
-/// number, a bool, an id and an address are none - a printed id or address reads as
-/// itself, never as a date.
+/// A piece's instants. A `Datetime` is one whatever the column's type has since become:
+/// the window reads the stored value; text is one when the ladder reads it as one.
 fn stamps<'c>(piece: &PieceRef<'c>) -> Result<Stamps<'c>, Bad> {
     let of = |word: &[u8], lit: bool| -> Result<Option<i64>, Bad> {
         Ok(instant_of(&piece.text_cell(word, lit)?.0))
@@ -630,9 +575,8 @@ impl<'c> Instants<'c> {
         self.has.is_some()
     }
 
-    /// These instants, and `fallback`'s for the rows that have none here: the effective
-    /// time of a row, which is its time column's instant or else the arrival time it was
-    /// stored with.
+    /// These instants, and `fallback`'s for the rows that have none here: a row's effective
+    /// time is its time column's instant or else the arrival time it was stored with.
     pub fn or(self, fallback: &Instants<'_>) -> Instants<'c> {
         let Instants { ns, has } = self;
         let Some(mut has) = has else {
@@ -655,8 +599,8 @@ impl<'c> Instants<'c> {
         .settled()
     }
 
-    /// The rows whose instant is in `[since, until)`: `in_window`, a row at a time. A row
-    /// with no instant is outside every window.
+    /// The rows whose instant is in `[since, until)`; a row with no instant is outside every
+    /// window.
     pub fn window(&self, since: Option<i64>, until: Option<i64>) -> Sel {
         let inside = |ns: &i64| in_window(Some(*ns), since, until);
         match &self.has {
@@ -814,10 +758,8 @@ mod tests {
         out
     }
 
-    /// A column's instants are each cell's, read as `instant_of` reads it; the window
-    /// over them is `in_window` a row at a time; and one column's instants with another's
-    /// behind them are a row's effective time, read off the row a query would build.
-    /// Over every column of every sample.
+    /// A column's instants, the window over them and a row's effective time are each what a
+    /// row a query would build says, over every column of every sample.
     #[test]
     fn a_column_s_instants_are_what_each_row_s_cell_reads_as() {
         let (mut with, mut without, mut borrowed, mut fell_back) = (0, 0, 0, 0);
@@ -913,10 +855,8 @@ mod tests {
 
     // ── The inverse a compare of stored bytes leans on ─────────────────────────────
 
-    /// An id and an address read back, from their text, as the bytes they were printed
-    /// from: in both cases, and in each spelling an address has. A term is put to an id
-    /// or an address column as bytes, and that is only right if the text a row would
-    /// print names one set of bytes and no other.
+    /// A term is put to an id or an address column as bytes, which is only right if the text
+    /// a row would print names one set of bytes and no other.
     #[test]
     fn an_id_and_an_address_read_back_as_the_bytes_that_printed_them() {
         let both = |bytes: [u8; 16]| {
@@ -1012,10 +952,8 @@ mod tests {
             .collect()
     }
 
-    /// The typed compare finds the rows the printed cells do: for every column of every
-    /// sample, in a column still its own type and in one that is now text, for `*`, every
-    /// text of the pool, and each of the column's own values asked by every text it could
-    /// be asked by and by that text with its case turned over.
+    /// The typed compare finds the rows the printed cells do, for every column of every
+    /// sample, as its own type and as text.
     #[test]
     fn a_typed_compare_finds_the_rows_the_printed_cells_do() {
         let mut matched: BTreeMap<&'static str, [u64; 2]> = BTreeMap::new();
@@ -1188,7 +1126,6 @@ mod tests {
         );
         assert_eq!(found("one epoch second", "1705314600", true), [0, 1, 2]);
 
-        // Booleans.
         assert_eq!(found("booleans, bare and quoted", "true", false), [0, 2, 5]);
         assert_eq!(
             found("booleans, bare and quoted", "False", false),

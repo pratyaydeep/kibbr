@@ -1,19 +1,7 @@
 //! A row group's header frame and its chunks, decoded and checked.
-//!
-//! Every length is compared with the bytes that remain before it is used, every CRC is
-//! checked before the bytes it covers are decoded, and every field is held to its closed
-//! set of values. Compaction, recovery and the walk decode a chunk through `chunk`, so
-//! what they read is what this checked, every value of it.
-//!
-//! **A query is held to less, and by choice.** It reads a row group's header through
-//! `header`, and its chunks as the file stores them, CRC-checked and not decoded
-//! (`file::Reader::stored`). Of those it decodes the ones its window, its terms or a row
-//! it builds ask for, with `column::Column`, which makes the checks `piece` makes on the
-//! layout and leaves what only printing a value finds - text that is not UTF-8, a literal
-//! row that is not JSON, a float that is not finite, a date its form cannot print - to
-//! `cell`, called for the rows the query prints and for no other. So a count can answer
-//! from a chunk none of whose values was printed, and a chunk nothing asked for has been
-//! held to its CRC and no further.
+//! Compaction, recovery and the walk decode a chunk through `chunk`, every value of it.
+//! A query is held to less, by choice: it decodes with `column::Column` only the chunks it
+//! asks for, and `cell` checks a value only for a row the query prints.
 
 use serde_json::Value;
 
@@ -88,8 +76,8 @@ impl Header {
     }
 }
 
-/// A header frame's payload. `base` is the file offset of the payload's first byte;
-/// `columns` says how many columns a schema has, `None` for a schema not yet written.
+/// A header frame's payload; `base` is the file offset of its first byte, and `columns`
+/// says how many columns a schema has, `None` for a schema not yet written.
 pub fn header(
     payload: &[u8],
     base: u64,
@@ -302,18 +290,12 @@ fn piece_form(r: &mut Bytes<'_>) -> Result<PieceDir, Bad> {
 
 // ── Chunks ─────────────────────────────────────────────────────────────────────────
 
-/// One decoded value: what a row holds, and so what a term is said of
-/// (`Term::matches_cell`), and - where printing that would not give back what was
-/// ingested - the JSON value that was.
+/// One decoded value: what a row holds and, where printing that would not give back what
+/// was ingested, the JSON value that was.
 pub type Cell = (ColValue, Option<Value>);
 
-/// A chunk's stored bytes, already CRC-checked, into one cell per row. `base` is the
-/// chunk's file offset.
-///
-/// **`rows` is held to what a row group holds before a cell is made.** It is the header's
-/// `row_count`, which `header` has already refused past `MAX_ROWS`; it is asked again
-/// here because this is where the cells are allocated, and an all-null chunk has no bytes
-/// to run out of: its cells are made from the count alone.
+/// A chunk's stored bytes, already CRC-checked, into one cell per row; `rows` is held to
+/// `MAX_ROWS` here too, since an all-null chunk's cells are made from the count alone.
 pub fn chunk(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Vec<Cell>, Bad> {
     if rows > MAX_ROWS as usize {
         return Err(too_many_rows(base, rows));
@@ -461,11 +443,8 @@ fn piece(bytes: &[u8], base: u64, dir: &PieceDir, n: usize) -> Result<Vec<Cell>,
         }
         Ok((lit(i), row_digits))
     };
-    // What a piece decodes to is never more than its rows written plain, and a plain body
-    // holds at most 256MiB: a constant or a word list stands for rows it does not store one
-    // by one, and a few stored bytes must not decode to gigabytes. Only text can pass it -
-    // a value of any other type is sixteen bytes at most, on the 8,192 rows a row group
-    // holds - so it is asked where a word or a constant is read, and not of a width.
+    // A constant or a word list stands for rows it does not store one by one, and a few
+    // stored bytes must not decode to more than a plain body may hold.
     let too_much = |plain: usize, at: u64| {
         Bad::at(
             at,
@@ -499,9 +478,8 @@ fn piece(bytes: &[u8], base: u64, dir: &PieceDir, n: usize) -> Result<Vec<Cell>,
             let indexes = r.take(n * width, "dictionary indexes")?;
             let mut first = vec![None; count];
             let mut plain = 0usize;
-            // The words are numbered in the order rows first name them, so a word's first
-            // row names the next number not yet seen, and every word is named: a list in
-            // any other order, or holding a word no row uses, is not one a writer made.
+            // The words are numbered in the order rows first name them, and every word is named:
+            // a list in any other order, or holding an unused word, is not one a writer made.
             let mut named = 0usize;
             for i in 0..n {
                 let mut le = [0u8; 4];
@@ -592,11 +570,8 @@ fn piece(bytes: &[u8], base: u64, dir: &PieceDir, n: usize) -> Result<Vec<Cell>,
 /// its digits byte.
 type Spelling = (bool, Option<u8>);
 
-/// A value one stored copy stands for in many rows - a word, a constant - printed for a
-/// row. Printing text runs the type ladder over it, so the value is printed once, at the
-/// first row that names it, and a later row spelling it the same way takes a copy of that
-/// row's cell; `first` is that row's spelling and place in `out`. A word named once costs
-/// nothing more than plain text would.
+/// A word or a constant printed for a row: printing text runs the type ladder, so it is
+/// printed once and a later row spelling it the same way takes a copy of that cell.
 fn print_once(
     out: &mut Vec<Cell>,
     first: &mut Option<(Spelling, usize)>,
@@ -650,12 +625,8 @@ pub(super) fn plain_value<'a>(r: &mut Bytes<'a>, form: &Form) -> Result<Raw<'a>,
     })
 }
 
-/// A value printed through its form: what a row holds, and so what a term is said of,
-/// and - where printing that would not give back what was ingested - the JSON value that
-/// was. `at` is where the value's bytes are, for the error.
-///
-/// A scan puts a term to a column's typed values and comes here for a row it builds, and
-/// for a value no typed compare is known to answer for.
+/// A value printed through its form: what a row holds and, where printing that would not
+/// give back what was ingested, the JSON value that was; `at` is for the error.
 pub(super) fn cell(
     raw: &Raw<'_>,
     form: &Form,
@@ -783,15 +754,8 @@ pub(super) fn cell(
     })
 }
 
-/// Text the ladder certainly reads as `String`, told apart without running it.
-///
-/// A String piece's rows are text the ladder typed `String` and, rarely, a value of
-/// another type that no form printed back. A query needs the ladder's value for each - a
-/// stored `"-0"` must still match `0` - and running every rung over every string in a scan
-/// costs more than the scan. Every rung but the last needs a value that starts with a
-/// digit, a sign, a point, a colon, a hex letter (a UUID, an IPv6 address, `false`) or `t`
-/// (`true`); `inf` and `nan` parse as floats and are held to finite values, so they are
-/// text too. Anything else is `String` without asking.
+/// Text the ladder certainly reads as `String`, told apart without running it: running
+/// every rung over every string in a scan costs more than the scan.
 pub fn surely_text(text: &str) -> bool {
     let Some(first) = text.bytes().next() else {
         return true;

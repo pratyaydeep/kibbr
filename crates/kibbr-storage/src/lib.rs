@@ -1,7 +1,5 @@
-//! Where templates and rows are kept: the trie and the catalog that makes it durable, the
-//! stores under it (memory, and format v3's day files with their manifest), the
-//! write-ahead log, and `db` - the write path that puts one parsed line into them. And
-//! `lock`: whoever opens a data directory to write takes it first.
+//! Where templates and rows are kept: the trie and its catalog, the stores under it, the
+//! write-ahead log, `db` - the write path for one parsed line - and `lock`.
 //!
 //! Above `kibbr-core` and under the engine: nothing here plans or answers a query.
 

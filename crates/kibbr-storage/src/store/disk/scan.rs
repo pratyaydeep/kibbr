@@ -1,64 +1,8 @@
 //! One day of one leaf, read for a query: its row groups, then its rows not yet in one.
-//!
-//! **The filter comes before the row.** A scan used to decode every wanted chunk to one
-//! printed cell a row, build a `Row` for every stored row, and only then ask the window
-//! and the terms of it; nearly every row it built was a row it threw away. Here the window
-//! and the terms are put to a row group's columns (`store::columns`), which gives the rows
-//! that pass as one bit a row, and a row is built only for a row that passed and only as
-//! far as the visitor reads it (`Wants`): no row for a count, the grouping's columns for a
-//! grouping, the whole row for a fetch.
-//!
-//! **What is read off the disk does not move.** The same files are opened, and of each row
-//! group the window does not prune the same header frame and the same chunks are read and
-//! CRC-checked, every wanted chunk before any is decoded. So a scan counts the files, row
-//! groups, bytes and rows it always counted, and a bad CRC in a chunk nothing went on to
-//! use still fails the query. What moves is what happens to the bytes afterwards: a column
-//! is decoded when the window, a term or a row being built first asks for it, and a value
-//! is printed when a row holding it is built. A chunk nothing asks for is held to its CRC
-//! and no further, and a value that does not print is refused by the query that prints it.
-//!
-//! **A term is put to typed values, not to printed cells** (`columns::hits`): an integer
-//! against integers, a word against a word list's few words, an id against sixteen stored
-//! bytes. What a term means is still said by `engine::value_matches` about the value a
-//! rendered row holds, and the compare made here is held to that in three ways: by the
-//! tests of `columns` and `engine`, by `slow_pick`, which chooses a row group's rows by
-//! printing every cell and which every debug build runs beside `pick`, and by the memory
-//! store, which still renders each row and asks it.
-//!
-//! **One stored row group is one unit** (`Unit`), and it owns what was read of it: its
-//! header, its chunks' bytes, each column once decoded. Its work is in three parts that
-//! need different things. Reading it needs the file. Choosing its rows (`pick`) needs the
-//! unit and the question and nothing else - no reader, no visitor, no counter - so it can
-//! be run wherever the unit is. Handing its rows over (`hand`) is the only part that
-//! touches the visitor and the counters. A row's position is the rows of its day before
-//! it, which the index gives before a byte is read, so no unit waits on another to know
-//! where its rows are.
-//!
-//! **A day's row groups are taken a window at a time, and the middle part of a window may
-//! be shared between threads** (`day`, `together`). A window is the next row groups the
-//! time window does not prune, which the index says before a byte is read. Each is read on
-//! the thread that asked, in storage order, and each is handed over there, in storage
-//! order; only between the two may the store's scan threads (`store::fan`) each take the
-//! next row group nobody has taken and choose its rows. So the visitor and the counters
-//! see what they saw when a day was walked one row group at a time, and whether a window
-//! was shared out cannot be told from an answer. Most windows are not: one with too few
-//! rows to be worth waking a thread for, and every window of a scan that stops at a
-//! number of rows, is read, chosen and handed over one row group at a time. One that is
-//! shared out is taken a batch at a time, so that what is held decoded at once is bounded
-//! by a number of bytes and not by how many row groups the window has.
-//!
-//! **A visitor that keeps the newest few rows is asked before a row is built for it**
-//! (`Visitor::wants_row`). A fetch with a limit keeps a few hundred rows of a day of a
-//! million, and every other row it was handed was built to be dropped. So such a visitor
-//! is told a matched row's time and position, which come off the time column alone, and
-//! the row is built only if it says the row could be one it keeps. Rows are still asked
-//! about in storage order, and every matched row is still counted. With each ask goes
-//! whether the row's time lies in the day it is stored under: see `hand`.
-//!
-//! **The rows not yet in a row group stay rows** (`tail`). They were built when they
-//! arrived, and turning a buffer into columns for each query would cost the very build
-//! this saves. They are asked the same terms, on the stored row and without rendering it:
-//! a row is rendered only once it has passed and is about to be handed over.
+//! The window and the terms are put to a row group's columns (`store::columns`) before any
+//! row is built, and a row is built only as far as the visitor reads it (`Wants`). A day's
+//! row groups may be chosen on the scan threads, but are read and handed over on the
+//! asking thread in storage order, so sharing cannot be told from an answer.
 
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -79,11 +23,8 @@ use crate::store::{
 };
 use kibbr_core::types::ColValue;
 
-/// What one leaf's scan was asked, worked out once for the leaf: the options, the terms,
-/// the window in nanoseconds, and what the visitor reads of a row.
-///
-/// Plain data. It holds no closure, no visitor and no counter, so it can be shared by
-/// reference with whatever chooses a row group's rows.
+/// What one leaf's scan was asked, worked out once for the leaf; plain data, so it can be
+/// shared by reference with whatever chooses a row group's rows.
 pub(super) struct Ask<'a> {
     opts: &'a ScanOptions,
     terms: &'a [Term],
@@ -125,24 +66,20 @@ impl<'a> Ask<'a> {
         !self.windowed() && self.terms.is_empty()
     }
 
-    /// Is the visitor asked about a row before the row is built? One that keeps the
-    /// newest rows is, unless the scan is to stop at a number of rows: that is the first
-    /// so many in storage order, and every one of them is a row the visitor is owed.
+    /// Is the visitor asked about a row before the row is built? Not where the scan stops at
+    /// a number of rows: every one of the first so many is a row the visitor is owed.
     fn gated(&self) -> bool {
         self.wants == Wants::Newest && self.opts.limit == 0
     }
 
-    /// Does `hand` read a row group's times off its time columns before it builds a row?
-    /// For a visitor that is asked first, unless a time column is now text: such a row's
-    /// time is read a row at a time, as the row would render it.
+    /// Does `hand` read a row group's times off its time columns before it builds a row? Not
+    /// where a time column is now text: that time is read a row at a time, as rendered.
     fn warms(&self) -> bool {
         self.gated() && !(self.ts_is_text || self.received_is_text)
     }
 
-    /// Is there anything in a row group of this scan for a second thread to do? Not in
-    /// one that stops at a number of rows, which reads no row group past the one it stops
-    /// in; and not where choosing the rows decodes nothing and nothing is decoded before
-    /// the visitor is asked.
+    /// Is there anything in a row group of this scan for a second thread to do? Not in one
+    /// that stops at a number of rows, nor where nothing is decoded before the visitor is asked.
     fn fans(&self) -> bool {
         self.opts.limit == 0 && (!self.is_open() || self.warms())
     }
@@ -151,9 +88,8 @@ impl<'a> Ask<'a> {
     fn shape(&self, schema: &[String]) -> Shape {
         let windowed = self.windowed();
         let columns = &self.opts.columns;
-        // Empty means every column: a `MATCH` returns whole rows. A window always reads
-        // the time column, because it filters on it; and a term's column is read because
-        // the term is asked of it, whether or not the caller named it too.
+        // Empty means every column. A window always reads the time column, and a term's column
+        // is read because the term is asked of it, whether or not the caller named it.
         let wanted: Vec<usize> = (0..schema.len())
             .filter(|at| {
                 let name = &schema[*at];
@@ -180,9 +116,8 @@ impl<'a> Ask<'a> {
         }
     }
 
-    /// Does a row not yet in a row group pass? The window on the stored row, as it is
-    /// asked of a stored row everywhere, and then each term - of the stored row too, read
-    /// as the rendered one would be, so that no row is rendered to be thrown away.
+    /// Does a row not yet in a row group pass? The window and each term are asked of the
+    /// stored row, read as the rendered one would be, so no row is rendered to be thrown away.
     fn admits(&self, row: &Row) -> bool {
         if self.windowed() && !in_window(effective_ts(row, self.ts), self.since, self.until) {
             return false;
@@ -193,10 +128,8 @@ impl<'a> Ask<'a> {
             .all(|(term, text)| term.matches_in(row, *text))
     }
 
-    /// The effective time of a row not yet in a row group as the row rendered would show
-    /// it, read without rendering it: of the time column and then of the arrival time,
-    /// the first that holds an instant, a date in a column that is now text being read as
-    /// the text it arrived as. `effective_ts` of `render_row` of the row, and no row made.
+    /// The effective time of a row not yet in a row group as the rendered row would show it,
+    /// read without rendering it: `effective_ts` of `render_row` of the row, and no row made.
     fn seen_ts_of(&self, row: &Row) -> Option<i64> {
         let columns = [
             (self.ts, self.ts_is_text),
@@ -231,12 +164,8 @@ struct Shape {
     row: Vec<usize>,
 }
 
-/// One stored row group as a scan holds it.
-///
-/// **It owns what was read of it** - the header, each wanted chunk's stored bytes, each
-/// column once something has decoded it - and borrows only what outlives the scan of its
-/// day: its entry in the frozen view, and the shape made for its schema. So it can be
-/// read in one place and its rows chosen and handed over in another.
+/// One stored row group as a scan holds it. It owns what was read of it, so it can be read
+/// in one place and its rows chosen and handed over in another.
 struct Unit<'v> {
     at: &'v Stored,
     shape: &'v Shape,
@@ -309,13 +238,8 @@ impl<'v> Unit<'v> {
         self.over(column, place)
     }
 
-    /// The bytes choosing this row group's rows may leave decoded in it: the bodies of
-    /// the terms' chunks, and of the time columns' where the window reads them or a fetch
-    /// is about to ask with them. Read off the header, before anything is decoded, and
-    /// never less than what is decoded: a term that leaves no row spares the next term's
-    /// column, and a `*` the directory answers spares its own. The same for a count,
-    /// which lets its columns go as soon as its rows are chosen: a batch is then cut where
-    /// it would be for a fetch, and what a batch holds does not depend on who asked.
+    /// The bytes choosing this row group's rows may leave decoded in it, read off the header
+    /// and never less than what is decoded; the same for a count, so a batch is cut alike.
     fn inflates(&self, ask: &Ask<'_>) -> u64 {
         let shape = self.shape;
         let times = ask.windowed() || ask.warms();
@@ -328,9 +252,8 @@ impl<'v> Unit<'v> {
             .sum()
     }
 
-    /// Each row's effective time, off the stored columns: the time column's instant, and
-    /// the arrival time's for a row that has none there. The arrival time is decoded only
-    /// when some row needs it.
+    /// Each row's effective time, off the stored columns. The arrival time is decoded
+    /// only when some row needs it.
     fn times(&self) -> Result<Instants<'_>, StoreError> {
         let ts = match self.shape.ts {
             Some(place) => instants(self.column(place)?).map_err(|bad| self.refused(bad))?,
@@ -345,12 +268,8 @@ impl<'v> Unit<'v> {
         }
     }
 
-    /// The effective time of row `r` as the row built of it would show it, for a scan
-    /// one of whose time columns is now text. `times` reads the stored value, and a date
-    /// in such a column is shown as the text it arrived as, which is what the visitor
-    /// will read the row's time from. So the one cell is printed and rendered as the row
-    /// would render it, and read as a row's value is read: the time column's, and the
-    /// arrival time's where that holds no instant.
+    /// The effective time of row `r` as the row built of it would show it, for a scan one of
+    /// whose time columns is now text: the visitor reads the row's time from the rendered text.
     fn seen_ts(&self, ask: &Ask<'_>, r: usize) -> Result<Option<i64>, StoreError> {
         let columns = [
             (self.shape.ts, ask.ts_is_text),
@@ -378,17 +297,13 @@ impl<'v> Unit<'v> {
     }
 }
 
-/// The rows of one row group, built one at a time for a visitor.
-///
-/// The columns a row is built of are decoded when the first row is built and not before,
-/// so a row group none of whose rows is built has none of them decoded: for a visitor
-/// that is asked first, that is most row groups.
+/// The rows of one row group, built one at a time for a visitor. Their columns are decoded
+/// when the first row is built, so a row group none of whose rows is built decodes none.
 struct Builder<'u> {
     unit: &'u Unit<'u>,
     ask: &'u Ask<'u>,
     /// One for each of `shape.row`: the column, and what was printed of it so far. A word
-    /// or a constant is printed once for the row group and copied after, as it was when
-    /// every chunk was printed whole.
+    /// or a constant is printed once for the row group and copied after.
     made: Option<(Vec<Col<'u>>, Vec<Memo>)>,
     row: Row,
 }
@@ -444,16 +359,8 @@ impl<'u> Builder<'u> {
     }
 }
 
-/// Which rows of a row group pass the window and the terms.
-///
-/// A function of the unit and the question alone. It decodes, inside the unit, the
-/// columns the window and the terms read, and stops at the first term that leaves no row:
-/// a later term's column is then not decoded at all.
-///
-/// A term is put to its column's typed values (`columns::hits`) and no cell is printed.
-/// **A debug build then chooses the rows a second time the plain way** (`slow_pick`) and
-/// stops if the two differ, so every scan a test runs is also a check of every compare it
-/// made. A release build chooses them once.
+/// Which rows of a row group pass the window and the terms, from typed values and stopping
+/// at the first term that leaves no row. A debug build checks each against `slow_pick`.
 fn pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
     let rows = unit.rows;
     let mut sel = Sel::all(rows);
@@ -475,9 +382,8 @@ fn pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
             sel = Sel::none(rows);
             break;
         };
-        // `*` is "present and not null", and a chunk's directory entry says that of every
-        // row at once when it can: no row of an all-null chunk, and every row of a chunk
-        // with no presence bitmap. Neither is decoded to find out.
+        // `*` is "present and not null", and a chunk's directory entry says that of every row
+        // at once when it can; neither case is decoded to find out.
         if matches!(term.want(), Want::Any) {
             let layout = unit.header.chunks[unit.shape.wanted[place]].layout;
             if layout == ALL_NULL {
@@ -511,12 +417,8 @@ fn pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
     Ok(sel)
 }
 
-/// `pick` by definition: every row's effective time read off its printed cells and asked
-/// the window, and every term asked of every row's printed cell, with no shortcut and no
-/// early way out.
-///
-/// What `pick` is held to. It decodes the chunks again for itself and leaves the unit as
-/// it found it, so that checking a scan does not change what the scan goes on to decode.
+/// `pick` by definition, cell by printed cell with no shortcut: what `pick` is held to. It
+/// decodes for itself and leaves the unit as found, so checking does not change the scan.
 fn slow_pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
     let rows = unit.rows;
     let mut sel = Sel::all(rows);
@@ -564,30 +466,8 @@ fn slow_pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
     Ok(sel)
 }
 
-/// The chosen rows of a row group to the visitor, and what the row group adds to the
-/// scan's counters. `false` once the limit is reached.
-///
-/// **Counted before anything is built.** `matched` is the rows that passed, up to the
-/// limit, and `scanned` the rows looked at to find them: every row of a row group read to
-/// its end, and the rows up to the last one taken where the limit stopped the scan. Both
-/// are what a walk of the rows one at a time counted, and neither depends on what the
-/// visitor reads or on which rows it takes.
-///
-/// **A visitor that keeps the newest rows is asked about each row first**, in storage
-/// order, with the time the built row would show, and the row is built only on a yes.
-/// When neither time column is text that time is the stored one, read off the time column
-/// for the whole row group; when one is, it is read a row at a time as the row would
-/// render it (`Unit::seen_ts`). A row group with no chosen row decodes no time column for
-/// this, and one with no row taken decodes no other column at all.
-///
-/// With the time goes whether it lies in the day the row group is stored under. A row is
-/// filed under the day of its time as it was read when the row arrived, and it is ranked
-/// by its time as it is read now. The two are one reading in a store written and read
-/// under one setting of the ladder. Where they are not - ten digits stored as an instant
-/// and read, under a narrower epoch window, as no instant at all - two rows of different
-/// days can come to one time and one position, and which of them a visitor keeps then
-/// depends on every row it was offered and in what order. So the visitor is told, and
-/// from the first such row on it takes every row, as it was always handed them.
+/// The chosen rows of a row group to the visitor, counted before any is built; `false` at
+/// the limit. A gated visitor is asked first, and told if the row's time is not in its day.
 fn hand(
     unit: &Unit<'_>,
     ask: &Ask<'_>,
@@ -659,9 +539,8 @@ fn hand(
     Ok(!done)
 }
 
-/// The rows not yet in a row group - moved aside first, then buffered - after the stored
-/// ones, because that is the position they will have once written. `base` is the day's
-/// stored rows. `false` once the limit is reached.
+/// The rows not yet in a row group, after the stored ones, because that is the position
+/// they will have once written. `base` is the day's stored rows; `false` at the limit.
 fn tail(view: &View, ask: &Ask<'_>, base: u64, v: &mut dyn Visitor, out: &mut Scan) -> bool {
     let limit = ask.opts.limit;
     let moved = view
@@ -684,9 +563,8 @@ fn tail(view: &View, ask: &Ask<'_>, base: u64, v: &mut dyn Visitor, out: &mut Sc
         out.matched += 1;
         if ask.wants != Wants::Nothing {
             let seq = base + k as u64;
-            // A visitor that keeps the newest rows is asked first here too, with the time
-            // the rendered row would show, so that a row it has no use for is not
-            // rendered; and told whether that time is in this day, as `hand` tells it.
+            // A visitor that keeps the newest rows is asked first here too, so that a row it has
+            // no use for is not rendered, and told whether that time is in this day.
             let asked = gated.then(|| ask.seen_ts_of(&b.row));
             if asked.is_none_or(|ts| v.wants_row(ts, seq, day_of(ts.unwrap_or(0)) == view.day)) {
                 // A whole row, whatever columns the visitor named: it is a row already.
@@ -713,14 +591,7 @@ const WINDOW_ROW_GROUPS: usize = 256;
 const WINDOW_BYTES: u64 = 32 * 1024 * 1024;
 
 /// The most chunk body, once inflated, that the row groups of one batch of a shared-out
-/// window may hold decoded: a batch is closed by the row group that reaches it.
-///
-/// **A window's bound is on stored bytes, and nearly every chunk is stored compressed.**
-/// A scan in turn holds one row group decoded. A window chosen whole held every one of
-/// its row groups' term columns decoded until each was handed over, and a day of long
-/// messages that repeat inflates a hundred times and more: 30 row groups of 438 KB as
-/// stored held 295 MB, where the scan in turn held 27. A row group closes at about 8 MB,
-/// so a batch of such row groups is four of them, one a thread.
+/// window may hold decoded: a window's bound is on stored bytes, and chunks inflate.
 const BATCH_BODY_BYTES: u64 = 32 * 1024 * 1024;
 
 /// One row group of a window that is chosen on the pool: the unit as it was read, and
@@ -730,18 +601,8 @@ struct Slot<'v> {
     sel: Option<Result<Sel, StoreError>>,
 }
 
-/// One day's rows - stored, then in memory - handed to the visitor. `false` once the
-/// limit is reached.
-///
-/// The day's row groups are taken a window at a time: the next row groups the time window
-/// does not prune, which the index says before a byte of them is read. With no scan
-/// threads, or in a scan they have nothing to do for (`Ask::fans`), a window is one row
-/// group, read, chosen and handed over before the next is looked at. Otherwise it is as
-/// many as the two bounds allow, and it is shared out (`together`) when it holds at least
-/// two row groups and enough rows to be worth waking a thread for, and the threads are
-/// free to take it (`Fan::turn`). A window that is not shared out is walked a row group
-/// at a time by the same lines as a window of one. Either way the same row groups are
-/// read on this thread and the same numbers are counted.
+/// One day's rows - stored, then in memory - handed to the visitor, its row groups taken a
+/// window at a time and shared out where that pays (`together`); `false` at the limit.
 pub(super) fn day(
     view: &View,
     ask: &Ask<'_>,
@@ -754,8 +615,7 @@ pub(super) fn day(
 }
 
 /// `day`, with what a batch of a shared-out window may hold decoded said by the caller:
-/// `BATCH_BODY_BYTES` for every scan, and a few bytes for a test that wants a window of
-/// three small row groups cut into batches.
+/// `BATCH_BODY_BYTES` for every scan, and a few bytes for a test that cuts a small window.
 fn day_by(
     view: &View,
     ask: &Ask<'_>,
@@ -842,23 +702,8 @@ fn day_by(
     Ok(tail(view, ask, base, v, out))
 }
 
-/// One window of a day with the pool, a batch at a time: the batch's row groups read
-/// here, in storage order; their rows chosen on this thread and the pool's; and handed
-/// over here, in storage order, before the next batch is read.
-///
-/// **The visitor and the counters are touched on this thread only, in the order they
-/// always were.** A thread that chooses a row group's rows is given the unit and the
-/// question and nothing else, and what it leaves behind is inside the unit.
-///
-/// **A batch is the next row groups of the window up to `batch` bytes of chunk body the
-/// choosing may leave decoded** (`Unit::inflates`), which is known once a row group's
-/// header is read and not before. So what a scan holds decoded at once is bounded by
-/// bytes, however many row groups its window has and however well they were compressed.
-/// A batch of one row group is chosen here: there is nobody to share one with.
-///
-/// **The error is the one a scan in turn would end on**: the first in storage order. A
-/// row group that cannot be opened or read ends the window before it, and its error
-/// waits until the row groups before it have been chosen and handed over.
+/// One window of a day with the pool, a batch at a time: read here, chosen on this thread
+/// and the pool's, handed over here in storage order. The error is the first in that order.
 #[allow(clippy::too_many_arguments)]
 fn together(
     view: &View,
@@ -953,14 +798,8 @@ fn together(
     stop.map_or(Ok(()), Err)
 }
 
-/// What is done with one row group of a batch between its read and its hand-over, on
-/// whichever thread took it: its rows are chosen, and the column a fetch is about to ask
-/// with is decoded.
-///
-/// **A row group nothing will be built from lets its decoded columns go here**, on the
-/// thread that decoded them: a count's, and one no row of which passed. `hand` reads no
-/// column of either, so they were held to its turn for nothing, and of a count that is
-/// every row group of the batch.
+/// What is done with one row group of a batch on whichever thread took it: its rows are
+/// chosen, then its columns let go if nothing will be built from them, or warmed for a fetch.
 fn choose(slot: &mut Slot<'_>, ask: &Ask<'_>) {
     let sel = pick(&slot.unit, ask);
     if let Ok(sel) = &sel {
@@ -975,14 +814,8 @@ fn choose(slot: &mut Slot<'_>, ask: &Ask<'_>) {
     slot.sel = Some(sel);
 }
 
-/// The column a gated fetch's `hand` decodes first whatever its rows hold, decoded where
-/// the unit is: the time column, or the arrival time's where the schema has no time
-/// column. **Decoded and left in the unit, and nothing built from it**: `Unit::times`
-/// would also make each row's instant, which is a borrow of the column where the column
-/// is one whole piece and a vector `hand` makes again where it is not. The arrival time
-/// of a row group whose time column has gaps is left to `hand`, which alone knows it is
-/// needed. An error here is dropped: the column stays undecoded and `hand` meets the same
-/// error in its turn.
+/// The column a gated fetch's `hand` decodes first, decoded where the unit is and left in
+/// it. An error here is dropped: `hand` meets the same error in its turn.
 fn warm(unit: &Unit<'_>, ask: &Ask<'_>, sel: &Sel) {
     if sel.is_empty() || !ask.warms() {
         return;
@@ -1014,16 +847,8 @@ mod tests {
     /// The newer day: one row group and two rows buffered.
     const NEWER: usize = UNIT + 2;
 
-    /// One row of the leaf `mixed` builds, in one of three shapes. `at` is the row's time
-    /// as its line writes it, `n` its number in its day.
-    ///
-    /// - Shape 0 has no `extra` key, a `note` that is null, and a `when` that is a date
-    ///   written with an offset.
-    /// - Shape 1 has a `level` that is a word, a number or a null by turns, a `note` that
-    ///   is there every other row, and a `when` that is a date or, every fifth row, `N/A`.
-    /// - Shape 2 has a `level` that is always the number 30, spelled `0030` every eighth
-    ///   row, and a `when` in epoch seconds; and one row in four has no time of its own
-    ///   and carries its arrival time instead, `arrived`.
+    /// One row of the leaf `mixed` builds, in one of three shapes that between them hold every
+    /// layout the tests below name. `at` is the row's time, `n` its number in its day.
     fn shaped(shape: usize, at: &str, n: usize, arrived: i64) -> Row {
         let line = match shape {
             0 => format!(
@@ -1085,22 +910,14 @@ mod tests {
         )
     }
 
-    /// One template over two days, with every kind of column a scan has to put a term to.
-    ///
-    /// The older day is three row groups of sixteen rows - `older` says what is in each -
-    /// and, when `in_memory`, five rows a flush has moved aside and five still buffered.
-    /// The newer day is one row group, and two buffered rows when `in_memory`. So there is
-    /// a column that is null in every row of a row group, a column in two pieces with nulls
-    /// beside them, a date in three spellings in a column a query may be told is text, a
-    /// time column some rows of which hold no time, and a key one row group's schema does
-    /// not have.
+    /// One template over two days, with every kind of column a scan has to put a term to:
+    /// `the_mixed_leaf_holds_the_layouts_it_is_for` says which.
     fn mixed(scratch: &Scratch, in_memory: bool) -> (DiskStore, Arc<DiskLeaf>) {
         mixed_on(scratch, in_memory, 0)
     }
 
     /// Row groups of sixteen rows, in a store whose scans may choose rows on `threads`
-    /// threads and share out every run of two row groups or more. Under two threads:
-    /// every scan in turn, as a store has it that was not asked for any.
+    /// threads and share out every run of two row groups or more.
     fn shared(threads: usize) -> DiskOptions {
         DiskOptions {
             scan_threads: threads,
@@ -1264,10 +1081,8 @@ mod tests {
         ]
     }
 
-    /// Windows over the mixed leaf, in nanoseconds: none; both days whole; one that cuts
-    /// the older day and holds the newer whole; one that cuts the older day's second and
-    /// third row groups and prunes its first; one that holds only rows in memory; the
-    /// newer day alone; and one with no beginning.
+    /// Windows over the mixed leaf, in nanoseconds: none, whole days, ones that cut and prune
+    /// row groups, one that holds only rows in memory, and one with no beginning.
     fn windows() -> Vec<(Option<i64>, Option<i64>)> {
         let at = |second: i64| Some(T0 + second * SECOND);
         vec![
@@ -1285,9 +1100,8 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_nanos(ns as u64)
     }
 
-    /// Every way the tests below ask the mixed leaf: each list of terms, under each
-    /// window, with `when` and the time column text and not, reading every column and
-    /// reading the ones a query that returns no rows would name.
+    /// Every way the tests below ask the mixed leaf: each list of terms, under each window,
+    /// with `when` and the time column text and not, reading every column or the named few.
     fn asks() -> Vec<(ScanOptions, Vec<Term>)> {
         let mut out = Vec::new();
         for (terms, _) in term_lists() {
@@ -1321,9 +1135,8 @@ mod tests {
         out
     }
 
-    /// A visitor that keeps what it is handed, says it reads what it was told to say, and
-    /// takes every day or declines every day. Asked about a row before the row is built,
-    /// it keeps what it was asked with, and has no use for the rows `refuses` names.
+    /// A visitor that keeps what it is handed and what it was asked, takes every day or
+    /// declines every day, and has no use for the rows `refuses` names.
     struct Keeps {
         wants: Wants,
         days: bool,
@@ -1365,9 +1178,8 @@ mod tests {
                 self.wants != Wants::Nothing,
                 "a visitor that reads nothing was handed a row"
             );
-            // A visitor that is asked first is handed a row straight after its ask, and
-            // the row shows the time it was asked with. Every test here names the time
-            // column `ts`.
+            // A visitor that is asked first is handed a row straight after its ask, and the row
+            // shows the time it was asked with. Every test here names the time column `ts`.
             if let Some((ts, asked, _)) = self.asked.last() {
                 assert_eq!(
                     (effective_ts(row, "ts"), seq),
@@ -1397,14 +1209,8 @@ mod tests {
         }
     }
 
-    /// What a visitor that keeps the newest rows was asked and handed, against the rows
-    /// the plain scan handed over, `plain`.
-    ///
-    /// `asked_first`: the scan had no number of rows to stop at. It was then asked about
-    /// every row that passed, in storage order, with the time that row shows and with
-    /// `placed` true - nothing here reads a row's time otherwise than it was stored - and
-    /// it was handed the rows it did not refuse and no others. Otherwise it was asked
-    /// about none and handed them all.
+    /// What a visitor that keeps the newest rows was asked and handed, against the plain scan's
+    /// rows: asked about every row that passed where `asked_first`, and about none otherwise.
     fn held_to_plain(v: &Keeps, plain: &[(Row, u64)], asked_first: bool, said: &str) {
         let asked: Vec<(Option<i64>, u64, bool)> = plain
             .iter()
@@ -1427,34 +1233,15 @@ mod tests {
             .to_vec()
     }
 
-    /// **The scan answers what the plain scan answers**, whatever the visitor reads.
-    ///
-    /// Over a leaf with every layout, for every list of terms under every window, stopped
-    /// by a limit and not: a visitor that reads nothing, one that reads a few columns, one
-    /// that reads whole rows and one that keeps the newest are each run beside the plain
-    /// scan, which builds every row and asks nobody what they read. All six counters must
-    /// be equal - the bytes among them, so nothing more and nothing less is read off the
-    /// disk - and so must the rows, their positions and their order: whole for the last
-    /// two visitors, and for the one that named columns, in those columns. A visitor that
-    /// reads nothing is handed nothing, and its count is still the count.
-    ///
-    /// The one that keeps the newest is asked about each row first where the scan has no
-    /// number of rows to stop at. It is run taking every row and refusing every third:
-    /// it must be asked about exactly the rows the plain scan hands over, in that order,
-    /// each with the time the row shows, and handed the ones it took. What it refuses is
-    /// still counted, so the counters are the plain scan's either way.
+    /// The scan answers what the plain scan answers whatever the visitor reads: counters, rows,
+    /// positions and order, and every ask of a visitor that keeps the newest.
     #[test]
     fn the_scan_answers_what_the_plain_scan_answers_whatever_is_read() {
         held_to_the_plain_scan_whatever_is_read(0);
     }
 
-    /// **And it answers the same with its row groups shared between threads.** The same
-    /// thirty thousand scans over the same leaf, in a store whose scans share out every
-    /// run of two row groups or more: the older day's three, wherever the scan has no
-    /// number of rows to stop at and there is something to decode. The counters, the
-    /// rows, their positions, their order and every ask of the visitor are the plain
-    /// scan's, as they are in turn; and more than a thousand runs were shared out, so
-    /// this is not the scan in turn passing twice.
+    /// And it answers the same with its row groups shared between threads, which the count of
+    /// runs shared out shows is not the scan in turn passing twice.
     #[test]
     fn the_scan_shared_between_two_threads_answers_what_the_plain_scan_answers() {
         held_to_the_plain_scan_whatever_is_read(2);
@@ -1479,10 +1266,8 @@ mod tests {
                     limit,
                     ..asking.clone()
                 };
-                // The visitors, whether each takes the days it is offered, and the rows
-                // each refuses when it is asked first. One that
-                // declines a day still has it counted: free when the day is whole inside
-                // the window and there is no term, and read otherwise.
+                // The visitors, whether each takes the days it is offered, and the rows each
+                // refuses when it is asked first. One that declines a day still has it counted.
                 let none: fn(u64) -> bool = |_| false;
                 let visitors = [
                     (Wants::Nothing, true, none),
@@ -1548,11 +1333,8 @@ mod tests {
         assert_eq!(shared_out == 0, threads < 2, "{shared_out} runs shared out");
     }
 
-    /// One template and one day whose time column a query may be told is text, written
-    /// every way a line writes a time: a date ending in `Z`, the same kind of date with
-    /// an offset, epoch seconds as a number and as a string of digits, and - one row in
-    /// seven - no time at all, the row going by its arrival time. Two row groups of
-    /// sixteen rows, then five rows moved aside and five buffered.
+    /// One template and one day whose time column a query may be told is text, written every
+    /// way a line writes a time, and by its arrival time where it has none.
     fn spelled(scratch: &Scratch, threads: usize) -> (DiskStore, Arc<DiskLeaf>) {
         let line = |n: usize| {
             let secs = 1_705_314_600 + n;
@@ -1594,27 +1376,15 @@ mod tests {
         (s, leaf)
     }
 
-    /// **A row is asked about with the time it then shows, and in the day it is stored
-    /// under.** A visitor that keeps the newest rows decides on a row from the time it is
-    /// asked with and ranks the row by the time it reads off it. Were those ever two
-    /// times, a row that belongs in an answer would go unbuilt, and only under a limit,
-    /// only once the heap is full.
-    ///
-    /// Over the mixed leaf and over one whose time column is written five ways, with the
-    /// time column text and not, under terms and windows: every row the visitor is handed
-    /// shows the time it was asked with (the visitor itself checks each one), in a row
-    /// group and in memory alike; it is asked about every row that passed, and handed the
-    /// ones it took; and **every row is `placed`**. A store written and read in one
-    /// process reads no time two ways, so a visitor is never told to stop trusting the
-    /// order - which would cost a fetch nothing but all of its speed, silently.
+    /// A visitor ranks a row by the time it reads off it: asked with another, a row that belongs
+    /// in an answer would go unbuilt, and only under a limit, once the heap is full.
     #[test]
     fn a_row_is_asked_about_with_the_time_it_shows_and_in_the_day_it_is_stored_under() {
         asked_about_with_the_time_it_shows(0);
     }
 
-    /// **And so it is where the row groups are shared between threads**: a thread that
-    /// chose a row group's rows may have decoded its time column first, and the time a
-    /// row is then asked about with is still the one it shows.
+    /// A thread that chose a row group's rows may have decoded its time column first, and the
+    /// time a row is asked about with is still the one it shows.
     #[test]
     fn a_row_of_a_scan_shared_between_two_threads_is_asked_about_with_the_time_it_shows() {
         asked_about_with_the_time_it_shows(2);
@@ -1631,9 +1401,8 @@ mod tests {
         let other = Scratch::new(&format!("scan-asked-spelled-{threads}"));
         let (s, spelled) = spelled(&other, threads);
 
-        // The second leaf's questions: nothing, a term, a window that cuts both row
-        // groups and the rows in memory, and both; each with the time column a date and
-        // with it text.
+        // The second leaf's questions: nothing, a term, a window that cuts both row groups and
+        // the rows in memory, and both; each with the time column a date and with it text.
         let mut spelled_asks = Vec::new();
         for terms in [vec![], vec![Term::any("n")], vec![Term::exact("n", "0012")]] {
             for (since, until) in [
@@ -1723,9 +1492,8 @@ mod tests {
         assert_eq!(shared_out == 0, threads < 2, "{shared_out} runs shared out");
     }
 
-    /// A term's column is read because the term is asked of it, whether or not the caller
-    /// named it among the columns to read: naming columns says what a row should hold, and
-    /// cannot make a term match nothing.
+    /// A term's column is read because the term is asked of it: naming columns says what a row
+    /// should hold, and cannot make a term match nothing.
     #[test]
     fn a_term_reads_its_column_whether_or_not_it_was_named() {
         let scratch = Scratch::new("scan-unnamed");
@@ -1750,13 +1518,8 @@ mod tests {
         assert!(some.bytes_read < all.bytes_read);
     }
 
-    /// What a visitor is promised by what it says it reads.
-    ///
-    /// One that names columns is handed, of a stored row, exactly the named columns its
-    /// row group has: not the terms' columns read beside them, and no entry for a column
-    /// the schema lacks. And a row group whose schema has no column for a term's key gives
-    /// no row, to `*` as to anything, while every one of its rows is still counted as
-    /// looked at.
+    /// A visitor that names columns is handed exactly the named columns its row group has; and
+    /// a row group with no column for a term's key gives no row, its rows still counted.
     #[test]
     fn a_visitor_is_handed_the_columns_it_named_and_no_others() {
         let scratch = Scratch::new("scan-named");
@@ -1815,15 +1578,8 @@ mod tests {
         }
     }
 
-    /// **The rows chosen from columns are the rows chosen cell by cell.** Over every row
-    /// group of the mixed leaf, for every list of terms under every window, with `when`
-    /// and the time column text and not: `pick`, which puts each term to its column's
-    /// typed values, selects exactly the rows `slow_pick` selects by printing every cell
-    /// and asking it.
-    ///
-    /// A debug build makes this comparison inside `pick`, on every row group of every
-    /// scan. Here the test makes it itself, so that it is made in a release build too, and
-    /// says how much it compared: selections of some rows, of every row and of none.
+    /// A debug build makes this comparison inside `pick`; here the test makes it itself, so
+    /// that it is made in a release build too, and says how much it compared.
     #[test]
     fn the_rows_chosen_from_columns_are_the_rows_chosen_cell_by_cell() {
         let scratch = Scratch::new("scan-pick");
@@ -1860,14 +1616,8 @@ mod tests {
             .collect()
     }
 
-    /// **A column is decoded when something asks for it, and not before.** Choosing the
-    /// rows of a row group decodes the columns the window and the terms read; a question
-    /// with neither decodes none, and so does `*` wherever the chunk's directory entry
-    /// already says which rows are null. Handing rows to a visitor that reads none decodes
-    /// nothing more, and asking a visitor about rows it then does not take decodes the
-    /// time it is asked with and nothing else. This is where the time goes when it goes
-    /// wrong: the answer would be the same with every column decoded, and several times
-    /// slower.
+    /// A column is decoded when something asks for it, and not before: the answer would be the
+    /// same with every column decoded, and several times slower.
     #[test]
     fn a_row_group_decodes_only_the_columns_it_is_asked_about() {
         let scratch = Scratch::new("scan-lazy");
@@ -1957,10 +1707,8 @@ mod tests {
         });
         assert!(built > 0);
 
-        // A visitor that is asked first and takes no row: the time column is decoded to
-        // ask it with - and the arrival time where some row has no time of its own - and
-        // no other column is, though each of them would be in a row. Then it takes one
-        // row, and the whole row group is decoded to build it.
+        // A visitor that is asked first and takes no row: only the time it is asked with is
+        // decoded. Then it takes one row, and the whole row group is decoded to build it.
         let ask = Ask::new(&base, &[], Wants::Newest);
         let mut fell_back = 0;
         each_unit(&frozen, &ask, |unit| {
@@ -2011,20 +1759,8 @@ mod tests {
             .collect()
     }
 
-    /// **A thread that chooses a row group's rows decodes what `hand` would decode next,
-    /// and leaves all of it behind.** After `pick` and `warm` the unit's decoded columns
-    /// are the ones `pick` decoded and - exactly when the visitor is asked first by the
-    /// stored time and some row was chosen - the one column `hand` reads that time from:
-    /// the time column, or the arrival time where the schema has no time column. Nothing
-    /// else, so no thread decodes a column the scan in turn would not have.
-    ///
-    /// Over row groups of every kind: a time column in one whole piece; one in two
-    /// pieces, some of whose rows hold no instant; a schema with no time column, whose
-    /// rows go by their arrival time; a schema with neither; and a time column that is
-    /// now text, where the time is read a row at a time and nothing is decoded ahead.
-    /// `hand`, for a visitor that then takes no row, decodes nothing more - **but for the
-    /// arrival time of a row group whose time column has rows without an instant**, which
-    /// is `hand`'s to find: only it knows the column is needed.
+    /// A thread that chooses a row group's rows decodes only what `hand` would decode next, so
+    /// no thread decodes a column the scan in turn would not have.
     #[test]
     fn a_task_decodes_the_column_a_fetch_asks_with_and_leaves_it_in_the_unit() {
         let scratch = Scratch::new("scan-warm");
@@ -2164,9 +1900,8 @@ mod tests {
         );
     }
 
-    /// One scan of a leaf by a visitor that takes every day, with the scan threads
-    /// `fan` in place of the store's own: what it counted, and the runs of row groups it
-    /// shared out.
+    /// One scan of a leaf with the scan threads `fan` in place of the store's own: what it
+    /// counted, and the runs of row groups it shared out.
     fn scan_with(
         leaf: &DiskLeaf,
         fan: &Arc<Fan>,
@@ -2184,17 +1919,8 @@ mod tests {
         (scan, fan.fanned() - before)
     }
 
-    /// **When a run of row groups is shared out, and when it is not.** Counted by the
-    /// runs a store's scan threads say they were given, before and after one scan of the
-    /// mixed leaf: an older day of three row groups of sixteen rows, a newer day of one.
-    ///
-    /// Shared out: a run of two row groups or more with something in it to decode before
-    /// the visitor is asked - a term, a window, or a fetch that is asked first - and at
-    /// least as many rows by the index as the store was told. Never: a run with fewer
-    /// rows; one row group alone; a scan that stops at a number of rows; a question with
-    /// no window and no term for a visitor that is handed every row or none, or that is
-    /// asked with a time read a row at a time; while an ingest body is in its task; and
-    /// while another scan holds the threads. The last two end when their cause does.
+    /// When a run of row groups is shared out and when it is not (`Ask::fans`, `Fan::turn`):
+    /// only with two row groups or more, enough rows, something to decode and the threads free.
     #[test]
     fn a_run_of_row_groups_is_shared_out_when_a_second_thread_has_something_to_do() {
         let scratch = Scratch::new("scan-fans");
@@ -2289,9 +2015,8 @@ mod tests {
         assert_eq!(out(&base, &term, Wants::Nothing), 1, "after it");
     }
 
-    /// A day of more row groups than one run holds is shared out a run at a time: six
-    /// hundred row groups of one row as two runs of two hundred and fifty-six and one of
-    /// eighty-eight, and counted as the plain scan counts them.
+    /// A day of more row groups than one run holds is shared out a run at a time, and counted
+    /// as the plain scan counts them.
     #[test]
     fn a_long_day_is_shared_out_a_run_of_row_groups_at_a_time() {
         const DAY_ROW_GROUPS: usize = 600;
@@ -2369,11 +2094,8 @@ mod tests {
         (s, leaf)
     }
 
-    /// **A scan told to stop reads no row group more.** A day of eight row groups, and
-    /// a visitor that says stop when it is handed its first row: the row group that row
-    /// is in is handed over whole, the second is never read, and the scan ends with
-    /// `Stopped` and not with a count. Told before it begins, a scan reads nothing; and
-    /// a stop nobody sets changes nothing.
+    /// A scan told to stop reads no row group more: the one the stop was said in is handed
+    /// over whole, and the scan ends with `Stopped` and not with a count.
     #[test]
     fn a_scan_told_to_stop_reads_no_row_group_more() {
         use crate::store::Stop;
@@ -2418,18 +2140,8 @@ mod tests {
 
     }
 
-    /// **A scan that fails ends on the first error in storage order, shared out or not.**
-    ///
-    /// A day of eight row groups. The third has a byte of a chunk flipped, and the sixth
-    /// is in a file that has since been removed. In turn, the scan hands over two row
-    /// groups and fails on the third's CRC, having never looked for the sixth. Shared
-    /// out, all eight are in one run, and the run is read before any of it is handed
-    /// over: the reading stops at the third, so the sixth is still never looked for, and
-    /// the scan must hand over the first two and no more, and fail with the same words.
-    /// A hundred times each, since what a thread finishes first must not show.
-    ///
-    /// With the byte put back, both fail on the file that is not there, and the visitor
-    /// has been handed the five row groups before it.
+    /// A scan that fails ends on the first error in storage order, shared out or not. Run a
+    /// hundred times each, since what a thread finishes first must not show.
     #[test]
     fn a_scan_fails_with_the_first_error_in_storage_order_shared_out_or_not() {
         use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
@@ -2510,9 +2222,8 @@ mod tests {
         assert_eq!(fan.fanned(), 400);
     }
 
-    /// `Frozen::visit` for a visitor that takes every day, with what a batch of a
-    /// shared-out run may hold decoded said by the test, and the scan threads `fan` in
-    /// place of the store's own.
+    /// `Frozen::visit` for a visitor that takes every day, with a batch's budget said by the
+    /// test and the scan threads `fan` in place of the store's own.
     fn visit_by(
         frozen: &Frozen,
         opts: &ScanOptions,
@@ -2550,14 +2261,8 @@ mod tests {
         sizes
     }
 
-    /// How a scan that may share out every run cuts each day of a frozen leaf into
-    /// batches of `batch` bytes: for each day shared out, the row groups in each batch.
-    ///
-    /// Said here from what a batch is, apart from the scan: of a day's row groups the
-    /// window does not prune, by the index, the next ones up to and with the one at which
-    /// the bytes their choosing may leave decoded reach `batch`. A day of fewer than two
-    /// such row groups, or of a scan with nothing for a second thread to do, is not
-    /// shared out at all.
+    /// How a scan that may share out every run cuts each day of a frozen leaf into batches of
+    /// `batch` bytes, said here from what a batch is, apart from the scan.
     fn batches_of(frozen: &Frozen, ask: &Ask<'_>, batch: u64) -> Vec<Vec<usize>> {
         let mut days = Vec::new();
         for view in &frozen.views {
@@ -2588,20 +2293,8 @@ mod tests {
         days
     }
 
-    /// **A run that is shared out is chosen a batch at a time, and answers what the scan
-    /// in turn answers.** A run's bound is on the bytes its row groups are stored in, and
-    /// a chunk that compresses a hundred times over inflates to a hundred times that; so
-    /// the row groups of a run are read, chosen and handed over a batch at a time, a
-    /// batch being closed by the row group at which the decoded bytes reach a budget.
-    ///
-    /// Over the mixed leaf, for every list of terms under every window and every visitor,
-    /// with the budget at one byte, at what the day's first row group inflates to and at
-    /// a byte more, at the three row groups' sum, and at no bound at all: the counters,
-    /// the rows, their positions and their order and every ask of the visitor are those
-    /// of the store with no scan threads, whose scan holds one row group at a time. And
-    /// the runs the threads say they were given are the batches of two row groups or
-    /// more, counted here from the headers: a batch of one is chosen on the thread that
-    /// asked, and is not a run shared out.
+    /// A run that is shared out is chosen a batch at a time, whatever the budget, and answers
+    /// what the scan in turn answers; a batch of one is not a run shared out.
     #[test]
     fn a_shared_out_run_is_chosen_a_batch_at_a_time_and_answers_what_the_scan_in_turn_answers() {
         let scratch = Scratch::new("scan-batches");
@@ -2630,10 +2323,8 @@ mod tests {
                 let in_turn = frozen.visit(&opts, &terms, &mut plain).expect("scan");
 
                 let ask = Ask::new(&opts, &terms, wants.clone());
-                // The budgets, from what the row groups of the oldest day frozen are
-                // counted for: one that every row group counted for anything reaches;
-                // one the first reaches exactly, and one it falls a byte short of; one
-                // only the last reaches; and one nothing reaches.
+                // The budgets, from what the oldest day's row groups are counted for: one every row
+                // group reaches, one the first just reaches, one it just misses, the sum, and none.
                 let oldest = frozen.views.last().expect("a day");
                 let sizes = inflated(oldest, &ask);
                 let budgets = [
@@ -2682,11 +2373,8 @@ mod tests {
         assert_eq!(BATCH_BODY_BYTES, 32 * 1024 * 1024);
     }
 
-    /// **What a batch may hold decoded is counted off the header, and is never less than
-    /// what choosing its rows decodes.** For every row group of the mixed leaf under
-    /// every question: the bodies of the columns `pick` and `warm` leave decoded sum to no
-    /// more than `Unit::inflates` said before anything was decoded. Without this a batch
-    /// could be closed late, and hold more than its budget.
+    /// What a batch may hold decoded is counted off the header, and is never less than what
+    /// choosing its rows decodes: without this a batch could be closed late, over its budget.
     #[test]
     fn a_row_group_is_counted_for_at_least_what_choosing_its_rows_decodes() {
         let scratch = Scratch::new("scan-inflates");
@@ -2722,11 +2410,8 @@ mod tests {
         );
     }
 
-    /// **A row group nothing will be built from holds no decoded column once its rows
-    /// are chosen**: a count's, and one no row of which passed. Of every other the thread
-    /// that chose its rows leaves what `pick` and `warm` leave, as before. Either way the
-    /// rows chosen are `pick`'s, and `hand` then hands over and counts what it does for a
-    /// row group nobody touched in between - so letting the columns go lost nothing.
+    /// A row group nothing will be built from holds no decoded column once its rows are
+    /// chosen, and `hand` then counts and hands over as before: letting them go lost nothing.
     #[test]
     fn a_row_group_nothing_is_built_from_lets_its_columns_go_once_its_rows_are_chosen() {
         let scratch = Scratch::new("scan-choose");
@@ -2790,13 +2475,8 @@ mod tests {
         );
     }
 
-    /// **And a scan that fails ends on the same error, with the same rows handed over,
-    /// however its run is cut into batches.** The day of eight row groups in two files,
-    /// broken as the test above breaks it: the third row group's CRC, and then the file
-    /// that holds the sixth. Cut into batches of one row group, of two, of three and of
-    /// all eight, the error is met reading the first row group of a batch, or the last,
-    /// or one between, with the batches before it already handed over; each time the scan
-    /// says what the scan in turn says and has handed over what that one had.
+    /// A scan that fails ends on the same error, with the same rows handed over, however its
+    /// run is cut into batches: the error met first, last or mid-batch.
     #[test]
     fn a_scan_cut_into_batches_fails_with_the_error_and_the_rows_of_the_scan_in_turn() {
         use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
@@ -2813,11 +2493,8 @@ mod tests {
         let (first, second) = (stored[0].file.path.clone(), stored[5].file.path.clone());
         let third = &stored[2].entry;
         let at = third.offset + u64::from(third.frame_len);
-        // The budgets for each visitor, taken before anything is broken, from what a
-        // row group is counted for. Each of the first four is counted the same, and the
-        // fifth for no less and at most twice that. So there is a budget every row group
-        // reaches, one that two of the first four reach and one does not, one that three
-        // reach and two do not, and one nothing reaches.
+        // The budgets for each visitor, taken before anything is broken: one every row group
+        // reaches, ones that two and three of the first four reach, and one nothing reaches.
         let budgets = |wants: &Wants| -> [u64; 4] {
             let sizes = inflated(&frozen.views[0], &Ask::new(&opts, &terms, wants.clone()));
             let one = sizes[0];

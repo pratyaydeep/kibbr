@@ -1,11 +1,6 @@
-//! The format held to its hand-built test vectors and to its own recovery rule.
-//!
-//! `testdata/v3/` holds three files built by hand to the bytes, each with an annotated dump
-//! beside it, and the nine lines they hold. A reader written from the byte specification
-//! must read them back value for value; the builder must make the same rows into the same
-//! pieces; and recovery must append the exact footer the cut file's dump ends with. Beside
-//! them is `encodings.col`, which the encoding writer made: every later build must read
-//! it, and the builder must remake it body for body.
+//! The format held to its test vectors and to its own recovery rule:
+//! a reader must read them back value for value, the builder must make the same rows into
+//! the same pieces, and recovery must append the exact footer the cut file's dump ends with.
 
 use std::path::{Path, PathBuf};
 
@@ -126,13 +121,8 @@ fn the_two_template_vector_reads_back_value_for_value() {
     assert_eq!(walked.index.schemas, index.schemas);
 }
 
-/// The builder makes these rows into the vector's row groups: the choice of groups, pieces
-/// and forms is a rule, so the same rows always make the same pieces. The vector was built
-/// by hand before the encodings and is plain throughout, where the builder lays
-/// each piece out in its own encoding - so the header, every chunk's layout and every
-/// piece's form must be the vector's, and every value must read back the same; the bytes
-/// the encodings change are held to `encodings.col`. Row groups 0 and 2; row group 1
-/// carries an optional section no writer here produces.
+/// The choice of groups, pieces and forms is a rule, so the builder makes the
+/// vector's pieces; its bytes differ, the vector being plain, and are held by `encodings.col`.
 #[test]
 fn the_builder_makes_the_vectors_row_groups_into_the_same_pieces() {
     let bytes = std::fs::read(vectors().join("two_templates.col")).expect("read");
@@ -215,12 +205,8 @@ fn the_builder_makes_the_vectors_row_groups_into_the_same_pieces() {
 
 // ── What the encodings wrote ──────────────────────────────────────────────────────
 
-/// `encodings.col` is the file the loader wrote from `encodings.ndjson`'s twelve lines: one
-/// row group holding every encoding and both compressions - constants, word lists
-/// with nulls and with literal rows, differences in two units, integers beside a text piece,
-/// bits of two JSON kinds, raw UUIDs, addresses in two pieces, floats beside a text piece.
-/// Every later build is held to reading it value for value, as this one is to the plain
-/// vector.
+/// `encodings.col` holds every encoding and both compressions in one row group;
+/// every later build is held to reading it value for value.
 #[test]
 fn the_encodings_vector_reads_back_value_for_value() {
     let path = vectors().join("encodings.col");
@@ -257,9 +243,8 @@ fn the_encodings_vector_reads_back_value_for_value() {
     );
 }
 
-/// The builder makes the vector's row group from its lines, piece for piece and body for
-/// body: the encodings are rules too, so the same rows always make the same bytes. Bodies
-/// are compared before zstd, whose bytes belong to the library's version, not the format.
+/// The encodings are rules too, so the same rows always make the same bytes; bodies are
+/// compared before zstd, whose bytes belong to the library's version, not the format.
 #[test]
 fn the_builder_makes_the_encodings_vector_body_for_body() {
     let path = vectors().join("encodings.col");
@@ -421,10 +406,8 @@ fn built_file(dir: &Path) -> (PathBuf, Vec<Value>) {
     (path, want)
 }
 
-/// The truncation test: a copy of a file cut at every byte offset from 0 to its length is
-/// either the whole sealed file, or unsealed and recovered to exactly the row groups
-/// wholly before the cut - every one read back value for value, none partly, none twice -
-/// and sealed so that it opens through its footer.
+/// A file cut at every byte offset is either the whole sealed file, or recovered to exactly
+/// the row groups wholly before the cut - none partly, none twice - and sealed.
 fn every_cut(original: &Path, want: &[Value], scratch: &Scratch) {
     let whole = std::fs::read(original).expect("read");
     let full = open_sealed(original).expect("readable").expect("sealed");
@@ -513,12 +496,8 @@ fn a_built_file_cut_at_every_byte_offset_recovers_the_whole_row_groups_before_th
 
 // ── What goes in comes back out ────────────────────────────────────────────────────
 
-/// Every spelling a value must come back in - zero-padded and signed integers, each RFC 3339
-/// variation, epochs as numbers and as strings, a boolean's case, UUIDs and IPv6 in each
-/// spelling, integers past `i64`, floats that do not print back, an array, null and the
-/// empty string: through the real parser, the builder and the reader, each value comes back
-/// as the JSON value that was ingested - a string character for character, a number as the
-/// same number.
+/// Every spelling a value must come back in, through the real parser, the builder and the
+/// reader: a string character for character, a number as the same number.
 #[test]
 fn every_named_spelling_comes_back_as_it_was_ingested() {
     let values = [

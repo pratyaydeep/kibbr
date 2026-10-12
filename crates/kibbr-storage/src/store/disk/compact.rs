@@ -1,42 +1,8 @@
 //! Compaction: a day the live door has finished with, rebuilt into full row groups in
-//! finished files.
+//! finished files and swapped in with one `replace` record.
 //!
-//! The live door closes a row group whenever a timeout fires, so a day arrives as
-//! thousands of small ones over however many files the size cap and the cap on open days
-//! cut. Compaction reads them back, cuts each template's rows into row groups at the same
-//! thresholds a load uses, encodes them through the one builder at the finished level, and
-//! swaps the two sets of files with one `replace` record. Nothing a query can see moves:
-//! not a row, and not a row's position among its template's rows of the day.
-//!
-//! **Three steps, and the flush's lock is held for the first and the last only.**
-//!
-//! - `begin`, under the lock: the day's buffered rows are written and its open file
-//!   sealed; the inputs are chosen; their row groups are copied out of the leaves; and
-//!   the output files' numbers are reserved.
-//! - `rebuild`, with no lock of the store's held: minutes of reading and encoding, during
-//!   which the live door flushes, loads commit and queries run as if nothing were
-//!   happening. The outputs are written in the day's own directory under the reserved
-//!   names. Until the record names them they are files nobody named, which a start
-//!   deletes.
-//! - `commit`, under the lock again: the inputs are checked to be what they were, the one
-//!   record is appended, and the outputs take the inputs' place in every leaf in the hold
-//!   a query's snapshot waits on.
-//!
-//! **The inputs are the trailing run**: the day's live files that are sealed, not finished,
-//! and sort after every finished file of the day. A file left of a finished one - a load
-//! into a day the live door had already written - stays as it is. Every file of the day
-//! that survives then sorts before every input, the outputs are numbered where the inputs
-//! were, and the day's row groups are in the same order before, after, and after a restart
-//! that reads them by path.
-//!
-//! **Numbers are reserved at the start**, from the counter the live door opens files by.
-//! A row for the day that arrives during the rebuild opens a file numbered after the whole
-//! reservation, so it sorts after the outputs as its rows sorted after the inputs'.
-//!
-//! **A stop at any moment leaves every row once.** Before the record is durable the
-//! outputs are unnamed and the next start deletes them; after it the inputs are, and it
-//! deletes those. No output is named until it is sealed and flushed, so nothing torn is
-//! ever part of the database.
+//! Three steps - `begin`, `rebuild`, `commit` - and the flush's lock is held for the first
+//! and the last only; a stop at any moment leaves every row once.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -61,23 +27,21 @@ use crate::store::{
 };
 use kibbr_core::types::ColValue;
 
-/// Input files kept open for reading at once. A template's row groups are read file by
-/// file in path order, so a day cut into more files than this reopens each of them once a
-/// template and no more; a descriptor per input would take a day of a thousand files past
-/// the limit the live door's own files and the sockets share.
+/// Input files kept open for reading at once: a descriptor per input would take a day of
+/// many files past the limit the live door's files and the sockets share.
 const MAX_READERS: usize = 64;
 
 /// How a caller runs a compaction.
 pub struct CompactOptions {
-    /// Threads row groups are encoded on. Held to `1..=cores`.
+    /// Threads row groups are encoded on, held to `1..=cores`.
     pub threads: usize,
-    /// Set to stop it: looked at between the row groups it reads and before every file it
-    /// seals. A cancelled compaction removes what it wrote and changes nothing.
+    /// Set to stop it, looked at between the row groups it reads and before every file it
+    /// seals; a cancelled compaction removes what it wrote and changes nothing.
     pub cancel: Arc<AtomicBool>,
 }
 
-/// What compacting one day did. A day with nothing to compact is `compacted: false`, every
-/// count zero: no record was written.
+/// What compacting one day did; a day with nothing to compact is `compacted: false`, every
+/// count zero.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Compacted {
     pub day: String,
@@ -97,9 +61,8 @@ pub struct Compacted {
     pub removed: Vec<String>,
 }
 
-/// A day that is due, and its inputs as one number - their paths and file ids hashed - so
-/// a caller that remembers a failed day can tell whether what failed is still what is
-/// there.
+/// A day that is due, and its inputs hashed to one number, so a caller that remembers a
+/// failed day can tell whether what failed is still there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Due {
     /// Days since the epoch.
@@ -119,19 +82,14 @@ struct Input {
 
 /// One template's row groups in the inputs, in storage order.
 struct Template {
-    /// The leaf's time column: what a rebuilt row group's time range is read from. `None`
-    /// for a template no leaf is open for - no catalog record names it, so nothing here
-    /// knows its time column - whose row groups are copied as they are.
+    /// The leaf's time column, which a rebuilt row group's time range is read from; `None`
+    /// for a template no leaf is open for, whose row groups are copied as they are.
     time_column: Option<String>,
     stored: Vec<Stored>,
 }
 
-/// A compaction between `begin` and `commit`.
-///
-/// **It holds the inputs' row groups, and so their files.** Each `Stored` is the leaf's
-/// own, `Arc<DataFile>` and all: a replace-a-day that retires the day meanwhile cannot
-/// delete a file while this still reads it, and the rebuild reads exactly the row groups
-/// the leaves answered from when it began - nothing found by listing a directory.
+/// A compaction between `begin` and `commit`. It holds the inputs' row groups and so their
+/// files: a replace-a-day meanwhile cannot delete a file this still reads.
 struct Job {
     day: i64,
     began: Instant,
@@ -163,12 +121,8 @@ struct Outputs {
 }
 
 impl DiskStore {
-    /// Compact `day`, as days since the epoch, whatever its age: its trailing unfinished
-    /// files rebuilt into finished ones and swapped in with one manifest record. A day
-    /// with nothing to compact writes nothing and is no error.
-    ///
-    /// `Cancelled` and `InputsChanged` are not failures: the first is the caller's own
-    /// doing, and the second a load that replaced the day and left nothing to compact.
+    /// Compact `day`, as days since the epoch, whatever its age, with one manifest record;
+    /// `Cancelled` and `InputsChanged` are not failures.
     pub fn compact_day(&self, day: i64, opts: &CompactOptions) -> Result<Compacted, StoreError> {
         let Some(job) = self.begin(day)? else {
             return Ok(Compacted {
@@ -185,19 +139,8 @@ impl DiskStore {
         }
     }
 
-    /// The days that are due at `today`, as days since the epoch: one short hold of the
-    /// flush's lock.
-    ///
-    /// **A day is due the day after its last live row.** It is before `today`; it has a
-    /// file compaction would take; no file of it was found sharing another day's rows; and
-    /// the live door last wrote a row group into it on a day before `today` - a day still
-    /// taking late rows is left until a day passes without one, rather than rebuilt after
-    /// each. A day holding a file only a restart can seal is left out, as `compact_day`
-    /// would refuse it; and so is every day while a commit is unsettled.
-    ///
-    /// **And only once all of it is behind the write-ahead log's checkpoint**
-    /// (`ahead_of_checkpoint`): the scheduler rebuilds no day the log could still replay
-    /// a line into.
+    /// The days due at `today`, as days since the epoch: before `today`, no live row group
+    /// written since, and all of it behind the write-ahead log's checkpoint.
     pub fn due_days(&self, today: i64) -> Vec<Due> {
         let files = lock(&self.files);
         if !files.uncertain.is_empty() || !files.unmoved.is_empty() {
@@ -227,14 +170,8 @@ impl DiskStore {
             .collect()
     }
 
-    /// The days the write-ahead log has delivered rows of that are not all in a row group
-    /// and behind its checkpoint: a day with a row still in memory, or one the checkpoint
-    /// has not passed the highest position this process has seen in. None, with no log.
-    /// One hold of each leaf's lock, whatever the number of days.
-    ///
-    /// What the scheduler waits for. A day asked for by name is not held to it - its
-    /// buffered rows are written as the compaction begins, and a replay holds a record
-    /// against a rebuilt row group's range as it does against any other (`wal_ranges`).
+    /// The days the log has delivered rows of that are not all in a row group and behind its
+    /// checkpoint. What the scheduler waits for; a day asked for by name is not held to it.
     fn ahead_of_checkpoint(&self, files: &Files) -> BTreeSet<i64> {
         if self.stream.load(Ordering::Relaxed) == 0 {
             return BTreeSet::new();
@@ -253,14 +190,8 @@ impl DiskStore {
         ahead
     }
 
-    /// The days that hold a file compaction would take, due or not: one short hold of the
-    /// flush's lock.
-    ///
-    /// What a failure is remembered against, where `due_days` is what is tried. The two
-    /// differ by exactly the days that are still failing and not due - one holding a file
-    /// only a restart seals, a day sharing a file with another, every day while a commit
-    /// is unsettled - so a caller that forgot the days `due_days` leaves out would forget
-    /// those.
+    /// The days that hold a file compaction would take, due or not: what a failure is
+    /// remembered against, where `due_days` is what is tried.
     pub fn compactable_days(&self) -> BTreeSet<i64> {
         let files = lock(&self.files);
         let days: BTreeSet<i64> = files
@@ -273,28 +204,8 @@ impl DiskStore {
             .collect()
     }
 
-    /// The first step, in one hold of the flush's lock: refuse a day that cannot be
-    /// compacted as it stands, write and seal what the day still has in memory, choose the
-    /// inputs, copy their row groups out of the leaves, and reserve the outputs' numbers.
-    /// `None` when the day has nothing to compact - and then nothing was written beyond
-    /// the flush.
-    ///
-    /// **An unsealed file that is not the one being written refuses the day.** A seal that
-    /// failed, or a write that could not be cut back, leaves a file named, unsealed and no
-    /// longer open, its row groups still in the leaves; only the next start's recovery
-    /// seals it. Compacting around it would put the files either side of it into an output
-    /// numbered after it: their rows would move behind its rows, in a day of nothing but
-    /// live rows, and move again when a later compaction took the recovered file.
-    ///
-    /// **A flush that fails here is not reported as a compaction that changed nothing.**
-    /// Its rows are back in their buffers, but it may have written other row groups of the
-    /// day first, and a seal that failed has left the day's file for the next start - so
-    /// the error says which, and never that the day's files are as they were.
-    ///
-    /// **The row groups come from the leaves**, and are held to the manifest's row count
-    /// file by file: what is rebuilt is what queries were answered from, and a file whose
-    /// row groups are not all in a leaf or waiting for one is refused rather than rebuilt
-    /// short.
+    /// The first step, in one hold of the flush's lock; `None` when the day has nothing
+    /// to compact. The row groups come from the leaves: what queries were answered from.
     fn begin(&self, day: i64) -> Result<Option<Job>, StoreError> {
         let began = Instant::now();
         let mut files = lock(&self.files);
@@ -495,10 +406,8 @@ impl DiskStore {
             input.rows = found;
         }
 
-        // One file more than the inputs' bytes fill, since a file is sealed only once it
-        // is past the cap - and never more files than there are row groups to put in
-        // them. A number not used stays a gap; a rebuild that needs more than it has puts
-        // the rest into the last, the cap being a soft one already.
+        // One file more than the inputs' bytes fill, since a file is sealed only once it is past
+        // the cap, and never more files than row groups. A number not used stays a gap.
         let wanted = bytes_in
             .div_ceil(self.segment_max_bytes.max(1))
             .saturating_add(1)
@@ -522,9 +431,8 @@ impl DiskStore {
         }))
     }
 
-    /// The second step, holding no lock of the store's: every template's row groups read
-    /// back and written into the reserved files, each sealed and flushed. Whatever fails,
-    /// nothing is published and the caller abandons the job.
+    /// The second step, holding no lock of the store's. Whatever fails, nothing is published
+    /// and the caller abandons the job.
     fn rebuild(&self, job: &Job, opts: &CompactOptions) -> Result<Outputs, StoreError> {
         // A panic here would otherwise leave the day marked as being compacted for the
         // life of the process, and its half-written files with it.
@@ -552,9 +460,8 @@ impl DiskStore {
         };
         let mut readers = Readers::default();
         for (id, template) in &job.templates {
-            // A replace-a-day took the day: what is being rebuilt is no longer its rows.
-            // The files are still readable - this job holds them - but there is nothing
-            // to gain by reading on.
+            // A replace-a-day took the day: what is being rebuilt is no longer its rows, and there
+            // is nothing to gain by reading on.
             if let Some(file) = job.files.iter().find(|f| f.is_retired()) {
                 return Err(StoreError::InputsChanged {
                     day: day_name(job.day),
@@ -620,17 +527,8 @@ impl DiskStore {
         Ok(Outputs { files })
     }
 
-    /// The third step, in one hold of the flush's lock: the inputs checked, the one record,
-    /// and the publish. The record is the commit.
-    ///
-    /// **Record and publish in one hold.** A replace-a-day between the two would retire
-    /// the outputs by path - they are the day's live files by then - while the leaves
-    /// still held the inputs.
-    ///
-    /// **The inputs are deleted after the lock is released.** Retiring a file unlinks it
-    /// when its last reader lets go, which with no query reading is at once: a day of
-    /// fragmented files unlinked under the flush's lock would hold every tick behind it.
-    /// So this job, which holds each of them, lets go last and outside.
+    /// The third step. Record and publish share one hold of the lock; the inputs are
+    /// unlinked after it is released, so a day of files does not hold every tick behind it.
     fn commit(&self, job: Job, outputs: Outputs) -> Result<Compacted, StoreError> {
         let mut files = Unlatch(lock(&self.files));
         match self.commit_locked(&mut files.0, &job, &outputs) {
@@ -710,10 +608,8 @@ impl DiskStore {
                 return Err(failed(job.day, e.into()))
             }
             Err(source) => {
-                // A write or a flush failed partway. The log cut the record back; if that
-                // cut is itself flushed, the record is certainly not on disk and this is
-                // an ordinary failure. If it is not - or the cut failed - the record may
-                // be there whole, and then it is the commit: both sets of files stay.
+                // A write or flush failed partway. Unless the log's cut of the record is itself
+                // flushed, the record may be on disk whole, and then it is the commit.
                 if !files.manifest.is_torn() && files.manifest.sync().is_ok() {
                     return Err(failed(job.day, source.into()));
                 }
@@ -753,16 +649,8 @@ impl DiskStore {
         Ok(())
     }
 
-    /// Give up a job that will not commit: delete whatever was written under its reserved
-    /// names, and hand the numbers back if the day has taken none since - so a day that
-    /// fails every time it is tried does not walk its file numbers away.
-    ///
-    /// **The numbers go back only once every reserved name is gone.** A file that could
-    /// not be deleted still holds its name: handed back, that number is the one the live
-    /// door creates the day's next file under, and every flush of the day then fails on a
-    /// file that exists - as does the flush a retry of the compaction begins with, so the
-    /// retry never gets as far as deleting it. Kept, the numbers are a gap, as after a
-    /// commit; the file is nobody's, and the next start deletes it.
+    /// Give up a job that will not commit: delete what it wrote under its reserved names, and
+    /// hand the numbers back only if every name is gone - a file left would block the day's next.
     fn abandon(&self, job: Job) {
         let dir = self.base.join(DATA_DIR).join(day_name(job.day));
         let end = job.first.saturating_add(job.reserved);
@@ -796,17 +684,7 @@ impl DiskStore {
 }
 
 /// The flush's lock as a commit holds it: let go by a panic, it takes the day's latch off.
-///
-/// **A panic under the lock would otherwise leave the day marked as being compacted for
-/// the life of the process**, and every later compaction of any day refused as busy.
-///
-/// **A guard, and not the `catch_unwind` the rebuild has.** A panic there is always before
-/// the record, so it can be turned into a failure that removes the outputs. One here may
-/// fall either side of the record, and what to delete is the opposite on each: so only
-/// the latch is touched, every file stays for the next start's manifest to choose
-/// between, and the panic goes on to the caller, which reports the job failed. Only on a
-/// panic: a commit that returns settles the latch itself, and one that hands the job to
-/// `abandon` keeps it on until the outputs are removed.
+/// A guard, not `catch_unwind`: a panic here may fall either side of the record.
 struct Unlatch<'a>(MutexGuard<'a, Files>);
 
 impl Drop for Unlatch<'_> {
@@ -865,8 +743,7 @@ fn failed(day: i64, e: StoreError) -> StoreError {
 }
 
 /// The files compaction takes from `day`: its live files after the last finished one, in
-/// path order. Unsealed ones included - the file being written is one of them until
-/// `begin` seals it.
+/// path order, the unsealed file being written included until `begin` seals it.
 fn trailing(live: &BTreeMap<String, FileRecord>, day: i64) -> Vec<&FileRecord> {
     let prefix = format!("{}/", day_name(day));
     let mut run = Vec::new();
@@ -921,9 +798,8 @@ fn free_bytes(dir: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
     let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: `path` is a NUL-terminated string that outlives the call, and `stat` is
-    // room for one `statvfs`, which the call fills when it returns 0 - the only case in
-    // which it is read.
+    // SAFETY: `path` is NUL-terminated and outlives the call, and `stat` is room for one
+    // `statvfs`, read only when the call returns 0 and has filled it.
     let stat = unsafe {
         if libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) != 0 {
             return None;
@@ -1023,14 +899,7 @@ fn widened(a: Source, b: Source) -> Source {
 }
 
 /// One template's row groups, decoded in storage order and cut into batches as a load cuts
-/// them: at `limits.rows` rows or `limits.bytes` of payload.
-///
-/// **In their order, and never sorted**: a row's position is the rows of its template and
-/// day before it, so the rows go out in the order they are stored in and only the row
-/// group boundaries move. **Every column, every row**: no projection, no window, no
-/// rendering - what was ingested is what the builder is handed again. **Only row groups of
-/// one stream are merged**: where the next one's source kind or stream differs, the batch
-/// closes first.
+/// them; never sorted, and only row groups of one stream are merged.
 fn merge(
     job: &Job,
     template_id: u64,
@@ -1068,10 +937,8 @@ fn merge(
                     }
                     .into());
                 };
-                // A row that carried its own time has no arrival time, and a row group it
-                // shared with one that fell back reads it a null there. Left out, the row
-                // is the row the live door buffered, and the schema it is rebuilt under
-                // the one the live door would have written.
+                // A row that carried its own time reads a null arrival time in a row group it
+                // shared with one that fell back. Left out, it is the row the live door buffered.
                 if name == RECEIVED_AT_COLUMN && matches!(value, ColValue::Null) {
                     continue;
                 }
@@ -1114,9 +981,8 @@ fn merge(
     }
 }
 
-/// Every batch's row group, encoded on up to `threads` threads at once, in batch order:
-/// through the one builder, at the level a finished file is written at. An encoder that
-/// panics fails its batch, and with it the compaction, rather than the process.
+/// Every batch's row group, encoded on up to `threads` threads, in batch order. An encoder
+/// that panics fails its batch, and with it the compaction, rather than the process.
 fn encode_all(batches: &[Batch], threads: usize) -> Vec<EncodedRowGroup> {
     let encode = |batch: &Batch| {
         let refs: Vec<&Row> = batch.rows.iter().collect();
@@ -1172,12 +1038,7 @@ fn encode_all(batches: &[Batch], threads: usize) -> Vec<EncodedRowGroup> {
 // ── Writing the outputs ────────────────────────────────────────────────────────────
 
 /// Where a rebuild's row groups go: the reserved files, one at a time, in number order.
-///
-/// **A file is created with the first row group it holds**, never ahead of one - inputs
-/// that hold no row group make no output at all - and sealed once an append takes it past
-/// the size cap, so every file but the last is at least that long. Batches wait here until
-/// there are enough to encode side by side, and are appended in the order they closed: a
-/// template's row groups stay together, in order, across however many files they span.
+/// A file is created with its first row group, so inputs holding none make no output.
 struct Sink<'a> {
     job: &'a Job,
     dir: PathBuf,
@@ -1240,9 +1101,8 @@ impl Sink<'_> {
         Ok(self.writer()?.schema_id(columns)?)
     }
 
-    /// Append a row group framed against a schema id `schema_id` just gave, and seal the
-    /// file if that took it past the cap - unless it is the last one reserved, which takes
-    /// whatever is left.
+    /// Append a row group, and seal the file if that took it past the cap - unless it is the
+    /// last one reserved, which takes whatever is left.
     fn put(&mut self, template_id: u64, rg: &RowGroup) -> Result<(), StoreError> {
         let max_bytes = self.max_bytes;
         let writer = self.writer()?;
@@ -1377,9 +1237,8 @@ mod tests {
         out
     }
 
-    /// Many small row groups over several files become a few full ones in finished files,
-    /// with one record, and nothing a query reads moves: every row, in its order, at its
-    /// position - before a restart and after.
+    /// Many small row groups over several files become a few full ones in finished files, with
+    /// one record, and nothing a query reads moves - before a restart and after.
     #[test]
     fn a_compacted_day_reads_back_row_for_row_from_fewer_full_row_groups() {
         let scratch = Scratch::new("compact-whole");
@@ -1501,10 +1360,8 @@ mod tests {
             .collect()
     }
 
-    /// Rows that carry their own time and rows that fell back to their arrival time share
-    /// a template, and so a row group: merged, a row that had no arrival time is beside
-    /// rows that have one. Tied times, three templates, files cut mid-template on both
-    /// sides - and every row is shown as it was, where it was.
+    /// Rows that carry their own time and rows that fell back to their arrival time share a
+    /// row group: merged, every row is shown as it was, where it was.
     #[test]
     fn rows_with_and_without_an_arrival_time_are_shown_as_they_were() {
         let scratch = Scratch::new("compact-arrival");
@@ -1564,10 +1421,8 @@ mod tests {
         out
     }
 
-    /// A row group the live door closed over rows of both kinds has the arrival-time
-    /// column, null in every row that carried its own time. Rebuilt into a row group of
-    /// such rows only, those nulls are not columns: its schema is the one the live door
-    /// would have written for the same rows, with no arrival time in it.
+    /// Rebuilt into a row group of rows that all carry their own time, the arrival-time nulls
+    /// are not columns: the schema is the one the live door would have written.
     #[test]
     fn a_row_group_rebuilt_from_rows_that_all_carry_their_own_time_has_no_arrival_column() {
         let scratch = Scratch::new("compact-own-time");
@@ -1635,9 +1490,8 @@ mod tests {
         assert_eq!(data_files(&scratch.0), paths(&scratch, &done.added));
     }
 
-    /// A row for the day that arrives while it is being rebuilt opens a file numbered
-    /// after the outputs, and its rows stay behind the rebuilt ones: every position is
-    /// what it was, in memory and after a restart orders the day by path.
+    /// A row for the day that arrives while it is being rebuilt opens a file numbered after
+    /// the outputs: every position is what it was, in memory and after a restart.
     #[test]
     fn a_file_the_live_door_opens_during_a_compaction_moves_no_position() {
         let scratch = Scratch::new("compact-late");
@@ -1791,10 +1645,8 @@ mod tests {
         assert_eq!(visited(leaf.as_ref()), before);
     }
 
-    /// A day one of whose files shares another day's rows, and any day while a committed
-    /// load's files are still in staging: each is refused, naming what is in the way,
-    /// before the flush - and is not due, so the scheduler does not walk into the refusal
-    /// every interval.
+    /// A mixed day, and any day while a committed load is still in staging, is refused before
+    /// the flush - and is not due, so the scheduler does not walk into the refusal.
     #[test]
     fn a_day_with_a_mixed_file_or_an_unsettled_load_is_refused_and_is_not_due() {
         let scratch = Scratch::new("compact-not-taken");
@@ -1837,8 +1689,7 @@ mod tests {
     }
 
     /// A file whose row groups in this process are not the rows the manifest gives it is
-    /// refused by name, with nothing reserved or written: rebuilt from what is held, the
-    /// day would come out short of a row or over by one.
+    /// refused by name: rebuilt from what is held, the day would come out a row short or over.
     #[test]
     fn a_file_whose_row_groups_do_not_add_up_to_its_manifest_rows_is_refused() {
         let scratch = Scratch::new("compact-rows");
@@ -1874,11 +1725,8 @@ mod tests {
         assert_eq!(visited(leaf.as_ref()), before);
     }
 
-    /// The flush a compaction begins with can fail, and has changed the day by then: a
-    /// write that failed has its rows back in their buffer, and a seal that failed has
-    /// left the day's file for the next start. Neither is reported as a compaction that
-    /// left the day's files as they were - the seal is a refusal naming the file with the
-    /// cause, and it is the refusal every later try gets.
+    /// The flush a compaction begins with can fail, and has changed the day by then: neither
+    /// a failed write nor a failed seal is reported as leaving the day's files as they were.
     #[test]
     fn a_compaction_whose_own_flush_fails_says_so_and_one_whose_seal_fails_names_the_file() {
         let day = day_of(T0);
@@ -1928,11 +1776,8 @@ mod tests {
         assert!(data_files(&scratch.0).is_empty());
     }
 
-    /// Row groups written from the log keep, rebuilt, a range that holds every position
-    /// they held: a replay goes on skipping the lines a compacted day holds. The rebuilt
-    /// range is the smallest one holding its inputs', so it also spans positions between
-    /// them - other templates' and other days' lines, which it says nothing of - and it
-    /// reads the same after a restart.
+    /// Row groups written from the log keep, rebuilt, the smallest range holding every position
+    /// they held: a replay goes on skipping the lines a compacted day holds.
     #[test]
     fn a_compacted_day_still_covers_the_log_positions_its_row_groups_held() {
         let scratch = Scratch::new("compact-wal");
@@ -1965,10 +1810,8 @@ mod tests {
         assert_eq!(ranges(&s, day), [(2, 20)]);
     }
 
-    /// Under a write-ahead log the scheduler leaves a day until all of it is behind the
-    /// log's checkpoint: every position this process has seen in it passed, and no row of
-    /// it still in memory. Asked for by name the day is compacted regardless - the rows it
-    /// holds in memory are written out as the compaction begins.
+    /// Under a write-ahead log the scheduler leaves a day until all of it is behind the log's
+    /// checkpoint; asked for by name the day is compacted regardless.
     #[test]
     fn a_day_is_not_due_until_it_is_behind_the_logs_checkpoint() {
         let scratch = Scratch::new("compact-checkpoint");
@@ -2000,9 +1843,8 @@ mod tests {
         assert_eq!((done.compacted, done.rows), (true, 2));
     }
 
-    /// Due by an explicit `today`: the day after the day's last live row group, never the
-    /// day itself, only while it has an unfinished file to take - and a start reads the
-    /// last write off the files, the newest of them.
+    /// Due the day after the day's last live row group, never the day itself - and a start
+    /// reads the last write off the files, the newest of them.
     #[test]
     fn a_day_is_due_the_day_after_its_last_live_row() {
         let scratch = Scratch::new("compact-due");
@@ -2083,9 +1925,8 @@ mod tests {
         }
     }
 
-    /// A template no leaf is open for has no time column anyone here knows, so its row
-    /// groups go across byte for byte - beside a template that is rebuilt - and read back
-    /// as they were when its leaf opens.
+    /// A template no leaf is open for has no time column anyone here knows, so its row groups
+    /// go across byte for byte, and read back as they were when its leaf opens.
     #[test]
     fn a_template_with_no_leaf_is_copied_as_it_is_and_reads_back_once_its_leaf_opens() {
         let scratch = Scratch::new("compact-no-leaf");
@@ -2125,10 +1966,8 @@ mod tests {
         assert_eq!(visited(s.open(7, "ts").expect("leaf").as_ref()), known);
     }
 
-    /// A template whose leaf opens between the start and the commit was copied as a
-    /// template with none, and by the commit its row groups are in the leaf and no longer
-    /// waiting for one. The commit swaps them there: the leaf reads every row once, from
-    /// the rebuilt files, and the inputs go.
+    /// A template whose leaf opens between the start and the commit was copied as one with
+    /// none; the commit swaps its row groups in the leaf, which reads every row once.
     #[test]
     fn a_leaf_that_opens_during_a_compaction_takes_the_rebuilt_row_groups() {
         let scratch = Scratch::new("compact-leaf-mid");
@@ -2162,9 +2001,8 @@ mod tests {
         assert_eq!(visited(s.open(7, "ts").expect("leaf").as_ref()), known);
     }
 
-    /// A replace-a-day that commits while the day is being rebuilt wins: the commit finds
-    /// its inputs retired, removes what it wrote, and the day is the load's. A rebuild
-    /// that starts after the replace stops as soon as it looks.
+    /// A replace-a-day that commits while the day is being rebuilt wins: the commit finds its
+    /// inputs retired and removes what it wrote. A rebuild after the replace stops at once.
     #[test]
     fn a_day_replaced_during_its_compaction_is_the_loads_and_the_outputs_are_removed() {
         let scratch = Scratch::new("compact-replaced");
@@ -2221,9 +2059,8 @@ mod tests {
         assert_eq!(data_files(&scratch.0).len(), 1);
     }
 
-    /// A stop before the record leaves the outputs unnamed, and the next start deletes
-    /// them; a stop just after it leaves the inputs unnamed, and it deletes those. Either
-    /// way every row is there once, where it was.
+    /// A stop before the record leaves the outputs unnamed and a stop after it the inputs; the
+    /// next start deletes whichever, and every row is there once, where it was.
     #[test]
     fn a_stop_before_the_record_keeps_the_old_files_and_a_stop_after_it_the_new() {
         for recorded in [false, true] {
@@ -2368,10 +2205,8 @@ mod tests {
         assert_eq!((done.compacted, done.rows), (true, 35));
     }
 
-    /// An output that cannot be deleted still holds its name. The numbers are not handed
-    /// back - the live door's next file for the day would be created over it, and fail -
-    /// so the day goes on taking rows under the number after them, compacts, and the file
-    /// nobody named goes at the next start.
+    /// An output that cannot be deleted still holds its name, so the numbers are not handed
+    /// back: the live door's next file for the day would be created over it, and fail.
     #[test]
     #[cfg(unix)]
     fn an_abandon_that_cannot_delete_an_output_keeps_its_numbers_and_the_live_door_writes_on() {
@@ -2420,10 +2255,8 @@ mod tests {
         assert_eq!(visited(s.open(7, "ts").expect("leaf").as_ref()), before);
     }
 
-    /// A commit that panics takes the day's latch off as it unwinds, whichever side of
-    /// the record it fell: the next compaction is not refused as busy for the life of the
-    /// process. Here it falls after the record, in the publish, and deletes nothing - the
-    /// next start reads the day from the files the record names.
+    /// A commit that panics takes the day's latch off as it unwinds, whichever side of the
+    /// record it fell: the next compaction is not refused as busy for the life of the process.
     #[test]
     fn a_commit_that_panics_leaves_no_day_marked_as_being_compacted() {
         let scratch = Scratch::new("compact-panic");
@@ -2459,10 +2292,8 @@ mod tests {
         assert_eq!(visited(s.open(7, "ts").expect("leaf").as_ref()), before);
     }
 
-    /// After a compaction's record the files it read are unnamed, and a start deletes
-    /// them - but not a start that then refuses a rebuilt file: they are the only whole
-    /// copy of the day left, and stay until a start has opened every file the manifest
-    /// names.
+    /// A start that refuses a rebuilt file does not delete the unnamed inputs: they are the
+    /// only whole copy of the day left.
     #[test]
     fn a_start_refused_for_a_damaged_compacted_file_leaves_the_unnamed_files_alone() {
         let scratch = Scratch::new("compact-damaged");
@@ -2574,9 +2405,8 @@ mod tests {
         assert_eq!(ns(leaf.as_ref()), (0..15).collect::<Vec<_>>());
     }
 
-    /// A record that failed and could not be cut back may be on disk whole. Both sets of
-    /// files stay, the day goes on being read from the old ones, and nothing is compacted
-    /// until that is settled - here by a start, which finds no record and keeps the old.
+    /// A record that failed and could not be cut back may be on disk whole: both sets of files
+    /// stay, and nothing is compacted until that is settled - here by a start.
     #[test]
     fn a_record_that_may_be_on_disk_keeps_both_sets_and_stops_compaction() {
         let scratch = Scratch::new("compact-uncertain");
@@ -2616,9 +2446,8 @@ mod tests {
         assert_eq!(data_files(&scratch.0), old);
     }
 
-    /// The next record the manifest takes is written where the uncertain one would have
-    /// been. From then on that one is not on disk: its files are nobody's, and they go,
-    /// and the day can be compacted again.
+    /// The next record the manifest takes is written where the uncertain one would have been:
+    /// from then on that one is not on disk, its files go, and the day can be compacted again.
     #[test]
     fn the_next_record_settles_an_uncertain_commit_and_removes_its_files() {
         let scratch = Scratch::new("compact-settled");

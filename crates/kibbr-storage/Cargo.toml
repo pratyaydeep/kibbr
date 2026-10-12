@@ -18,7 +18,6 @@ tracing.workspace = true
 zstd.workspace = true
 
 [features]
-# What this crate's own tests build their rows and files from, for the tests of the
-# crates above it: they are held to the same samples, and a `#[cfg(test)]` item is not
-# there for another crate's tests. Named only under `[dev-dependencies]`.
+# What this crate's own tests build their rows and files from, for the tests of the crates
+# above it: a `#[cfg(test)]` item is not there for another crate's tests.
 test-support = []

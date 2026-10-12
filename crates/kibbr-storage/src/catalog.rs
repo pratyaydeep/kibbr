@@ -1,31 +1,8 @@
-//! `catalog.log`: the truth about templates. Append-only, CRC-framed, one JSON object per
+//! `catalog.log`: the truth about templates - append-only, CRC-framed, one JSON object per
 //! record.
 //!
-//! ```text
-//! record   [4] payload_len  u32 LE
-//!          [4] crc          u32 LE, CRC-32C over the payload
-//!          [N] payload      one JSON object
-//! ```
-//!
-//! **Why this file exists.** `trie.json` is written in one place, the clean shutdown path,
-//! and nothing else on disk could rebuild a trie: `_leaf.json` holds a key set but no
-//! promoted values and no column types. Delete the snapshot, crash before it is written,
-//! or fill the disk, and every leaf directory became an orphan and every query answered 0.
-//! The catalog is written *before* the line that needs it counts as ingested, so a
-//! template exists on disk from the moment it exists at all.
-//!
-//! **The write rule.** A record is appended and `sync_all()` has returned Ok before the
-//! line that caused it counts as ingested. New templates and widenings are rare, so the
-//! cost at steady state is nothing. If the append fails the line is rejected with a
-//! per-line error saying why, and the template is not created in memory either - a trie
-//! that knows a template the disk does not is exactly the state this file removes.
-//!
-//! **Reading.** From the start. A bad length or CRC at the tail is a torn write: the file
-//! is truncated there and a WARN names the offset. A record whose `kind` this build does
-//! not know is skipped with a WARN, so a later version can add kinds, and so is an intact
-//! payload that is not one JSON object of a shape this file has (`read_record`). None of
-//! these is ever a failed start: the same reasoning `triefile` gives - an operator cannot
-//! repair this by hand, and a crash loop is worse than a warning.
+//! A record is appended and flushed before the line that caused it counts as ingested, so a
+//! template exists on disk from the moment it exists at all; no bad record fails a start.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -47,9 +24,8 @@ pub const CATALOG_FILE_NAME: &str = "catalog.log";
 #[cfg(test)]
 const HEADER: usize = frame::HEADER;
 
-/// A payload longer than this is a bad length, not a record. A template record is a few
-/// hundred bytes; a length field reading in the megabytes is a torn or foreign write,
-/// and treating it as a tear stops the reader from waiting on bytes that will never come.
+/// A payload longer than this is a bad length, not a record: treating it as a tear stops
+/// the reader from waiting on bytes that will never come.
 const MAX_PAYLOAD: u32 = 16 * 1024 * 1024;
 
 #[derive(Debug, Error)]
@@ -67,14 +43,12 @@ pub enum CatalogError {
         #[source]
         source: serde_json::Error,
     },
-    /// An earlier append failed *and* the partial write could not be rolled back, so the
-    /// tail of the file is not a record boundary. Anything appended after it would sit
-    /// behind a tear and be truncated away on the next start, so nothing is.
+    /// An earlier append failed and could not be rolled back, so anything appended after it
+    /// would sit behind a tear and be truncated away on the next start.
     #[error("{path}: an earlier append left a torn record at offset {offset} that could not be removed; no further records are written until the process restarts")]
     Torn { path: String, offset: u64 },
     /// The catalog was just created and its directory could not be fsynced, so the file's
-    /// own entry may not survive a crash - and a record fsynced into a file that is not
-    /// there after the crash was never durable.
+    /// own entry may not survive a crash.
     #[error("{path}: created {CATALOG_FILE_NAME} here and could not fsync the directory, so the file itself may not survive a crash: {source}")]
     SyncDir {
         path: String,
@@ -105,10 +79,8 @@ pub enum Token {
 }
 
 impl Token {
-    /// The edge label this token is in the trie: the one `ParsedLog::walk_tokens` gave
-    /// the line that made the template, `=` in the key escaped. The record holds the key;
-    /// spelled here any other way, a template comes back from a restart under a label no
-    /// line of its shape walks to.
+    /// The edge label this token is in the trie, spelled as `ParsedLog::walk_tokens` spells
+    /// it, or a template comes back from a restart under a label no line walks to.
     pub fn label(&self) -> String {
         match self {
             Token::Promoted { promoted, value } => promoted_token(promoted, value),
@@ -125,10 +97,8 @@ pub enum Record {
         created_at: DateTime<Utc>,
         tokens: Vec<Token>,
     },
-    /// A column's type. Written once when the template is created and again whenever
-    /// the type join changes it, so the last record for a `(template_id, name)` wins.
-    /// `type` is `null` for a column that has only ever held nulls - a different fact from
-    /// `String`, and the trie keeps them apart.
+    /// A column's type, written when the template is created and again when the type join
+    /// changes it, so the last record wins; `null` is a column that has only held nulls.
     Column {
         template_id: u64,
         name: String,
@@ -139,8 +109,8 @@ pub enum Record {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<DateTime<Utc>>,
     },
-    /// The time source, `column:<name>` or `arrival`. Recorded so the choice is durable:
-    /// the next start makes the same one whatever the configured list says by then.
+    /// The time source, `column:<name>` or `arrival`, recorded so the next start makes the
+    /// same choice whatever the configured list says by then.
     TimeSource { template_id: u64, source: String },
 }
 
@@ -159,13 +129,12 @@ impl Record {
 pub struct Parsed {
     pub records: Vec<Record>,
     /// The offset of the first byte that is not a whole, intact record - `None` when the
-    /// file ends on a record boundary. Everything from here on is a torn write.
+    /// file ends on a record boundary.
     pub torn_at: Option<u64>,
     /// `(offset, kind)` of every record skipped for a kind this build does not know.
     pub unknown: Vec<(u64, String)>,
-    /// `(offset, error)` of every record whose CRC held but whose payload is not one of
-    /// the shapes above. Skipped, like an unknown kind: the framing says the bytes are
-    /// what was written, so this is a writer bug or a newer field layout, not a tear.
+    /// `(offset, error)` of every record whose CRC held but whose payload is not one of the
+    /// shapes above: a writer bug or a newer field layout, not a tear, so it is skipped.
     pub malformed: Vec<(u64, String)>,
 }
 
@@ -175,11 +144,8 @@ pub fn frame(record: &Record) -> Result<Vec<u8>, serde_json::Error> {
     Ok(frame::frame(&serde_json::to_vec(record)?))
 }
 
-/// Every intact record from the start of `bytes`, stopping at the first tear.
-///
-/// Never panics and never fails: the worst input is a file that reads as empty. The
-/// restart test truncates a catalog at every byte offset and asks for the intact prefix,
-/// and the `record_log` fuzz target holds every input to the same.
+/// Every intact record from the start of `bytes`, stopping at the first tear; never
+/// panics and never fails, the worst input being a file that reads as empty.
 pub fn parse(bytes: &[u8]) -> Parsed {
     let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
     let mut parsed = Parsed {
@@ -197,9 +163,8 @@ fn decode(parsed: &mut Parsed, at: u64, payload: &[u8]) {
     match read_record::<Record>(payload) {
         Ok(record) => parsed.records.push(record),
         Err(e) => {
-            // The CRC held, so these are the bytes that were written. Look for the kind
-            // before calling it malformed: a kind this build does not know is the one
-            // case the format promises to step over quietly.
+            // The CRC held, so these are the bytes that were written. A kind this build does not
+            // know is the one case the format promises to step over quietly.
             match kind_of(payload) {
                 Some(kind) if !KNOWN_KINDS.contains(&kind.as_str()) => {
                     parsed.unknown.push((at, kind));
@@ -214,27 +179,8 @@ const KNOWN_KINDS: &[&str] = &["template", "column", "time_source"];
 
 // ── One JSON object ────────────────────────────────────────────────────────────────
 
-/// One intact payload as a `T`, or the reason it is not one. `manifest.log` reads its
-/// records through this too, and a third file framed this way should.
-///
-/// **A record is one JSON object, and each thing in it is the JSON the writer writes
-/// there.** The readers serde derives take more: a JSON array for any struct - the
-/// fields in order, an internally tagged enum's tag first - and an object for a name,
-/// `{"Ip":null}` for `"Ip"`. So `["time_source",101,"arrival"]` read as a record here,
-/// `["remove",["2024-01-15/seg_0_000001.col"]]` as a manifest record retiring a live
-/// file, and `"wal":["…","2024-01-15",5]` as the mark that tells a replay which lines to
-/// drop. Nothing writes those, and a payload that is not one of the shapes the format
-/// lists is skipped, not guessed at.
-///
-/// So what was read is written back, as the writer spells it, and held against the
-/// payload: an object where the payload has an object, an array for an array, a string
-/// for a string. That is one rule for every struct and every name a record holds today
-/// or is given later, with no attribute to remember on the new field, and it is the
-/// writer's own spelling that says what belongs where.
-///
-/// The payload is read a second time for this, as plain JSON. A payload the first read
-/// took and the second cannot - a number no float holds or text that is not UTF-8, in a
-/// field the record does not have and so never looked at - is not a JSON object either.
+/// One intact payload as a `T`, or the reason it is not one: serde's derived readers also
+/// take an array for a struct, so what was read is written back and held against the payload.
 pub(crate) fn read_record<T>(payload: &[u8]) -> Result<T, String>
 where
     T: Serialize + DeserializeOwned,
@@ -264,13 +210,8 @@ fn json_type(value: &Value) -> &'static str {
     }
 }
 
-/// The first place `written` and `said` hold different kinds of JSON: what `said` has
-/// there and what `written` has, with `path` left naming the place - `files[0]`, `wal`,
-/// or nothing for the payload itself. `None`, and `path` as it was, when they agree
-/// everywhere.
-///
-/// Kinds and not values: a time is written one way and read from several. A key the
-/// payload leaves out is one the reader filled in, and holds nothing to check.
+/// The first place `written` and `said` hold different kinds of JSON, with `path` left
+/// naming it; kinds and not values, since a time is written one way and read from several.
 fn spelled_otherwise(
     written: &Value,
     said: &Value,
@@ -308,9 +249,8 @@ fn spelled_otherwise(
     found
 }
 
-/// The `kind` an intact payload names, when the payload is a JSON object naming one as a
-/// string: what tells a kind this build does not know from a malformed record. An array
-/// has no kind, whatever its first element says.
+/// The `kind` an intact payload names, when it is a JSON object naming one as a string:
+/// what tells a kind this build does not know from a malformed record.
 pub(crate) fn kind_of(payload: &[u8]) -> Option<String> {
     match serde_json::from_slice::<Value>(payload) {
         Ok(Value::Object(said)) => said.get("kind")?.as_str().map(str::to_string),
@@ -320,20 +260,15 @@ pub(crate) fn kind_of(payload: &[u8]) -> Option<String> {
 
 // ── The file ───────────────────────────────────────────────────────────────────────
 
-/// An open catalog, positioned at its end. The file mechanics - truncating a torn tail,
-/// fsyncing a new file's directory, rolling back a failed append - are `frame::Log`'s,
-/// shared with `manifest.log`.
+/// An open catalog, positioned at its end; the file mechanics are `frame::Log`'s, shared
+/// with `manifest.log`.
 pub struct Catalog {
     log: Log,
 }
 
 impl Catalog {
-    /// Open for appending, reading every record that is already there.
-    ///
-    /// A torn tail is truncated *on disk* here, not just skipped, so the next append lands
-    /// on a record boundary rather than behind bytes the next start would cut off again.
-    /// Unknown kinds and malformed payloads are reported through `warn` and left in place;
-    /// they are intact records this build does not use.
+    /// Open for appending and read every record already there; a torn tail is truncated on
+    /// disk, unknown kinds and malformed payloads are reported through `warn` and left in place.
     pub fn open(
         path: &Path,
         warn: &mut dyn FnMut(String),
@@ -391,17 +326,8 @@ impl Catalog {
         })
     }
 
-    /// Append the records and return only once every byte is on disk.
-    ///
-    /// Several records in one call so a template and its columns are one durable unit:
-    /// one `write_all`, one `sync_all`. A tear between them would leave a template with
-    /// no column types, which the reader would accept and the trie would carry as a
-    /// template whose every column has only held nulls.
-    ///
-    /// On failure the file is cut back to where the records began. If *that* fails the
-    /// catalog refuses every later append (`CatalogError::Torn`): a record written behind
-    /// a tear is a record the next start cannot see, and rejecting the line now is the
-    /// honest answer.
+    /// Append the records and return only once every byte is on disk, as one durable unit:
+    /// a tear between a template and its columns would leave it with no column types.
     pub fn append(&mut self, records: &[Record]) -> Result<(), CatalogError> {
         let mut payloads = Vec::with_capacity(records.len());
         for record in records {
@@ -590,10 +516,8 @@ mod tests {
         assert_eq!(parsed.torn_at, None);
     }
 
-    /// A record is one JSON object, and so is each token in it. serde's derived reader
-    /// takes an array for a record - the tag first, then the fields in order - and the
-    /// first two of these read as records nobody wrote. All are intact, so all are
-    /// skipped as malformed, and the record after them is still read.
+    /// A record is one JSON object, and so is each token in it: serde's derived reader also
+    /// takes an array, which is intact, so it is skipped as malformed and the next record read.
     #[test]
     fn a_json_array_where_the_format_has_an_object_is_malformed() {
         let arrays: [(&[u8], &str); 4] = [
@@ -759,9 +683,7 @@ mod tests {
     }
 
     /// The real directory sync, on a directory it cannot succeed on: write and search
-    /// permission without read, so the file can be created and the directory cannot be
-    /// opened to fsync. The open fails rather than carrying on with an entry that may not
-    /// survive a crash, and leaves no file behind.
+    /// permission without read, so the file can be created and the directory cannot be opened.
     #[cfg(unix)]
     #[test]
     fn a_directory_that_cannot_be_synced_fails_the_first_open() {

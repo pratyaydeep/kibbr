@@ -1,36 +1,8 @@
 //! `manifest.log`: the truth about which data files are live.
 //!
-//! Framed exactly as `catalog.log` is - `frame::Log` underneath both - one JSON object
-//! per record:
-//!
-//! ```text
-//! {"kind":"add",    "files":[{"path":"2024-01-15/seg_0_000007.col","file_id":"…",
-//!                             "sealed":true,"rows":81234,"min_ts":…,"max_ts":…,
-//!                             "finished":true}], "source":"load:9f3a…"}
-//! {"kind":"seal",   "files":[{…the same fields, now known…}]}
-//! {"kind":"remove", "files":["2024-01-15/seg_0_000003.col", …]}
-//! {"kind":"replace","add":[…],"remove":[…],"source":"load:…"}   one step: compaction, or replace-a-day
-//! ```
-//!
-//! A replace-a-day under a write-ahead log also carries `"wal":{"stream":"…","day":
-//! "2024-01-15","through":81234}`: the lines of that day the log held up to that position
-//! were in the files this record retired, and a replay must not bring them back
-//! (`WalMark`).
-//!
-//! **A file the manifest does not name is not part of the database.** Startup deletes
-//! such files. A load's files it does name but that a crash left in `staging/` are moved
-//! into place first - the record was the commit - and then the rest of `staging/` is
-//! deleted. So every change to the set of files is one appended record, and a crash lands
-//! cleanly on one side of it.
-//!
-//! **Why `seal` is a kind of its own.** The live door names a file the moment it creates
-//! it - before its first row group, so a crash cannot leave durable row groups in a file
-//! the next start would delete - and only knows its row count and time range once it is
-//! sealed. An `add` says "this file is live and still being written"; the `seal` for the
-//! same path says it is closed, with the numbers startup reads instead of opening it. A
-//! file named and never sealed is one a crash left, and startup recovers it. A load's
-//! files are sealed before they are named, so its `add` carries `"sealed":true` and needs
-//! no second record.
+//! Framed as `catalog.log` is. A file the manifest does not name is not part of the
+//! database, so every change to the set of files is one appended record and a crash lands
+//! on one side of it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -43,8 +15,7 @@ use crate::frame::{self, Log, LogError};
 
 pub const MANIFEST_FILE_NAME: &str = "manifest.log";
 
-/// A payload longer than this is a bad length, not a record. A replace naming every file of
-/// a busy day is a few hundred kilobytes.
+/// A payload longer than this is a bad length, not a record.
 const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 
 #[derive(Debug, Error)]
@@ -109,13 +80,8 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What one of the digits `hex` writes is worth: `0` to `9` and `a` to `f`, and nothing
-/// else.
-///
-/// Not `from_str_radix`, which reads a number and so takes a sign: `+f` was the byte 15
-/// to it, and `load:+000000000000001` the load 1. And not the capitals: no build has
-/// written one, and a start holds a file's id to the manifest's by comparing the text
-/// `hex` writes, so an id spelled `0A…` names no file even when it reads as one.
+/// What one of the digits `hex` writes is worth. Not `from_str_radix`, which takes a sign,
+/// and no capitals: a start matches a file's id to the manifest's as the text `hex` writes.
 fn hex_digit(digit: u8) -> Option<u8> {
     match digit {
         b'0'..=b'9' => Some(digit - b'0'),
@@ -124,8 +90,7 @@ fn hex_digit(digit: u8) -> Option<u8> {
     }
 }
 
-/// The file id 32 hex digits spell: `hex` read back, and `None` for anything `hex` does
-/// not write.
+/// The file id 32 hex digits spell, `None` for anything `hex` does not write.
 pub fn file_id_of(hex: &str) -> Option<[u8; 16]> {
     let digits = hex.as_bytes();
     if digits.len() != 32 {
@@ -138,8 +103,8 @@ pub fn file_id_of(hex: &str) -> Option<[u8; 16]> {
     Some(id)
 }
 
-/// A compaction's `source`. Not a load's, so no load id is read out of it and no file it
-/// added is ever looked for in `staging/`: compaction writes its files in place.
+/// A compaction's `source`, never read as a load's: compaction writes its files in place,
+/// so none is looked for in `staging/`.
 pub const COMPACT_SOURCE: &str = "compact";
 
 /// A bulk load's `source`: `load:` and its id as 16 hex digits.
@@ -147,8 +112,7 @@ pub fn load_source(load_id: u64) -> String {
     format!("load:{load_id:016x}")
 }
 
-/// The load id a `source` names, if it names one: `load_source` read back, and `None` for
-/// anything it does not write.
+/// The load id a `source` names, `None` for anything `load_source` does not write.
 pub fn load_of(source: &str) -> Option<u64> {
     let digits = source.strip_prefix("load:")?.as_bytes();
     if digits.len() != 16 {
@@ -159,8 +123,8 @@ pub fn load_of(source: &str) -> Option<u64> {
     })
 }
 
-/// Every load a record names as its source, committed or since retired: running one of them
-/// again is refused by its id, whatever became of its files.
+/// Every load a record names as its source, committed or since retired, so running one
+/// again is refused by its id.
 pub fn load_ids(records: &[Record]) -> std::collections::BTreeSet<u64> {
     records
         .iter()
@@ -173,8 +137,8 @@ pub fn load_ids(records: &[Record]) -> std::collections::BTreeSet<u64> {
         .collect()
 }
 
-/// The load that published each path, by the record that added it: where startup looks for
-/// a file a commit named and a crash left in `staging/<load id>/`.
+/// The load that published each path: where startup looks for a file a commit named and
+/// a crash left in `staging/<load id>/`.
 pub fn published_by_load(records: &[Record]) -> BTreeMap<String, u64> {
     let mut out = BTreeMap::new();
     for record in records {
@@ -199,17 +163,8 @@ pub fn published_by_load(records: &[Record]) -> BTreeMap<String, u64> {
     out
 }
 
-/// What a replace-a-day tells the write-ahead log's replay: every line of `day` the log
-/// `stream` holds at a position up to `through` was replaced, and is not to be stored
-/// again.
-///
-/// **Without it a replaced day comes back.** A replay stores every line no durable row
-/// group's range covers, and the row groups that covered this day's lines are in the
-/// files the record retires: after a crash the lines the log still holds past its
-/// checkpoint would be covered by nothing, and stored again beside the load that replaced
-/// them. `through` is the last position applied when the day was written out and retired,
-/// with the log's applier held still across both - so it is exactly the lines the retired
-/// files held, and a line applied after it is one that arrived after the replace.
+/// What a replace-a-day tells the write-ahead log's replay: `day`'s lines up to `through`
+/// were replaced, and without it a replayed day comes back beside its replacement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalMark {
     /// The log's id, as 16 hex digits.
@@ -249,8 +204,8 @@ pub enum Record {
         remove: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
-        /// A replace-a-day's word to the write-ahead log. Never a compaction's: its
-        /// rebuilt row groups carry the ranges of the ones they replace.
+        /// A replace-a-day's word to the write-ahead log; never a compaction's, whose rebuilt
+        /// row groups carry the ranges of the ones they replace.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wal: Option<WalMark>,
     },
@@ -262,20 +217,15 @@ const KNOWN_KINDS: &[&str] = &["add", "seal", "remove", "replace"];
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decoded {
     Record(Record),
-    /// A kind this build does not know, by its name. Skipped, so a later version can add
-    /// kinds.
+    /// A kind this build does not know, skipped so a later version can add kinds.
     Unknown(String),
-    /// The CRC held and the payload is not one of the shapes above, with the reason.
-    /// Skipped too: the framing says these are the bytes that were written.
+    /// An intact frame whose payload is not one of the shapes above, with the reason;
+    /// skipped too.
     Malformed(String),
 }
 
-/// One intact payload, read. Never an error: a payload that is not a record is one of the
-/// two skips.
-///
-/// Through the catalog's `read_record`, so a record is one JSON object and each file and
-/// each `wal` mark in it is one: an array in the place of any of them is malformed, where
-/// serde alone read `["remove",[…]]` as a record retiring a live file.
+/// One intact payload, read through the catalog's `read_record` so an array in the place
+/// of an object is malformed; never an error.
 pub fn decode(payload: &[u8]) -> Decoded {
     match catalog::read_record::<Record>(payload) {
         Ok(record) => Decoded::Record(record),
@@ -286,12 +236,8 @@ pub fn decode(payload: &[u8]) -> Decoded {
     }
 }
 
-/// Every intact frame from the start of `bytes` as `(offset, what it is)`, and the offset
-/// of the first byte that is not one - `None` when the bytes end on a record boundary.
-///
-/// What `Manifest::open` does with a file's bytes, without the file: the same frame
-/// reader under the same length cap, and the same `decode`. The `record_log` fuzz target
-/// reads through this.
+/// Every intact frame of `bytes` as `(offset, what it is)` and the offset of the first
+/// torn byte: what `Manifest::open` does, without the file, for the `record_log` fuzz target.
 pub fn parse(bytes: &[u8]) -> (Vec<(u64, Decoded)>, Option<u64>) {
     let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
     let decoded = frames
@@ -301,8 +247,7 @@ pub fn parse(bytes: &[u8]) -> (Vec<(u64, Decoded)>, Option<u64>) {
     (decoded, torn_at)
 }
 
-/// The live files, by path, after every record is applied in order: the last word on a
-/// path wins, and a removed path is gone.
+/// The live files, by path, after every record is applied in order.
 pub fn live(records: &[Record]) -> BTreeMap<String, FileRecord> {
     let mut files = BTreeMap::new();
     for record in records {
@@ -311,8 +256,8 @@ pub fn live(records: &[Record]) -> BTreeMap<String, FileRecord> {
     files
 }
 
-/// One record applied to a live set: what `live` does for each record in turn, and what a
-/// running store does for each record it appends, so the two cannot disagree.
+/// One record applied to a live set, shared by `live` and a running store so the two
+/// cannot disagree.
 pub fn apply(files: &mut BTreeMap<String, FileRecord>, record: &Record) {
     match record {
         Record::Add { files: added, .. } | Record::Seal { files: added } => {
@@ -342,10 +287,8 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Open for appending, reading every record already there. A torn tail is truncated
-    /// on disk and warned about with its offset; a record of a kind this build does not
-    /// know, or one whose CRC holds and whose payload is not one of the shapes above, is
-    /// skipped with a WARN - the catalog's rules, through the catalog's reader.
+    /// Open for appending, reading every record already there; a torn tail is truncated and
+    /// an unknown or malformed record skipped, each with a warning.
     pub fn open(
         path: &Path,
         warn: &mut dyn FnMut(String),
@@ -399,20 +342,18 @@ impl Manifest {
         self.log.is_empty()
     }
 
-    /// Whether a failed append could not be cut back, so no record is written until a
-    /// restart.
+    /// Whether a failed append could not be cut back, so no record is written until a restart.
     pub fn is_torn(&self) -> bool {
         self.log.is_torn()
     }
 
-    /// Flush the log as it stands: what tells a failed append that was cut back - and is
-    /// then certainly not on disk - from one that may be.
+    /// Flush the log as it stands: what tells a failed append that was cut back from one that
+    /// may be on disk.
     pub fn sync(&mut self) -> Result<(), ManifestError> {
         Ok(self.log.sync()?)
     }
 
-    /// A manifest whose every append fails, and cannot be cut back: what a full disk or a
-    /// dead mount looks like.
+    /// A manifest whose every append fails and cannot be cut back, as on a full disk.
     #[cfg(test)]
     pub fn read_only(path: &Path) -> Result<Self, ManifestError> {
         Ok(Self {
@@ -478,9 +419,8 @@ mod tests {
         );
     }
 
-    /// The digits are the sixteen `hex` writes. A sign is not one - `from_str_radix` took
-    /// `+f` for a byte and `+000000000000001` for a load - and neither is a capital,
-    /// which nothing has written and a start would not match to a file.
+    /// A sign is no digit, though `from_str_radix` takes one, and neither is a capital, which
+    /// a start would not match to a file.
     #[test]
     fn a_sign_or_a_capital_is_not_a_hex_digit() {
         assert_eq!(file_id_of(&"+f".repeat(16)), None);
@@ -502,10 +442,8 @@ mod tests {
         assert!(load_ids(&[signed]).is_empty());
     }
 
-    /// A record is one JSON object, and so is each file and each `wal` mark in it.
-    /// serde's derived readers take an array for any of the three, and each of these read
-    /// as a record nobody wrote: one retiring a live file, one naming a file, one telling
-    /// a replay which lines to drop. All are malformed, and the reason names the place.
+    /// serde's derived readers take an array for a record, a file or a `wal` mark, and each
+    /// would read as a record nobody wrote.
     #[test]
     fn a_json_array_where_the_format_has_an_object_is_malformed() {
         let id = hex(&[7; 16]);
@@ -565,7 +503,7 @@ mod tests {
     }
 
     /// A load's id comes back from its `source`, on an `add` and on a `replace` alike, and a
-    /// record from before replace carried one still reads.
+    /// `replace` on disk with no `source` still reads.
     #[test]
     fn a_load_is_named_by_its_source_on_add_and_replace() {
         let id = 0x9f3a_0000_0000_0001;

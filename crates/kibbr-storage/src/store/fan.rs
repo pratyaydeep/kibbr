@@ -1,27 +1,8 @@
 //! The threads a disk scan chooses a day's rows on beside the thread that asked.
 //!
-//! **A scan reads on the thread it runs on, always, and hands its rows over there.** What
-//! it shares out is what lies between: choosing a row group's rows (`disk::scan::pick`)
-//! and decoding the one column a fetch is about to ask with. Both need the row group and
-//! the question and nothing else, and leave what they made inside the row group. So
-//! whether a run of row groups was shared out cannot be seen in an answer or in a counter,
-//! and the two reasons for not sharing one out may depend on what else the server is doing.
-//!
-//! **`Turn::each` blocks the thread that calls it until the work is done.** It is reached
-//! from `disk::scan::day` and from nowhere else, and a scan runs on a thread that may
-//! block - the `spawn_blocking` thread a query is answered on - and never on a runtime
-//! worker, where it would stall every request in flight. The pool itself is started by the
-//! first scan that asks for it, so that is on such a thread too.
-//!
-//! **rayon's code runs in three places, and the third is not a call anyone writes**: the
-//! build, in `Fan::pool`; the scope, in `Turn::each`; and the pool's own `Drop`, when the
-//! last `Arc<Fan>` goes. The `Drop` tells each thread to end and waits for none. A
-//! server keeps a `Fan` of its own until its runtime is gone (`serve::run`), so that the
-//! last one is never let go on a runtime thread or under an `async fn`.
-//!
-//! This is the only file that names rayon, and it uses a pool of its own and a scope on
-//! it: not the global pool, and not `par_iter`, whose caller sleeps while the pool works.
-//! Here the thread that asked takes row groups too.
+//! A scan reads and hands its rows over on its own thread; only choosing and decoding is
+//! shared out. `Turn::each` blocks its caller, so it runs on a thread that may block.
+//! The only file that names rayon: a pool of its own, never the global one or `par_iter`.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -40,11 +21,10 @@ pub struct Fan {
     taken: AtomicBool,
     /// Ingest bodies in their task.
     bodies: AtomicUsize,
-    /// Runs of row groups shared out so far: for `/stats`, and for a test to know that
-    /// what it compared was shared out.
+    /// Runs of row groups shared out so far, for `/stats` and for tests.
     fanned: AtomicU64,
-    /// The threads `each` shared work out from: for the test that holds a scan to a
-    /// thread that may block.
+    /// The threads `each` shared work out from, for the test that holds a scan to a thread
+    /// that may block.
     #[cfg(any(test, feature = "test-support"))]
     entered: Mutex<Vec<std::thread::ThreadId>>,
 }
@@ -58,8 +38,8 @@ impl Drop for Turn<'_> {
     }
 }
 
-/// An ingest body in its task, from before it is inflated until its answer is ready.
-/// While one is held no scan is given the pool: the ingest path keeps its cores.
+/// An ingest body in its task; while one is held no scan is given the pool, so the
+/// ingest path keeps its cores.
 pub struct Body<'f>(&'f Fan);
 
 impl Drop for Body<'_> {
@@ -69,8 +49,8 @@ impl Drop for Body<'_> {
 }
 
 impl Fan {
-    /// The threads one scan may choose rows on, the asking thread among them. `None`
-    /// under two: there is then nobody to share with. Starts no thread.
+    /// The threads one scan may choose rows on, the asking thread among them; `None` under
+    /// two, and no thread is started.
     pub fn new(threads: usize, least_rows: u64) -> Option<Arc<Self>> {
         let helpers = threads.checked_sub(1).filter(|n| *n > 0)?;
         Some(Arc::new(Self {
@@ -100,10 +80,8 @@ impl Fan {
         Body(self)
     }
 
-    /// The pool for one run of row groups, or `None`: an ingest body is in its task,
-    /// another scan holds it, or it could not start. Never waits on either of the first
-    /// two. A scan told no chooses its rows in turn, which is always right, and asks
-    /// again at its next run.
+    /// The pool for one run of row groups, or `None` without waiting when an ingest body is
+    /// in its task, another scan holds it, or it could not start.
     pub(crate) fn turn(&self) -> Option<Turn<'_>> {
         if self.bodies.load(Ordering::Relaxed) != 0 {
             return None;
@@ -118,8 +96,8 @@ impl Fan {
         self.pool().is_some().then_some(turn)
     }
 
-    /// The pool, started the first time it is asked for. A pool that will not start is
-    /// said once and is never a failed query: every scan then chooses in turn.
+    /// The pool, started the first time it is asked for; one that will not start is said
+    /// once and is never a failed query.
     fn pool(&self) -> Option<&rayon::ThreadPool> {
         self.pool
             .get_or_init(|| {
@@ -145,7 +123,7 @@ impl Fan {
         lock(&self.entered).clone()
     }
 
-    /// Has the pool been asked for? A test's way of knowing no thread was started.
+    /// Whether the pool has been asked for: a test's way of knowing no thread was started.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn started(&self) -> bool {
         self.pool.get().is_some()
@@ -153,14 +131,8 @@ impl Fan {
 }
 
 impl Turn<'_> {
-    /// `work` on every item, each once, on this thread and the pool's. Returns when all
-    /// are done. **Blocks the calling thread.**
-    ///
-    /// The items stay the caller's: each thread takes the next one nobody has taken, so
-    /// the thread that asked works too, and a pool thread the system has not run yet
-    /// finds nothing left and costs a wait at the end and no more. A lock an item, never
-    /// waited on, since each is taken once; it is there because what a scan shares out
-    /// may be sent to a thread and not shared between two.
+    /// `work` on every item, each once, on this thread and the pool's; blocks the calling
+    /// thread until all are done.
     pub(crate) fn each<T: Send>(&self, items: &[Mutex<T>], work: impl Fn(&mut T) + Sync) {
         let next = AtomicUsize::new(0);
         let claim = || {
@@ -211,14 +183,8 @@ mod tests {
         }
     }
 
-    /// **rayon is named in this file and in no other of the workspace, and a turn on the
-    /// pool is taken in the disk scan and nowhere else.** A handler is an `async fn` on a runtime worker,
-    /// and a `par_iter` written into one would stall every request in flight while it
-    /// ran; so would a turn taken from one. Neither can be written without one of these
-    /// two words, and this is what says so the day one is.
-    ///
-    /// It cannot see where the pool is dropped: `serve::run` holds that, by the order
-    /// of two of its locals.
+    /// A `par_iter` or a turn in an `async fn` handler would stall every request in flight;
+    /// neither can be written without one of these two words.
     #[test]
     fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
         // Every crate's sources, named from the workspace's root: the handlers this is
@@ -257,9 +223,7 @@ mod tests {
         );
     }
 
-    /// **Every item, each once**, however many there are and however long each takes:
-    /// none, one, as many as the threads, one more or fewer, and a thousand of uneven
-    /// length. What is left in each item is what `work` made of that item and no other.
+    /// Every item, each once, however many there are and however long each takes.
     #[test]
     fn each_does_the_work_on_every_item_once() {
         for threads in [2, 3, 4] {
@@ -285,8 +249,7 @@ mod tests {
         }
     }
 
-    /// The work is shared: of a thousand items that each take a moment, some are done on
-    /// a thread other than the one that asked, and some on the one that asked.
+    /// The asking thread works too, and so does the pool.
     #[test]
     fn the_asking_thread_and_the_pool_both_take_items() {
         let fan = Fan::new(4, 0).expect("a fan");
@@ -313,8 +276,7 @@ mod tests {
         assert_eq!((fan.least_rows(), fan.fanned()), (7, 0));
     }
 
-    /// No thread is started until a scan takes a turn: a store that is never asked a
-    /// query worth sharing out has none.
+    /// A store that is never asked a query worth sharing out starts no thread.
     #[test]
     fn no_thread_is_started_before_the_first_turn() {
         let fan = Fan::new(4, 0).expect("a fan");
@@ -358,9 +320,8 @@ mod tests {
         drop((turn, late));
     }
 
-    /// A panic in the work leaves `each` as a panic, on the thread that asked, whichever
-    /// thread it began on; and the pool is given back, so the next scan is not refused
-    /// for the life of the process.
+    /// A panic in the work reaches the thread that asked, and the pool is given back, so
+    /// the next scan is not refused for the life of the process.
     #[test]
     fn a_panic_in_the_work_leaves_each_as_a_panic_and_gives_the_pool_back() {
         let fan = Fan::new(4, 0).expect("a fan");

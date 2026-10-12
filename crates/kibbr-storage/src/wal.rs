@@ -1,99 +1,8 @@
 //! The write-ahead log: where a line is durable before `/ingest` says it was taken.
 //!
-//! ```text
-//! <data-dir>/wal/
-//! ├── seg_000001.wal      segments, numbered in the order they were written
-//! ├── seg_000002.wal
-//! └── checkpoint          one u64 as text: every position up to it is in a row group
-//!
-//! segment  [4]  'K' 'W' 'A' 'L'
-//!          [1]  version      1
-//!          [3]  reserved     zero
-//!          [8]  stream       u64 - the log's id: random, never 0
-//!          [8]  base         u64 - no record here is below it, none before it reaches it
-//!          [4]  crc          CRC-32C of the 24 bytes before it
-//!          then one frame per flush, framed as catalog.log is (frame.rs):
-//!          [4]  payload_len
-//!          [4]  crc          CRC-32C of the payload
-//!          [1]  kind         1 = a batch of records, zstd
-//!          [4]  raw_len      the batch's bytes before compression
-//!          [..]              one zstd frame holding the batch
-//!
-//! batch    [4]  count        u32 - how many records
-//!          [8]  time         i64, once per record, in their order: the effective time
-//!                            the line's row was first filed under, unix nanoseconds
-//!          then the records, back to back
-//!
-//! record   [4]  crc          CRC-32C of the rest of the record
-//!          [8]  seq          u64 - its position in the stream
-//!          [8]  template_id  u64 - the template the line was routed to: the catalog's id
-//!          [8]  received_at  i64 - unix nanoseconds
-//!          [4]  len          u32
-//!          [N]               the line, as it arrived
-//! ```
-//!
-//! Integers are little-endian. The CRC is CRC-32C, the one every other record in the data
-//! directory is checked with.
-//!
-//! **The time beside each record is what a replay is held to, and the record is not.** A
-//! row group covers a position of one template on one UTC day, so a replay has to know
-//! the day a line was filed under before it can tell whether a row group holds it. Read
-//! back off the line, that day would depend on what parses it - the epoch window in force,
-//! the build - and a start under other settings would look for the line in the wrong day:
-//! skip one that nothing holds, or store one twice. So the day the row *was* filed under
-//! is written down when it is, beside the template it was routed to: neither is decided
-//! again. It also means a line a row group already holds is skipped without being parsed,
-//! which is nearly every line a start reads.
-//!
-//! **What a `200` means now.** A line is parsed and routed to its template first - the
-//! record carries the template's id, and a template's catalog record is durable before any
-//! log record names it - then written here and flushed, and only then acknowledged. From
-//! that point nothing loses it: a store that cannot take the row delays it until the next
-//! start replays it, and never turns into an error for the sender (`error::IngestError`).
-//!
-//! **One writer, and no timer.** Bodies queue; one thread takes whatever has queued,
-//! compresses it, writes it and flushes once, and then takes whatever queued while it did.
-//! A sender waits one flush, not a flush and a timer: measured with a 4ms flush, 4ms
-//! against 9ms behind a 5ms wait and 27ms behind a 20ms one, for no more throughput.
-//!
-//! **A body is in the log whole or not at all.** A flush takes bodies, never part of one:
-//! `batch_lines` is where it stops taking *more* of them, so a body larger than that is
-//! the last of its flush, whole. So one frame is one or more whole bodies, a kill leaves a
-//! body's lines all in the log or none of them, and a body the log refuses has no line in
-//! it - a shipper that sends it again stores nothing twice. Split at the bound instead, a body
-//! could be durable up to a line and refused from there: the `503` would be true of half
-//! of it, and the retry would store the other half a second time.
-//!
-//! **One applier, in log order.** A flushed batch goes down a channel to the one thread
-//! that hands rows to the store, each with its position. That order is what a row group's
-//! range rests on: every buffer of one template and one day holds its rows in position
-//! order, so the rows a row group is cut from are a run with nothing of that template and
-//! day skipped inside it, and "positions `first` to `last`" says exactly which lines the
-//! row group made durable. Replay skips a record a durable row group's range holds and
-//! puts back every other - by the range and not by the checkpoint, because a row group
-//! reaches the disk before the checkpoint moves past it, and a replay that trusted the
-//! checkpoint alone would store those rows twice.
-//!
-//! **A position a row group could name is never given out twice.** Positions start at 1
-//! and only grow, across segments and across restarts: a flush that fails burns the
-//! positions it had taken, and a start resumes above everything it can see - the last
-//! record, the newest segment's base, the checkpoint - and above anything a stretch it
-//! could not read might have held. A position given out twice would be two lines that one
-//! row group's range covers, and replay would drop the second. The only positions that
-//! come round again are ones no flush ever made durable, which no row was ever given.
-//!
-//! **A run writes only segments it made.** A start never appends to a segment an earlier
-//! process left: it opens the next number. So a record torn by a kill can only be the
-//! last thing in a segment, the bytes after a tear are never a later run's records, and
-//! a reader never has to cut a file to keep them apart - nothing here is ever truncated
-//! but by the writer taking back its own failed write.
-//!
-//! **The checkpoint moves while the server runs** (`Wal::advance`): to just before the
-//! oldest position that is still only in memory. Segments wholly behind it are deleted
-//! then - never the newest, which is what carries the stream's id and its next position
-//! when nothing else is left. The file is a hint: it saves replay from holding each line
-//! behind it against the row groups, and it is what lets segments go. It is written by
-//! rename, and one that is lost costs a longer replay and no row.
+//! It holds the segment, frame, batch and record layouts, replay, the one writer and
+//! the bound on what waits. One applier hands rows to the store in log order, which is
+//! what a row group's range of positions rests on.
 
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
@@ -110,8 +19,8 @@ use thiserror::Error;
 use crate::db::Placed;
 use crate::frame;
 
-/// The log's directory inside the data directory. Beside `data/`, never under it: a start
-/// deletes every file there that the manifest does not name.
+/// The log's directory inside the data directory, beside `data/` and never under it: a
+/// start deletes every file there that the manifest does not name.
 pub const DIR: &str = "wal";
 const CHECKPOINT_FILE: &str = "checkpoint";
 
@@ -125,54 +34,37 @@ const RECORD_HEADER: usize = 32;
 /// A segment rolls to the next number once it is this long.
 pub const DEFAULT_SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Where a flush stops taking more bodies: once it holds this many lines. An upper bound
-/// on what rides together and not a target or a wait - a flush takes what has queued - and
-/// not a bound on a body, which is never split: one that takes a flush past this is the
-/// last the flush takes.
+/// Where a flush stops taking more bodies, once it holds this many lines: an upper bound
+/// and not a wait, and never a bound on a body, which is not split.
 pub const DEFAULT_BATCH_LINES: usize = 500;
 
-/// And once it holds this many bytes of lines: 500 lines are 125KB of ordinary logs, and
-/// can be 32GB of the largest lines there are.
+/// And once it holds this many bytes of lines: a count of lines says nothing of their size.
 const BATCH_BYTES: usize = 8 * 1024 * 1024;
 
-/// The most one body may come to as records: its lines, and forty bytes of header and
-/// time for each. 1GiB, which the largest body the door takes by default stays under - 64MiB
-/// of `{}` lines, twenty-two million of them, are 896MiB here - and which keeps a frame's
-/// lengths inside a `u32`. A body past it is refused before it is queued (`Refused::TooLarge`):
-/// written, it would be a frame no start could read.
+/// The most one body may come to as records, which keeps a frame's lengths inside a `u32`;
+/// a body past it is refused before it is queued (`Refused::TooLarge`).
 const MAX_BODY_RAW: usize = 1024 * 1024 * 1024;
 
-/// The most a batch may claim to decompress to: one body, and the bodies a flush took
-/// before it - under `BATCH_BYTES` of records, and their times. What is written is held to
-/// this as what is read is, so a frame this build wrote is one it reads.
+/// The most a batch may claim to decompress to: one body and the bodies a flush took before
+/// it, held on writing as on reading so a frame this build wrote is one it reads.
 pub const MAX_RAW: usize = MAX_BODY_RAW + 2 * BATCH_BYTES;
 
 // A frame says how long its batch is in four bytes.
 const _: () = assert!(MAX_RAW <= u32::MAX as usize);
 
-/// The least a log that could not write writes, and takes back, to find out whether it
-/// can again: enough to need a block the volume may not have. It writes as much as the
-/// flush that failed, when that was more.
+/// The least a log that could not write writes, and takes back, to find out whether it can
+/// again: enough to need a block the volume may not have.
 const PROBE_BYTES: usize = 64 * 1024;
 
-/// zstd 3: 253 bytes a line down to 88 on the generated logs, with no CPU cost that
-/// shows beside the flush.
+/// zstd 3: no CPU cost that shows beside the flush.
 const ZSTD_LEVEL: i32 = 3;
 
-/// The most bytes of lines that may be between a body's sender and the store, where
-/// nothing says otherwise (`Options::queue_bytes`): waiting for the writer, or written
-/// and not yet handed to the store. What bounds the memory a stalled disk can take, and
-/// a store that is slow to take rows as well - the writer does not wait for the applier,
-/// so counted only up to the writer the rows it had written would collect behind it with
-/// nothing held against them. Past it a body waits for room, for as long as it is allowed
-/// (`Wait`), and is then shed with a `503`, and its sender keeps it. How many bodies may
-/// be inside at once, each a parked thread, is the door's to bound, before it reads one.
+/// The most bytes of lines that may be between a body's sender and the store by default,
+/// which bounds the memory a stalled disk or a slow store can take.
 pub const DEFAULT_QUEUE_BYTES: usize = 256 * 1024 * 1024;
 
-/// The most positions one unreadable byte of a segment is taken to have held: what a
-/// start skips, per byte it could not read, before it gives out a position. A record is
-/// forty bytes and more before compression and zstd does not reach a thousand to one on
-/// records whose positions all differ, so this is past anything a frame can hold.
+/// The most positions one unreadable byte of a segment is taken to have held: past anything
+/// a frame can hold, so a start skips enough before it gives out a position.
 const POSITIONS_PER_LOST_BYTE: u64 = 1024;
 
 /// How long a sender sleeps between looks at whether the log's threads are still there.
@@ -187,8 +79,8 @@ pub enum WalError {
         #[source]
         source: std::io::Error,
     },
-    /// A frame whose checksum holds and whose contents this build cannot read. Not a tear
-    /// - those are the bytes a writer wrote - so nothing is guessed: the start stops.
+    /// A frame whose checksum holds and whose contents this build cannot read: not a tear, so
+    /// nothing is guessed and the start stops.
     #[error(
         "{path}: offset {offset}: {what}. The frame's checksum holds, so these are bytes a \
          writer wrote and not a write a stop cut short; this build does not guess at them. \
@@ -202,9 +94,8 @@ pub enum WalError {
         offset: u64,
         what: String,
     },
-    /// A segment whose header will not read and which is longer than a header: not a
-    /// segment cut short as it was created, which holds nothing, but one that may hold
-    /// lines - of another version, or damaged.
+    /// A segment whose header will not read and which is longer than a header, so it may hold
+    /// lines.
     #[error(
         "{path}: {why}, and the file is longer than a header, so it may hold lines this \
          build cannot read. Nothing was replayed: start the build that wrote the log, or \
@@ -212,15 +103,15 @@ pub enum WalError {
          the lines only the old one holds are not stored"
     )]
     Header { path: PathBuf, why: String },
-    /// Two streams in one directory. A row group's range names one stream, and a record
-    /// of another would be held against ranges that were never about it.
+    /// Two streams in one directory: a record of another stream would be held against row
+    /// group ranges that were never about it.
     #[error(
         "{a} and {b} carry different stream ids: segments of two write-ahead logs are in one \
          directory, and this build does not guess which one the stored row groups came from"
     )]
     Streams { a: PathBuf, b: PathBuf },
-    /// What the replay's caller could not do with a record. Carried as text: the caller's
-    /// error is the store's, and the log does not depend on the store.
+    /// What the replay's caller could not do with a record, carried as text so the log does
+    /// not depend on the store.
     #[error("replaying position {seq}: {detail}")]
     Replay { seq: u64, detail: String },
 }
@@ -232,9 +123,8 @@ fn io(path: &Path) -> impl Fn(std::io::Error) -> WalError + '_ {
     }
 }
 
-/// A line of the process's log, at `info`. Whatever writes the event out must not panic
-/// when stderr is gone, as `eprintln!` does - the binary's subscriber drops the line
-/// instead (`kibbr::logs`): a panic here would end the thread every `/ingest` waits on.
+/// A line of the process's log, at `info`. Not `eprintln!`, which panics when stderr is
+/// gone: a panic here would end the thread every `/ingest` waits on.
 fn say(message: &str) {
     tracing::info!("{message}");
 }
@@ -368,17 +258,16 @@ pub struct Line {
     pub placed: Placed,
 }
 
-/// Why the log did not take a body. Nothing of the body is in the log - but for the one
-/// case no reader can settle, a writer that died with the body in its hands.
+/// Why the log did not take a body, nothing of which is in the log - but for the one case
+/// no reader can settle, a writer that died with the body in its hands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refused {
     /// The log cannot write: the error of the flush that failed.
     Cannot(String),
-    /// More is waiting on the log than it is allowed to hold, and no room came in the
-    /// time the body was given to wait for it: a shed, as the door's are, and not a
-    /// verdict on the disk.
+    /// More is waiting on the log than it may hold, and no room came in the time the body was
+    /// given to wait: a shed, as the door's are, and not a verdict on the disk.
     Busy,
-    /// The body is more, as records, than one frame holds. The sender's to fix: no retry
+    /// The body is more, as records, than one frame holds: the sender's to fix, since no retry
     /// of the same body will fit.
     TooLarge { bytes: usize, limit: usize },
     /// The body's sender had gone, and the log had no room for the body: it was let go
@@ -389,10 +278,10 @@ pub enum Refused {
 /// How long a body may wait for room in the log, and what ends the wait early.
 #[derive(Debug, Clone, Copy)]
 pub struct Wait<'a> {
-    /// From the moment the log is found full. Zero: do not wait.
+    /// From the moment the log is found full; zero is no wait.
     pub at_most: Duration,
-    /// Set, with no lock, once the body's sender has gone. A body that is waiting sees
-    /// it the next time it looks, and `Wal::wake_room` has it look at once.
+    /// Set, with no lock, once the body's sender has gone; a waiting body sees it the next
+    /// time it looks, and `Wal::wake_room` has it look at once.
     pub left: &'a AtomicBool,
 }
 
@@ -445,9 +334,8 @@ pub struct Stats {
     pub queue_left: u64,
 }
 
-/// What has become of one body. `Logged` is the writer's word the moment a flush returns,
-/// and `Applied` the applier's: a body's sender waits for the second, so a client that
-/// ingests and then queries sees what it sent.
+/// What has become of one body. A sender waits for `Applied`, not `Logged`, so a client
+/// that ingests and then queries sees what it sent.
 struct Outcome {
     progress: Mutex<Progress>,
     moved: Condvar,
@@ -484,10 +372,8 @@ impl Outcome {
                 // In the log, and the applier is gone: durable, so it is acknowledged,
                 // and the next start applies it.
                 Progress::Logged if shared.stopped.load(Ordering::Acquire) => return Ok(()),
-                // Taken off the queue by a writer that then died: whether its flush
-                // landed nobody is left to say. A writer still running says, and is
-                // waited for - told "refused" here, a body it then wrote would be stored
-                // by the next start and again by its sender's retry.
+                // Taken off the queue by a writer that then died: nobody is left to say whether
+                // its flush landed. A writer still running is waited for, lest a retry store twice.
                 Progress::Queued if shared.writer_gone.load(Ordering::Acquire) => {
                     return Err(Refused::Cannot(
                         "the write-ahead log's writer stopped while this body was being \
@@ -514,9 +400,8 @@ pub struct Ticket<'w> {
 }
 
 impl Ticket<'_> {
-    /// Until the body's lines are durable and applied, or refused. `Err` carries why the
-    /// log could not take them. Blocks for a flush, so it is called from a blocking
-    /// thread.
+    /// Wait until the body's lines are durable and applied, or refused; it blocks for a flush,
+    /// so it is called from a blocking thread.
     pub fn wait(self) -> Result<(), Refused> {
         match &self.outcome {
             Some(outcome) => outcome.wait(self.shared),
@@ -526,12 +411,7 @@ impl Ticket<'_> {
 }
 
 /// Whether a body is past what one frame holds, told from its bytes before it is parsed:
-/// every line of it that is not blank counted as a record.
-///
-/// An upper bound - a line that will not parse is no record - so a body this lets by is
-/// one `enqueue` takes, and one it refuses is refused before gigabytes are spent parsing a
-/// body no frame would hold. Bodies of ordinary size are not walked: under a twenty-first
-/// of the bound in bytes, no number of lines reaches it.
+/// an upper bound, so a body it refuses costs no parse.
 pub fn too_large(body: &[u8]) -> Option<Refused> {
     const PER_LINE: usize = RECORD_HEADER + 8;
     // The shortest line is a byte and its newline.
@@ -549,8 +429,8 @@ pub fn too_large(body: &[u8]) -> Option<Refused> {
     })
 }
 
-/// What a body counts for against the log's bound: every line of it that is not blank,
-/// as a record. For a test that sets the bound in bodies.
+/// What a body counts for against the log's bound, every line that is not blank as a
+/// record: for a test that sets the bound in bodies.
 #[cfg(any(test, feature = "test-support"))]
 pub fn counted(body: &[u8]) -> usize {
     body.split(|b| *b == b'\n')
@@ -592,21 +472,13 @@ struct Shared {
     queue: Mutex<Queue>,
     wake: Condvar,
     /// Where a body waits for room. Notified with the queue's lock held, and only while
-    /// `room_waiters` says somebody is there: by the applier once a batch is stored, by a
-    /// flush that failed, by a thread that ended, and by whoever has changed what a
-    /// waiter looks at - a sender that left, a server that is stopping.
+    /// `room_waiters` says somebody is there.
     room: Condvar,
     /// The bytes of the lines waiting for the writer. Written only with the queue's lock
-    /// held, and an atomic so that `/stats` reads it with no lock: the writer keeps that
-    /// lock while it moves every line of the bodies it takes, and a runtime thread must
-    /// not queue behind that.
+    /// held, and an atomic so that `/stats` reads it without queueing behind the writer.
     queued: AtomicUsize,
-    /// The bytes of the lines the writer has taken and the applier has not yet handed to
-    /// the store. With `queued`, what is held under the queue's `limit`.
-    ///
-    /// Raised only with the queue's lock held, as the writer takes a body. Lowered by
-    /// the applier with no lock, which is safe because lowering can only make room: read
-    /// under the lock, the two together are never less than what is really there.
+    /// The bytes of lines the writer has taken and the applier has not yet handed to the
+    /// store. Raised under the queue's lock; lowered with none, which can only make room.
     unapplied: AtomicUsize,
     /// The most `queued` and `unapplied` have come to together. Kept under the queue's
     /// lock, where the two are read as one.
@@ -632,18 +504,15 @@ struct Shared {
     /// The checkpoint its file holds: behind `checkpoint` for as long as the file could
     /// not be written.
     filed: AtomicU64,
-    /// Whether the last flush could write, and why not: one value, read in one step, so
-    /// no reader is told the log cannot write and left to find the reason where it is not
-    /// yet. Its lock is taken alone or inside the queue's, never the other way round.
+    /// Whether the last flush could write, and why not, as one value read in one step.
+    /// Its lock is taken alone or inside the queue's, never the other way round.
     health: RwLock<Health>,
     /// No thread is taking lines: before `start`, after `close`, or because one died.
     stopped: AtomicBool,
     /// The writer has ended, and whatever it had taken off the queue it will not finish.
     writer_gone: AtomicBool,
-    /// The checkpoint has reached the last position written, and the segment being
-    /// written holds records: once it is worth it (`Log::ensure`) the writer opens the
-    /// next at its next flush, so this one - every line of it in a row group - is
-    /// deleted, where it would have stayed until it was full.
+    /// The checkpoint has reached the last position written and the segment being written
+    /// holds records: the writer opens the next (`Log::ensure`), so this one can be deleted.
     drained: AtomicBool,
     flushes: AtomicU64,
 }
@@ -657,9 +526,8 @@ enum Health {
     Writing { last_error: Option<String> },
     /// It could not, and every refusal, `/health` and `/stats` say `why`.
     Cannot { why: String },
-    /// A thread of the log has died, and `why` says to restart the server. Nothing a
-    /// flush finds changes that: one that fails is not the reason the log takes nothing,
-    /// and one that succeeds wrote what nothing will apply.
+    /// A thread of the log has died, and `why` says to restart the server. Nothing a flush
+    /// finds changes that.
     Died { why: String },
 }
 
@@ -714,10 +582,8 @@ impl Shared {
         true
     }
 
-    /// Wake every body waiting for room, if any is: each looks again at what it waits
-    /// on. **The caller holds the queue's lock.** A waiter holds that lock from its look
-    /// until it is parked, so a wake-up sent under it is never between the two, and never
-    /// lost.
+    /// Wake every body waiting for room, if any is. The caller holds the queue's lock, which
+    /// a waiter holds from its look until it is parked: a wake-up under it is never lost.
     fn wake_room(&self) {
         if self.room_waiters.load(Ordering::Acquire) > 0 {
             self.room.notify_all();
@@ -802,15 +668,8 @@ pub struct Wal {
 }
 
 impl Wal {
-    /// The log in `base`, if there is one: its segments' headers and its checkpoint, and
-    /// nothing read past them yet. `None` for a directory with no segment a start can use.
-    ///
-    /// **A segment no longer than a header, whose header will not read, was cut short as it
-    /// was made** - by a stop, or by a write that failed and could not be cleared away. The
-    /// header is written and flushed before a record can follow it, so such a file holds
-    /// no line: it is removed with a warning. One that is longer and will not read stops
-    /// the start (`WalError::Header`): it may hold lines, and leaving it out would be
-    /// guessing that it does not.
+    /// The log in `base`, if there is one: its segments' headers and checkpoint, nothing read
+    /// past them yet, and a segment cut short as it was made removed with a warning.
     pub fn open(base: &Path, warn: &mut dyn FnMut(String)) -> Result<Option<Self>, WalError> {
         let dir = base.join(DIR);
         let entries = match fs::read_dir(&dir) {
@@ -890,12 +749,8 @@ impl Wal {
         }))
     }
 
-    /// A new log in `base`: a new stream, with its id drawn here. The id reaches the disk
-    /// with the first segment (`start`), before any row can carry a position of it.
-    ///
-    /// **A new id and never the old one**, whatever is left in the directory: a log that
-    /// is lost and made again starts its positions again, and under the old id its record
-    /// 17 would be skipped on replay because some week-old row group covers 17.
+    /// A new log in `base`, with a new stream id and never the old one: its positions start
+    /// again, and under the old id they would be held against the old row groups.
     pub fn create(base: &Path) -> Result<Self, WalError> {
         let dir = base.join(DIR);
         fs::create_dir_all(&dir).map_err(io(&dir))?;
@@ -950,9 +805,8 @@ impl Wal {
         matches!(*self.shared.health(), Health::Writing { .. })
     }
 
-    /// Why the log cannot write, and `None` while it can: what the door reads before it
-    /// takes a body, and what `/health` and `enqueue` say. Whether and why are one read,
-    /// so there is never the one without the other.
+    /// Why the log cannot write, and `None` while it can: whether and why in one read, so
+    /// there is never the one without the other.
     pub fn refusal(&self) -> Option<String> {
         self.shared.refusal()
     }
@@ -963,34 +817,8 @@ impl Wal {
         self.shared.health().report().1
     }
 
-    /// Read every record past the checkpoint back, in order, and hand each to `each`. An
-    /// `Err` from it stops the replay and is returned.
-    ///
-    /// **A record a stop cut short is the normal end of a segment, and not corruption.** A
-    /// frame with fewer bytes than its length says, or one at the end of the file whose
-    /// checksum fails, is what a process killed mid-write leaves: it is warned about and
-    /// skipped, and the start goes on. Refusing to start over it would turn a clean crash
-    /// into an outage. The line it held was never acknowledged - the flush that would
-    /// have acknowledged it never returned.
-    ///
-    /// **Nothing is cut.** The bytes after the last whole frame stay where they are: no
-    /// run appends to a segment it did not make, so they are in nobody's way, and the
-    /// checkpoint deletes the segment whole. A reader that truncated at the first thing
-    /// it could not read would, on a segment with one damaged length in the middle,
-    /// destroy every acknowledged frame after it.
-    ///
-    /// **A stretch that will not read with whole frames after it is stepped over**, and
-    /// warned about as corrupt: the lines in it are lost and the frames after it are not.
-    /// The next frame is found by looking for one - a length that fits, the batch's kind,
-    /// a checksum that holds, contents that decode.
-    ///
-    /// What stops the start is a frame whose checksum holds and whose contents will not
-    /// decode: see `WalError::Corrupt`.
-    ///
-    /// **Every segment is flushed before it is read.** After a kill the last frames can
-    /// be whole in the page cache and never have reached the disk. Read as they are and
-    /// acted on - a row group written from them, a position given out above them - they
-    /// would be relied on by things that are durable, and lost with the power.
+    /// Read every record past the checkpoint back, in order, and hand each to `each`, whose
+    /// `Err` stops the replay; a torn end is skipped and nothing is cut.
     pub fn replay(
         &self,
         warn: &mut dyn FnMut(String),
@@ -1014,12 +842,8 @@ impl Wal {
                 &seg.path, &bytes, checkpoint, &mut found, &mut lost, &mut *warn, &mut *each,
             )?;
         }
-        // Above everything read - and above whatever the bytes that would not read could
-        // have held. After a kill those are a frame that was never flushed, and so never
-        // applied; but if they were once whole frames, rows were stored from them, and a
-        // row group somewhere names their positions. Given out again, those positions
-        // would be new lines a replay took for stored ones. Positions are not scarce: a
-        // gap costs nothing.
+        // Above everything read, and above whatever the unreadable bytes could have held: if they
+        // were once whole frames, a row group names their positions. A gap costs nothing.
         if let State::Idle { next_seq, .. } = &mut *lock(&self.state) {
             let gap = lost.saturating_mul(POSITIONS_PER_LOST_BYTE);
             *next_seq = (*next_seq).max(found.last_seq.saturating_add(1).saturating_add(gap));
@@ -1032,14 +856,8 @@ impl Wal {
         Ok(found)
     }
 
-    /// Start writing: a new segment, the writer and the applier. Called once, after
-    /// `replay`; the log takes no line before it.
-    ///
-    /// **A segment that cannot be made does not stop the start.** A full volume is the
-    /// usual reason, and a server on one still has rows to answer queries about: it
-    /// starts with the log unhealthy - `/ingest` answers `503` with the reason - and the
-    /// flush tick's probe makes the segment once the volume has room. Only a thread that
-    /// will not start is an error.
+    /// Start writing, once, after `replay` - a new segment, the writer and the applier; a
+    /// segment that cannot be made leaves the log unhealthy for the probe to mend, and is no error.
     pub fn start(&self, options: Options, apply: Apply) -> Result<(), WalError> {
         let mut state = lock(&self.state);
         let State::Idle {
@@ -1060,11 +878,8 @@ impl Wal {
             failed_bytes: 0,
             shared: Arc::clone(&self.shared),
         };
-        // Every position below the first this run gives out was applied by the caller, or
-        // was never given out - burned by a flush that failed, or skipped past a stretch
-        // that would not read. Said here, so the checkpoint can cross such a gap and the
-        // segments before it go; left at the last record read, they would stay until a
-        // new line's row group closed, and every start meanwhile would leave one more.
+        // Every position below the first this run gives out was applied or never given out.
+        // Said here, so the checkpoint can cross such a gap and the segments before it go.
         let before = next_seq.saturating_sub(1);
         self.shared.written.fetch_max(before, Ordering::AcqRel);
         self.shared.applied.fetch_max(before, Ordering::AcqRel);
@@ -1096,29 +911,8 @@ impl Wal {
         Ok(())
     }
 
-    /// Put a body's lines in the log's queue - all of them, for one flush - waiting for
-    /// room if the log has none, and return what the body's sender then waits on
-    /// (`Ticket::wait`). `Err` is why the log did not take the body: none of its lines is
-    /// in the log then, and the sender must keep them. `received_at` is the body's
-    /// arrival time, in unix nanoseconds: what a row with no time of its own is stored
-    /// under, now and at every replay.
-    ///
-    /// **A full log makes the body wait, and the wait is the caller's to bound.** A body
-    /// that has been read and parsed is the dearest thing to turn away: its sender comes
-    /// back a second later and all of that is done again. So it waits here for the
-    /// applier to make room, for as long as `wait` allows, and only then is shed. What
-    /// the wait costs is a parsed body held in memory that the bound does not count, so
-    /// the caller keeps its permit for the parse until this returns: there are then no
-    /// more bodies waiting than there are permits.
-    ///
-    /// **Room first, and then whether to go on waiting.** A body whose sender has gone,
-    /// or that arrives while the server is stopping, is still taken whole when the log
-    /// has room for it.
-    ///
-    /// The clock is read only when the log is full: a body that finds room pays two
-    /// loads and a comparison for the look.
-    ///
-    /// Blocks while it waits, so it is called from a blocking thread.
+    /// Put a body's lines in the queue, all for one flush, waiting up to `wait` for room, and
+    /// return what its sender waits on; `Err` means none of its lines is in the log.
     pub fn enqueue(
         &self,
         lines: Vec<Line>,
@@ -1141,11 +935,8 @@ impl Wal {
         }
         let outcome = Arc::new(Outcome::new());
         {
-            // The health is read under the queue's lock, which a failing flush holds while
-            // it empties the queue: a body is refused here or by that flush, never left
-            // waiting behind it. And every look below is under it too, so whoever makes
-            // room, or changes what a waiter looks at, and then takes this lock finds the
-            // waiter either not yet looking - and it will see the change - or parked.
+            // The health is read under the queue's lock, which a failing flush holds while it
+            // empties the queue: a body is refused here or by that flush, never left behind it.
             let mut queue = lock(&shared.queue);
             // When this body's wait for room ends: set the first time it finds none.
             let mut until: Option<Instant> = None;
@@ -1208,10 +999,8 @@ impl Wal {
         })
     }
 
-    /// Put a body's lines in the log and return once they are durable and applied:
-    /// `enqueue` with no wait for room, and then the wait for the answer. The tests'
-    /// way in, for a sender with nothing to hold between the two and nowhere to go: the
-    /// server calls the two apart, to give its permit back between them.
+    /// `enqueue` with no wait for room, and then the wait for the answer: the tests' way in,
+    /// where the server calls the two apart to give its permit back between them.
     #[cfg(test)]
     pub fn commit(&self, lines: Vec<Line>, received_at: i64) -> Result<(), Refused> {
         // A sender that never leaves.
@@ -1223,29 +1012,22 @@ impl Wal {
         self.enqueue(lines, received_at, wait)?.wait()
     }
 
-    /// Have whoever is waiting for room look again: something it looks at has changed
-    /// that no thread of the log's changed - its sender has left.
-    ///
-    /// Takes the queue's lock, which the writer can keep for as long as moving a large
-    /// body's lines takes: called from a thread that may block, never a runtime worker.
+    /// Have whoever is waiting for room look again, because its sender has left; it takes the
+    /// queue's lock, so it is called from a thread that may block.
     pub fn wake_room(&self) {
         let _queue = lock(&self.shared.queue);
         self.shared.wake_room();
     }
 
-    /// The server is stopping: nobody waits for room from here on. A body waiting is
-    /// shed at once, and so is one that finds no room later - a stop must not take as
-    /// long as the longest wait. Bodies already in the queue are written and applied as
-    /// they would have been.
-    ///
-    /// Takes the queue's lock, as `wake_room` does: a thread that may block.
+    /// The server is stopping, so nobody waits for room from here on - a stop must not take as
+    /// long as the longest wait; it takes the queue's lock, as `wake_room` does.
     pub fn hurry(&self) {
         self.shared.hurry.store(true, Ordering::Release);
         self.wake_room();
     }
 
-    /// Bodies waiting for room now. Read with no lock: the door asks it on a runtime
-    /// worker, to say the right thing to a body it has kept waiting for nothing.
+    /// Bodies waiting for room now, read with no lock: the door asks it on a runtime worker,
+    /// to say the right thing to a body it has kept waiting for nothing.
     pub fn waiting_for_room(&self) -> usize {
         self.shared.room_waiters.load(Ordering::Acquire)
     }
@@ -1258,13 +1040,8 @@ impl Wal {
         self.shared.queued.load(Ordering::Relaxed) + self.shared.unapplied.load(Ordering::Acquire)
     }
 
-    /// Ask the writer, while the log cannot write, to try again: make a segment if there
-    /// is none, write to it, flush it, and take the write back (`Log::probe`). The flush
-    /// tick calls this, so the door opens again within a tick of the disk coming back and
-    /// not at the first body brave enough to try - and stays shut while it has not.
-    ///
-    /// Not once a thread of the log has died: there is nothing a write could show then,
-    /// and what `/ingest` says - restart the server - is not to be written over.
+    /// Ask the writer, while the log cannot write, to try again (`Log::probe`), so the door
+    /// opens within a tick of the disk coming back; not once a thread of the log has died.
     pub fn probe(&self) {
         if self.is_healthy() || self.shared.stopped.load(Ordering::Acquire) {
             return;
@@ -1273,28 +1050,8 @@ impl Wal {
         self.shared.wake.notify_one();
     }
 
-    /// Move the checkpoint to just before the oldest position still only in memory, and
-    /// delete the segments wholly behind it.
-    ///
-    /// `oldest` is asked for that position - the lowest one in any buffer, or held back
-    /// for any other reason - **after** the applied position is read here. In that order
-    /// a row is never missed: one applied before the read is in a buffer when `oldest`
-    /// looks, or already in a row group; one applied after it is above the bound.
-    ///
-    /// **The file is a hint, and a file that cannot be written does not keep a segment.**
-    /// Every position up to the checkpoint is in a row group whether or not the file says
-    /// so, and on a full volume the segments behind it are the room the file needs: so
-    /// they go either way, and the failure is handed back beside what moved. A start
-    /// after it reads an older checkpoint, finds the segments gone, and holds the rest
-    /// against the row groups as it would have.
-    ///
-    /// Segments are looked for even when the checkpoint has not moved: each start opens
-    /// one, and a server started and stopped with nothing sent would otherwise leave one
-    /// behind every time. They leave the list under its lock and the disk after it, so
-    /// nothing waits on an unlink.
-    ///
-    /// One caller at a time - the flush tick, and then the shutdown once the tick's task
-    /// is joined. `None` when nothing moved and nothing was deleted.
+    /// Move the checkpoint to just before the oldest position still only in memory and delete the
+    /// segments behind it; `oldest` is asked after `applied` is read, so no row is missed.
     pub fn advance(
         &self,
         oldest: impl FnOnce() -> Option<u64>,
@@ -1332,9 +1089,8 @@ impl Wal {
             {
                 self.shared.drained.store(true, Ordering::Release);
             }
-            // Every record of a segment is below the next one's base. Never the newest:
-            // it is being written, and it is what says which stream this is and where it
-            // had got to.
+            // Every record of a segment is below the next one's base. Never the newest: it says
+            // which stream this is and where it had got to.
             let behind = segments
                 .windows(2)
                 .take_while(|pair| pair[1].base <= target.saturating_add(1))
@@ -1345,9 +1101,8 @@ impl Wal {
             match fs::remove_file(&seg.path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                // Left on the disk and off the list: the next start finds it, finds
-                // every line of it behind the checkpoint or in a row group, and deletes
-                // it at its first tick.
+                // Left on the disk and off the list: the next start finds every line of it behind
+                // the checkpoint or in a row group, and deletes it at its first tick.
                 Err(e) => problem = problem.or(Some(io(&seg.path)(e))),
             }
         }
@@ -1363,10 +1118,8 @@ impl Wal {
         // The two from one read of the health: never unhealthy beside no reason, or beside
         // the reason of a failure before this one.
         let (healthy, last_error) = self.shared.health().report();
-        // `unapplied` before `queued`. The writer takes a body out of `queued` and then
-        // into `unapplied`, so read in this order, with no lock, the pair can miss the
-        // body the writer has in hand and can never hold it twice. Read the other way
-        // round it could: in `queued` at the first read, in `unapplied` by the second.
+        // `unapplied` before `queued`: the writer moves a body out of `queued` and then into
+        // `unapplied`, so in this order the pair can miss a body and never hold it twice.
         let unapplied_bytes = self.shared.unapplied.load(Ordering::Acquire);
         let queue_bytes = self.shared.queued.load(Ordering::Acquire);
         Stats {
@@ -1448,11 +1201,8 @@ impl Shared {
     }
 }
 
-/// Missing or unparseable is 0: the checkpoint is a hint, and without it a replay reads
-/// more and skips by the row groups' ranges.
-///
-/// Digits only, which is all `advance` writes: `parse` alone takes a sign, and `+5` is
-/// not a checkpoint this log wrote.
+/// Missing or unparseable is 0: the checkpoint is a hint. Digits only, which is
+/// all `advance` writes: `parse` alone takes a sign, and `+5` is no checkpoint.
 fn read_checkpoint(dir: &Path) -> u64 {
     fs::read_to_string(dir.join(CHECKPOINT_FILE))
         .ok()
@@ -1462,18 +1212,8 @@ fn read_checkpoint(dir: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// One segment's frames, read as `Wal::replay` reads them: `bytes` is the whole file,
-/// `path` is only what the warnings and errors name, and `found` and `lost` are the
-/// replay's own, carried from segment to segment. Returns the offset the reading stopped
-/// at: the segment's length, or where its torn end begins.
-///
-/// Apart from `replay`, which reads the file and hands its bytes here, only the fuzz
-/// target calls this (`fuzzing::wal_record`): it takes bytes, and no file, so that the
-/// reader can be held to its invariants without a disk under it.
-///
-/// **`bytes` is a segment `Wal::open` took**, so it is no shorter than a header: `open`
-/// leaves out every file whose header will not read, and nothing is read here before
-/// `HEADER_LEN`.
+/// One segment's frames, read as `Wal::replay` reads them, returning the offset the reading
+/// stopped at; it takes the file's bytes and no file, so the fuzz target can call it.
 pub fn read_segment(
     path: &Path,
     bytes: &[u8],
@@ -1485,9 +1225,8 @@ pub fn read_segment(
 ) -> Result<usize, WalError> {
     let mut at = HEADER_LEN;
     loop {
-        // Checked, as every frame in the data directory is, against the bytes that
-        // remain before anything is sliced: a length of 0xFFFFFFFF is a tear,
-        // never a 4GB read.
+        // Checked against the bytes that remain before anything is sliced: a length of
+        // 0xFFFFFFFF is a tear, never a 4GB read.
         let payload = match frame::read(bytes, at, u32::MAX) {
             frame::Next::End => return Ok(at),
             frame::Next::Frame { payload, end } => Some((payload, end)),
@@ -1578,14 +1317,8 @@ pub fn unpack(payload: &[u8]) -> Result<Vec<u8>, String> {
     Ok(raw)
 }
 
-/// A batch's records, every one checked before the first is handed over: the count, each
-/// length against the bytes that remain, each record's own checksum, and the batch used
-/// up exactly.
-///
-/// **A record that fails here is not skipped.** The frame's checksum held, so these are
-/// the bytes the writer wrote: a record inside them that will not check is a writer's
-/// fault, not a tear, and stepping over it by a length the failed check did not vouch
-/// for would be guessing at an acknowledged line.
+/// A batch's records, every one checked before the first is handed over; one that fails is
+/// a writer's fault and not a tear, so it is not skipped.
 pub fn records(raw: &[u8]) -> Result<Vec<Record<'_>>, String> {
     let Some(count) = raw.get(..4) else {
         return Err("a batch too short to hold its count".to_string());
@@ -1634,16 +1367,9 @@ pub fn records(raw: &[u8]) -> Result<Vec<Record<'_>>, String> {
 
 /// The offset of the next whole frame at or after `from`, if there is one: what tells
 /// damage in the middle of a segment from its torn end.
-///
-/// A frame begins where a length that fits is followed, eight bytes on, by the batch's
-/// kind and zstd's magic, its checksum holds, and its contents decode into records above
-/// `after`. All of it, because this looks at every offset: on bytes that are not a frame
-/// each holds by chance now and then, and all of them together do not.
 fn resync(bytes: &[u8], from: usize, after: u64) -> Option<usize> {
-    // A batch's payload begins with its kind, its length, and then the zstd frame, whose
-    // first four bytes are zstd's own. Looked for before any checksum is taken: without
-    // it a long stretch of compressed bytes offers a length that fits every few hundred
-    // offsets, and each would cost a checksum over megabytes.
+    // zstd's magic is looked for before any checksum is taken: without it compressed bytes
+    // offer a length that fits often, and each would cost a checksum over megabytes.
     const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
     let last = bytes
         .len()
@@ -1687,17 +1413,12 @@ struct Log {
 }
 
 impl Log {
-    /// A segment to write to: the open one, or the next number once that is past its size
-    /// or was abandoned. `base` is the position of the first record that would go into a
-    /// new one: what its header says no record in it is below.
-    ///
-    /// **The header is flushed, and the directory with it, before a record follows.** A
-    /// record flushed into a file whose entry a crash then loses was never durable.
+    /// A segment to write to: the open one, or the next number, whose header says no record
+    /// is below `base`. Header and directory are flushed before a record follows.
     fn ensure(&mut self, base: u64) -> Result<(), WalError> {
         if let Some(open) = &self.segment {
-            // Left early only once it is worth a new file and three flushes to be rid of:
-            // a sixty-fourth of a segment. A server that takes a line a second and writes
-            // each out at once would otherwise open a segment a line.
+            // Left early only once it is worth a new file: a sixty-fourth of a segment. A server
+            // that takes a line a second would otherwise open a segment a line.
             let drained = self.shared.drained.swap(false, Ordering::AcqRel)
                 && open.len >= (self.segment_bytes / 64).max(1);
             // Asked for with nothing in it, the segment in hand is already the next one.
@@ -1745,15 +1466,8 @@ impl Log {
         Ok(())
     }
 
-    /// One flush: the lines as one frame, written and flushed once.
-    ///
-    /// **A flush that fails is cut back**, so the frame is not found by a later start and
-    /// stored for a sender that was told it was refused. If the cut fails too the segment
-    /// is abandoned as it is and the next flush opens the next number. What is left at
-    /// its end is then usually part of a frame, which a reader stops at - but it can be
-    /// the whole frame, if it was the flush and not the write that failed: a start would
-    /// then store lines whose senders were told `503`, and store them again when those
-    /// senders retried. Two failures in a row on one file are past what this can promise.
+    /// One flush: the lines as one frame, written and flushed once. A flush that fails is cut
+    /// back, so a later start does not store a frame whose sender was refused.
     fn append(&mut self, first: u64, lines: &[(Line, i64)]) -> Result<(), WalError> {
         self.ensure(first)?;
         let size: usize = lines.iter().map(|(l, _)| RECORD_HEADER + l.raw.len()).sum();
@@ -1822,15 +1536,8 @@ impl Log {
         }
     }
 
-    /// Whether the log can write again: a segment, and a block written to its end,
-    /// flushed, and cut back off.
-    ///
-    /// **A write, because that is what failed, and as long as the one that did.** A flush
-    /// of a file with nothing new in it succeeds on a full volume, and so does a small
-    /// write on a volume with a little room: a probe that passed either way would open
-    /// the door for a body that is then read, parsed and refused - every tick, for as
-    /// long as the volume stayed full. The block is zeros, which a reader takes for a
-    /// tear: a stop between the write and the cut leaves a tail the next start skips.
+    /// Whether the log can write again: a block as long as the write that failed, flushed and
+    /// cut back off. Zeros, which a reader takes for a tear if a stop comes between.
     fn probe(&mut self) -> Result<(), WalError> {
         self.ensure(self.next_seq)?;
         let Some(open) = self.segment.as_mut() else {
@@ -1888,18 +1595,14 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
                 return;
             }
             queue.probe = false;
-            // Whatever has queued, in the order it queued, a whole body at a time: no more
-            // bodies once the bound is reached, and never part of one.
-            // So a flush is under `BATCH_BYTES` and one body, which is under `MAX_RAW`.
+            // A whole body at a time, and no more bodies once the bound is reached: so a flush
+            // is under `BATCH_BYTES` and one body, which is under `MAX_RAW`.
             while lines.len() < log.batch_lines && bytes < BATCH_BYTES {
                 let Some(body) = queue.waiting.pop_front() else {
                     break;
                 };
-                // Out of the one count and then into the other, in that order: a reader
-                // with no lock can miss a body that is between the two, and can never
-                // count it twice - so long as it reads `unapplied` first and `queued`
-                // second, as `Wal::stats` does. Read the other way round, a body could
-                // be met in both.
+                // Out of one count, then into the other: a reader with no lock that reads
+                // `unapplied` first (`Wal::stats`) can miss a body, and never count it twice.
                 let queued = shared.queued.load(Ordering::Relaxed);
                 shared
                     .queued
@@ -1937,9 +1640,8 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
         };
         match result {
             Ok(()) => {
-                // Not while the applier is gone: the log can write, and nothing it wrote
-                // would reach the store. `Stopping` said so under this lock, and it stays
-                // said.
+                // Not while the applier is gone: the log can write, and nothing it wrote would
+                // reach the store.
                 let again = {
                     let _queue = lock(&shared.queue);
                     !shared.stopped.load(Ordering::Acquire) && shared.writing()
@@ -1957,10 +1659,8 @@ fn write_loop(mut log: Log, tx: &Sender<Batch>) {
                     // Under the queue's lock, so no body joins the queue behind a flush
                     // that has failed: see `Wal::enqueue`.
                     let mut queue = lock(&shared.queue);
-                    // The reason goes in with the verdict, and before any body is
-                    // refused: whoever is told the log cannot write is told why, from the
-                    // first `503` on. Unless a thread has died - what `Stopping` said
-                    // then is kept, and only this flush's own bodies hear of the disk.
+                    // The reason goes in with the verdict, before any body is refused. Unless a
+                    // thread has died: what `Stopping` said then is kept.
                     let first = shared.cannot(&why);
                     let refused = Progress::Refused(Refused::Cannot(why.clone()));
                     for outcome in &taken {
@@ -2003,20 +1703,14 @@ fn apply_loop(shared: &Arc<Shared>, rx: &Receiver<Batch>, mut apply: Apply) {
                 .collect(),
         );
         shared.applied.store(last, Ordering::Release);
-        // Off the count before the answer, never after it. The answer wakes the sender's
-        // thread at once: were the bytes still counted then, a sender that came straight
-        // back would be measured against lines the store already has, and shed by an
-        // idle log.
+        // Off the count before the answer: the answer wakes the sender at once, and one that
+        // came straight back would be measured against lines the store already has.
         take_off(&shared.unapplied, batch.bytes);
         for outcome in batch.taken {
             outcome.set(Progress::Applied);
         }
-        // There is room now, and whoever is waiting for it is told - after the answers,
-        // so that no sender waits on this lock. Taken even with nobody waiting: a body
-        // about to wait holds it from its look at the count until it is parked, so the
-        // look comes after the bytes were taken off, or the wake-up after the body is
-        // parked. Without the lock a body could look, be passed by the wake-up, and park
-        // for its whole wait beside a log with room.
+        // Told after the answers, so no sender waits on this lock. Taken even with nobody
+        // waiting: without it a body could look, be passed by the wake-up, and park beside room.
         let _queue = lock(&shared.queue);
         shared.wake_room();
     }
@@ -2165,10 +1859,8 @@ mod tests {
         );
     }
 
-    /// What a write a stop cut short leaves at the end of a segment, in each shape: fewer
-    /// bytes than a frame's header, a frame whose length says more than is there, a whole
-    /// frame whose checksum fails, and a run of zeros. Each is warned about and skipped,
-    /// the start goes on, and nothing is cut: the file is as the stop left it.
+    /// What a write a stop cut short leaves at the end of a segment, in each shape: warned
+    /// about and skipped, the start goes on, and nothing is cut.
     #[test]
     fn a_torn_last_record_of_any_shape_is_warned_about_and_skipped() {
         let mut bad_crc = frame::frame(b"\x01torn");
@@ -2215,11 +1907,8 @@ mod tests {
         }
     }
 
-    /// Damage in the middle of a segment costs the frame it is in and no other, whether
-    /// it is in the frame's contents or in its length: the frames after it are found and
-    /// read, and nothing is cut. A reader that stopped at the first thing it could not
-    /// read - or cut the file there - would lose every acknowledged frame behind one bad
-    /// length.
+    /// Damage in the middle of a segment costs the frame it is in and no other, whether in
+    /// the frame's contents or its length: the frames after it are read, and nothing is cut.
     #[test]
     fn damage_mid_segment_costs_its_frame_and_the_frames_after_it_are_read() {
         for (name, at_length) in [("payload", false), ("length", true)] {
@@ -2276,9 +1965,8 @@ mod tests {
         }
     }
 
-    /// The checkpoint moves to just before the oldest position still in memory, deletes
-    /// the segments wholly behind it and never the newest; and a start resumes above
-    /// every position it gave out, whether or not the checkpoint file survived.
+    /// The checkpoint deletes the segments wholly behind it and never the newest, and a start
+    /// resumes above every position it gave out, whether or not the checkpoint file survived.
     #[test]
     fn the_checkpoint_deletes_what_is_behind_it_and_positions_are_never_reused() {
         let scratch = Scratch::new("checkpoint");
@@ -2404,9 +2092,8 @@ mod tests {
         ));
     }
 
-    /// A log made again in a directory that had one is given another id: its positions
-    /// start again, and the id is what keeps them from being held against the old one's
-    /// row groups.
+    /// A log made again in a directory that had one is given another id, which keeps its
+    /// positions from being held against the old one's row groups.
     #[test]
     fn a_log_made_again_is_a_new_stream() {
         let scratch = Scratch::new("again");
@@ -2416,9 +2103,8 @@ mod tests {
         assert_ne!(first, second);
     }
 
-    /// A log that cannot write refuses the body with the reason, says it is unhealthy,
-    /// refuses the next body without trying, and writes again once asked to try - above
-    /// the positions the failed flush had taken.
+    /// A log that cannot write refuses with the reason, refuses the next body without trying,
+    /// and writes again once asked to try - above the positions the failed flush had taken.
     #[test]
     #[cfg(unix)]
     fn a_log_that_cannot_write_refuses_and_then_writes_again() {
@@ -2459,9 +2145,8 @@ mod tests {
         assert_eq!(records.iter().map(|r| r.0).collect::<Vec<_>>(), [1, 4]);
     }
 
-    /// Once the checkpoint has reached the end of the log, the segment being written is
-    /// left at the next flush and deleted at the tick after: a small store does not keep
-    /// every line twice until 64MB of them have gone by.
+    /// Once the checkpoint has reached the end of the log, the segment being written is left
+    /// at the next flush and deleted at the tick after, not kept until it fills.
     #[test]
     fn a_segment_with_nothing_left_to_replay_is_left_and_deleted() {
         let scratch = Scratch::new("drained");
@@ -2493,8 +2178,7 @@ mod tests {
         assert_eq!((scanned.behind, scanned.last_seq), (1, 4));
     }
 
-    /// A log that was never started takes nothing, and says so, where it used to be able
-    /// to queue a body nothing would ever write.
+    /// A log that was never started takes nothing, and says so: nothing would ever write the body.
     #[test]
     fn a_log_that_is_not_started_refuses() {
         let scratch = Scratch::new("idle");
@@ -2553,9 +2237,8 @@ mod tests {
         assert_eq!(wal.commit(body(0, 1), 0), Ok(()));
     }
 
-    /// Readers that ask `wrong` of the log over and over until `stop` is set, half of
-    /// them in two reads - whether it can write, then why not - and half as `/stats`
-    /// does. Each returns how often the answer was yes, and how often it asked.
+    /// Readers that ask `wrong` of the log until `stop` is set, half in two reads and half as
+    /// `/stats` does. Each returns how often the answer was yes, and how often it asked.
     #[cfg(unix)]
     fn readers_asking(
         wal: &Arc<Wal>,
@@ -2592,9 +2275,8 @@ mod tests {
         readers
     }
 
-    /// The log's first failure, with readers asking "can it write?" and then "why not?"
-    /// the whole way across it. None of them is ever told the log cannot write and given
-    /// no reason.
+    /// The log's first failure, with readers asking "can it write?" and then "why not?" across
+    /// it: none is ever told the log cannot write and given no reason.
     #[test]
     #[cfg(unix)]
     fn no_reader_sees_the_log_unhealthy_without_a_reason() {
@@ -2628,9 +2310,8 @@ mod tests {
         );
     }
 
-    /// A second failure, once the log has written again, with the same readers across
-    /// it. The first failure's reason is still there to be read while the log writes, and
-    /// is never the reason given for the second.
+    /// A second failure, once the log has written again: the first failure's reason is still
+    /// there to be read while the log writes, and is never the reason given for the second.
     #[test]
     #[cfg(unix)]
     fn a_second_failure_is_never_told_with_the_reason_of_the_first() {
@@ -2689,8 +2370,7 @@ mod tests {
     }
 
     /// Once a thread of the log has died the reason is to restart the server, and a flush
-    /// that was under way does not change it: not by failing, which would name a disk
-    /// whose mending cures nothing, and not by succeeding, which would open the door.
+    /// under way does not change it, by failing or by succeeding.
     #[test]
     fn a_flush_does_not_change_the_reason_once_a_thread_has_died() {
         let shared = Shared::new(Vec::new(), 0);
@@ -2709,10 +2389,8 @@ mod tests {
         );
     }
 
-    /// A thread of the log that dies leaves the log saying so: the body already in the log
-    /// is acknowledged, and from then on the door, `/stats` and the next body's refusal
-    /// give the one reason - restart the server - which neither a probe nor a close takes
-    /// away.
+    /// A thread of the log that dies leaves the log saying so: the body already in the log is
+    /// acknowledged, and neither a probe nor a close takes the one reason away.
     #[test]
     fn a_thread_that_dies_leaves_the_log_unhealthy_and_saying_to_restart() {
         let scratch = Scratch::new("died");
@@ -2745,9 +2423,8 @@ mod tests {
             .expect("a test line")
     }
 
-    /// Bodies from many senders at once: whatever the flushes took together, every body
-    /// is whole - its lines at positions in a row, in its own order, under its own
-    /// arrival time - and the applier is handed every position in the log's order.
+    /// Bodies from many senders at once: whatever the flushes took together, every body is
+    /// whole and in its own order, and the applier is handed every position in the log's order.
     #[test]
     fn bodies_sent_together_each_stay_whole_and_in_order() {
         let scratch = Scratch::new("together");
@@ -2782,10 +2459,8 @@ mod tests {
         }
     }
 
-    /// A segment that ends in a torn record is some run's last, and the runs after it
-    /// wrote segments of their own: they are read. And the positions those runs gave out
-    /// begin past anything the torn bytes could have held - if they were once whole
-    /// frames, rows were stored from them, and their positions are some row group's.
+    /// The segments after one that ends in a torn record are read, and their positions begin
+    /// past anything the torn bytes could have held: a row group may name those.
     #[test]
     fn the_segments_after_a_torn_one_are_read_and_their_positions_are_past_it() {
         let scratch = Scratch::new("torn-then-more");
@@ -2873,9 +2548,8 @@ mod tests {
         assert_eq!(*lock(&applied), [1]);
     }
 
-    /// A start that skipped positions past a torn record still lets the checkpoint cross
-    /// them: with nothing left to replay, the torn segment goes at the first tick, and a
-    /// server started and stopped with nothing sent does not leave a segment each time.
+    /// A start that skipped positions past a torn record still lets the checkpoint cross them,
+    /// so a server started and stopped with nothing sent does not leave a segment each time.
     #[test]
     fn an_idle_start_after_a_torn_record_leaves_no_segment_behind() {
         let scratch = Scratch::new("torn-idle");
@@ -2920,9 +2594,8 @@ mod tests {
         );
     }
 
-    /// The checkpoint's file is a hint, and one that cannot be written keeps no segment:
-    /// on a full volume the segments behind the checkpoint are the room it needs. The
-    /// checkpoint moves, the segments go, and the failure is handed back beside them.
+    /// The checkpoint's file is a hint, and one that cannot be written keeps no segment: on a
+    /// full volume the segments behind the checkpoint are the room it needs.
     #[test]
     fn a_checkpoint_file_that_cannot_be_written_does_not_keep_a_segment() {
         let scratch = Scratch::new("no-checkpoint-file");
@@ -2967,9 +2640,8 @@ mod tests {
         assert_eq!(scanned.behind, 1);
     }
 
-    /// With the checkpoint's file gone and nothing left in the log to read, the newest
-    /// segment's base is all that says where the positions had got to: the next one is
-    /// taken from it, and not from 1 - which some row group already holds a line at.
+    /// With the checkpoint's file gone and nothing left to read, the newest segment's base is
+    /// all that says where the positions had got to: the next is taken from it, not from 1.
     #[test]
     fn positions_go_on_from_the_newest_segments_base_when_nothing_else_is_left() {
         let scratch = Scratch::new("base-only");
@@ -2990,8 +2662,7 @@ mod tests {
 
     // ── The bound on what is between a sender and the store ───────────────────────────
     //
-    // The slow hop in these is the applier, and the test holds it: it says when it has
-    // been handed a batch and stores nothing until it is told to. Nothing here sleeps to
+    // The slow hop in these is the applier, and the test holds it. Nothing here sleeps to
     // let a thing happen; a state is waited for, and the wait's limit fails the test.
 
     /// How many lines the bodies of these tests hold.
@@ -3044,12 +2715,8 @@ mod tests {
         }
     }
 
-    /// A started log whose applier the test holds still.
-    ///
-    /// **The gate is the second of the two, so it is let go first.** Dropping a log
-    /// closes it, and a close waits for the applier: one still held at a gate nobody
-    /// will open would hang a failing test where it should fail. With the gate gone the
-    /// applier takes every batch it is handed.
+    /// A started log whose applier the test holds still. The gate is returned second, so it
+    /// is dropped first: a close waiting on a held applier would hang a failing test.
     fn gated(scratch: &Scratch, options: Options) -> (Arc<Wal>, Gate) {
         let wal = Wal::create(&scratch.0).expect("create");
         let (said, handed) = channel::<usize>();
@@ -3093,16 +2760,8 @@ mod tests {
         }
     }
 
-    /// **A line counts against the bound until the store has it, and no longer.** The
-    /// writer taking a body off the queue does not make room for the next: the rows are
-    /// still in memory, on their way to the applier. And a body that has its answer is in
-    /// nobody's count - its bytes leave the bound before its sender is woken, so a sender
-    /// that comes straight back is never measured against lines that are already stored.
-    ///
-    /// The second half is a thousand bodies, each as large as the bound, each sent the
-    /// moment the one before was answered, with no wait allowed. With the bytes taken off
-    /// after the answer any of them could be shed, whenever the applier lost the
-    /// processor between the two.
+    /// A line counts against the bound until the store has it, and no longer: its bytes leave
+    /// the bound before its sender is woken, so one that comes straight back is not shed.
     #[test]
     fn the_bound_counts_a_line_until_it_is_applied() {
         let scratch = Scratch::new("bound-applied");
@@ -3134,13 +2793,8 @@ mod tests {
         assert_eq!(lock(&gate.applied).len() as u64, 1001 * EVEN);
     }
 
-    /// **A body's bytes leave the bound before the body is answered, on every run.** The
-    /// test holds the first body's answer shut, so the applier stops at the moment it
-    /// would give it. With the bytes taken off first the count is already down, and a
-    /// second body as large as the bound finds room while the first is still unanswered.
-    /// Taken off after the answer, the count would never fall while the answer is held,
-    /// and the wait for it fails the test: no luck with the processor is needed either
-    /// way, which the thousand bodies of the test above do need.
+    /// A body's bytes leave the bound before the body is answered, on every run: the test
+    /// holds the first answer shut, so no luck with the processor is needed.
     #[test]
     fn a_body_is_out_of_the_bound_before_it_is_answered() {
         let scratch = Scratch::new("bound-before-answer");
@@ -3188,10 +2842,8 @@ mod tests {
         assert_eq!(*lock(&gate.applied), (1..=2 * EVEN).collect::<Vec<u64>>());
     }
 
-    /// How long a body that a test expects to be woken may wait for room, and how long
-    /// the test gives it to come back. Far apart, so that the wake-up is the only way
-    /// out: a waiter also looks again when its own wait runs out, and with a short wait a
-    /// test would pass with the wake-up it is there to hold taken away.
+    /// How long a body a test expects to be woken may wait for room, and how long the test
+    /// gives it to come back: far apart, so that the wake-up is the only way out.
     const LONG_WAIT: Duration = Duration::from_secs(60);
     const WOKEN_WITHIN: Duration = Duration::from_secs(10);
 
@@ -3250,9 +2902,8 @@ mod tests {
             .collect()
     }
 
-    /// **A body the log has no room for waits, and is taken when there is some.** It is
-    /// not in the log while it waits - no position, no byte - and the applier storing the
-    /// body ahead of it is what wakes it.
+    /// A body the log has no room for waits, with no position and no byte in the log, and is
+    /// taken when the applier storing the body ahead of it wakes it.
     #[test]
     fn a_body_waits_for_room_and_is_taken_when_there_is_some() {
         let scratch = Scratch::new("room-wait");
@@ -3283,11 +2934,8 @@ mod tests {
         assert_eq!(stored(&scratch), lines_of(&[0, 1]));
     }
 
-    /// **What is between the senders and the store never passes the bound, however many
-    /// senders there are, and none of them is shed for it.** Eight senders of five bodies
-    /// each against a bound of two bodies, with the applier letting one batch through at
-    /// a time: at every batch the bytes queued and the bytes written and not yet stored,
-    /// read together under the queue's lock, are within the bound.
+    /// What is between the senders and the store never passes the bound, however many senders
+    /// there are, and none of them is shed for it.
     #[test]
     fn memory_stays_under_the_bound_while_senders_wait() {
         const SENDERS: u64 = 8;
@@ -3345,9 +2993,8 @@ mod tests {
         assert_eq!(found, lines_of(&every));
     }
 
-    /// **A wait that runs out is a shed, as a full log was at once before.** The gate is
-    /// never opened while the two bodies ask, so no speed turns either into an `Ok`: the
-    /// twenty milliseconds are how long the test takes, and not a guess at anything.
+    /// A wait that runs out is a shed. The gate is never opened while the two bodies ask, so
+    /// no speed turns either into an `Ok`.
     #[test]
     fn a_wait_that_runs_out_is_a_shed() {
         let scratch = Scratch::new("room-shed");
@@ -3373,11 +3020,8 @@ mod tests {
         assert_eq!(stored(&scratch), lines_of(&[0]));
     }
 
-    /// **A log that fails tells every body waiting for room why.** Two bodies wait while
-    /// a third is with the applier; the log's directory then takes no new file. When the
-    /// first is stored, one of the two is given its room and its flush fails - and that
-    /// failure is what wakes the other, which is refused with the same reason and not
-    /// left to wait out a minute beside a log that will not write.
+    /// A log that fails tells every body waiting for room why: the failed flush wakes the
+    /// others, which are refused with the same reason and not left to wait out their minute.
     #[test]
     #[cfg(unix)]
     fn a_log_that_fails_tells_every_body_waiting_for_room_why() {
@@ -3417,8 +3061,7 @@ mod tests {
         assert_eq!(wal.stats().queue_waiting, 0);
     }
 
-    /// **A sender that leaves gives up its wait, and nothing of its body is in the log.**
-    /// Its flag is set and the log is asked to look; it does not wait out its minute. The
+    /// A sender that leaves gives up its wait, and nothing of its body is in the log: the
     /// body after it takes the positions it never had.
     #[test]
     fn a_sender_that_leaves_gives_up_its_wait() {
@@ -3455,9 +3098,8 @@ mod tests {
         assert_eq!(stored(&scratch), lines_of(&[0, 2]));
     }
 
-    /// **A sender that has left is still taken when there is room.** Room is looked for
-    /// before the flag: a body whose sender hung up while it was being parsed goes into
-    /// the log whole, as it always has.
+    /// A sender that has left is still taken when there is room: room is looked for before
+    /// the flag, so a body whose sender hung up while it was parsed goes in whole.
     #[test]
     fn a_body_whose_sender_has_left_is_taken_when_there_is_room() {
         let scratch = Scratch::new("room-left-fits");
@@ -3473,9 +3115,8 @@ mod tests {
         assert_eq!(wal.stats().queue_left, 0);
     }
 
-    /// **Nobody waits for room once the log has been told to hurry.** A stop must not
-    /// take as long as the longest wait: the body waiting is shed at once, with the gate
-    /// still shut, and so is one that arrives afterwards with a minute to wait.
+    /// Nobody waits for room once the log has been told to hurry: a stop must not take as
+    /// long as the longest wait.
     #[test]
     fn nobody_waits_once_the_log_is_told_to_hurry() {
         let scratch = Scratch::new("room-hurry");
@@ -3509,10 +3150,8 @@ mod tests {
         assert_eq!(first.join().expect("the first sender"), Ok(()));
     }
 
-    /// **A thread of the log that dies tells the bodies waiting for room.** The applier
-    /// here dies only once the test has seen the second body waiting - were it to die
-    /// the moment it was handed the first, the second could arrive afterwards, be refused
-    /// at the door of the queue, and pass this with nobody ever having waited.
+    /// A thread of the log that dies tells the bodies waiting for room. The applier dies only
+    /// once the second body is seen waiting, or the test could pass with nobody having waited.
     #[test]
     fn a_thread_that_dies_tells_the_bodies_waiting_for_room() {
         let scratch = Scratch::new("room-died");

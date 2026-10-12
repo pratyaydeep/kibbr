@@ -1,36 +1,8 @@
-//! One chunk decoded to what its encodings hold, with no cell printed.
-//!
-//! `read::chunk` hands back one printed cell a row: every value through its form, a
-//! `String` for each UUID, the type ladder over each word. A filter needs none of that for
-//! a row it throws away. It needs the number a varint holds, the word a row names, the
-//! sixteen bytes of an id; and a count of every row needs nothing decoded at all. So this
-//! is a second reader of the same layout. It stops where the encodings stop: numbers as
-//! vectors, a word list as its words and one small number a row, text and ids as places in
-//! the chunk's body. A cell is printed only for a row that is asked for, through
-//! `read::cell`, the function `read::chunk` prints with.
-//!
-//! **Beside `read::chunk`, not in place of it.** Compaction, recovery and the walk decode
-//! through `chunk`, and what it refuses is pinned by its words and by the row that trips
-//! first. Nothing in it changed for this file but the visibility of what both readers
-//! call. What ties the two together is one sentence, held by the encoding tests on every
-//! chunk they build and by the fuzz harness on every chunk it reads: `read::chunk` is
-//! `Ok(cells)` exactly when `Column::decode` is `Ok` and `Col::cell` is `Ok` for every row,
-//! and then `cell(r)` is `cells[r]`.
-//!
-//! **What `decode` checks and what it leaves.** It makes every check `read::piece` makes
-//! on the layout, in the same order and in the same words: the bitmaps, the lengths, a
-//! word list's count and order, a varint's one spelling, a piece used up exactly. What it
-//! leaves is what only printing a value finds - text that is not UTF-8, a literal row that
-//! is not JSON, a float that is not finite, a date its form cannot print - and `Col::cell`
-//! finds those for the row it prints. So a chunk that is decoded and never printed has
-//! been held to its CRC and to its layout, and a value in it that does not print is
-//! refused by the query that prints it and by no other.
-//!
-//! Two refusals here are not `read::chunk`'s, and no chunk out of a file meets either. A
-//! piece whose encoding is not one its type has is refused as `read::header` refuses it
-//! where the directory says so, which is why no header hands one over; `read::piece`,
-//! given such a pair by hand, would read it as plain. And bytes longer than a `u32` can
-//! count are no chunk: a directory entry's length is one.
+//! One chunk decoded to what its encodings hold, with no cell printed: a filter needs a
+//! row's number, word or bytes, not its cell, which `read::cell` prints only when asked.
+//! A second reader beside `read::chunk`, held to it: `chunk` is `Ok(cells)` exactly when
+//! `Column::decode` and every `Col::cell` are `Ok`, and then the cells are equal.
+//! `decode` checks the layout; what only printing finds, `Col::cell` refuses at its row.
 
 use super::read::{self, Cell, ChunkDir, PieceDir, Raw, SOME_NULL};
 use super::{
@@ -39,10 +11,8 @@ use super::{
 };
 use kibbr_core::types::ColValue;
 
-/// A place in a chunk's body: a word, a constant, a bitmap.
-///
-/// A column keeps places and not slices so that it owns everything it holds and borrows
-/// nothing: it can be kept beside the bytes it was decoded from, and handed on with them.
+/// A place in a chunk's body: a word, a constant, a bitmap. Places, not slices, so a
+/// column owns everything it holds and can be kept beside the bytes it was decoded from.
 #[derive(Debug, Clone, Copy)]
 struct Span {
     at: u32,
@@ -50,9 +20,8 @@ struct Span {
 }
 
 impl Span {
-    /// The `len` bytes starting at `from`, an offset as a `Bytes` over the body reports
-    /// it; `origin` is the offset of the body's first byte. Both fit: a body is held to
-    /// what a `u32` counts before anything in it is read.
+    /// The `len` bytes starting at `from`; `origin` is the offset of the body's first byte.
+    /// Both fit: a body is held to what a `u32` counts before anything in it is read.
     fn at(from: u64, len: usize, origin: u64) -> Self {
         Self {
             at: (from - origin) as u32,
@@ -66,9 +35,7 @@ impl Span {
     }
 }
 
-/// The bytes at a place. A column is only ever read over the bytes it was decoded from,
-/// which `Column::over` holds by their length, so every place is inside them; one that is
-/// not is an error and never a slice out of range.
+/// The bytes at a place; one outside the bytes is an error and never a slice out of range.
 fn slice(body: &[u8], span: Span, base: u64) -> Result<&[u8], Bad> {
     let from = span.at as usize;
     from.checked_add(span.len as usize)
@@ -87,11 +54,8 @@ fn bit_at(map: &[u8], i: usize) -> bool {
         .is_some_and(|byte| byte & (1 << (i % 8)) != 0)
 }
 
-/// Where one row's value is: in piece A or in piece B, and which of that piece's values;
-/// or nowhere, for a null.
-///
-/// Two bytes a row. A row group holds 8,192 rows, so an index into a piece takes thirteen
-/// bits, bit 15 says piece B, and all sixteen set is a null.
+/// Where one row's value is - piece A or B, and which of its values - or nowhere, for a
+/// null: two bytes a row, since an index into a piece takes thirteen bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Slot(u16);
 
@@ -104,7 +68,7 @@ impl Slot {
         Slot(at as u16 | piece)
     }
 
-    /// Whether the value is in piece B, and its place in its piece. `None` for a null.
+    /// Whether the value is in piece B, and its place in its piece; `None` for a null.
     pub fn get(self) -> Option<(bool, usize)> {
         (self != Self::NULL).then_some((
             self.0 & Self::PIECE_B != 0,
@@ -113,8 +77,8 @@ impl Slot {
     }
 }
 
-/// One chunk, decoded and not printed. It owns what it decoded and has no lifetime: read
-/// it through `over`, with the stored bytes it was decoded from.
+/// One chunk, decoded and not printed; it owns what it decoded, and is read through `over`
+/// with the stored bytes it was decoded from.
 #[derive(Debug)]
 pub struct Column {
     rows: usize,
@@ -195,9 +159,8 @@ struct Laid {
 }
 
 impl Column {
-    /// A chunk's stored bytes, already CRC-checked, as typed values. `base` is the chunk's
-    /// file offset and `rows` its row group's row count, held to what a row group holds
-    /// before anything is made for it, as `read::chunk` holds it.
+    /// A chunk's stored bytes, already CRC-checked, as typed values; `rows` is held to what a
+    /// row group holds before anything is made for it.
     pub fn decode(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Self, Bad> {
         if rows > MAX_ROWS as usize {
             return Err(read::too_many_rows(base, rows));
@@ -229,11 +192,8 @@ impl Column {
         })
     }
 
-    /// This column over the bytes it was decoded from, ready to read.
-    ///
-    /// The places a column holds mean nothing over other bytes. Bytes of another length
-    /// are refused here, and a place is read with a checked slice, so the wrong bytes are
-    /// an error or the wrong text and never a panic.
+    /// This column over the bytes it was decoded from; bytes of another length are refused,
+    /// so the wrong bytes are an error or the wrong text and never a panic.
     pub fn over<'c>(&'c self, stored: &'c [u8]) -> Result<Col<'c>, Bad> {
         if stored.len() != self.stored_len {
             return Err(Bad::at(
@@ -344,9 +304,8 @@ fn mistyped(at: u64) -> Bad {
     Bad::at(at, "a value of another type than its piece's")
 }
 
-/// One piece of `n` rows, read as `read::piece` reads it with nothing printed. The values
-/// must use the piece up exactly. `base` is the offset of the piece's first byte and
-/// `origin` of its body's.
+/// One piece of `n` rows, read as `read::piece` reads it with nothing printed. `base` is
+/// the offset of the piece's first byte and `origin` of its body's.
 fn piece(bytes: &[u8], base: u64, origin: u64, dir: &PieceDir, n: usize) -> Result<Piece, Bad> {
     let form = dir.form;
     if !encodes(form.column_type(), dir.encoding) {
@@ -380,9 +339,8 @@ fn piece(bytes: &[u8], base: u64, origin: u64, dir: &PieceDir, n: usize) -> Resu
     } else {
         None
     };
-    // The one thing a row's spelling can break without being printed: a JSON number has
-    // no digit count. Asked row by row where `read::piece` asks it, so that of two broken
-    // rows the same one is named.
+    // The one thing a row's spelling can break without being printed: a JSON number has no
+    // digit count. Asked row by row as `read::piece` does, so the same broken row is named.
     let spelled = |i: usize, at: u64| -> Result<(), Bad> {
         let Some((digits, _)) = digits else {
             return Ok(());
@@ -683,12 +641,8 @@ pub struct Col<'c> {
     body: &'c [u8],
 }
 
-/// A word or a constant printed once per spelling and copied after: what `read::chunk`
-/// saves by printing a word at the first row that names it, kept for rows that are
-/// printed one at a time. Printing text runs the type ladder over it, and a row group
-/// names the same few words thousands of times.
-///
-/// One memo belongs to one column of one row group; it knows words by their number.
+/// A word or a constant printed once per spelling and copied after, since printing text
+/// runs the type ladder and a row group names the same few words thousands of times.
 #[derive(Debug, Default)]
 pub struct Memo {
     a: Vec<Option<Cell>>,
@@ -737,9 +691,7 @@ impl<'c> Col<'c> {
         }
     }
 
-    /// `cell`, printing a word or a constant once for each way rows spell it. A word is
-    /// known by its number and whether the row was a JSON number or bool; a constant by
-    /// that alone, unless each row has its own digit count, and then nothing is kept.
+    /// `cell`, printing a word or a constant once for each way rows spell it.
     pub fn cell_with(&self, row: usize, memo: &mut Memo) -> Result<Cell, Bad> {
         let Some((in_b, piece, at)) = self.place(row)? else {
             return Ok((ColValue::Null, None));
@@ -765,12 +717,12 @@ impl<'c> Col<'c> {
         Ok(cell)
     }
 
-    /// Where each row's value is. `None` when piece A holds every row in row order.
+    /// Where each row's value is; `None` when piece A holds every row in row order.
     pub fn slots(&self) -> Option<&'c [Slot]> {
         self.column.slots.as_deref()
     }
 
-    /// Piece A and piece B, as slices. Neither when every row is null.
+    /// Piece A and piece B, as slices; neither when every row is null.
     pub fn pieces(&self) -> Result<[Option<PieceRef<'c>>; 2], Bad> {
         let column = self.column;
         let over = |piece: &'c Option<Piece>| {
@@ -857,7 +809,6 @@ mod tests {
     use super::super::{type_byte, NO_COMPRESSION, PER_ROW, PLAIN};
     use super::*;
 
-    /// A sample by its name.
     fn sample(name: &str) -> Sample {
         samples::layouts()
             .into_iter()
@@ -871,9 +822,8 @@ mod tests {
         Column::decode(&chunk.bytes, chunk.at, &chunk.dir, sample.rows).expect("decodes")
     }
 
-    /// Every file under `testdata/v3/`, read as compaction reads it and as a query does:
-    /// the same bytes are counted, each stored chunk is the file's bytes where its header
-    /// puts it, and the typed decoder prints every row as the cell `Reader::chunks` made.
+    /// Every file under `testdata/v3/`, read as compaction reads it and as a query does: the
+    /// typed decoder prints every row as the cell `Reader::chunks` made.
     #[test]
     fn the_vectors_read_the_same_through_both_readers() {
         let (mut row_groups, mut cells_held) = (0, 0);
@@ -916,9 +866,7 @@ mod tests {
     }
 
     /// Every layout, decoded both ways and held cell for cell - and the list of samples
-    /// held to being every layout: each encoding each type has, both compressions, nulls,
-    /// two pieces, a chunk of nothing but nulls, both JSON kinds in one piece, a digit
-    /// count a row, and every shape the typed values take.
+    /// held to being every layout.
     #[test]
     fn every_layout_decodes_to_the_cells_the_reader_prints() {
         let mut pairs = BTreeSet::new();
@@ -988,9 +936,8 @@ mod tests {
         );
     }
 
-    /// What a column holds for a few chunks, by hand: the values as their encoding has
-    /// them, a slot a row only where a row's number is not its value's, and a row's JSON
-    /// kind beside its value.
+    /// What a column holds for a few chunks, by hand: the values as their encoding has them,
+    /// a slot a row only where a row's number is not its value's.
     #[test]
     fn a_column_holds_what_its_chunk_lays_out() {
         let numbers = sample("integers, bare and quoted");
@@ -1090,9 +1037,8 @@ mod tests {
         assert_eq!(col.cell(3), Ok((ColValue::Null, None)));
     }
 
-    /// A column reads over the bytes it was decoded from and over no others: bytes of
-    /// another length are refused, a row past the last is refused, and bytes of the right
-    /// length that are not the chunk's give an error or other text, never a panic.
+    /// A column reads over the bytes it was decoded from and over no others: the wrong
+    /// bytes give an error or other text, never a panic.
     #[test]
     fn a_column_is_read_over_its_own_bytes() {
         for sample in samples::all() {
@@ -1176,9 +1122,8 @@ mod tests {
         out
     }
 
-    /// Both readers refuse this chunk in the same words at the same offset - stored as it
-    /// is, where the offset is a place in the file, and through zstd, where it is the
-    /// chunk's and the words say where in the body.
+    /// Both readers refuse this chunk in the same words at the same offset, stored as it is
+    /// and through zstd.
     fn refused_alike(body: &[u8], dir: &ChunkDir, rows: usize, why: &str) {
         const AT: u64 = 40;
         let read = read::chunk(body, AT, dir, rows).expect_err(why);
@@ -1207,8 +1152,7 @@ mod tests {
     }
 
     /// The typed decoder makes every check of the layout that `read::chunk` makes, in its
-    /// words and at its offset: one case for each, on chunks whose values would all print,
-    /// so that the layout is the only thing either can refuse.
+    /// words and at its offset, on chunks whose values would all print.
     #[test]
     fn a_broken_layout_is_refused_in_the_reader_s_words() {
         let text = Form::String {
@@ -1413,8 +1357,7 @@ mod tests {
     }
 
     /// The typed decoder reads an encoding only on the type that has it, as the header
-    /// refuses any other pair where the directory names it. `read::chunk`, handed such a
-    /// pair by hand, reads what the bytes happen to hold; no header hands one over.
+    /// refuses any other pair where the directory names it.
     #[test]
     fn an_encoding_on_another_type_is_refused_as_the_header_refuses_it() {
         let int = Form::Int64 {
@@ -1437,13 +1380,8 @@ mod tests {
         }
     }
 
-    /// Every chunk of the samples with one byte of its body changed, one bit at a time,
-    /// and with a byte cut off or added: `read::chunk` and the typed decoder take the same
-    /// ones and refuse the same ones, and where both take one they print the same cells.
-    ///
-    /// A changed body is stored as it is, since the layout is what is under test and a
-    /// CRC is not in its way here; one edit in eight also goes through zstd, where an
-    /// error is the chunk's and says where in the body.
+    /// Every chunk of the samples with a bit changed, a byte cut off or added: both readers
+    /// take the same ones, refuse the same ones, and print the same cells.
     #[test]
     fn every_edit_of_a_body_is_taken_or_refused_by_both_readers() {
         let (mut taken, mut refused, mut chunks) = (0u32, 0u32, 0u32);

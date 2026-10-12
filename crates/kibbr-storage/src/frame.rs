@@ -1,20 +1,8 @@
 //! The one record framing, and the append-only file built on it.
 //!
-//! ```text
-//! frame   [4] payload_len  u32 LE, at least 1
-//!         [4] crc          u32 LE, CRC-32C over the payload
-//!         [N] payload
-//! ```
-//!
-//! **Four kinds of file read through this and nothing else**: `catalog.log`,
-//! `manifest.log`, every frame of a v3 data file, and every flush in a segment of the
-//! write-ahead log. One reader is one thing to fuzz, and one place where a length is
-//! checked against the bytes that remain before anything trusts it.
-//!
-//! **`payload_len` is never 0.** CRC-32C of nothing is 0, so without the rule a run of
-//! zero bytes - which some file systems leave past the last durable write after a crash -
-//! would read as an endless run of valid empty records. Every payload holds at least one
-//! byte (a JSON object's `{`, a data frame's kind), so eight zero bytes are a tear.
+//! One reader for `catalog.log`, `manifest.log`, v3 data frames and the write-ahead log:
+//! one place where a length is checked against the bytes that remain before it is trusted.
+//! `payload_len` is never 0, so a run of zero bytes is a tear and not empty records.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
@@ -23,9 +11,8 @@ use std::path::{Path, PathBuf};
 /// `payload_len` + `crc`.
 pub const HEADER: usize = 8;
 
-/// CRC-32C: Castagnoli, reflected, initial value and final XOR `0xFFFFFFFF`. The crate
-/// takes the CPU's CRC instruction where there is one - SSE 4.2, or ARMv8's CRC
-/// extension - and a table where there is not; the answer is the same either way.
+/// CRC-32C (Castagnoli), by the CPU's CRC instruction where there is one and a table
+/// where there is not.
 pub fn crc32c(bytes: &[u8]) -> u32 {
     crc32c::crc32c(bytes)
 }
@@ -42,19 +29,17 @@ pub fn frame(payload: &[u8]) -> Vec<u8> {
 /// What is at one offset.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Next<'a> {
-    /// A whole frame whose CRC holds. `end` is the offset just past it.
+    /// A whole frame whose CRC holds, `end` being the offset just past it.
     Frame { payload: &'a [u8], end: usize },
     /// Exactly at the end of the bytes: nothing torn, nothing more.
     End,
-    /// Not a whole, intact frame: fewer than eight bytes, a zero or oversized length, a
-    /// length past the end, or a CRC that fails. After a crash this is the normal
-    /// signature of a write that did not finish.
+    /// Not a whole, intact frame; after a crash, the normal signature of a write that did
+    /// not finish.
     Tear,
 }
 
-/// The frame starting at `at`, with its length checked against `max` and against the
-/// bytes that actually remain *before* anything is sliced - a length of `0xFFFFFFFF` is a
-/// tear, never a 4GB read.
+/// The frame starting at `at`, its length checked against `max` and the bytes that remain
+/// before anything is sliced, so `0xFFFFFFFF` is a tear and never a 4GB read.
 pub fn read(bytes: &[u8], at: usize, max: u32) -> Next<'_> {
     if at == bytes.len() {
         return Next::End;
@@ -97,10 +82,8 @@ pub fn read_all(bytes: &[u8], max: u32) -> (Vec<(u64, &[u8])>, Option<u64>) {
     }
 }
 
-/// `read_all`, with each payload as its range of `bytes` and not a borrow of them: what
-/// `Log::open_with` keeps of a file it has read, so the bytes can move into `Opened`
-/// beside the ranges. A function of its own so the `record_log` fuzz target holds the
-/// ranges a start slices by to the payloads `read_all` found, without a file.
+/// `read_all`, with each payload as its range of `bytes`, so `Log::open_with` can move the
+/// bytes into `Opened` beside the ranges.
 pub fn spans(bytes: &[u8], max: u32) -> (Vec<(u64, std::ops::Range<usize>)>, Option<u64>) {
     let (found, torn_at) = read_all(bytes, max);
     let frames = found
@@ -123,14 +106,12 @@ pub enum LogError {
         #[source]
         source: std::io::Error,
     },
-    /// An earlier append failed *and* the partial write could not be rolled back, so the
-    /// tail of the file is not a frame boundary. Anything appended after it would sit
-    /// behind a tear and be truncated away on the next start, so nothing is.
+    /// An earlier append failed and could not be rolled back, so anything appended after it
+    /// would sit behind a tear and be truncated away on the next start.
     #[error("{path}: an earlier append left a torn record at offset {offset} that could not be removed; no further records are written until the process restarts")]
     Torn { path: String, offset: u64 },
-    /// The file was just created and its directory could not be fsynced, so the file's
-    /// own entry may not survive a crash - and a record fsynced into a file that is not
-    /// there after the crash was never durable.
+    /// The file was just created and its directory could not be fsynced, so the file's own
+    /// entry may not survive a crash.
     #[error("{path}: created {name} here and could not fsync the directory, so the file itself may not survive a crash: {source}")]
     SyncDir {
         path: String,
@@ -170,24 +151,8 @@ pub struct Log {
 }
 
 impl Log {
-    /// Open for appending, reading every frame that is already there.
-    ///
-    /// A torn tail is truncated *on disk* here, not just skipped, so the next append lands
-    /// on a frame boundary rather than behind bytes the next start would cut off again.
-    ///
-    /// **A file this call creates has its directory fsynced before anything is appended.**
-    /// `sync_all` on the file makes its bytes durable and says nothing about the entry
-    /// naming it: after a crash the first record can be on disk in a file that is not in
-    /// the directory. Once, on creation - an existing file's entry was made durable by the
-    /// start that created it. If that fsync fails the new file is removed before the error
-    /// is returned, so the next start does not find an empty file and take it for truth.
-    ///
-    /// **A file that was already there is flushed before its records are used.** A process
-    /// killed inside an append's flush leaves the record whole in the page cache, where
-    /// this start reads it like any other - and then acts on it: a template the record
-    /// defines is named by lines in the write-ahead log, a file it names takes row groups.
-    /// Those are flushed, and would outlive a power cut that the record they rest on did
-    /// not. One flush a start makes what was read what is on the disk.
+    /// Open for appending and read every frame already there, cutting a torn tail on disk,
+    /// fsyncing a created file's directory and flushing an existing file: what is read is durable.
     pub fn open_with(
         path: &Path,
         max: u32,
@@ -206,9 +171,8 @@ impl Log {
         let (frames, torn_at) = spans(&bytes, max);
         let end = torn_at.unwrap_or(bytes.len() as u64);
 
-        // Not `append(true)`: an append-mode handle ignores `set_len` + seek for the
-        // rollback in `append`, and `O_APPEND` writes land wherever the file ends, which
-        // after a failed rollback is not a frame boundary.
+        // Not `append(true)`: an append-mode handle ignores the `set_len` + seek rollback in
+        // `append`, and after a failed rollback would write where there is no frame boundary.
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -252,8 +216,8 @@ impl Log {
         ))
     }
 
-    /// A log whose every append fails: the handle is read-only, so `write_all` is refused
-    /// by the kernel. What a full disk or a dead mount looks like from here.
+    /// A log whose every append fails, as on a full disk or a dead mount: the handle is
+    /// read-only.
     #[cfg(any(test, feature = "test-support"))]
     pub fn read_only(path: &Path) -> Result<Self, LogError> {
         let io = |source| LogError::Io {
@@ -274,12 +238,8 @@ impl Log {
         &self.path
     }
 
-    /// Append one frame per payload and return only once every byte is on disk: one
-    /// `write_all`, one `sync_all`, so several records are one durable unit.
-    ///
-    /// On failure the file is cut back to where the frames began. If *that* fails the log
-    /// refuses every later append (`LogError::Torn`): a record written behind a tear is a
-    /// record the next start cannot see.
+    /// Append one frame per payload as one durable unit, cutting the file back on failure;
+    /// if the cut fails the log refuses every later append (`LogError::Torn`).
     pub fn append(&mut self, payloads: &[Vec<u8>]) -> Result<(), LogError> {
         let display = self.path.display().to_string();
         if let Some(offset) = self.torn {
@@ -330,8 +290,8 @@ impl Log {
         self.torn.is_some()
     }
 
-    /// Flush the file as it stands. After a failed append that was cut back, this is what
-    /// makes the cut durable: once it returns, no part of that append can be on disk.
+    /// Flush the file as it stands, which after a failed append that was cut back is what
+    /// makes the cut durable.
     pub fn sync(&mut self) -> Result<(), LogError> {
         self.file.sync_all().map_err(|source| LogError::Io {
             path: self.path.display().to_string(),

@@ -1,17 +1,11 @@
-//! The trie. One token per edge, leaf at depth N, no truncation and no separate column
-//! list - the keys that did not branch are simply the tail of the path.
+//! The trie: one token per edge, leaf at depth N, no truncation and no separate
+//! column list - the keys that did not branch are the tail of the path.
 //!
-//! Two orders run over one token set and must not be confused. *Identity order* is the
-//! flattener's - keys sorted, promoted keys rendered `key=value` in place - and it is
-//! what `fingerprint` joins and `template_id` hashes; nothing here touches it. *Walk
-//! order* is this module's: promoted tokens first, then the rest sorted. Same multiset
-//! either way. `ParsedLog::walk_tokens` turns one into the other, and documents why.
+//! Edges are in walk order - promoted tokens first, then the rest sorted - and not the
+//! flattener's identity order; `ParsedLog::walk_tokens` turns one into the other.
 
-// The query engine will call `walk`, `walk_prefix` and `all_leaves`; the column store
-// will open `LeafMeta::storage_path`, and crash recovery will read its timestamps.
-// Nothing builds a `Placeholder` yet either. Written now because teaching a walk its lock
-// discipline later means editing every call site that already exists - the retrofit this
-// module is shaped to avoid. Scoped so the allow does not travel.
+// Not every walk and variant here has a caller yet. Written now because teaching a walk
+// its lock discipline later means editing every call site that already exists.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -38,47 +32,29 @@ pub const ROOT_LABEL: &str = "__root__";
 pub const PLACEHOLDER_LABEL: &str = "[*]";
 
 /// Template ids start here rather than at 0 so that a leaf id is never confused with a
-/// node id in a log line or a query plan: they are two counters over the same trie, and
-/// an explained query prints both.
+/// node id in a log line or a query plan, which prints both.
 pub const FIRST_TEMPLATE_ID: u64 = 101;
 
-/// The largest id a template can have: one short of `u64::MAX`.
-///
-/// The counter holds the id the next template takes, and a start derives it as `max + 1`
-/// of the ids in the catalog. `u64::MAX` has no `max + 1`: computed, it was a panic at
-/// startup in a debug build, and in a release one it wrapped to 0 and reserved nothing.
-/// And a counter that counted past `u64::MAX` went on from 0, through every id already in
-/// use. So the counter stops at `u64::MAX`, which is its word for "nothing left" and is
-/// never an id, and the last id it gives is this one.
+/// The largest id a template can have: one short of `u64::MAX`, which is the counter's
+/// word for "nothing left" and is never an id.
 pub const LAST_TEMPLATE_ID: u64 = u64::MAX - 1;
 
 /// Where a leaf's columns live when nothing said otherwise - the CLI, which has no data
 /// directory because it rebuilds the database per invocation.
-///
-/// `LeafMeta::storage_path` is written once per template and persisted with it, so it is
-/// documentation and not authority: the store derives a leaf's directory from the
-/// configured base and the template id, because a restart under a different `--data-dir`
-/// would otherwise send every leaf back to the directory it was first seen under.
 pub const DEFAULT_DATA_DIR: &str = "/var/lib/kibbr/data";
 
-/// The only way a trie operation fails.
-///
-/// A poisoned lock means some thread panicked while holding it, so the children below
-/// that node may be half-inserted. There is nothing to recover here - the caller decides
-/// whether that ends the run.
+/// How a trie operation fails; a poisoned lock may mean half-inserted children, and the
+/// caller decides whether that ends the run.
 #[derive(Debug, Error)]
 pub enum TrieError {
     #[error("trie node lock poisoned by a panic in another thread")]
     LockPoisoned,
     /// The catalog record a line needed could not be made durable, so the template or
-    /// widening it would have caused was not made in memory either. Per line, not fatal:
-    /// the next line that needs no record still lands.
+    /// widening was not made in memory either; per line, not fatal.
     #[error("catalog: {0}")]
     Catalog(#[source] CatalogError),
-    /// A line needed a new template and every id is spent. Counting does not get here -
-    /// a template a microsecond takes half a million years - so some file names an id at
-    /// the far end of the range, and the ids up to it are kept from reuse like any
-    /// other's. A line of a template that already exists still lands.
+    /// A line needed a new template and every id is spent, which only an id a file names at
+    /// the far end of the range can cause; a line of an existing template still lands.
     #[error(
         "no template id is left for a new template: every id up to {LAST_TEMPLATE_ID} is \
          in use or reserved by an id a file names"
@@ -86,13 +62,8 @@ pub enum TrieError {
     TemplateIdsSpent,
 }
 
-/// `Static` is an exact token; `Placeholder` matches any token in this position.
-///
-/// Nothing produces a `Placeholder` yet: schema merging, when it arrives, reuses an
-/// existing leaf rather than introducing a wildcard edge, so every node `insert` builds
-/// is `Static`. The variant and the preference in `find_child` are the contract for
-/// whenever a producer exists - most likely a label whose distinct-value count crosses a
-/// bound - and until then the rule is unreachable rather than wrong.
+/// `Static` is an exact token; `Placeholder` matches any token in this position, and
+/// nothing produces one yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NodeType {
     Static,
@@ -104,24 +75,17 @@ pub struct Edge {
     pub child: Arc<Node>,
 }
 
-/// `Node` holds `RwLock` and `AtomicBool`, neither `Serialize`. Do not derive it:
-/// persisting the trie means a separate flat representation where an `Arc<Node>` pointer
-/// has become an integer id, and there is nothing to persist to yet.
+/// Holds `RwLock` and `AtomicBool`, neither `Serialize`, so do not derive it: persisting
+/// the trie is a separate flat form where an `Arc<Node>` has become an integer id.
 pub struct Node {
     pub id: u64,
     pub label: String,
     pub node_type: NodeType,
-    /// Kept sorted by label. Sorted on insert, not on render, so `all_leaves` and the
-    /// demo tree are order-independent structurally rather than leaving every consumer
-    /// to re-sort and one of them to forget.
+    /// Kept sorted by label, on insert and not on render, so no consumer has to re-sort.
     pub children: RwLock<Vec<Edge>>,
     pub is_leaf: AtomicBool,
-    /// What a plan reads of it - the columns, the storage path and the time source - is
-    /// written by `Trie::publish` and `Trie::amend` and by nothing else: each puts the
-    /// template in the trie's key index before this lock is let go, and a writer that
-    /// went round them would leave a plan reading a template that is not this one.
-    /// `ingest` bumps `last_seen` itself, which no plan reads, and a node rebuilt from
-    /// `trie.json` arrives with its meta and is put in the index by `Trie::restored`.
+    /// Written by `Trie::publish` and `Trie::amend` and nothing else, which put the template
+    /// in the key index before this lock is let go; `ingest` alone bumps `last_seen`.
     pub leaf_meta: RwLock<Option<LeafMeta>>,
 }
 
@@ -133,8 +97,8 @@ pub struct LeafMeta {
     pub first_seen: DateTime<Utc>,
     /// Bumped on every ingest.
     pub last_seen: DateTime<Utc>,
-    /// Where this template's rows get their time. Chosen when the template is
-    /// created, recorded in the catalog, never changed.
+    /// Where this template's rows get their time: chosen when the template is created,
+    /// recorded in the catalog, never changed.
     pub time_source: TimeSource,
 }
 
@@ -143,18 +107,13 @@ pub struct ColumnDef {
     /// `None` means the column has been seen but has only ever held nulls - a different
     /// fact from `String`, which is why `ColumnType` has no `Null`.
     pub col_type: Option<ColumnType>,
-    /// The last ⊔ that *changed* `col_type`; `None` for a column that has held one type
-    /// since `first_seen`. This is what makes a mutable column type affordable once there
-    /// is data on disk: partitions are day-stamped, so a column that widened at *t* means
-    /// every partition older than *t* holds the pre-widening type and needs promotion on
-    /// read, and nothing newer does. Without the timestamp, finding the laggards means
-    /// opening all of them.
+    /// The last ⊔ that changed `col_type`, `None` if it never did: partitions older than it
+    /// hold the pre-widening type and need promotion on read, and nothing newer does.
     pub widened_at: Option<DateTime<Utc>>,
 }
 
-/// What a completed `walk` found. `None` from `walk` is "no such template", which must
-/// stay distinct from "template found, zero rows" - a query that cannot tell them apart
-/// reports an unknown field as an empty result.
+/// What a completed `walk` found; `None` from `walk` is "no such template", which must
+/// stay distinct from "template found, zero rows".
 pub struct WalkResult {
     pub node: Arc<Node>,
     pub is_leaf: bool,
@@ -173,12 +132,8 @@ impl Node {
         }
     }
 
-    /// A node rebuilt from `trie.json`, children attached afterwards.
-    ///
-    /// Two-pass, because an adjacency list names children by id and an id may be written
-    /// before the node it names. The loader validates the records into a tree *before*
-    /// calling this, so no `Arc` cycle can be built here - a cycle in the file would
-    /// otherwise be a leak rather than an error.
+    /// A node rebuilt from `trie.json`, children attached afterwards; the loader validates
+    /// the records into a tree first, so no `Arc` cycle can be built here.
     pub fn restored(
         id: u64,
         label: String,
@@ -212,12 +167,9 @@ pub const DEFAULT_TIME_COLUMNS: &[&str] = &[
 
 /// What the type ladder and the trie are told about the data: for now, which key names
 /// may carry a template's time.
-///
-/// Carried by the CLI as well as the server - `kibbr query <file>` builds its trie in
-/// the process, and a template created there chooses its time source by the same rule.
 #[derive(Debug, Clone)]
 pub struct Schema {
-    /// Ordered. A template's time source is the first of these that is one of its keys
+    /// Ordered: a template's time source is the first of these that is one of its keys
     /// and whose value on the creating line inferred as `Datetime`.
     pub time_columns: Vec<String>,
 }
@@ -242,36 +194,11 @@ pub struct Trie {
     /// Path length summed over templates, not over lines - one per edge, counted once
     /// per template rather than once per line that walked it.
     tokens: AtomicU64,
-    /// `catalog.log`, when this trie is durable. `None` for the CLI and `--storage memory`,
-    /// where a template exists only for the run.
-    ///
-    /// Owned by the trie because the trie is what a catalog describes: `ingest` writes the
-    /// record *before* it changes a leaf, and the two would drift apart the moment they had
-    /// two owners. A `Mutex` and not the per-node locks - a record is taken while one
-    /// leaf's meta lock is held, and the order is always leaf then catalog then `keys`, so
-    /// two lines creating two templates cannot deadlock on each other.
+    /// `catalog.log`, when this trie is durable; `None` for the CLI and `--storage memory`.
+    /// A `Mutex`: the lock order is always leaf, then catalog, then `keys`.
     catalog: Mutex<Option<Catalog>>,
-    /// For each key the templates that have it, and what a plan carries of each: what a
-    /// plan reads in place of crossing the nodes.
-    ///
-    /// The one lock here that belongs to the whole trie and not to a node. A plan takes
-    /// it for reading while it chooses its templates and for no longer. A new template
-    /// and a change to a template's columns take it for writing, for one `put`, as the
-    /// last thing they do and with the leaf's meta lock still held - so a plan sees a
-    /// template under every one of its keys or under none, and what it sees is what the
-    /// leaf holds. A line of a template that exists and changes no column never takes it.
-    ///
-    /// **Never a node's lock while this one is held.** `publish` and `amend` come to it
-    /// holding a leaf's lock, so a holder of this one that waited for a node could wait
-    /// for ever. A plan reads the index and the templates behind it and nothing else, and
-    /// anything that compares the index with the nodes walks them first and looks here
-    /// after.
-    ///
-    /// Read and written through poison. It is poisoned only by a panic inside a `put`,
-    /// which would leave one template under some of its keys and not others; refusing
-    /// every plan and every new template from then on would turn that into a dead server,
-    /// and refusing a new template here would refuse a line whose record is already in
-    /// the catalog.
+    /// For each key the templates that have it: what a plan reads in place of crossing the
+    /// nodes. Never take a node's lock while holding it; read and written through poison.
     keys: RwLock<KeyIndex>,
 }
 
@@ -299,16 +226,8 @@ impl Trie {
         }
     }
 
-    /// A trie rebuilt from `trie.json`.
-    ///
-    /// `next_id` and `next_template_id` are handed in rather than recomputed here because
-    /// only the loader has seen the whole file - and they are *derived* from it rather than
-    /// trusted: a stale counter hands out an id that is already in use, and for a template
-    /// id that means two leaves sharing one storage directory.
-    ///
-    /// The nodes arrive finished, so the key index is built here by one walk of them. In
-    /// id order, where the walk gives path order: each `put` is then an append, and in
-    /// path order it would move the tail of every list it touched.
+    /// A trie rebuilt from `trie.json`, its counters derived by the loader from the whole
+    /// file and its key index built here by one walk of the finished nodes.
     pub fn restored(
         root: Arc<Node>,
         data_dir: &str,
@@ -337,8 +256,8 @@ impl Trie {
         trie
     }
 
-    /// The names a new template's time column is chosen from. Affects templates created
-    /// after the call and nothing already recorded.
+    /// The names a new template's time column is chosen from, for templates created after
+    /// the call and nothing already recorded.
     pub fn with_time_columns(mut self, time_columns: Vec<String>) -> Self {
         self.time_columns = time_columns;
         self
@@ -373,13 +292,8 @@ impl Trie {
         }
     }
 
-    /// A trie rebuilt from catalog records, in record order.
-    ///
-    /// The last column record for a `(template, name)` wins, which is how a widening
-    /// replays. Two template records with one id, or two with one path, keep the first
-    /// and warn: the catalog is append-only and the writer never produces either, so a
-    /// second is a file that has been edited or spliced, and the first is the one every
-    /// leaf directory was named after.
+    /// A trie rebuilt from catalog records, in record order: the last column record wins,
+    /// and of two template records with one id or one path the first is kept, with a warning.
     pub fn from_catalog(
         data_dir: &str,
         records: &[Record],
@@ -391,12 +305,6 @@ impl Trie {
 
     /// `from_catalog`, with the configured time columns and the records a caller should
     /// append: one `time_source` for every template the catalog holds none for.
-    ///
-    /// A catalog written before the time source existed has no `time_source` records. The
-    /// source of such a template is derived here by the same rule, over the column types
-    /// the catalog does hold - the nearest thing to what its creating line would have
-    /// said - and handed back so it can be made durable, because the choice is one that
-    /// must not move between restarts.
     pub fn from_catalog_with(
         data_dir: &str,
         records: &[Record],
@@ -418,11 +326,8 @@ impl Trie {
                     created_at,
                     tokens,
                 } => {
-                    // Intact, and no build wrote it: an id comes from a counter that
-                    // stops at `LAST_TEMPLATE_ID`. Skipped with a WARN like any intact
-                    // record the format does not describe, and never a failed
-                    // start. Its column and time_source records name a template with no
-                    // record before them, and are skipped as those are.
+                    // Intact, and no build wrote it: an id comes from a counter that stops at
+                    // `LAST_TEMPLATE_ID`. Skipped with a WARN, and never a failed start.
                     if *id > LAST_TEMPLATE_ID {
                         warn(format!(
                             "a template record has id {id}, past the largest id a template \
@@ -504,14 +409,8 @@ impl Trie {
         let trie = Self::new_in(data_dir).with_time_columns(time_columns);
         let mut backfill = Vec::new();
         for (id, pending) in templates {
-            // `max + 1`, so a gap in the sequence is never refilled: a leaf directory is
-            // named by id whether or not the id's template record survived.
-            //
-            // Before the path is looked at, so the id of a record skipped just below is
-            // kept from reuse too. The record stays in the file, and a new template given
-            // its id would be the second record under it: the next start keeps the first
-            // of the two, skips it again for its path, and the template that took the id
-            // is gone with its rows still stored under it.
+            // `max + 1`, so a gap in the sequence is never refilled, and before the path is looked
+            // at, so the id of a record skipped just below is kept from reuse too.
             trie.reserve_template_ids_through(id);
             let labels: Vec<String> = pending.tokens.iter().map(Token::label).collect();
             let borrowed: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -555,12 +454,6 @@ impl Trie {
 
     /// Every template as catalog records, in id order: what writing a catalog from a
     /// `trie.json` produces, once, on the first start that finds no catalog.
-    ///
-    /// The snapshot stores a path as edge labels, and a label `event=login` is either a
-    /// promoted `event` or a literal key spelled that way - the two render alike and the
-    /// file did not say which. Split at the first `=` here: both readings rebuild the same
-    /// label, so the trie is the same either way, and only the record's spelling can be
-    /// wrong, on a catalog that predates the catalog.
     pub fn catalog_records(&self) -> Vec<Record> {
         let mut leaves: Vec<(Vec<String>, LeafMeta)> = Vec::new();
         for (path, leaf) in self.leaf_paths() {
@@ -634,9 +527,8 @@ impl Trie {
         Arc::clone(&self.root)
     }
 
-    /// Poison the key index's lock, as a panic inside a hold of its write half does.
-    /// For the tests of what an ingest and a plan do after one - here, and the planner's
-    /// a crate above.
+    /// Poison the key index's lock, as a panic inside a hold of its write half does, for
+    /// the tests of what an ingest and a plan do after one.
     #[cfg(any(test, feature = "test-support"))]
     pub fn poison_keys(&self) {
         std::thread::scope(|scope| {
@@ -648,20 +540,14 @@ impl Trie {
         });
     }
 
-    /// The key index, for a plan. Held for as long as the guard is, so a caller reads
-    /// what it needs and lets go before it does anything that could make a template.
+    /// The key index, for a plan, held for as long as the guard is: a caller reads what it
+    /// needs and lets go before it does anything that could make a template.
     pub fn keys(&self) -> RwLockReadGuard<'_, KeyIndex> {
         self.keys.read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The one place a template comes to exist in memory: its place in the key index,
-    /// its meta and its leaf flag, inside one hold of the index's write lock.
-    ///
-    /// All three inside the hold, so a plan that finds the template in the index finds
-    /// the leaf made, and a walk that finds the leaf made finds the template in the
-    /// index. Called with the leaf's meta lock held and the template's record already in
-    /// the catalog, and it cannot fail: a line is refused before its record is durable
-    /// or not at all.
+    /// The one place a template comes to exist in memory: its place in the key index, its
+    /// meta and its leaf flag in one hold of the index's write lock, so a plan and a walk agree.
     fn publish(&self, leaf: &Node, slot: &mut Option<LeafMeta>, path: Vec<String>, meta: LeafMeta) {
         let template = Arc::new(Template::of(path, &meta));
         let mut keys = self.keys.write().unwrap_or_else(PoisonError::into_inner);
@@ -676,11 +562,6 @@ impl Trie {
 
     /// The one place a template's columns change: the changes applied to `meta`, the
     /// template made again whole from it, and that template put in the key index.
-    ///
-    /// The index's lock is held for the `put` alone. The changes are applied and the
-    /// template is built under the leaf's meta lock, which the caller holds and without
-    /// which nothing reads a leaf's columns. Called with the changes' records already in
-    /// the catalog, and it cannot fail.
     fn amend(
         &self,
         meta: &mut LeafMeta,
@@ -720,9 +601,8 @@ impl Trie {
             );
     }
 
-    /// Every template a walk of the nodes finds, in id order: its id, its column names
-    /// and what a plan would carry of it. A leaf whose lock is poisoned is left out, as
-    /// a plan that walks leaves it out.
+    /// Every template a walk of the nodes finds, in id order; a leaf whose lock is poisoned
+    /// is left out, as a plan that walks leaves it out.
     fn walked(&self) -> Vec<keys::Walked> {
         let mut walked = Vec::new();
         for (path, leaf) in self.leaf_paths() {
@@ -739,27 +619,15 @@ impl Trie {
         walked
     }
 
-    /// Whether the key index is the one a walk of the nodes would build: the same
-    /// templates, each described as its leaf describes it and listed under exactly its
-    /// columns, every list in id order. The reason, where it is not.
-    ///
-    /// For tests, the fuzz harness and the checks a debug build makes after it rebuilds a
-    /// trie. It says something only while nothing ingests: the nodes are walked first and
-    /// the index read after, never one under the other's lock, so a template made in
-    /// between is a difference that is not a fault.
+    /// Whether the key index is the one a walk of the nodes would build, and the reason
+    /// where it is not; it says something only while nothing ingests.
     pub fn keys_agree(&self) -> Result<(), String> {
         let walked = self.walked();
         self.keys().agrees_with(&walked)
     }
 
-    /// Sequential, from an `AtomicU64` fetch-and-increment. Ids are therefore handed out
-    /// in the order templates are first seen, which is the order lines arrived in - the
-    /// one part of a rendered tree that a reordered file moves.
-    ///
-    /// Checked, where a bare `fetch_add` wraps: past `LAST_TEMPLATE_ID` the counter has
-    /// nothing to give and says so, every time it is asked, and does not start again from
-    /// 0 through the ids already in use. A catalog naming `LAST_TEMPLATE_ID` was enough
-    /// for that: the next template took `u64::MAX` and the one after it 0.
+    /// The next template id, in the order templates are first seen; checked, so past
+    /// `LAST_TEMPLATE_ID` it says so and does not start again from 0 through the ids in use.
     pub fn next_template_id(&self) -> Result<u64, TrieError> {
         let mut next = self.next_template_id.load(Ordering::Relaxed);
         loop {
@@ -782,55 +650,26 @@ impl Trie {
         self.next_id.load(Ordering::Relaxed)
     }
 
-    /// The leaves that exist, counted - not the ids handed out.
-    ///
-    /// Those were the same number until `reserve_template_ids_through` started skipping
-    /// the ids that leaf directories on disk have already spent. A trie recovered from a
-    /// lost snapshot holds no templates and may still have reserved a hundred ids, and
-    /// every caller of this wants the first number: the banner, `/stats`, and the line
-    /// the shutdown prints.
+    /// The leaves that exist, counted - not the ids handed out, which reserving skips ahead of.
     pub fn template_count(&self) -> u64 {
         self.all_leaves().len() as u64
     }
 
-    /// Refuse to hand out a template id at or below one already spent.
-    ///
-    /// The counter's floor is normally `trie.json`, which records every id issued. But
-    /// leaf directories are *named* by template id, so the ids they hold are spent whether
-    /// or not anything still remembers issuing them - and when the snapshot is missing or
-    /// unparsable the trie starts empty and the counter restarts from `FIRST_TEMPLATE_ID`
-    /// while those directories are still sitting there.
-    ///
-    /// Reissuing one points a freshly learned template at another template's rows. The
-    /// symptom is the bad kind: the two key sets are merged into one directory, so an
-    /// unfiltered `MATCH` still returns everything and looks right, while a filtered one
-    /// prunes to the template the trie names and silently misses the rows in the directory
-    /// it actually opened. A wrong answer, not an error.
-    ///
-    /// `highest_used` is read from a file - a catalog record, a row group, a record in
-    /// the write-ahead log - and may be any `u64`. Saturating, so the largest of them
-    /// leaves the counter at `u64::MAX` with no id left to give (`next_template_id`),
-    /// where `+ 1` panicked a start in a debug build and, in a release one, wrapped to 0
-    /// and reserved nothing.
+    /// Refuse to hand out a template id at or below one already spent: leaf directories are
+    /// named by id, and reissuing one points a new template at another template's rows.
     pub fn reserve_template_ids_through(&self, highest_used: u64) {
         self.next_template_id
             .fetch_max(highest_used.saturating_add(1), Ordering::Relaxed);
     }
 
-    /// What the same templates would cost with no prefix sharing at all: every template's
-    /// path spelled out in full, hanging off the one root they cannot help but share.
-    ///
-    /// The root is not a token, but it is counted here for the same reason `node_count`
-    /// counts it - on both sides of the comparison, so `token_count - node_count` is
-    /// exactly the nodes shared prefixes removed and nothing else.
+    /// What the same templates would cost with no prefix sharing: every path spelled out in
+    /// full, the root counted as `node_count` counts it so the difference is the nodes shared.
     pub fn token_count(&self) -> u64 {
         self.tokens.load(Ordering::Relaxed) + 1
     }
 
-    /// Walk the tokens, creating what is missing, and return the last node - **not yet a
-    /// leaf**. `ingest` marks it one only after the catalog record that describes it is on
-    /// disk, so an interior node this creates and then abandons is the whole cost of a
-    /// failed append: a few nodes nothing walks to, and no template.
+    /// Walk the tokens, creating what is missing, and return the last node - not yet a leaf:
+    /// `ingest` marks it one only after its catalog record is on disk.
     fn path_to(&self, tokens: &[&str]) -> Result<Arc<Node>, TrieError> {
         let mut node = Arc::clone(&self.root);
         for token in tokens {
@@ -839,19 +678,8 @@ impl Trie {
         Ok(node)
     }
 
-    /// Find the child for `token`, creating it if it is genuinely absent.
-    ///
-    /// Read lock first: the overwhelmingly common case is a child that already exists and
-    /// nothing to write. Escalate to the write lock only when the child is missing - and
-    /// then re-check under it, because the lock was dropped in between and another thread
-    /// may have created the same child in that gap. Without the re-check the two threads
-    /// build two nodes wearing one label, and the second silently owns a template's worth
-    /// of rows nothing can walk to.
-    ///
-    /// Built this way while the program is still single-threaded on purpose: the lock on
-    /// a node's children is that node's own, and retrofitting that means touching every
-    /// call site. The one lock for the whole trie is `keys`, and a line of a template
-    /// that exists takes it only when it changes a column.
+    /// Find the child for `token`, creating it if absent: read lock first, then the write
+    /// lock and a re-check, or two threads build two nodes wearing one label.
     fn child_or_create(&self, node: &Arc<Node>, token: &str) -> Result<Arc<Node>, TrieError> {
         if let Some(child) = exact_child(&read(&node.children)?, token) {
             return Ok(child);
@@ -862,9 +690,8 @@ impl Trie {
             return Ok(child);
         }
 
-        // Exact match only, even though `walk` falls back to `[*]`. Insert has to
-        // create the static edge the token names; matching an existing placeholder here
-        // would file a new template under a wildcard and lose the specific one.
+        // Exact match only, even though `walk` falls back to `[*]`: matching an existing
+        // placeholder here would file a new template under a wildcard and lose the specific one.
         let child = Arc::new(Node::new(
             self.next_id.fetch_add(1, Ordering::Relaxed),
             token,
@@ -883,11 +710,8 @@ impl Trie {
         Ok(child)
     }
 
-    /// Walk an exact token list. `None` is "no such path" - the trie has never seen this
-    /// shape - and must stay distinguishable from a leaf that holds no rows.
-    ///
-    /// `None` on a poisoned lock too: the signature has no room to say more, and an
-    /// unwalkable trie and an absent path are the same answer to the caller.
+    /// Walk an exact token list; `None` is "no such path" (or a poisoned lock) and must stay
+    /// distinguishable from a leaf that holds no rows.
     pub fn walk(&self, tokens: &[&str]) -> Option<WalkResult> {
         let mut node = Arc::clone(&self.root);
         for token in tokens {
@@ -911,12 +735,8 @@ impl Trie {
         })
     }
 
-    /// Every leaf under `prefix`. Omitted keys in a query pattern act as wildcards, so a
-    /// partial pattern selects a subtree rather than a single leaf - which works only
-    /// because walk order hoists the promoted tokens to the top of the trie.
-    ///
-    /// An unmatched prefix is an empty result, not an error: nothing went wrong, there is
-    /// simply nothing there.
+    /// Every leaf under `prefix`, since omitted keys in a pattern act as wildcards; an
+    /// unmatched prefix is an empty result, not an error.
     pub fn walk_prefix(&self, prefix: &[&str]) -> Result<Vec<Arc<Node>>, TrieError> {
         let mut node = Arc::clone(&self.root);
         for token in prefix {
@@ -934,27 +754,16 @@ impl Trie {
         Ok(leaves)
     }
 
-    /// Every leaf in the trie, in path order - children are stored sorted, so this does
-    /// not depend on the order lines arrived in.
-    ///
-    /// A poisoned lock truncates the subtree it guards rather than failing; the signature
-    /// has nowhere to report it, and a partial list is what the caller gets.
+    /// Every leaf in the trie, in path order, so independent of the order lines arrived in;
+    /// a poisoned lock truncates the subtree it guards rather than failing.
     pub fn all_leaves(&self) -> Vec<Arc<Node>> {
         let mut leaves = Vec::new();
         let _ = collect_leaves(&self.root, &mut leaves);
         leaves
     }
 
-    /// Every leaf with the edge labels that reach it, root excluded.
-    ///
-    /// `/templates` reports the template, and a template *is* its path: `LeafMeta` holds
-    /// the columns but not which of them were promoted into the fingerprint, so the
-    /// columns alone cannot say whether a leaf is `event=login_failed, ts, user` or some
-    /// other arrangement of the same names. `Template::path` carries the same tokens
-    /// for the same reason.
-    ///
-    /// Depth-first over children already sorted by label, so two runs over one file list
-    /// the templates in the same order.
+    /// Every leaf with the edge labels that reach it, root excluded: a template is its path,
+    /// and the columns alone cannot say which of them were promoted.
     pub fn leaf_paths(&self) -> Vec<(Vec<String>, Arc<Node>)> {
         let mut out = Vec::new();
         let mut path = Vec::new();
@@ -962,21 +771,8 @@ impl Trie {
         out
     }
 
-    /// Put one parsed line into the trie: walk order to a leaf, then fold this line's
-    /// types into that leaf's columns.
-    ///
-    /// The fold is `types::join`'s ⊔, applied on *every* ingest rather than written once
-    /// from the line that created the template - which is the point of the lattice.
-    /// Commutative and associative, so the column type does not depend on arrival order;
-    /// monotonic, so a ten-digit order id the ladder called a `Datetime` widens back to
-    /// `String` the first time it meets `AX-99213`.
-    ///
-    /// **The catalog is written first.** A new template, a widened column or a column
-    /// added to an existing leaf is appended and fsynced before the leaf changes, under
-    /// the leaf's meta lock so nothing reads the half-made state. If the append fails the
-    /// line is refused with `TrieError::Catalog`, the leaf is exactly as it was, and the
-    /// template id drawn for a new template is left unused - a gap in the sequence, which
-    /// the restart path already tolerates, rather than an id two lines could both hold.
+    /// Put one parsed line into the trie: walk order to a leaf, then join this line's types
+    /// into its columns, the catalog record written before the leaf changes.
     pub fn ingest(
         &self,
         parsed: &ParsedLog,
@@ -986,9 +782,8 @@ impl Trie {
         let borrowed: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let leaf = self.path_to(&borrowed)?;
 
-        // Scoped, so the write lock is released before the leaf is handed back - a
-        // caller that goes straight on to read the columns would otherwise deadlock on
-        // a guard it cannot see.
+        // Scoped, so the write lock is released before the leaf is handed back to a caller
+        // that goes straight on to read the columns.
         let mut slot = write(&leaf.leaf_meta)?;
         let is_new = match slot.as_mut() {
             None => {
@@ -1029,9 +824,8 @@ impl Trie {
                     widened_from: None,
                     at: None,
                 }));
-                // The time source: the first configured name that is one of
-                // this line's keys and read as a `Datetime`. Chosen once, in the same
-                // durable unit as the template, and never changed.
+                // The time source: the first configured name among this line's keys that read as a
+                // `Datetime`, chosen once in the same durable unit as the template.
                 let time_source =
                     TimeSource::choose(&self.time_columns, |name| parsed.column_type(name));
                 records.push(Record::TimeSource {
@@ -1065,9 +859,8 @@ impl Trie {
                 true
             }
             Some(meta) => {
-                // What this line changes, decided before anything is touched: the record
-                // has to be durable first, and a change applied and then refused would
-                // leave the trie ahead of the file.
+                // What this line changes, decided before anything is touched: the record has to be
+                // durable first, or a refused change would leave the trie ahead of the file.
                 let mut records = Vec::new();
                 let mut changes: Vec<(String, Option<ColumnType>, bool)> = Vec::new();
                 for key in &parsed.keys {
@@ -1080,11 +873,8 @@ impl Trie {
                             let col = &meta.columns[at];
                             let joined = join(col.col_type, incoming);
                             if joined != col.col_type {
-                                // The moment a column widens: the one place an
-                                // operator can learn that `"N/A"` just sent every
-                                // time-range query on this column to a full scan.
-                                // `None ⊔ T` is a column learning its first type, not a
-                                // widening, and is not warned about.
+                                // The one place an operator can learn that a column widened.
+                                // `None ⊔ T` is a column learning its first type: no warning.
                                 if let (Some(from), Some(to)) = (col.col_type, joined) {
                                     tracing::warn!(
                                         "template {} column `{key}` widened \
@@ -1105,12 +895,8 @@ impl Trie {
                                 changes.push((key.clone(), joined, true));
                             }
                         }
-                        // A key not on the path, which one leaf per token multiset makes
-                        // unreachable but not impossible: a promoted `event=login` and
-                        // the literal key `{"event=login": 1}` share one edge label.
-                        // Union the columns rather than drop the value - two schemas in
-                        // one leaf is schema merging's to settle, and losing a column
-                        // here would hide that it happened.
+                        // A key not on the path: a leaf from before `=` was escaped can hold a
+                        // literal `event=login` too. Union the columns, do not drop the value.
                         Err(_) => {
                             records.push(Record::Column {
                                 template_id: meta.template_id,
@@ -1138,10 +924,8 @@ impl Trie {
     }
 }
 
-/// The keys an operator could add to `time_columns` to give a template a time of its own -
-/// those typed `Datetime`, comma-separated, or `none`. One spelling for the WARN a template
-/// on arrival time is made with and for the bulk loader's refusal naming it, so the two
-/// cannot name different keys for one template.
+/// The `Datetime`-typed keys an operator could add to `time_columns`, comma-separated, or
+/// `none`: one spelling for the WARN and for the bulk loader's refusal.
 pub fn datetime_keys<'a>(
     columns: impl IntoIterator<Item = (&'a str, Option<ColumnType>)>,
 ) -> String {
@@ -1177,9 +961,6 @@ fn exact_child(children: &[Edge], token: &str) -> Option<Arc<Node>> {
 
 /// A static child always beats a placeholder: when both could match a token, the more
 /// specific template is the right answer, so `[*]` is only the fallback.
-///
-/// Unreachable while nothing builds a `Placeholder`, and here so that whatever eventually
-/// builds one is matched by a walk that already exists.
 fn find_child(children: &[Edge], token: &str) -> Option<Arc<Node>> {
     exact_child(children, token).or_else(|| exact_child(children, PLACEHOLDER_LABEL))
 }
@@ -1258,9 +1039,8 @@ mod tests {
         Arc::clone(template)
     }
 
-    /// The write rule: no record on disk, no template in memory. The line is refused
-    /// with the catalog's reason, the trie walks to nothing, and a later line that needs
-    /// no record still lands.
+    /// The write rule: no record on disk, no template in memory, and a later line that
+    /// needs no record still lands.
     #[test]
     fn a_failed_append_creates_no_template() {
         let dir = scratch("failed-append");
@@ -1428,10 +1208,8 @@ mod tests {
         }
     }
 
-    /// A template is listed under each of its columns from the line that makes it. A
-    /// column that widens to text is text in the template the index hands out from the
-    /// line that widens it, and a template handed out before is the template as it was. A
-    /// line that changes no column goes nowhere near the index.
+    /// A template is listed under each of its columns from the line that makes it, a widening
+    /// shows in the next template handed out, and an earlier handle is the template as it was.
     #[test]
     fn the_key_index_follows_a_new_template_and_a_widening() {
         let trie = Trie::new();
@@ -1481,10 +1259,8 @@ mod tests {
         assert_eq!(trie.keys_agree(), Ok(()));
     }
 
-    /// A leaf from before `=` was escaped in a key's token: its one label reads as a
-    /// promoted `event` and its one column is the literal key spelled that way. A line
-    /// whose `event` promotes to that label walks to the same leaf and adds the column
-    /// `event`, so the template is listed under a key it was not listed under before.
+    /// A leaf from before `=` was escaped in a key's token: a line whose `event` promotes to
+    /// its label adds the column `event`, and the template is then listed under that key too.
     #[test]
     fn a_column_added_to_a_leaf_lists_its_template_under_the_new_key() {
         let records = vec![
@@ -1517,8 +1293,7 @@ mod tests {
     }
 
     /// The three records a replay skips - an id past the last one, a second record under
-    /// an id, a second template on a path - make no template, so none of them is in the
-    /// index and none of the keys only they name has a list.
+    /// an id, a second template on a path - make no template, so none is in the index.
     #[test]
     fn a_record_a_replay_skips_leaves_nothing_in_the_key_index() {
         let int = Some(ColumnType::Int64);
@@ -1561,10 +1336,8 @@ mod tests {
         assert_eq!(trie.keys_agree(), Ok(()));
     }
 
-    /// A panic inside a hold of the index's write lock poisons it, and nothing after that
-    /// is refused for it: a line of a new template is taken and its template is planned,
-    /// a widening of it shows in the next plan, and the index is still the nodes'. A line
-    /// refused here would be one whose record the catalog already holds.
+    /// Nothing is refused for a poisoned index lock: a line refused here would be one
+    /// whose record the catalog already holds.
     #[test]
     fn a_poisoned_key_index_still_takes_templates_and_answers_plans() {
         let trie = Trie::new();
@@ -1590,9 +1363,7 @@ mod tests {
     }
 
     /// A template record whose id has no `max + 1` is skipped with a WARN that names it,
-    /// with the column and time_source records that name it, and the start goes on: the
-    /// template beside it is rebuilt and the next id follows it. The `max + 1` of that id
-    /// panicked the start in a debug build.
+    /// with the records that name it, and the start goes on.
     #[test]
     fn a_template_id_with_no_next_id_is_skipped_and_never_fails_a_start() {
         let records = vec![
@@ -1626,10 +1397,8 @@ mod tests {
         );
     }
 
-    /// A template record skipped for a path another template holds still names its id,
-    /// and the id is not given again. It was: the next template took 102 here, its record
-    /// was the second under that id, and the start after that kept the first of the two
-    /// and skipped it for its path - one template where two had been ingested into.
+    /// A template record skipped for a path another template holds still names its id, and
+    /// the id is not given again, or the next start would lose the template that took it.
     #[test]
     fn the_id_of_a_template_record_skipped_for_its_path_is_not_given_again() {
         let mut records = vec![
@@ -1666,10 +1435,8 @@ mod tests {
         assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
-    /// The last id is handed out once and nothing after it: not 0, not an id again. A
-    /// line that needs a new template is refused, the template that holds the last id
-    /// still takes its lines, and reserving through `u64::MAX` - an id a WAL record or a
-    /// row group could name - is not a panic and frees nothing.
+    /// The last id is handed out once and nothing after it: not 0, not an id again, and
+    /// reserving through `u64::MAX` - an id a file could name - is not a panic.
     #[test]
     fn the_last_template_id_is_given_once_and_no_id_is_given_twice() {
         let trie = Trie::new();

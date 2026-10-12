@@ -1,39 +1,8 @@
-//! Storage format v3: one shared file per day, row groups of one template each, a typed
-//! piece per column that prints every value back as it was ingested.
-//!
-//! ```text
-//! header        24 bytes: 'KBBR', version 3, three zero bytes, a 16-byte random file id
-//! frames        schema records, row groups (each followed by its chunk area), optional
-//!               frames, in the order they were written
-//! footer frame  written once, when the file is sealed
-//! trailer       8 bytes: the footer frame's length, then 'KBBR'
-//! ```
-//!
-//! Every frame is `frame::read`'s: `[4] payload_len [4] crc [N] payload`, the payload's
-//! first byte its kind. The catalog and the manifest are framed the same way, so one
-//! reader reads all three.
-//!
-//! The split:
-//!
-//! - this file - the numbers, the forms, and the print rules the writer's check and the
-//!   reader both go through, so what is checked on the way in is what is printed on the
-//!   way out;
-//! - `build` - **the segment builder**: rows of one template in, one encoded row group
-//!   out. No clock, no lock, no knowledge of who is calling it - closing a live row group,
-//!   compaction and the bulk loader all hand it rows the same way;
-//! - `read` - a row group's header and chunks, decoded and checked;
-//! - `column` - one chunk decoded a second way, to typed values with no cell printed:
-//!   what a query filters on before it builds a row;
-//! - `file` - a whole file: writing it, sealing it, opening a sealed one through its
-//!   footer, walking an unsealed one frame by frame, and recovering it.
-//!
-//! **Reject, never guess.** Every field has a closed set of values, and a reader that meets
-//! one it does not know - a type, a form, an encoding, a compression, a flag bit, a
-//! nonzero reserved byte - refuses the file and names its path and offset. The one
-//! exception is the high bit of a kind: a frame, a section or a footer part whose kind has
-//! bit 7 set is optional, and a reader that does not know it steps over it by its length.
-//! What a reader needs to produce an answer is refused when unknown; what only speeds an
-//! answer up is skipped.
+//! Storage format v3: one shared file per day, row groups of one template each, a
+//! typed piece per column that prints every value back as it was ingested.
+//! This file holds the numbers, the forms and the print rules the writer's check and the
+//! reader both go through, so what is checked on the way in is what is printed on the way
+//! out; an unknown value is refused, never guessed.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
@@ -56,8 +25,8 @@ pub mod samples;
 mod vectors;
 
 pub const MAGIC: [u8; 4] = *b"KBBR";
-/// The magic 0.1.0-alpha.1 wrote, before the rename. A file that starts with it is refused
-/// by path, like one of another version: nothing reads it and there is nothing to migrate.
+/// The magic 0.1.0-alpha.1 wrote, before the rename: a file that starts with it is refused
+/// by path, since nothing reads it and there is nothing to migrate.
 pub const PRE_RENAME_MAGIC: [u8; 4] = [0x54, 0x52, 0x44, 0x42];
 pub const VERSION: u8 = 3;
 pub const HEADER_LEN: usize = 24;
@@ -70,16 +39,11 @@ pub const KIND_FOOTER: u8 = 3;
 /// A kind with this bit set is optional: a reader that does not know it steps over it.
 pub const OPTIONAL: u8 = 0x80;
 
-/// The largest chunk body a reader will allocate. No writer produces one: a row group
-/// closes at about 8MB, and a line is at most 64MiB.
+/// The largest chunk body a reader will allocate; no writer produces one.
 pub const MAX_BODY: u32 = 256 * 1024 * 1024;
 
-/// The most rows a row group holds. Every writer closes one at 8,192 rows - the live door,
-/// the bulk loader and compaction, all through the one builder, which refuses more - so a
-/// reader refuses a `row_count` past it before anything is allocated by it. A chunk
-/// decodes into one cell a row, and an all-null chunk or a one-byte constant stores no
-/// bytes that vouch for the count: without this, a header of a hundred bytes asks for a
-/// cell for each of four thousand million rows.
+/// The most rows a row group holds, refused by a reader before anything is allocated by
+/// it, since an all-null chunk stores no bytes that vouch for the count.
 pub const MAX_ROWS: u32 = 8_192;
 
 pub const DAY_NS: i64 = 86_400 * 1_000_000_000;
@@ -87,12 +51,8 @@ const NANOS: i64 = 1_000_000_000;
 
 // ── Errors ─────────────────────────────────────────────────────────────────────────
 
-/// What reading or writing a v3 file can fail on.
-///
-/// `Corrupt` is bytes whose CRC held and which break a rule of the format - a writer's
-/// bug, found at startup or in a query and always named by path and offset. A **tear**
-/// is not an error: it is where a crash stopped a write, and `file::recover` cuts the file
-/// back to it.
+/// What reading or writing a v3 file can fail on; a tear is not one, `file::recover` cuts
+/// the file back to it.
 #[derive(Debug, Error)]
 pub enum FormatError {
     #[error("{path}: {source}")]
@@ -107,9 +67,8 @@ pub enum FormatError {
         offset: u64,
         what: String,
     },
-    /// A kibbr file from another format version. There is no upgrade path: the path is
-    /// named and the process exits non-zero rather than reading bytes it would have to
-    /// guess the meaning of.
+    /// A kibbr file from another format version: there is no upgrade path, so the path is
+    /// named and the process exits non-zero.
     #[error(
         "{path}: segment format version {found}; this build reads version 3 only, and there \
          is no migration - point --data-dir somewhere else, or remove it and re-ingest"
@@ -123,8 +82,7 @@ pub enum FormatError {
     PreRename { path: PathBuf },
 }
 
-/// A rule broken at one offset, before the path is known. `at` is relative to whatever
-/// `Bytes` was reading, and `Bytes::base` makes it a file offset.
+/// A rule broken at one offset, before the path is known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bad {
     pub offset: u64,
@@ -150,9 +108,8 @@ impl Bad {
 
 // ── Reading bytes ──────────────────────────────────────────────────────────────────
 
-/// A region of a file, read front to back. **Every length is compared with what remains
-/// before anything is sliced or allocated**, so a `u32` of `0xFFFFFFFF` is a `Bad`, never
-/// a 4GB allocation.
+/// A region of a file, read front to back, every length compared with what remains
+/// before anything is sliced or allocated.
 pub struct Bytes<'a> {
     bytes: &'a [u8],
     at: usize,
@@ -239,9 +196,7 @@ impl<'a> Bytes<'a> {
         }
     }
 
-    /// An unsigned LEB128 of at most ten bytes, in its one shortest form: a last byte of 0
-    /// after others is a byte the number did not need, and a tenth byte above 1 holds bits
-    /// past the 64th. Either is refused, so a value has exactly one spelling.
+    /// An unsigned LEB128 of at most ten bytes, refused unless in its one shortest form.
     pub fn varint(&mut self, what: &str) -> Result<u64, Bad> {
         let at = self.offset();
         let mut value = 0u64;
@@ -284,7 +239,7 @@ pub fn put_varint(mut n: u64, out: &mut Vec<u8>) {
 
 // ── Numbers ────────────────────────────────────────────────────────────────────────
 
-/// The type byte. The first five are v2's.
+/// The type byte.
 pub fn type_byte(ty: ColumnType) -> u8 {
     match ty {
         ColumnType::String => 0,
@@ -310,21 +265,15 @@ pub fn type_of_byte(b: u8) -> Option<ColumnType> {
     })
 }
 
-/// Encodings: how a piece's values are laid out. Plain and constant hold every
-/// type, and each of the others one type. A reader refuses any other number, and any
-/// encoding on a type outside its row of the table, as it refuses an unknown one - a byte
-/// this build cannot decode is not a byte it may guess at.
+/// An encoding is how a piece's values are laid out; plain holds every type.
 pub const PLAIN: u8 = 0;
 /// One value, in plain layout, that every row of the piece holds.
 pub const CONSTANT: u8 = 1;
-/// `String`: `[4]` word count, at least 1; the distinct words in plain layout, in the order
-/// they first appear; one index per row - 1 byte if there are at most 256 words, 2 if at
-/// most 65,536, else 4 - little-endian.
+/// `String`: a word list in the order rows first name its words, then one index per row.
 pub const DICTIONARY: u8 = 2;
 /// `Int64`: per value zigzag, then LEB128, at most 10 bytes.
 pub const VARINT: u8 = 3;
-/// `Datetime`: the first value, then each value minus the one before it, wrapping in i64;
-/// each zigzag, then LEB128.
+/// `Datetime`: the first value, then each value minus the one before it, zigzag LEB128.
 pub const DELTA: u8 = 4;
 /// `Bool`: `ceil(n/8)` bytes, bit i = row i, the bits past the last row zero.
 pub const BITS: u8 = 5;
@@ -352,20 +301,15 @@ pub fn index_width(words: usize) -> usize {
 
 /// Compression 0, none: the body is stored as it is.
 pub const NO_COMPRESSION: u8 = 0;
-/// Compression 1, zstd: one zstd frame (RFC 8878) holding the whole body, and nothing else,
-/// decompressing to exactly `body_len` bytes.
+/// Compression 1, zstd: one frame holding the whole body and nothing else.
 pub const ZSTD: u8 = 1;
 
-/// Where a row group's rows came from.
-///
-/// For the live door the stream is the WAL and the positions are its sequence numbers;
-/// for the bulk door the stream is the load and the positions are line numbers. Replay
-/// skips exactly what a durable row group's range covers.
+/// Where a row group's rows came from, so replay skips exactly what a durable row
+/// group's range covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Source {
-    /// Rows that came by no log - the live door before it had one, and any row appended
-    /// with no position since: nothing to record, and a byte that says so is better than
-    /// a zero that looks like a position.
+    /// Rows that came by no log: a byte that says so is better than a zero that looks like a
+    /// position.
     #[default]
     NotRecorded,
     Wal {
@@ -437,8 +381,7 @@ pub const RFC3339: u8 = 0;
 pub const EPOCH_SECS: u8 = 1;
 pub const EPOCH_MILLIS: u8 = 2;
 
-/// How a piece's values were written, so the reader writes them back the same way: the
-/// form byte beside the type, grown into a small record. Its first byte is `json_kind`.
+/// How a piece's values were written, so the reader writes them back the same way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Form {
     String {
@@ -521,7 +464,7 @@ impl Form {
         )
     }
 
-    /// The bytes after type and encoding. Their length is fixed by the type.
+    /// The bytes after type and encoding, their length fixed by the type.
     pub fn bytes(&self) -> Vec<u8> {
         match *self {
             Form::String { kind } => vec![kind as u8],
@@ -544,10 +487,8 @@ impl Form {
         }
     }
 
-    /// A form read back, every field held to its range, and none of the combinations no
-    /// writer makes: spelling fields on the form of a JSON number or bool, RFC 3339 for
-    /// anything but a JSON string, RFC 3339 fields on an epoch, a `Uuid` or an `Ip` that was
-    /// not a string. `at` is where the form starts, for the error.
+    /// A form read back, every field held to its range and to the combinations a writer
+    /// makes.
     pub fn read(ty: ColumnType, r: &mut Bytes<'_>) -> Result<Self, Bad> {
         let at = r.offset();
         let kind_byte = r.u8("form json_kind")?;
@@ -647,9 +588,7 @@ impl Form {
 
 // ── Printing ───────────────────────────────────────────────────────────────────────
 //
-// One function per rule, called by the writer's check and by the reader. A value goes
-// into a typed piece only if printing it through the piece's form gives back what was
-// ingested - a JSON string byte for byte, a JSON number as the same value - so a spelling
+// One function per rule, called by the writer's check and by the reader, so a spelling
 // these miss costs its row its typing and never its value.
 
 /// An `Int64` string row: an optional sign, then the digits zero-padded to `width`.
@@ -695,10 +634,8 @@ pub fn autosi_digits(ns: i64) -> u8 {
     }
 }
 
-/// RFC 3339 for an instant: moved by the offset, then date, separator, time, `digits`
-/// fraction digits and the zone as written. `None` when the instant moved by the offset is
-/// outside what the type holds, or when `digits` would drop a nonzero sub-second digit -
-/// a value with more sub-second digits than its row prints is not one this form prints.
+/// RFC 3339 for an instant moved by the offset; `None` when that is outside what the type
+/// holds, or when `digits` would drop a nonzero sub-second digit.
 pub fn print_rfc3339(ns: i64, separator: u8, zone: u8, offset: u16, digits: u8) -> Option<String> {
     if digits > 9 {
         return None;
@@ -771,7 +708,7 @@ pub fn print_uuid(bytes: &[u8; 16], upper: bool) -> String {
     out
 }
 
-/// A UUID's text as its bytes, in the order the text reads. `None` for anything that is
+/// A UUID's text as its bytes, in the order the text reads; `None` for anything that is
 /// not 8-4-4-4-12 hex.
 pub fn uuid_bytes(text: &str) -> Option<[u8; 16]> {
     let raw = text.as_bytes();
@@ -823,9 +760,7 @@ pub fn print_ip(bytes: &[u8], spelling: u8) -> Option<String> {
     }
 }
 
-/// RFC 5952 as the format fixes it: groups in hex without leading zeros; the longest run
-/// of two or more zero groups written `::`, the first such run on a tie; and the last 32
-/// bits in dotted decimal exactly when the first 96 are `::ffff`, an IPv4-mapped address.
+/// RFC 5952 as the format fixes it.
 fn rfc5952(groups: &[u16; 8]) -> String {
     if groups[..5].iter().all(|g| *g == 0) && groups[5] == 0xffff {
         let [a, b] = groups[6].to_be_bytes();

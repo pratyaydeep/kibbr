@@ -1,30 +1,8 @@
-//! `LOCK`: one process owns a data directory.
+//! `LOCK`: one process owns a data directory, because the catalog and the manifest are
+//! append-only logs each written by exactly one handle.
 //!
-//! The catalog and the manifest are append-only logs, each written by exactly one handle
-//! that keeps its own end offset. Two processes appending to either would write over each
-//! other's records, and two catalogs handing out template ids from the same counter would
-//! give one id two templates. So one process owns the directory - a server, or a bulk load
-//! or a compaction running alone - and it holds an advisory lock on `<base>/LOCK` for its
-//! whole life.
-//!
-//! **Why a lock and not the port.** A server used to claim its directory by binding its
-//! port first: a second server on the same port failed before touching a file. Two servers
-//! on two ports - or both on `--port 0`, as every script runs them - both got through, and a
-//! load running alone binds nothing. The lock is the directory's own, whatever listens.
-//!
-//! **Held by the kernel, not by the file's contents.** `flock` is released when the process
-//! dies, `kill -9` included, so a crash never leaves a lock someone must delete by hand; the
-//! file itself is never deleted, because a process deleting it while another opened it
-//! would let two think they hold it. What the file *says* is only a hint: who holds it, and
-//! for a server, where to reach it - which is how `kibbr load` finds the server it must ask
-//! to run the load instead of writing beside it.
-//!
-//! **And the key to its `/load`.** A server reads the files a load names, with its own
-//! permissions, and serves their rows to anyone who can query it. So a load is taken only
-//! from a client that shows a token the server wrote here - readable, the file being
-//! `0600`, only by the account that owns the directory. `/ingest` is a door for lines a
-//! client already has; without this, `/load` would be a door to every file the server can
-//! read, open to whoever can reach its port.
+//! An advisory `flock`, so the kernel releases it when the holder dies; what the file says
+//! is a hint - who holds it, a server's address, and the token its `/load` asks for.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -48,9 +26,8 @@ pub struct Holder {
     /// What a server takes a `/load` only with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
-    /// A compaction running alone. It says `load` as well: a build from before this field
-    /// reads `load` and gives up at once, where a holder it could not place is taken for a
-    /// server still starting and waited on for thirty seconds.
+    /// A compaction running alone, which says `load` as well so that an older build reads
+    /// it as a load and gives up at once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub compact: bool,
 }
@@ -116,7 +93,7 @@ pub struct DataLock {
 }
 
 impl DataLock {
-    /// Take the directory's lock, or say who holds it. Never waits.
+    /// Take the directory's lock without waiting, or say who holds it.
     pub fn acquire(base: &Path) -> Result<Self, LockError> {
         let path = base.join(LOCK_FILE);
         let io = |source| LockError::Io {
@@ -147,8 +124,8 @@ impl DataLock {
         }
     }
 
-    /// Say who holds the lock. Not flushed: the lock is the kernel's, and this is a hint
-    /// that only a running holder's readers need.
+    /// Say who holds the lock, unflushed: the lock is the kernel's, and this is a hint that
+    /// only a running holder's readers need.
     pub fn announce(&mut self, holder: &Holder) -> Result<(), LockError> {
         let mut text = serde_json::to_vec(holder).unwrap_or_default();
         text.push(b'\n');
@@ -163,7 +140,7 @@ impl DataLock {
     }
 }
 
-/// What `LOCK` says, if it says anything readable. The lock itself is not consulted: a
+/// What `LOCK` says, if it says anything readable; the lock itself is not consulted, so a
 /// holder that died left its last words here.
 pub fn holder(base: &Path) -> Option<Holder> {
     let mut text = String::new();

@@ -1,17 +1,7 @@
-//! The row groups the typed column's tests are run over.
-//!
-//! One list, shared, for the reason `store::pool` is one list: the tests that read it
-//! hold different pieces of code to one contract - the typed decoder against
-//! `read::chunk`, a typed compare against the same question asked of each printed cell, a
-//! column's instants against each cell's - and a layout one of them never saw is a layout
-//! nothing says they agree on.
-//!
-//! Three sources. Every file under `testdata/v3/`, read as a query reads it; row groups
-//! the builder makes from lines chosen so that each encoding, both compressions, nulls, a
-//! second piece, both JSON kinds in one piece and a digit count a row are all there; and
-//! pieces laid out plain by hand, since no writer has made a plain piece of most types
-//! since the encodings and a file from before them still holds one. A test in `column`
-//! says which layouts the list covers, so a sample that stops making its layout is seen.
+//! The row groups the typed column's tests are run over: one shared list, since a layout
+//! one of the tests never saw is a layout nothing says they agree on.
+//! Three sources: every file under `testdata/v3/`, row groups the builder makes, and
+//! pieces laid out plain by hand, which a file from before the encodings still holds.
 
 use std::path::{Path, PathBuf};
 
@@ -70,8 +60,8 @@ impl Sample {
     }
 }
 
-/// Rows of one template as the row group the store would build of them. Each row's time
-/// is its effective time under the time column `ts`.
+/// Rows of one template as the row group the store would build of them, each row's time
+/// its effective time under the time column `ts`.
 pub fn of_rows(name: &str, rows: &[Row]) -> Sample {
     let refs: Vec<&Row> = rows.iter().collect();
     let times: Vec<i64> = rows

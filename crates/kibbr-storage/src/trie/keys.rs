@@ -1,11 +1,8 @@
 //! What a plan reads of the trie without crossing it: one finished description of each
 //! template, and for each key the templates that have it as a column.
 //!
-//! A plan that walks the nodes pays for the trie and not for its question. It takes every
-//! node's lock and copies every label to learn which templates hold a key, and then copies
-//! the path and the columns of each template it keeps. So the answer to "which templates
-//! have this key" is kept here as templates are made, and what a plan carries of a template
-//! is built once and shared by every plan that names it.
+//! Kept as templates are made, so a plan takes no node's lock and copies no label to learn
+//! which templates hold a key.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -14,47 +11,30 @@ use super::LeafMeta;
 use kibbr_core::flatten::promoted_of;
 use kibbr_core::types::ColumnType;
 
-/// One template as a plan reads it: everything a planned leaf carries but its id and the
-/// terms left to the scan.
-///
-/// Made when the template is made, made again whole when a column of it widens or is
-/// added, and never changed in place: a plan holds an `Arc` of it, and a plan made a moment
-/// before a widening goes on reading the template as it was.
+/// One template as a plan reads it, made again whole when a column widens or is added and
+/// never changed in place, so a plan holding an `Arc` reads it as it was.
 #[derive(Debug, PartialEq)]
 pub struct Template {
-    /// The template's key set as walk tokens - what `ParsedLog::walk_tokens` produces for
-    /// any line in it - root excluded.
-    ///
-    /// Carried because it is the template's *content-derived* identity, where its id is a
-    /// counter handed out in the order templates were first seen. The result order needs a
-    /// tiebreak for rows a timestamp cannot separate, and a tiebreak the reference scanner
-    /// cannot recompute is one the two sides will disagree about - which they did, on
-    /// every template whose time column is not called `ts`.
-    ///
-    /// The first label is the root's edge to this template, which is what a plan's root
-    /// filter reads.
+    /// The template's key set as walk tokens, root excluded: its content-derived identity,
+    /// which the result order's tiebreak needs and the reference scanner can recompute.
     pub path: Vec<String>,
     /// Carried by a plan and opened by nothing: a store finds a leaf's directory from its
     /// own base and the template's id, and this is the path the leaf was first given.
     pub storage_path: String,
     /// The template's time column: what its rows are ordered, windowed and bucketed by,
-    /// falling back to the system column on a row where it holds no instant. Every
-    /// template has one, so every planned leaf has a time axis.
+    /// falling back to the system column on a row where it holds no instant.
     pub time_column: String,
-    /// Columns whose type is now `String`, in the order the leaf holds its columns. A
-    /// `Datetime` stored in one of them is rendered back to its ingested text by the store
-    /// before the row is read.
+    /// Columns whose type is now `String`, in the leaf's column order; a `Datetime` stored
+    /// in one is rendered back to its ingested text before the row is read.
     pub text_columns: Vec<String>,
-    /// `(column, value)` for each column the path settles, in key order: what
-    /// `flatten::promoted_of` reads from this path and these columns. Empty for most
-    /// templates and one pair for most of the rest, so it is searched and not hashed.
+    /// `(column, value)` for each column the path settles, in key order; empty or one pair
+    /// for most templates, so it is searched and not hashed.
     promoted: Vec<(String, String)>,
 }
 
 impl Template {
-    /// The one function from a leaf to what a plan reads of it. Every site that makes or
-    /// changes a template calls this and nothing else builds one, so the plan that reads
-    /// the index and the plan that walks the nodes describe a template the same way.
+    /// The one function from a leaf to what a plan reads of it, so the plan that reads the
+    /// index and the plan that walks the nodes describe a template the same way.
     pub fn of(path: Vec<String>, meta: &LeafMeta) -> Self {
         let columns: BTreeSet<&str> = meta.columns.iter().map(|c| c.name.as_str()).collect();
         let promoted = promoted_of(&path, &columns)
@@ -93,12 +73,8 @@ pub type Posting = (u64, Arc<Template>);
 /// `Template::of` makes of it. What a held index is compared with.
 pub(super) type Walked = (u64, Vec<String>, Template);
 
-/// For each key, the templates that have it as a column; and every template.
-///
-/// Each list is in ascending template id, which is the order a plan gives its leaves in,
-/// so a plan reads a list from front to back and sorts nothing. A template is in a key's
-/// list exactly when that key is one of its leaf's columns: the key is the column's name
-/// as a query spells it, never an edge label.
+/// For each key, the templates that have it as a column, and every template; each list
+/// is in ascending template id, the order a plan gives its leaves in, so a plan sorts nothing.
 #[derive(Default)]
 pub struct KeyIndex {
     all: Vec<Posting>,
@@ -114,8 +90,8 @@ impl KeyIndex {
         &self.all
     }
 
-    /// The templates that have `key` as a column. `None` when no template has it; never
-    /// an empty list.
+    /// The templates that have `key` as a column: `None` when no template has it, never an
+    /// empty list.
     pub fn of(&self, key: &str) -> Option<&[Posting]> {
         self.by_key.get(key).map(Vec::as_slice)
     }
@@ -126,11 +102,6 @@ impl KeyIndex {
 
     /// Put template `id` under each of `keys` and among all templates: inserted at its
     /// place by id where it is new, the handle replaced where it is there.
-    ///
-    /// One method for a new template and for a changed one, since a template's columns
-    /// are only ever added to: a changed template is in every list it was in, and a
-    /// column it gained is one more key to be put under. Ids nearly always arrive
-    /// ascending, so finding the place is a search that ends at the back.
     pub(super) fn put<'a>(
         &mut self,
         id: u64,
@@ -151,9 +122,8 @@ impl KeyIndex {
         place(&mut self.all, id, &template);
     }
 
-    /// Whether this index is the one `walked` describes: the same templates in the same
-    /// order, each under exactly its own columns, and every list strictly ascending by
-    /// id. `walked` is in ascending id. The reason, where it is not.
+    /// Whether this index is the one `walked` (in ascending id) describes - the same templates,
+    /// each under exactly its own columns, every list ascending - and the reason where not.
     pub(super) fn agrees_with(&self, walked: &[Walked]) -> Result<(), String> {
         ascending("every template", &self.all)?;
         if self.all.len() != walked.len() {

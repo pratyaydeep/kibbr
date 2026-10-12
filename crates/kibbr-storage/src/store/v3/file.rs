@@ -1,16 +1,8 @@
 //! A whole v3 file: writing it, sealing it, opening a sealed one through its footer,
 //! walking an unsealed one frame by frame, and recovering it.
-//!
-//! **Sealed** means the file ends in a trailer whose footer frame checks out: whole, its
-//! CRC holding, of kind 3, ending exactly where the trailer begins. Anything else is
-//! **unsealed** - the file being written, or one a crash left - and is read by walking its
-//! frames from byte 24. The walk stops at the first tear, the normal signature of a
-//! process killed mid-write; recovery truncates there, appends the footer of what the walk
-//! kept and seals the file.
-//!
-//! A frame whose CRC holds but whose contents break a rule is not a tear: those are the
-//! bytes a writer wrote. It is named by path and offset and refused, because a writer bug
-//! found at startup costs less than one found in an answer.
+//! A tear is where a crash stopped a write, and recovery cuts the file back to it; a
+//! frame whose CRC holds but breaks a rule is a writer's bug, refused by path and offset,
+//! because one found at startup costs less than one found in an answer.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -38,24 +30,20 @@ pub struct Entry {
     pub row_count: u32,
     pub min_time: i64,
     pub max_time: i64,
-    /// The chunk area's length. Not in the footer, which does not need it: it is in the
-    /// header frame, read before any chunk. An index opened through a footer measures it
-    /// instead, as the bytes up to the next row group or the footer, which is never less.
-    /// Held here for the bytes `/stats` reports, and as the most a header read through
-    /// this entry may say its chunk area is.
+    /// The chunk area's length, which an index opened through a footer measures as the
+    /// bytes up to the next row group or the footer, never less.
     pub chunks_len: u32,
 }
 
-/// What a file holds, as its footer says or as the walk found it: the same template
-/// table and entries either way, which is why the open file's in-memory copy of this is
-/// what queries on it read.
+/// What a file holds, as its footer says or as the walk found it; the open file's
+/// in-memory copy of this is what queries on it read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Index {
     pub file_id: [u8; 16],
     pub schemas: Vec<Vec<String>>,
     /// In file order.
     pub entries: Vec<Entry>,
-    /// Written whole by compaction or a bulk load. The live door never sets it.
+    /// Written whole by compaction or a bulk load; the live door never sets it.
     pub finished: bool,
     pub replaced: Vec<(String, [u8; 16])>,
 }
@@ -165,16 +153,15 @@ pub fn header_bytes(file_id: &[u8; 16]) -> [u8; HEADER_LEN] {
     out
 }
 
-/// A fresh file id from the operating system's random source. A path is a place, not an
-/// identity: a day directory emptied by retention hands its file names out again, and an
-/// id cannot come back.
+/// A fresh file id from the operating system's random source: a path is a place, not an
+/// identity, and an id cannot come back.
 pub fn new_file_id() -> std::io::Result<[u8; 16]> {
     let mut id = [0u8; 16];
     File::open("/dev/urandom")?.read_exact(&mut id)?;
     Ok(id)
 }
 
-/// The header checked: magic, version 3, zero reserved bytes. Its file id back.
+/// The header checked - magic, version 3, zero reserved bytes - and its file id back.
 pub fn check_header(path: &Path, bytes: &[u8]) -> Result<[u8; 16], FormatError> {
     let corrupt = |offset: u64, what: &str| FormatError::Corrupt {
         path: path.to_path_buf(),
@@ -222,9 +209,8 @@ pub fn file_id_of(path: &Path) -> Result<[u8; 16], FormatError> {
     check_header(path, &head)
 }
 
-/// The version byte of a file that starts with the magic, without reading the rest -
-/// what startup reads, before the port is taken, to refuse a directory holding another
-/// version. A file that starts with the pre-rename magic is `PreRename`.
+/// The version byte of a file that starts with the magic, read before the port is taken
+/// to refuse a directory of another version; the pre-rename magic is `PreRename`.
 pub fn version_of(path: &Path) -> Result<Option<u8>, FormatError> {
     let io = |source| FormatError::Io {
         path: path.to_path_buf(),
@@ -249,9 +235,8 @@ pub fn version_of(path: &Path) -> Result<Option<u8>, FormatError> {
 
 // ── The footer ─────────────────────────────────────────────────────────────────────
 
-/// A footer frame's payload, every rule checked. `base` is the payload's file offset, so
-/// its frame starts eight bytes before that - which is where the row groups it lists
-/// must end.
+/// A footer frame's payload, every rule checked; `base` is its file offset, so
+/// its frame starts eight bytes before that, where the row groups it lists must end.
 pub fn footer(payload: &[u8], base: u64, file_id: [u8; 16]) -> Result<Index, Bad> {
     let mut r = Bytes::new(payload, base);
     let kind = r.u8("footer kind")?;
@@ -378,12 +363,8 @@ pub fn footer(payload: &[u8], base: u64, file_id: [u8; 16]) -> Result<Index, Bad
     if placed.windows(2).any(|w| w[0].1.offset == w[1].1.offset) {
         return Err(Bad::at(base, "two footer entries at one offset"));
     }
-    // Every entry is a header frame between the file's header and the footer, and none
-    // runs into the one after it: taken from the last backwards, each is held to where
-    // the next thing starts. The sum is checked, because an offset near the top of a u64
-    // would wrap round to a small one and pass. What an entry says is not a place in this
-    // file until this has held, so the error names where the entry is written, and says
-    // the offset it claims.
+    // Every entry is a header frame between the file's header and the footer, none running
+    // into the next; the sum is checked, since an offset near the top of a u64 would wrap.
     let mut next = base.saturating_sub(frame::HEADER as u64);
     let mut after = "the footer";
     for (at, e) in placed.iter_mut().rev() {
@@ -447,7 +428,7 @@ pub fn schema_columns(r: &mut Bytes<'_>) -> Result<Vec<String>, Bad> {
 
 // ── Sealed files ───────────────────────────────────────────────────────────────────
 
-/// The file's index through its footer, or `None` when it is not sealed. Three reads -
+/// The file's index through its footer, or `None` when it is not sealed: three reads -
 /// header, trailer, footer - and no row group.
 pub fn open_sealed(path: &Path) -> Result<Option<Index>, FormatError> {
     let io = |source| FormatError::Io {
@@ -463,9 +444,8 @@ pub fn open_sealed(path: &Path) -> Result<Option<Index>, FormatError> {
     })
 }
 
-/// `open_sealed` over whatever holds the file: `len` is how many bytes it has, and `read`
-/// fills a buffer from an offset. The three reads and every check are here, so the fuzz
-/// target reads a file held in memory through the same code a file on disk goes through.
+/// `open_sealed` over whatever holds the file, so the fuzz target reads a file held in
+/// memory through the same code a file on disk goes through.
 pub fn sealed(
     path: &Path,
     len: u64,
@@ -514,12 +494,8 @@ pub struct Walk {
     pub end: u64,
 }
 
-/// Walk an unsealed file's bytes from its header, frame by frame, every CRC checked -
-/// the header frames', and after each row group's header its chunks' and sections'. The
-/// walk stops at the first of: fewer than 8 bytes left; a `payload_len` of 0 or past the
-/// end; a CRC that fails; a chunk area that runs past the end or whose CRCs fail; a footer
-/// frame. Every chunk the walk keeps is also decoded, so a row group it keeps is one a
-/// query can read.
+/// Walk an unsealed file's bytes from its header, frame by frame, every CRC checked, to
+/// the first tear; every chunk kept is also decoded, so a query can read it.
 pub fn walk(path: &Path, bytes: &[u8]) -> Result<Walk, FormatError> {
     let file_id = check_header(path, bytes)?;
     let mut index = Index::new(file_id);
@@ -646,9 +622,8 @@ pub struct Recovered {
     pub torn_at: Option<(u64, u64)>,
 }
 
-/// The bytes of a file that ends inside its header, held to being the start of one: what
-/// `recover` asks before it writes the empty file in their place. Apart from it so the
-/// fuzz target asks the same of bytes held in memory.
+/// The bytes of a file that ends inside its header, held to being the start of one;
+/// apart from `recover` so the fuzz target asks the same of bytes held in memory.
 pub fn cut_in_header(path: &Path, bytes: &[u8]) -> Result<(), FormatError> {
     // Even cut inside the magic: the first bytes say which build wrote it.
     if !bytes.is_empty() && PRE_RENAME_MAGIC.starts_with(&bytes[..bytes.len().min(4)]) {
@@ -676,8 +651,7 @@ pub fn cut_in_header(path: &Path, bytes: &[u8]) -> Result<(), FormatError> {
 }
 
 /// Seal an unsealed file: walk it, truncate at the tear, append the footer of what the
-/// walk kept - not finished, replacing nothing - and the trailer, and flush. A file that
-/// ends inside its header holds no rows and becomes an empty sealed file with a new id.
+/// walk kept and the trailer, and flush.
 pub fn recover(path: &Path) -> Result<Recovered, FormatError> {
     let io = |source| FormatError::Io {
         path: path.to_path_buf(),
@@ -731,9 +705,7 @@ impl Mark {
     }
 }
 
-/// A file being written: append only. A schema record goes before the first row group
-/// that names it; row groups follow as they close; the footer and trailer go once, at
-/// seal.
+/// A file being written, append only.
 pub struct Writer {
     path: PathBuf,
     file: File,
@@ -838,7 +810,7 @@ impl Writer {
         Ok(id)
     }
 
-    /// Append a row group built against a schema id from `schema_id`. Not flushed: the
+    /// Append a row group built against a schema id from `schema_id`, not flushed: the
     /// caller appends every row group that is due and then calls `sync` once.
     pub fn append(&mut self, template_id: u64, rg: &RowGroup) -> Result<Entry, FormatError> {
         let offset = self.len;
@@ -881,15 +853,8 @@ impl Writer {
         }
     }
 
-    /// Cut the file back to `mark` and forget every schema record and row group written
-    /// since.
-    ///
-    /// What a close does when a row group or a flush fails: the rows go back to their
-    /// buffer to be written again, so what was written of them here has to go, or the file
-    /// would hold them twice once the retry lands. A flush that failed has made nothing
-    /// after the mark durable, so there is nothing to keep. A cut that fails leaves the
-    /// writer torn - it appends nothing more, and the next start's recovery cuts the file
-    /// at the tear.
+    /// Cut the file back to `mark` and forget everything written since, so rows that go
+    /// back to their buffer are not held twice once the retry lands.
     pub fn rollback(&mut self, mark: Mark) -> Result<(), FormatError> {
         if self.torn {
             return Err(self.torn_error());
@@ -913,16 +878,14 @@ impl Writer {
         Ok(())
     }
 
-    /// Flag the file finished: written whole, by a bulk load or by compaction, so
-    /// compaction skips it. The flag is in the footer, so it takes effect at `seal`.
+    /// Flag the file finished - written whole, by a bulk load or by compaction, so compaction
+    /// skips it - which takes effect at `seal`.
     pub fn finish(&mut self) {
         self.index.finished = true;
     }
 
-    /// Name the files this one replaces, by path under `data/` and file id: what
-    /// compaction read to write it. They go into the footer, so like `finish` this takes
-    /// effect at `seal`; the manifest's `replace` record is what retires them, and these
-    /// are the cross-check a start holds it to.
+    /// Name the files this one replaces, by path under `data/` and file id: the cross-check
+    /// a start holds the manifest's `replace` record to.
     pub fn replaces(&mut self, parents: Vec<(String, [u8; 16])>) {
         self.index.replaced = parents;
     }
@@ -942,7 +905,7 @@ impl Writer {
         }
     }
 
-    /// Append the footer and trailer and flush. The file is sealed once this returns.
+    /// Append the footer and trailer and flush; the file is sealed once this returns.
     pub fn seal(mut self) -> Result<Index, FormatError> {
         let bytes = self.index.seal_bytes();
         self.write(&bytes)?;
@@ -961,15 +924,13 @@ pub struct StoredChunk {
     pub at: u64,
 }
 
-/// A file open for reading row groups. `F` is what holds its bytes: a `File` everywhere
+/// A file open for reading row groups; `F` is what holds its bytes, a `File` everywhere
 /// but in the fuzz target, which reads a file held in memory through the same code.
 pub struct Reader<F = File> {
     path: PathBuf,
     file: F,
-    /// How many bytes the file had when it was opened: what every read is held to. The
-    /// row groups a reader is asked for were all in the file by then - one is published
-    /// only once it is written and flushed - so a file that has grown since holds nothing
-    /// this reader is asked for.
+    /// How many bytes the file had when it was opened: what every read is held to, since a
+    /// row group is published only once it is written and flushed.
     len: u64,
 }
 
@@ -995,12 +956,8 @@ impl<F: Read + Seek> Reader<F> {
         }
     }
 
-    /// The `len` bytes of `what` at `offset`. **The length is held to the file before the
-    /// buffer is allocated**: an index entry or a header can say any length, and believing
-    /// one costs a buffer of four gibibytes for a file of three hundred bytes. Bytes the
-    /// file does not have are refused here, by the offset they would start at - or by the
-    /// file's end, when they would start past it - and not left for the read to come back
-    /// short, which is an I/O error that names no place.
+    /// The `len` bytes of `what` at `offset`, the length held to the file before the buffer
+    /// is allocated, so a lie is refused by its offset and not a short read.
     fn read_at(&mut self, offset: u64, len: usize, what: &str) -> Result<Vec<u8>, FormatError> {
         if offset
             .checked_add(len as u64)
@@ -1042,13 +999,7 @@ impl<F: Read + Seek> Reader<F> {
     }
 
     /// A row group's header frame, its CRC checked and its fields held to the entry that
-    /// pointed at it.
-    ///
-    /// **Its `chunks_len` is held to the entry's**, which is the bytes the file has for
-    /// the chunk area: exactly the header's own for an entry the walk or the writer made,
-    /// and the room up to the next row group or the footer for one read from a footer.
-    /// A header that says more names chunks that lie in another row group, in the footer
-    /// or past the end, and it is refused here, before `chunks` or `copy` reads by it.
+    /// pointed at it; a `chunks_len` of more than the entry has is refused here.
     pub fn header(&mut self, entry: &Entry, columns: usize) -> Result<Header, FormatError> {
         let bytes = self.read_at(
             entry.offset,
@@ -1089,16 +1040,8 @@ impl<F: Read + Seek> Reader<F> {
         Ok(header)
     }
 
-    /// A row group as it is stored, renumbered as schema `schema_id` of another file: its
-    /// header checked as `header` checks it, its chunk area byte for byte and undecoded.
-    ///
-    /// What compaction copies when it cannot rebuild - a template whose time column
-    /// nothing in the process knows. The schema number is the one field of a row group
-    /// that belongs to its file, so it is the one field rewritten, and the frame's CRC
-    /// with it; the chunks' CRCs are over their stored bytes and go across as they are.
-    /// **The area's length is the header's `chunks_len`**, not the entry's: a sealed
-    /// file's index measures an entry up to the next row group, and a schema record
-    /// written between the two is inside that measure.
+    /// A row group as it is stored, renumbered as schema `schema_id` of another file: what
+    /// compaction copies when it cannot rebuild, the area's length the header's `chunks_len`.
     pub fn copy(
         &mut self,
         entry: &Entry,
@@ -1165,13 +1108,8 @@ impl<F: Read + Seek> Reader<F> {
         Ok((out, read))
     }
 
-    /// The chunks of the columns at `wanted` as the file stores them, each held to
-    /// `MAX_BODY`, read and CRC-checked as `chunks` checks it and not decoded; and the
-    /// chunk bytes read.
-    ///
-    /// What a query reads. Which of a row group's columns it needs decoded depends on
-    /// what its filter finds, and a count of every row needs none; so the reading and the
-    /// CRC come first, for every wanted chunk, and decoding is left to whoever asks.
+    /// The chunks of the columns at `wanted` as the file stores them, CRC-checked and not
+    /// decoded: what a query reads, decoding left to whoever asks.
     pub fn stored(
         &mut self,
         entry: &Entry,
@@ -1240,8 +1178,7 @@ mod tests {
     }
 
     /// A rollback takes back the bytes, the schema records and the row groups written since
-    /// the mark: the file reads as if they had never been, and the next schema takes the
-    /// number the forgotten one had.
+    /// the mark: the next schema takes the number the forgotten one had.
     #[test]
     fn a_rollback_forgets_everything_written_since_the_mark() {
         let dir = std::env::temp_dir().join(format!("kibbr-rollback-{}", std::process::id()));
@@ -1301,10 +1238,8 @@ mod tests {
         }
     }
 
-    /// A footer entry is a header frame between the file's header and the footer. One
-    /// that is not - past the end, running into the footer, or so near the top of a u64
-    /// that its end wraps round - is refused, and the offset the error names is where the
-    /// entry is written in the footer, not the offset it claims: that one is in the words.
+    /// A footer entry that is not a header frame inside the file is refused, and the offset
+    /// the error names is where the entry is written in the footer, not the one it claims.
     #[test]
     fn a_footer_entry_that_is_not_in_the_file_is_refused_where_it_is_written() {
         let id = [7u8; 16];
@@ -1374,8 +1309,7 @@ mod tests {
     }
 
     /// A read is held to the file's length before its buffer is made: a length the file
-    /// cannot meet is a refusal naming a place in the file, where it used to be a buffer of
-    /// that length and then an I/O error with no offset.
+    /// cannot meet is a refusal naming a place in the file.
     #[test]
     fn a_read_past_the_end_of_the_file_is_refused_before_a_buffer_is_made() {
         let (dir, path, index) = two_groups("read-past-the-end");
@@ -1415,9 +1349,7 @@ mod tests {
     }
 
     /// A chunk read as it is stored is the bytes `chunks` decodes, read and checked the
-    /// same way: the same bytes counted, each chunk the file's bytes where the header puts
-    /// it, and the same refusal - a chunk the file does not have, one past what a body may
-    /// be, one whose CRC does not hold - at the same offset in the same words.
+    /// same way, with the same refusal at the same offset in the same words.
     #[test]
     fn a_stored_chunk_is_the_bytes_chunks_decodes() {
         let (dir, path, index) = two_groups("stored-chunks");
@@ -1477,9 +1409,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A header's `chunks_len` is held to the bytes its entry has for the chunk area, so a
-    /// header that says more is refused when it is read - before a copy allocates the area
-    /// it names, or a chunk is read out of the row group after it.
+    /// A header that says more chunk bytes than its entry has is refused when it is read,
+    /// before a copy allocates the area it names or a chunk is read out of the next row group.
     #[test]
     fn a_header_that_says_more_chunk_bytes_than_its_entry_has_is_refused() {
         let (dir, path, index) = two_groups("chunk-area");
