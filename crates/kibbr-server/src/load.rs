@@ -1,59 +1,8 @@
-//! The bulk door: a closed day of lines - or six months of them - loaded whole. What
-//! `kibbr load` runs alone and what a server runs for it (`POST /load`); the command
-//! itself - who runs the load, and what it prints - is the binary's.
+//! The bulk door: a closed day of lines, or six months of them, loaded whole, by
+//! `kibbr load` alone or by a server for it (`POST /load`).
 //!
-//! ```text
-//!  inputs ─► load id ─► arrival check on the head ─► parse, on the load's own threads
-//!         ─► per template and UTC day, batches in memory (invisible to queries)
-//!         ─► row groups ─► staging/<load id>/<day>/NNNNNN.col, sealed, finished
-//!         ─► arrival check on every row ─► one manifest record
-//!         ─► data/<day>/seg_0_NNNNNN.col ─► the leaves
-//! ```
-//!
-//! - **One write path.** A line goes through `db::place`, which `/ingest` goes through
-//!   too: the same template, the same types, the same catalog records, the same stored
-//!   row with the same arrival stamp. What differs is only where the row goes - a batch
-//!   of the load's, not a leaf's buffer - so no query sees a row of a load before the
-//!   whole load is committed.
-//! - **Full row groups.** The loader sees all of its input, so a template's rows of a day
-//!   close at 8,192 rows or about 8MB of column data, the thresholds every writer uses -
-//!   never at a timeout. A hard bound on the rows held, `--load-buffer-bytes`, writes the
-//!   largest batches early: at 10,000 templates a batch each is more memory than the
-//!   machine has, and a load inside a server shares the machine with the live door.
-//! - **Every row's time checked.** A row with no time of its own is filed under its
-//!   arrival day, which for an old file is the wrong one. The loader counts them all as it
-//!   stages, and stops before the commit if too many would be. A stop there leaves the
-//!   load's new templates made, each on arrival time for good, so the head of the input is
-//!   looked at first: a file untimed from its first line stops with nothing made.
-//! - **Born finished.** Every file is flagged finished, so compaction will skip it: there
-//!   is nothing a rewrite would improve. It needs no write-ahead log - the input is the
-//!   log - and a stop at any moment before the commit costs only the staging directory.
-//! - **All or nothing.** `DiskStore::commit_load` publishes every file of the load in one
-//!   manifest record, however many days they span.
-//!
-//! **The load id** is FNV-1a 64 over each input in the order the loader reads them -
-//! sorted by file name, then by length and content (`order`) - of its file name (`-` for
-//! standard input), a zero
-//! byte, its length after decompression and the FNV-1a 64 of its bytes after
-//! decompression, both as `u64` little-endian; 0 is taken as 1, because 0 means no stream.
-//! The name and not the path, so the same files read from another mount are the same load;
-//! the bytes after decompression, so a file recompressed under the same name is the same
-//! file. Two inputs of one name are ordered by their length and content, not by path. The
-//! manifest records the id as the commit's source, and a load whose id it already names is
-//! refused before a line is parsed: the same inputs twice would be every row twice, and
-//! nothing later could tell the copies apart. Standard input is spooled to a file first, so
-//! its id is known - and a repeat refused - before anything is written, like any other
-//! input's.
-//!
-//! **What the id does not catch.** It is over the whole set of inputs, by name: a file
-//! renamed (`day.ndjson` loaded again as `day.ndjson.gz`), the same bytes piped through
-//! `-`, or a file loaded again beside new ones is a new load, and its rows are stored
-//! twice. Kibbr keeps no row identity to catch that later; one source per day, and
-//! `--replace-day` to change it, is the rule that keeps a day's rows once.
-//!
-//! **Positions.** Each row group records the load id as its stream and the line numbers of
-//! its first and last rows, counted from 1 across every input in load order - where each
-//! row came from, and the range a replay would skip.
+//! One write path with `/ingest` (`db::place`), full row groups, every row's time checked,
+//! and one manifest record for the whole load; the load id is in the row group header.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -86,60 +35,40 @@ use kibbr_storage::store::{
 };
 use kibbr_storage::trie::Trie;
 
-/// How much of the input the early arrival-time check reads before anything is staged:
-/// enough rows that a share of 1% is a hundred of them, few enough that it costs nothing
-/// beside the load. It is an early exit only - the count that decides is over every row.
+/// How many rows the early arrival-time check reads before anything is staged: enough
+/// that a share of 1% is a hundred of them, and an early exit only.
 pub const HEAD_ROWS: usize = 10_000;
 
-/// Lines the head check reads at most, rows or not: a rejected line is no row, and an input
-/// opening on gigabytes of text that is not JSON would otherwise be parsed whole, unpaced,
-/// before the paced pass read it again. The whole-input count still decides.
+/// Lines the head check reads at most, rows or not: an input opening on gigabytes of text
+/// that is not JSON would otherwise be parsed whole, unpaced, before the paced pass.
 const HEAD_LINES: usize = 10 * HEAD_ROWS;
 
 /// The share of the rows, in percent, that may fall back to arrival time before a load
-/// stops. Loading old files, arrival time is the wrong day by construction - today - so a
-/// row that takes it is misfiled rather than late; a load that would misfile more than
-/// one row in a hundred is more likely missing a `time_columns` name than meant.
+/// stops: for old files arrival time is the wrong day, so such a row is misfiled.
 pub const DEFAULT_MAX_ARRIVAL_SHARE: f64 = 1.0;
 
-/// The memory a load holds its rows in unless told otherwise (`--load-buffer-bytes`): open
-/// batches and closed ones not yet written, together, as `Row::held_bytes` counts them.
-///
-/// **Its own bound, well under the live door's 512MiB.** Held to the live door's limit, a
-/// load inside a busy server cost about half a core but raised its resident size by 0.5
-/// to 0.9GB, which on an 8GB machine was a swap storm: 40 to 57s with nothing ingested and
-/// `/ingest` answering 503. `--max-mb-per-sec` and `--threads` bound what a load costs in
-/// CPU; this bounds its memory. 64MiB is about 28,000 farm rows (2.4KB held each): a
-/// template that dominates the input still closes row groups of thousands of rows, and a
-/// load of thousands of templates writes its largest batches early, as smaller row
-/// groups. That is the trade taken for a load that cannot push the live door out of memory.
+/// The memory a load holds its rows in unless told otherwise (`--load-buffer-bytes`): its
+/// own bound, well under the live door's, so a load cannot push it out of memory.
 pub const DEFAULT_LOAD_BUFFER_BYTES: usize = 64 * 1024 * 1024;
 
 /// Lines per parse job: large enough that handing one to a thread costs nothing beside
 /// parsing it.
 const CHUNK_LINES: usize = 2_048;
 
-/// A round's raw lines are at most this fraction of the load's buffer - and one line at
-/// least, whatever its size. A round is read whole, then parsed whole, before its first
-/// row is placed, and none of that is counted as held: a farm line of 488 bytes parses
-/// into about 9.6KB of line and row, twenty times its size, so a round of even a quarter
-/// of the bound would parse into five times the bound. At a sixty-fourth the default's
-/// rounds are 1MiB of lines, about 20MB parsed.
+/// A round's raw lines are at most this fraction of the load's buffer, one line at least:
+/// a round is parsed whole before it is counted as held, into many times its size.
 const ROUND_SHARE: usize = 64;
 
-/// Templates a refusal names; past this it counts the rest. A load of old files missing a
-/// time column can leave thousands of templates on arrival time, and a message that lists
-/// them all is not read.
+/// Templates a refusal names; past this it counts the rest, since a message that lists
+/// thousands of them is not read.
 const MAX_NAMED: usize = 10;
 
-/// Staging files a load keeps open at once. A load of six months has a day per file; past
-/// this many, the least recently written is sealed and its day's next rows open a file of
-/// their own, which keeps the load inside the process's open-file limit whatever it spans.
+/// Staging files a load keeps open at once; past this the least recently written is
+/// sealed, which keeps a load of many days inside the process's open-file limit.
 const MAX_OPEN_STAGED: usize = 64;
 
-/// FNV-1a 64: the load id's hash. Sixty-four bits is enough: a collision refuses a new load
-/// as a repeat, which is loud, and a cryptographic hash would be a dependency against a
-/// threat - an operator's own files - that does not exist.
+/// FNV-1a 64: the load id's hash. A collision refuses a new load as a repeat,
+/// which is loud, and an operator's own files are no threat to need a cryptographic one.
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -167,13 +96,11 @@ pub struct Options {
     pub inputs: Vec<Input>,
     /// Retire every other file of this day, as days since the epoch, in the commit.
     pub replace_day: Option<i64>,
-    /// Decompressed input bytes a second the pass that parses and encodes may read - the
-    /// pass whose CPU the live door shares. The id's digest and the head check are not held
-    /// to it; see `Pace`.
+    /// Decompressed input bytes a second the pass that parses and encodes may read; see `Pace`.
     pub max_bytes_per_sec: Option<f64>,
     pub threads: usize,
-    /// The rows the load may hold in memory - open batches and closed ones not yet written,
-    /// as `Row::held_bytes` counts them - before it writes the largest early. At least 1.
+    /// The rows the load may hold in memory, as `Row::held_bytes` counts them, before it
+    /// writes the largest early; at least 1.
     pub load_buffer_bytes: usize,
     /// The arrival time of every row with no time of its own, and every template's
     /// `created_at`: one instant for the whole load, as one `/ingest` body has one.
@@ -215,10 +142,8 @@ pub fn server_threads() -> usize {
 
 // ── What a load did ────────────────────────────────────────────────────────────────
 
-/// Rows with no time of their own, which took the load's arrival time.
-///
-/// The new fields default when absent, so a client reads the report of a server a build
-/// older than itself.
+/// Rows with no time of their own, which took the load's arrival time; the newer fields
+/// default when absent, so a client reads an older server's report.
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 pub struct Arrival {
     /// Rows the early check on the head read, before anything was staged.
@@ -304,9 +229,8 @@ impl Report {
                 self.replaced.len()
             ));
         }
-        // Always, zero included: the line an operator reads is where a load filed under
-        // the wrong day has to show, and a count said only when it is large is one they
-        // learn to expect absent.
+        // Always, zero included: a count said only when it is large is one an operator learns
+        // to expect absent.
         let a = &self.arrival;
         if a.day.is_empty() {
             // A server a build older than this client: its report counted the head only.
@@ -397,8 +321,8 @@ pub enum LoadError {
     /// The data directory could not be opened as a server's start opens it.
     #[error(transparent)]
     Open(#[from] crate::Error),
-    /// What whoever ran the load ended it with, around the load itself - the command's
-    /// own output it could not write, a server it could not ask. Printed as itself.
+    /// What whoever ran the load ended it with, around the load itself: the command's own
+    /// output it could not write, a server it could not ask.
     #[error(transparent)]
     Caller(Box<dyn std::error::Error + Send + Sync>),
 }
@@ -411,9 +335,8 @@ impl From<kibbr_storage::lock::LockError> for LoadError {
 
 // ── Inputs ─────────────────────────────────────────────────────────────────────────
 
-/// What makes two inputs the same file, however they were reached: a symlinked
-/// directory, a hard link, or the same path given twice. Loaded twice in one load, each of
-/// its rows would be stored twice under one id, and no repeat check could catch it.
+/// What makes two inputs the same file, however they were reached: loaded twice in one
+/// load, its rows would be stored twice under one id, and no repeat check could catch it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Identity {
     Stdin,
@@ -437,15 +360,8 @@ fn identity(path: &Path, meta: &fs::Metadata) -> Identity {
     }
 }
 
-/// The command line's inputs, expanded: a directory to every regular file under it, at any
-/// depth, skipping names that start with `.`; `-` to standard input, copied to `spool`
-/// first. Each file once, whichever ways it was reached, at its canonical path under the
-/// name it was found by.
-///
-/// **Regular files only.** A load reads its input three times - for the id, for the
-/// arrival check and to stage it - and a pipe or a device gives its bytes once: the second
-/// read would find nothing, and an empty load would be committed and its id recorded.
-/// Standard input is spooled to a file for that reason, and `-` is how to pipe a load.
+/// The command line's inputs, expanded to regular files, each once, and `-` spooled to a
+/// file: a load reads its input three times, and a pipe gives its bytes once.
 pub fn resolve(args: &[PathBuf], spool: Option<&Path>) -> Result<Vec<Input>, LoadError> {
     let mut found: Vec<(Input, Identity)> = Vec::new();
     let mut stdin_seen = false;
@@ -482,9 +398,8 @@ pub fn resolve(args: &[PathBuf], spool: Option<&Path>) -> Result<Vec<Input>, Loa
             source,
         })?;
         if meta.is_dir() {
-            // Its own set of directories seen: a directory also given as another argument,
-            // or inside one, is walked again and its files found again - and then kept once
-            // below - rather than taken for an empty one.
+            // Its own set of directories seen: a directory given twice is walked again and its
+            // files kept once below, rather than taken for an empty one.
             let before = found.len();
             walk_dir(arg, &meta, &mut found, &mut BTreeSet::new())?;
             if found.len() == before {
@@ -526,9 +441,8 @@ fn once(mut found: Vec<(Input, Identity)>) -> Vec<Input> {
         .collect()
 }
 
-/// The same for inputs that did not come through `resolve` - a server's `/load` request,
-/// whose client may be anything that speaks HTTP: a file named twice there would be loaded
-/// twice under one id just the same.
+/// The same for inputs that did not come through `resolve`: a `/load` request's client
+/// may be anything that speaks HTTP, and may name a file twice.
 fn each_file_once(inputs: &[Input]) -> Result<Vec<Input>, LoadError> {
     let mut found = Vec::with_capacity(inputs.len());
     for input in inputs {
@@ -559,9 +473,8 @@ fn found_file(path: &Path, meta: &fs::Metadata) -> Result<(Input, Identity), Loa
     ))
 }
 
-/// Every regular file under `dir`, through links, each directory walked once: a link back
-/// to an ancestor - `current -> .` - is a directory already seen, not a loop to follow
-/// until the kernel's link limit.
+/// Every regular file under `dir`, through links, each directory walked once, so a link
+/// back to an ancestor is not a loop to follow.
 fn walk_dir(
     dir: &Path,
     meta: &fs::Metadata,
@@ -595,9 +508,8 @@ fn walk_dir(
     Ok(())
 }
 
-/// A file's bytes after decompression: gzip and zstd are told apart from NDJSON by their
-/// first bytes and not by a name, which a shipper chooses and a rename changes. A gzip
-/// file of several members, and a zstd file of several frames, read whole.
+/// A file's bytes after decompression, gzip and zstd told apart by their first bytes and
+/// not by a name, which a shipper chooses and a rename changes.
 pub fn open_decoded(path: &Path) -> Result<Box<dyn Read + Send>, LoadError> {
     let io_err = |source| LoadError::Read {
         path: path.to_path_buf(),
@@ -614,31 +526,8 @@ pub fn open_decoded(path: &Path) -> Result<Box<dyn Read + Send>, LoadError> {
     })
 }
 
-/// The pace `--max-mb-per-sec` holds a load to: the bytes the staging pass has read,
-/// decompressed, never ahead of the rate times the time since that pass began.
-///
-/// On the decompressed bytes, because they are what the parse and the encode cost - the
-/// CPU the live door shares - where a compressed file's bytes on disk understate it tenfold.
-///
-/// **Only the pass that parses and encodes is paced.** The id's digest and the head check
-/// read the input before it, and cost a decompress, a hash and ten thousand rows' parse -
-/// little beside the pass that parses every line. Charged to one pace with that pass, as
-/// they once were, they spent the rate on bytes read twice, and a load delivered about
-/// 0.47 of what it was asked for: 40 MB/s gave 15.9 to 17.0, 20 gave 9.3, 10 gave 4.8, 5
-/// gave 2.4 and 1 gave 0.44, over a 70MB farm day, zstd or plain, four threads or one. Paced
-/// alone, a 98MB farm day at 10 MB/s takes 10.3s (9.5 MB/s) and at 5 takes 20.1s (4.9):
-/// the rest is the reads before it and the last row groups and the commit after.
-///
-/// **The time the reads before it took is credit, up to `PACE_CREDIT`.** The rate is what a
-/// load reads over its whole run - what its report's seconds divide - and those reads took
-/// 0.5s of that day: started at the staging pass, the clock left 20 MB/s delivering 17.9.
-/// Capped, because the credit is a burst at full speed: the id's digest took 0.3s of a
-/// 98MB day, so tens of seconds of six months', and the pass would spend them all on the
-/// cores the live door shares before the rate held it.
-///
-/// **Every read checks for a stop**, unpaced ones included, and a wait is slept in short
-/// slices that check too: a load paced to a trickle must not hold up a server's shutdown -
-/// and its final flush of the live door's rows - for as long as its next megabyte is due.
+/// The pace `--max-mb-per-sec` holds the staging pass to, on decompressed bytes, which are
+/// what the parse and encode cost; every read checks for a stop, unpaced ones too.
 struct Pace {
     bytes_per_sec: Option<f64>,
     start: Instant,
@@ -649,8 +538,8 @@ struct Pace {
 /// How long a paced wait sleeps before it looks for a stop again.
 const PACE_SLICE: Duration = Duration::from_millis(50);
 
-/// The most of the reads before the staging pass its pace counts as already spent: see
-/// `Pace`. About what they take for a day of logs.
+/// The most of the reads before the staging pass its pace counts as already spent: the
+/// rate is over the whole run, but the credit is a burst at full speed, so it is capped.
 const PACE_CREDIT: Duration = Duration::from_secs(1);
 
 impl Pace {
@@ -724,7 +613,7 @@ fn paced<'a>(
     ))
 }
 
-/// The load id of these inputs. See the module comment.
+/// The load id of these inputs.
 #[cfg(test)]
 pub fn load_id(inputs: &[Input]) -> Result<u64, LoadError> {
     let pace = RefCell::new(Pace::unpaced(Arc::default()));
@@ -750,14 +639,8 @@ fn digest(input: &Input, pace: &RefCell<Pace>) -> Result<(u64, u64), LoadError> 
     }
 }
 
-/// The inputs in load order, and the load id.
-///
-/// **By name, then by what the file holds.** Two inputs of one name - `app.log` from two
-/// hosts' directories - are ordered by their length and content hash, not by their paths:
-/// a path depends on the mount, the working directory and how it was typed, and ordering by
-/// it would give the same files two ids, and a repeat of them a way through. The path
-/// breaks a tie only between two files alike in name and bytes, where the order changes
-/// neither the id nor a line.
+/// The inputs in load order, and the load id: by name, then by length and content, never
+/// by path, which would give the same files two ids.
 fn order(inputs: &[Input], pace: &RefCell<Pace>) -> Result<(Vec<Input>, u64), LoadError> {
     let mut keyed = Vec::with_capacity(inputs.len());
     for input in inputs {
@@ -785,8 +668,7 @@ fn order(inputs: &[Input], pace: &RefCell<Pace>) -> Result<(Vec<Input>, u64), Lo
 // ── Reading lines ──────────────────────────────────────────────────────────────────
 
 /// The physical lines of every input in load order, numbered from 1 across all of them,
-/// handed out in chunks. Blank lines are counted and dropped; a line over the cap is
-/// rejected by number and stepped over, as every read loop does.
+/// in chunks; blank lines are counted and dropped, a line over the cap rejected by number.
 struct Lines<'a> {
     inputs: &'a [Input],
     at: usize,
@@ -896,10 +778,8 @@ fn read_round(
     let mut chunk_bytes = 0usize;
     let mut ended = false;
     loop {
-        // A chunk also closes at its share of the round's bytes, so a round of wide lines
-        // that meets the byte budget is still spread across every thread. Never empty:
-        // under a bound so small a thread's share rounds to nothing, that would be a round
-        // of empty chunks, and no line read.
+        // A chunk also closes at its share of the round's bytes, so wide lines are still spread
+        // across every thread. Never empty: a share that rounds to nothing would read no line.
         if !chunk.is_empty() && (chunk.len() >= CHUNK_LINES || chunk_bytes >= max_bytes / threads) {
             chunk_bytes = 0;
             chunks.push(std::mem::take(&mut chunk));
@@ -907,9 +787,8 @@ fn read_round(
                 break;
             }
         }
-        // A line may be 64MiB: a round of thousands of them is gigabytes before one row
-        // reaches a batch the bound counts. A round starts at no bytes, so it takes its
-        // first line whatever that line's size.
+        // A line may be 64MiB, so a round is bounded in bytes too; it starts at none, and so
+        // takes its first line whatever that line's size.
         if round_bytes >= max_bytes {
             break;
         }
@@ -934,9 +813,8 @@ fn read_round(
 
 // ── The arrival-time check ─────────────────────────────────────────────────────────
 
-/// Whose rows fell back to arrival time: a template by id, or - in the head check, which
-/// makes nothing - one not made yet, by the line it was first met on and the keys that
-/// line could have taken its time from.
+/// Whose rows fell back to arrival time: a template by id, or, in the head check, which
+/// makes nothing, one not made yet, by its first line and that line's Datetime keys.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Who {
     Template(u64),
@@ -993,9 +871,8 @@ impl Tally {
                 Who::New { .. } => None,
             })
             .collect();
-        // A template on arrival time, by the keys an operator could name as its time; one
-        // with a time column, by that column - its rows fell back because the column held
-        // no instant, and no time key would change that.
+        // A template on arrival time, by the keys an operator could name as its time; one with a
+        // time column, by that column, since no time key would change that its rows held none.
         let mut said: HashMap<u64, String> = HashMap::new();
         if !wanted.is_empty() {
             for leaf in trie.all_leaves() {
@@ -1070,20 +947,8 @@ impl Tally {
     }
 }
 
-/// The early look at the head of the input: how much of it would be stored at its arrival
-/// time. An exit before anything is staged, for the file untimed from its first line; the
-/// count that decides is over every row, as they are staged.
-///
-/// **Nothing is created.** A line of a template the catalog knows takes that template's
-/// time source; a line of one it does not takes the source its first line would choose -
-/// the same rule `Trie::ingest` applies - remembered here for the head's later lines of it.
-/// Creating the templates for real would make the check's answer permanent: a template's
-/// time source is chosen once, and one created while a load is refused would keep arrival
-/// time after the operator added its time key and ran the load again.
-///
-/// **Parsed on the load's threads**, in the staging pass's rounds. On one thread it took
-/// 0.66s of a 98MB farm day loaded at 10 MB/s: unpaced time the report's seconds count and
-/// the rate does not, which alone put the load 7% under the rate it was asked for.
+/// The early look at the head of the input, an exit before anything is staged. It creates
+/// nothing: a template made while a load is refused would keep arrival time.
 fn arrival_head(
     trie: &Trie,
     inputs: &[Input],
@@ -1264,9 +1129,8 @@ impl Stage<'_> {
         Ok(())
     }
 
-    /// Append one encoded row group to its day's file, and seal that file once it is past
-    /// the size cap - after the append, as the live door checks after a flush, so a file
-    /// passes the cap by at most one row group.
+    /// Append one encoded row group to its day's file, sealing it once past the size cap:
+    /// checked after the append, as the live door does, so it passes by one row group at most.
     fn append(
         &mut self,
         day: i64,
@@ -1309,9 +1173,8 @@ type EncodedBatch = Result<(Vec<String>, build::Encoded), LoadError>;
 /// template it touched with its time column, whose leaves open before the commit.
 type StagedLoad = (Vec<StagedFile>, Counts, BTreeMap<u64, String>);
 
-/// Encode every due batch - on up to `threads` threads - and append each to its day's
-/// staging file, in the order they closed: a template's row groups of a day are then in
-/// line order, which is the order the live door would have stored them in.
+/// Encode every due batch and append each to its day's staging file in the order they
+/// closed, so a template's row groups of a day are in line order, as the live door's are.
 fn write_due(
     due: &mut Vec<Due>,
     stage: &mut Stage<'_>,
@@ -1388,12 +1251,7 @@ fn write_due(
 }
 
 /// Every row a load holds: its open batches, and the batches closed and waiting to be
-/// encoded and written.
-///
-/// **Both count against the bound.** A batch closed at the row group thresholds is in
-/// memory until it is written, and one round can close many: counted only while open, as
-/// they once were, a round's worth of full batches sat outside a bound that said nothing
-/// was held.
+/// written, which are in memory until then and so count against the bound too.
 #[derive(Default)]
 struct Held {
     open: HashMap<(u64, i64), Batch>,
@@ -1452,16 +1310,8 @@ impl Held {
         Ok(())
     }
 
-    /// Back within `bound` if the last row took it past: the closed batches written, and if
-    /// that is not enough, the largest open ones closed and written too.
-    ///
-    /// Called after every row, so the bound is passed by one row at most, for as long as
-    /// the writes take. Once a round, as it was, a round of rows could close more full
-    /// batches than the bound holds before anything looked.
-    ///
-    /// **Down to three quarters of it**, not to just under it: at the bound, closing only
-    /// what the last row passed it by would close a batch on nearly every row after, and one
-    /// burst would buy a long run of tiny row groups.
+    /// Back within `bound` if the last row took it past, checked after every row. Down to
+    /// three quarters of it: just under would close a tiny batch on nearly every row after.
     fn bound(
         &mut self,
         bound: usize,
@@ -1549,8 +1399,7 @@ fn parse_chunks(chunks: Vec<Vec<Got>>, threads: usize) -> Result<Vec<Vec<Parsed>
             .collect()
     };
     // A chunk whose parse panicked fails the load: an empty result in its place would drop
-    // two thousand lines from a load that then commits, uncounted, under an id that refuses
-    // them for good.
+    // its lines from a load that then commits under an id that refuses them for good.
     let failed = |chunk: &Vec<Got>| {
         LoadError::Input(format!(
             "the parser failed on lines {} to {}; nothing was loaded",
@@ -1583,12 +1432,8 @@ fn parse_chunks(chunks: Vec<Vec<Got>>, threads: usize) -> Result<Vec<Vec<Parsed>
     })
 }
 
-/// Run a load against an open store, from the id to the commit.
-///
-/// `on_error` is told each rejected line as it is found; the report carries the first
-/// thousand as well. The caller owns the data directory - it holds `LOCK` - and has opened
-/// the leaves it serves; the templates this load creates get theirs here, before the
-/// commit, so its rows appear in each leaf in the same step as the commit publishes them.
+/// Run a load against an open store, from the id to the commit; the templates it creates
+/// get their leaves here, so its rows appear in the step that publishes them.
 pub fn run(
     trie: &Trie,
     stores: &StoreManager,
@@ -1681,9 +1526,8 @@ fn run_inner(
         disk.unstage(load_id);
         return Err(LoadError::Cancelled);
     }
-    // Every row counted and nothing published: the check that decides. The head's saw ten
-    // thousand rows in load order, and a clean head says nothing of an untimed tail or of a
-    // later file with no time at all.
+    // Every row counted and nothing published: the check that decides. A clean head says
+    // nothing of an untimed tail or of a later file with no time at all.
     let tally = &counts.arrival;
     if !opts.proceed && tally.share() > limit {
         disk.unstage(load_id);
@@ -1711,9 +1555,8 @@ fn run_inner(
         .sum();
     let days = files.iter().map(|f| f.day).collect::<BTreeSet<_>>().len() as u64;
     let rows: u64 = files.iter().map(|f| f.index.row_count()).sum();
-    // Nothing to publish is refused, not committed: its id would be recorded as a load
-    // that happened - and with `--replace-day` it would retire the whole day for nothing,
-    // which is what an empty file or a pipe from a command that failed looks like.
+    // Nothing to publish is refused, not committed: its id would be recorded as a load that
+    // happened, and with `--replace-day` it would retire the whole day for nothing.
     if rows == 0 {
         disk.unstage(load_id);
         return Err(LoadError::Input(match opts.replace_day {
@@ -1889,9 +1732,8 @@ fn stage_all(
                 templates
                     .entry(template_id)
                     .or_insert_with(|| placed.time_column.clone());
-                // Fell back exactly when `place` gave it the arrival column: no flattened key
-                // can be spelled that way, so the column is there only because the template's
-                // own time column held no instant.
+                // Fell back exactly when `place` gave it the arrival column: no flattened key can
+                // be spelled that way, so it is there only because the time column held no instant.
                 let fell_back = placed.row.contains_key(RECEIVED_AT_COLUMN);
                 counts
                     .arrival
@@ -1998,7 +1840,6 @@ mod tests {
         assert_ne!(id(&plain), id(&renamed), "the name is part of the id");
     }
 
-    /// A directory is every file under it, at any depth, but not the ones named with a dot.
     #[test]
     fn a_directory_is_its_files_in_name_order_without_hidden_ones() {
         let scratch = Scratch::new("dir");
@@ -2095,8 +1936,7 @@ mod tests {
     }
 
     /// `count` timed lines across `templates` key sets and `days` days, interleaved so every
-    /// template-day is open at once: line `i` holds key `t<i*7 % templates>`, falls on
-    /// 2024-01-<1 + i*13 % days>, and carries `n` = `i`.
+    /// template-day is open at once; line `i` carries `n` = `i`.
     fn spread(count: usize, templates: usize, days: usize) -> Vec<u8> {
         (0..count)
             .map(|i| {
@@ -2120,8 +1960,7 @@ mod tests {
     }
 
     /// A hard bound: open batches and closed ones not yet written together never hold more
-    /// than `--load-buffer-bytes`, however many template-days are open - and every row is
-    /// still stored once, each template-day's rows in line order.
+    /// than `--load-buffer-bytes`, and every row is still stored once, in line order.
     #[test]
     fn a_tiny_load_buffer_holds_its_rows_to_the_bound_and_loses_none() {
         const LINES: usize = 6_000;
@@ -2163,9 +2002,8 @@ mod tests {
         assert_eq!(last.len(), 84, "not every template-day was stored");
     }
 
-    /// `--max-mb-per-sec` holds the pass that parses and encodes, and that pass reads each
-    /// input byte once: its pace is charged the inputs' decompressed length exactly - not
-    /// the id's digest of them, nor the head check's, which read them first.
+    /// The paced pass reads each input byte once, so its pace is charged the inputs'
+    /// decompressed length exactly, not the id's digest or the head check's reads as well.
     #[test]
     fn the_pace_is_charged_each_input_byte_once() {
         let scratch = Scratch::new("paced");
@@ -2185,9 +2023,8 @@ mod tests {
         assert_eq!(measured.paced, (plain.len() + other.len()) as u64);
     }
 
-    /// And the rate is what the load delivers: bytes at N a second take about bytes / N
-    /// seconds, not twice or three times that. Wide margins, for a debug build on a busy
-    /// machine; a pace charged for the digest and the head as well is still past them.
+    /// The rate is what the load delivers: bytes at N a second take about bytes / N seconds.
+    /// Wide margins, for a debug build on a busy machine.
     #[test]
     fn a_paced_load_takes_about_its_bytes_over_the_rate() {
         let scratch = Scratch::new("rate");
@@ -2208,9 +2045,8 @@ mod tests {
         );
     }
 
-    /// The head check makes nothing - a template made while the load is refused would keep
-    /// arrival time after its time key was added - so it names a template it has not seen
-    /// by the line it first met it on, with the keys that could be its time.
+    /// The head check makes nothing, since a template made while the load is refused would
+    /// keep arrival time, so it names a new template by the line it first met it on.
     #[test]
     fn the_head_check_names_a_new_template_by_its_line_and_makes_none() {
         let scratch = Scratch::new("head");
@@ -2236,10 +2072,8 @@ mod tests {
         );
     }
 
-    /// The head check reads at most `HEAD_LINES` lines, rows or not: an input opening on
-    /// text that is not JSON is not parsed whole, unpaced, before the paced pass. Here the
-    /// head finds no row at all and lets the load through to the count over every row,
-    /// which stops it.
+    /// The head check reads at most `HEAD_LINES` lines, rows or not; here it finds no row and
+    /// lets the load through to the count over every row, which stops it.
     #[test]
     fn the_head_check_stops_at_its_line_cap_and_the_count_over_every_row_decides() {
         let scratch = Scratch::new("head-lines");
@@ -2260,8 +2094,7 @@ mod tests {
     }
 
     /// A template with a time column whose rows held no instant there is named by that
-    /// column, not by Datetime-typed keys an operator could add: no time key would change
-    /// where its rows go.
+    /// column: no time key an operator could add would change where its rows go.
     #[test]
     fn a_template_with_a_time_column_is_named_by_it_when_its_rows_fall_back() {
         let scratch = Scratch::new("column-fell-back");

@@ -2,11 +2,8 @@
 
 use super::*;
 
-/// The log viewer. One HTML file, inline CSS and JS, no other request needed.
-///
-/// `no-store`, because the page is rebuilt with the binary. A cached viewer against a
-/// newer server is a debugging tool lying about what the database answered, which costs
-/// more than the few kilobytes it saves.
+/// The log viewer, one HTML file; `no-store`, because a cached viewer against a newer
+/// server is a debugging tool lying about what the database answered.
 async fn get_viewer() -> Response {
     (
         [(axum::http::header::CACHE_CONTROL, "no-store")],
@@ -15,22 +12,15 @@ async fn get_viewer() -> Response {
         .into_response()
 }
 
-/// Every template: its path, its columns, its row count, and when it was first and last
-/// seen.
-///
-/// The path is the template's identity and the columns alone cannot reconstruct it -
-/// `LeafMeta` does not record which names were promoted into the fingerprint, so
-/// `event=login_failed, ts, user` and a leaf holding the same three names arranged
-/// differently would print identically. `Trie::leaf_paths` carries the tokens for that
-/// reason, as `Template::path` does for the engine's plan.
+/// Every template with its path, which is its identity: the columns alone do not say
+/// which names were promoted into the fingerprint.
 async fn get_templates(State(server): State<Arc<Server>>) -> Response {
     let stores = &server.stores;
     let mut templates = Vec::new();
 
     for (path, leaf) in server.trie.leaf_paths() {
-        // A leaf whose meta will not read is a poisoned lock, and there is nothing to
-        // report about it that is not a guess. Skipped rather than faked - `count` below
-        // is the length of what was actually readable.
+        // A leaf whose meta will not read is a poisoned lock: skipped rather than faked, and
+        // `count` below is the length of what was readable.
         let Ok(slot) = leaf.leaf_meta.read() else {
             continue;
         };
@@ -70,18 +60,8 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
     Json(json!({ "count": templates.len(), "templates": templates })).into_response()
 }
 
-/// Throughput, template count, storage sizes.
-///
-/// `storage` says which of the two modes this process is in and what that costs. The
-/// banner is seen once by whoever started it; this is the field a dashboard can read.
-///
-/// `buffered_rows` and `write_failures` are the two numbers that are only visible here.
-/// The first is what the next start would put back from the write-ahead log - and, with
-/// storage in memory, what an exit costs. The second exists because a disk that has gone
-/// away under `data/` is otherwise invisible: `/ingest` keeps answering 200, rightly - the
-/// line is durable in the log - while no row reaches a file. `wal` is the log itself:
-/// where it has got to, where the store has, how far behind them the checkpoint is, and
-/// what this start had to read back.
+/// Throughput, template count, storage sizes, and the two numbers only visible here:
+/// `buffered_rows`, and `write_failures` for a disk gone away while `/ingest` answers 200.
 pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
     let stores = &server.stores;
     let (open_segments, max_open_segments) = stores.open_files();
@@ -122,12 +102,8 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // How long a row group may stay open: what a quiet template's rows wait in
             // the log and in memory before they reach a file.
             "row_group_timeout_ms": server.storage.row_group_timeout.as_millis() as u64,
-            // The write-ahead log; null when storage is memory. `last_seq` is the last
-            // position made durable, `applied` the last handed to the store, and every
-            // position up to `checkpoint` is in a row group - the segments wholly behind
-            // it are gone. `healthy` false is /ingest answering 503. `replay` is what
-            // this start read back: `applied` put back in memory, `covered` skipped
-            // because a row group already held them, `held` left in the log.
+            // The write-ahead log; null when storage is memory. `healthy` false is /ingest
+            // answering 503, and `replay` is what this start read back.
             "wal": wal.as_ref().map(|wal| wal_stats(&server, wal)),
             "stores_open": stores.open(),
             // Day files held open for writing, and the cap they are held under. Past it the
@@ -137,17 +113,12 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "segment_max_bytes": server.storage.segment_max_bytes,
             "rows": stores.rows(),
             "buffered_rows": stores.buffered(),
-            // Memory the buffered rows hold - estimated, hash tables and allocations
-            // included - against the limit past which the largest are closed early; and
-            // how many have been, which is nonzero only when the buffers could not keep up.
+            // Estimated memory the buffered rows hold, against the limit past which the
+            // largest are closed early.
             "buffered_bytes": buffered_bytes,
             "max_buffer_bytes": max_buffer_bytes,
-            // How often a day that has ended is looked for; 0 is never. And what the
-            // looks and `kibbr compact` have done: `runs` counts the jobs that tried a
-            // day, `days_compacted` the days rebuilt - one found with nothing to compact
-            // is not one - `last` is the last of those, and `last_error` the latest
-            // failure among the days still failing. From the jobs' own lock: this does
-            // not wait on a flush.
+            // 0 is never. `compaction` is read from the jobs' own lock: this does not wait
+            // on a flush.
             "compact_interval_ms": server.storage.compact_interval.as_millis() as u64,
             "compaction": server
                 .compactions
@@ -158,14 +129,10 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "write_failures": stores.write_failures(),
             "last_write_error": stores.last_write_error(),
             // True while the last flush tick failed, which is also while /health says
-            // degraded. The first tick that writes everything clears it. /ingest goes on
-            // answering 200 meanwhile: its lines are in the log.
+            // degraded; /ingest goes on answering 200 meanwhile, its lines being in the log.
             "degraded": stores.is_degraded(),
-            // On disk this is the segments' bytes as of the last row group closed, plus what the
-            // buffer would add. In memory it is payload bytes - key text, string values,
-            // and a scalar's fixed width - and the resident size is larger, because
-            // allocator slack and the hash tables are not in it. Estimated either way.
-            // The log's segments count toward it: they are bytes this database holds.
+            // Estimated either way: on disk the segments' bytes plus what the buffer would
+            // add, in memory payload bytes. The log's segments count: this database holds them.
             "approx_bytes": stores.approx_bytes() + wal.as_ref().map_or(0, |wal| wal.bytes),
         },
         "trie": {
@@ -178,22 +145,18 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "lines_ingested": ingested,
             "lines_rejected": server.lines_rejected.load(Ordering::Relaxed),
             // Averaged over uptime, not sampled over a window: an idle server reports a
-            // falling rate rather than a stale spike, which is the honest reading of a
-            // counter divided by a clock.
+            // falling rate rather than a stale spike.
             "lines_per_second": rate(ingested, uptime),
-            // Nonzero means the server was telling shippers to slow down, which is the
-            // design working. A body shed at the door was never read, so it is in none
-            // of the line counters above; one the log shed was, and is in two of them.
+            // Nonzero means the server was telling shippers to slow down, which is the design
+            // working. A body shed at the door was never read, so no line counter has it.
             "requests_shed": server.door.shed.total(),
-            // How long a body may be kept waiting before it is shed.
             "ingest_wait_ms": server.api.ingest_wait.as_millis() as u64,
-            // How long a stop gives the requests in flight; 0 is for as long as they take.
+            // 0 is for as long as they take.
             "shutdown_deadline_ms": server
                 .api
                 .shutdown_deadline
                 .map_or(0, |deadline| deadline.as_millis() as u64),
-            // How long one request is given; 0 is for as long as it takes. And how many
-            // were answered 408 or 504 because it passed.
+            // 0 is for as long as it takes.
             "request_timeout_ms": server
                 .api
                 .request_timeout
@@ -209,10 +172,8 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
                 .saturating_sub(server.ingest_permits.available_permits()),
             "bodies_inside": ingest_bodies(&server.api)
                 .saturating_sub(server.ingest_bodies.available_permits()),
-            // Bodies waiting at the door now, unread; how many ever have; and how long
-            // they waited, all together.
-            // `line_max` is the most that may wait there at once, and null while the
-            // line has no bound: at the default wait, where it never had one.
+            // `line_max` is the most that may wait at the door at once, and null while the
+            // line has no bound.
             "door": {
                 "waiting": server.door.waiting.load(Ordering::Relaxed),
                 "waits": server.door.waits.load(Ordering::Relaxed),
@@ -228,16 +189,11 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             // left, a shutdown. Not in `served`.
             "stopped": server.queries_stopped.load(Ordering::Relaxed),
             "per_second": rate(queries, uptime),
-            // Runs of a day's row groups whose rows were chosen on more threads than the
-            // query's own, over the life of the process. Zero on a server with one scan
-            // thread, and it stays where it is while bodies are being ingested: a query
-            // asked then is answered on its own thread.
+            // Runs of a day's row groups chosen on more threads than the query's own. It stays
+            // where it is while bodies are ingested: a query then runs on its own thread.
             "scan_fan_outs": server.fan.as_ref().map_or(0, |fan| fan.fanned()),
-            // What this server resolved: the threads one query may choose a day's rows
-            // on, its own among them - 1 where there is nobody to share with (the memory
-            // store, or `--scan-threads` 0 or 1) - and the rows under which a run of row
-            // groups is never shared out. Without them a count of 0 above reads the same
-            // for one thread as for four with nothing worth sharing.
+            // What this server resolved: without them a count of 0 above reads the same for
+            // one thread as for four with nothing worth sharing.
             "scan_threads": scan_threads(&server),
             "scan_fan_rows": server.storage.scan_fan_rows,
         },
@@ -245,10 +201,8 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
     .into_response()
 }
 
-/// `/stats`'s `storage.wal`: where the log has got to, and what is waiting on it.
-///
-/// Two objects joined, because one `json!` holds only so many keys before the compiler
-/// stops expanding it.
+/// `/stats`'s `storage.wal`: where the log has got to, and what is waiting on it. Two
+/// objects joined, because one `json!` holds only so many keys before it stops expanding.
 fn wal_stats(server: &Server, wal: &wal::Stats) -> Value {
     let mut stats = json!({
         "dir": server.wal.as_ref().map(|w| w.dir().display().to_string()),
@@ -278,18 +232,14 @@ fn wal_stats(server: &Server, wal: &wal::Stats) -> Value {
         },
     });
     let queue = json!({
-        // The most bytes of lines that may be in the log and not yet in the store;
-        // those waiting for its writer now; those it has written that the store does
-        // not have yet; and the most the two have come to together. The two are each
-        // exact and are not read together, so their sum can miss the one body the
-        // writer is taking at that instant, and never counts one twice.
+        // The two counts are each exact and are not read together, so their sum can miss the
+        // one body the writer is taking at that instant, and never counts one twice.
         "queue_max_bytes": server.storage.wal_queue_bytes,
         "queue_bytes": wal.queue_bytes,
         "unapplied_bytes": wal.unapplied_bytes,
         "queue_peak_bytes": wal.queue_peak_bytes,
-        // Bodies parsed and waiting for room in the log now, and how many ever have;
-        // those whose wait ran out, which were shed; and those let go because their
-        // sender hung up while they waited.
+        // `queue_sheds` are bodies whose wait for room ran out, `queue_left` those let go
+        // because their sender hung up while they waited.
         "queue_waiting": wal.queue_waiting,
         "queue_waits": wal.queue_waits,
         "queue_sheds": wal.queue_sheds,
@@ -316,32 +266,8 @@ pub(super) fn fail(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "ok": false, "error": message }))).into_response()
 }
 
-/// Counts a request as in flight until it is answered - and answers it here if the
-/// shutdown deadline passes first, 503, or the request's own timeout, 408 or 504.
-///
-/// **What either drops is the handler, wherever it had got to.** A body still being
-/// read is let go unread, and nothing of it was taken. A query's scan is told to stop
-/// (`post_query`), and stops at its next row group. An `/ingest` body already handed to
-/// the write-ahead log is not undone by the shutdown's cut - its task is off this future
-/// and is waited for by the wind-down - so its sender is told 503 for lines that are
-/// stored, and sending them again stores them twice: what any answer lost on the way has
-/// always cost, and why the deadline is long.
-///
-/// **The timeout is `api.request_timeout`, from here - the request's headers read - to
-/// its answer, and which of two answers depends on whose time it was.** A body that has
-/// not been read to its end is the client's: `408`, and `say_close` closes the
-/// connection, half a request being all it holds. A request read whole and not answered
-/// is this server's: `504`. **But not an `/ingest` body read whole.** Its handler is
-/// past the door and its waits are the ingest wait's; what is left is the log's flush,
-/// and a `504` for lines the log has taken would have their shipper send them twice in
-/// ordinary running, not only at a stop. That one is waited for as it always was.
-///
-/// A request that never finishes its *headers* does not reach this layer and is not
-/// timed out by it; at a stop its connection is the one `serve` leaves open.
-///
-/// At `debug` each request is a line of the log when it is answered: its method, its
-/// path, the status and how long it took. Asked for before the request is handed on,
-/// and only then - at any other level a request costs this nothing but the question.
+/// Counts a request as in flight, and answers it here at the shutdown deadline (503) or
+/// its own timeout (408 unread, 504 read) - never an `/ingest` body the log may have taken.
 async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {
     let _guard = InFlight::enter(&server);
     let noted = tracing::enabled!(tracing::Level::DEBUG).then(|| {
@@ -427,30 +353,8 @@ fn timed_out(whole: bool, timeout: Duration) -> Response {
     }
 }
 
-/// `Connection: close` on every answer after which this server closes the connection
-/// (RFC 9112 section 9.6).
-///
-/// An answer written while the request's body is still unread leaves half a request on
-/// the connection, and it cannot carry another: the server closes it once the answer is
-/// out. A client that is not told sends its next request into the closed socket and gets
-/// no answer at all. With the log failing that was every other batch of a shipper that
-/// keeps its connection, where each should have been a 503 it knows what to do with.
-///
-/// **One layer, and not a header on each refusal.** What closes the connection is the body
-/// left unread, not which answer was built. `cannot_log` and `log_busy` come from the door
-/// before the body is read, and from the handler after it - where the connection stays
-/// open and must not be told to close. So the body is wrapped in `Watched`, and the answer
-/// is marked when the body it was given was not read to its end. That covers the answers
-/// this file does not build as well: axum's 413 from a body limit, its 404 and 405, and
-/// a `GET` that was sent a body.
-///
-/// The header is not only a report. With it in the answer the connection is closed after
-/// the answer whatever becomes of the rest of the body, so the two cannot disagree. A
-/// refused body small enough to have arrived whole with its head used to leave its
-/// connection open, by the luck of one read; it is closed now, and said to be.
-///
-/// Nothing is read here to keep the connection: the refusal comes before the body is read,
-/// and stays that way.
+/// `Connection: close` on every answer sent with the request's body unread (RFC 9112
+/// section 9.6): one layer, so it covers the answers axum builds as well.
 async fn say_close(request: Request, next: Next) -> Response {
     // A request with no body has nothing left unread, whatever answers it.
     if request.body().is_end_stream() {
@@ -473,10 +377,8 @@ async fn say_close(request: Request, next: Next) -> Response {
         response
             .headers_mut()
             .insert(header::CONNECTION, HeaderValue::from_static("close"));
-        // In the client's own version. An answer of HTTP/1.1 to a client of HTTP/1.0 that
-        // asked to keep its connection is given `keep-alive` on its way out, over the
-        // header above, and the connection is closed all the same; one of HTTP/1.0 keeps
-        // the header it came with.
+        // In the client's own version: an HTTP/1.1 answer to an HTTP/1.0 client that asked to
+        // keep its connection is given `keep-alive` on its way out, over the header above.
         *response.version_mut() = version;
     }
     response
@@ -502,10 +404,8 @@ impl HttpBody for Watched {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
         let polled = Pin::new(&mut self.inner).poll_frame(cx);
-        // The end is `None`, or a frame with nothing after it. A body with a
-        // `Content-Length` ends on its last data frame, and a reader that stops there has
-        // read all of it: the body limit does, when the frame that crosses the limit is
-        // also the last.
+        // The end is `None`, or a frame with nothing after it: a body with a `Content-Length`
+        // ends on its last data frame, and a reader that stops there has read all of it.
         let ended = match &polled {
             Poll::Ready(None) => true,
             Poll::Ready(Some(Ok(_))) => self.inner.is_end_stream(),
@@ -544,9 +444,8 @@ pub(super) fn router(server: Arc<Server>) -> Router {
         .route("/load/{job}", get(get_load))
         .route("/compact", post(post_compact))
         .route("/compact/{job}", get(get_compact))
-        // Order matters. `.layer()` wraps what is already there, so the *last* added is
-        // outermost: `admit` runs first, and a shed body never reaches the extractor that
-        // would have buffered it.
+        // Order matters: the *last* layer added is outermost, so `admit` runs first and a shed
+        // body never reaches the extractor that would have buffered it.
         .route(
             "/ingest",
             post(post_ingest)
@@ -560,10 +459,8 @@ pub(super) fn router(server: Arc<Server>) -> Router {
             Arc::clone(&server),
             track,
         ))
-        // Last, so outermost of all: outside `admit` and outside every body limit. It has
-        // to see the body before anything can refuse it or stop reading it, to know that
-        // the answer went out with the body unread - and then the answer tells the client
-        // that the connection closes.
+        // Last, so outermost of all: it has to see the body before anything can refuse it or
+        // stop reading it, to know that the answer went out with the body unread.
         .layer(axum::middleware::from_fn(say_close))
         .with_state(server)
 }

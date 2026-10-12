@@ -17,13 +17,8 @@ struct CompactRequest {
     data_dir: Option<std::path::PathBuf>,
 }
 
-/// Start a compaction job and answer at once with its number; `GET /compact/<job>` says how
-/// it went. Not held open for the compaction, for the reasons `post_load` is not.
-///
-/// **One at a time, and apart from the load slot.** A second compaction is a 409. A load
-/// beside one is not: the two meet only under the store's own lock, and a load that
-/// replaces the day being compacted wins it - the compaction finds its inputs retired and
-/// removes what it rebuilt.
+/// Start a compaction job and answer at once with its number; one runs at a time, and a
+/// load beside it wins the day it replaces.
 pub(super) async fn post_compact(
     State(server): State<Arc<Server>>,
     headers: HeaderMap,
@@ -129,21 +124,8 @@ pub(super) async fn get_compact(
     Json(body).into_response()
 }
 
-/// A compaction thread, from its first look to its job's last word: which days, each of
-/// them in turn, and how the job ended.
-///
-/// `job` is the number a request was answered with. The scheduler's thread comes with
-/// none, and **takes one only once it has a day to try**: a look that finds nothing due,
-/// or only days still waiting out a failure, is not a job - it would fill the kept jobs
-/// with empty ones and refuse a request that arrived while it looked.
-///
-/// **The due days are listed here, on this thread.** The listing takes the flush's lock,
-/// which a flush holds across its writes; taken on the runtime it would park a worker
-/// behind the disk.
-///
-/// **A failure here is not a write failure.** It is logged, kept for `/stats` and
-/// remembered by the scheduler; the store's health, which `/ingest` and `/health` answer
-/// from, is the flush's alone and is not touched.
+/// A compaction thread. It lists the due days itself, since the listing takes the flush's
+/// lock, and the scheduler's takes a job number only once it has a day to try.
 fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64>) {
     let jobs = || server.compactions.lock().unwrap_or_else(|e| e.into_inner());
     let every = server.storage.compact_interval;
@@ -164,9 +146,8 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
     let (id, ending) = match job.zip(asked) {
         Some(asked) => asked,
         None => {
-            // A day that failed and has nothing left to compact - a load replaced it - is
-            // never tried again, so its failure is dropped here or never. Listed before
-            // the jobs' lock is taken: the two locks are never held together.
+            // A failed day with nothing left to compact is never tried again, so its failure is
+            // dropped here. Listed before the jobs' lock is taken: the two are never held together.
             let compactable = store.compactable_days();
             let mut jobs = jobs();
             jobs.forget_except(&compactable);
@@ -255,20 +236,8 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
     ending.finish(state, !days.is_empty());
 }
 
-/// Look for days that are due, every interval, until the token is cancelled.
-///
-/// **This task keeps the clock and nothing else.** It watches the token, asks whether a
-/// load or a compaction is running, and starts a thread; the thread lists the due days and
-/// compacts them (`compaction`). Nothing here takes the store's flush lock, so a slow
-/// flush cannot park a runtime worker behind it.
-///
-/// Not part of `flush_loop`: a compaction awaited there would hold up every tick and the
-/// memory relief with it.
-///
-/// A look is skipped while a load runs - a load that replaces a day would make a rebuild
-/// of it wasted work, and the two would share the cores - and while the last flush tick
-/// could not write, since a rebuild needs the day's size again on a disk that is already
-/// refusing.
+/// Look for due days every interval, starting a thread for each look so that nothing
+/// here takes the store's flush lock on the runtime.
 pub(super) async fn compact_loop(server: Arc<Server>, token: CancellationToken) {
     let every = server.storage.compact_interval;
     // Zero is "never look", and is returned on before it reaches an interval, which
@@ -278,9 +247,8 @@ pub(super) async fn compact_loop(server: Arc<Server>, token: CancellationToken) 
     }
     let mut tick = tokio::time::interval(every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // The first tick completes immediately, and is consumed: nothing is compacted the
-    // moment a server starts, so one that a compaction brought down comes back up and
-    // serves for an interval before it tries again.
+    // The first tick completes at once and is consumed: a server that a compaction brought
+    // down comes back up and serves for an interval before it tries again.
     tick.tick().await;
     loop {
         tokio::select! {
@@ -291,8 +259,8 @@ pub(super) async fn compact_loop(server: Arc<Server>, token: CancellationToken) 
     }
 }
 
-/// Whether this look is left to the next tick: a load is running, or the last flush tick
-/// could not write. Why each is in `compact_loop`.
+/// Whether this look is left to the next tick: a load would waste the rebuild, and a
+/// disk refusing the flush has no room for one.
 pub(super) fn look_waits(server: &Server) -> bool {
     server.stores.is_degraded() || load_running(server)
 }
@@ -329,30 +297,16 @@ pub(super) fn look_for_due_days(server: &Arc<Server>) {
     }
 }
 
-/// Shutdown has begun: tell the running compaction to stop, and start no other.
-///
-/// Called the moment the signal arrives, while the last requests are still draining,
-/// rather than when the compaction is waited for: the earlier it hears, the less there is
-/// to wait for. The flag is raised under the jobs' lock, which both ways of starting a job
-/// take their number under, so none starts after it.
+/// Shutdown has begun: tell the running compaction to stop and start no other, at the
+/// signal rather than at the join, so there is less to wait for.
 pub(super) fn cancel_compactions(server: &Server) {
     let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
     jobs.stop();
     server.compact_cancel.store(true, Ordering::Relaxed);
 }
 
-/// Wait for the compaction threads: after the final flush, before the lock is let go.
-///
-/// **After the final flush and not before it.** A process told to stop may be killed
-/// before it has finished, and a kill before the flush costs the next start a replay of
-/// every row still buffered: waiting here first would put a compaction's last file between
-/// a SIGTERM and the write that saves it. After it, a kill during this wait costs
-/// nothing: a rebuilt file the manifest does not name is removed by the next start. Waiting
-/// later is safe because a compaction adds no row and no template: it and the flush meet
-/// only under the store's lock, one after the other.
-///
-/// **Before the lock is released**, because a thread still writing the directory after it
-/// would be writing beside whichever process took the lock next.
+/// Wait for the compaction threads: after the final flush, so a kill during the wait
+/// costs nothing, and before the lock is released.
 pub(super) fn join_compactions(server: &Server) {
     cancel_compactions(server);
     let threads = {

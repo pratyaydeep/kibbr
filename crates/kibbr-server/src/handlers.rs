@@ -9,19 +9,8 @@ struct QueryRequest {
     q: String,
 }
 
-/// `{"ok":true,"status":"ok"}`, or `degraded` while something here cannot write: the
-/// write-ahead log, the store, or rows the store refused (`Server::degraded`).
-///
-/// Waits on no flush and reads no data - a health check that blocks behind a long ingest
-/// reports the wrong thing - which is why each verdict is a flag beside what it is about
-/// and not a question put to it.
-///
-/// **`ok` stays `true` when degraded, and the status says otherwise.** This is the
-/// liveness check an orchestrator kills the process on, and a process that cannot write
-/// is not a process worth killing: restarting it does not empty the disk, and the rows
-/// already on it are still queryable. `degraded` is for the dashboard and the human;
-/// `/ingest` is where the refusal belongs, because that is the caller who would otherwise
-/// be told a lie.
+/// `{"ok":true,"status":"ok"}`, or `degraded` while something here cannot write; `ok`
+/// stays `true` because this is the liveness check, and a restart does not empty a disk.
 pub(super) async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
     match server.degraded() {
         Some(detail) => Json(json!({ "ok": true, "status": "degraded", "detail": detail })),
@@ -32,11 +21,6 @@ pub(super) async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
 impl Server {
     /// What is wrong with this server's writing, if anything is: the log first, because
     /// while it cannot write `/ingest` refuses every body.
-    ///
-    /// A store that cannot write is degraded and refuses nothing: its rows are in the log
-    /// and are written when it can, or put back by the next start. A catalog that cannot
-    /// write is not reported here: it costs the lines that needed a new record, and a body
-    /// of nothing else is refused in its own answer, which names the write (`nothing_taken`).
     pub(super) fn degraded(&self) -> Option<String> {
         if let Some(why) = self.wal.as_ref().and_then(Wal::refusal) {
             return Some(format!(
@@ -62,24 +46,8 @@ impl Server {
     }
 }
 
-/// The refusal a shipper gets while the write-ahead log cannot write.
-///
-/// 503 and a `Retry-After`, the same shape as the shed at `busy`, and for a related
-/// reason: this server cannot take the batch now and the caller should keep it and come
-/// back. The difference is in the body, which names the write error - an operator reading
-/// a shipper's log needs to see `No space left on device` there and not "try later".
-///
-/// **This is the refusal that is about durability, and it is the log's.** A `200` means
-/// the line is in the log and flushed, so a log that cannot write has no `200` to give; a
-/// `503` keeps the line at the shipper, where it can still be sent again. It used to be
-/// the store's: with no log a `200` meant *buffered*, and on a full disk every batch got
-/// one, the shutdown log said "90,000 rows written", and after a restart `COUNT LOG {}`
-/// was 0. A store that cannot write is no longer a reason to refuse anything - the line is
-/// safe in the log, and a `503` would make a shipper resend a line that is already stored.
-///
-/// One other refusal is about durability, and it is the catalog's: a body that never
-/// reached the log, because no line of it could be given the record it needed before it
-/// counts. That one is answered apart (`nothing_taken`), with its errors by line.
+/// The refusal a shipper gets while the write-ahead log cannot write: 503, a
+/// `Retry-After` and the write error, since a `200` means the line is in the log.
 fn cannot_log(detail: &str) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -97,15 +65,7 @@ fn cannot_log(detail: &str) -> Response {
 }
 
 /// The answer to a body of which nothing was taken because nothing could be written for
-/// it (`IngestReport::nothing_taken`): 503 and a `Retry-After`, as the log's refusal is,
-/// around the report a `200` would have carried - `ingested: 0` and each line's error
-/// against its number, which is where the write that failed and its path are named.
-///
-/// A `200` here told a shipper that goes by the status to drop a body of well-formed
-/// lines this server had none of. `error` is for the client that reads that field of
-/// every refusal and no further, and repeats the first line's reason.
-///
-/// The body was read to its end, so the connection is left as it is.
+/// it: 503 around the report, since a `200` tells a shipper to drop well-formed lines.
 fn nothing_taken(report: &IngestReport) -> Response {
     let first = match report.errors.first() {
         Some(error) => format!("line {}: {}", error.line, error.msg),
@@ -125,24 +85,8 @@ fn nothing_taken(report: &IngestReport) -> Response {
         .into_response()
 }
 
-/// NDJSON in, `{"ok":true,"ingested":N,"errors":[]}` out. Optionally gzipped.
-///
-/// **Single tenant, deliberately.** No stream or tenant identifier, in the path or in a
-/// header, and every line lands in the one trie this process holds. Recorded here because
-/// the omission gets expensive with time: once a fleet is configured against this URL,
-/// *adding* an identifier breaks every one of their configs.
-///
-/// It is also not a header away. The trie path is built from the line's own keys
-/// (`ParsedLog::walk_tokens`) and a header is not part of the line, so separating tenants
-/// means either a forced-first `__stream` token in the fingerprint - changing every
-/// `template_id` - or one `Trie` and `Stores` per tenant, with a tenant selector on
-/// `/query`, `/templates`, `/stats` and the viewer. Both are large changes, and a header
-/// accepted but ignored would be worse than neither: it reads as isolation that is not
-/// there. Revisit with the deployment work.
-///
-/// `body` is a `Result`, not a `Bytes`, for the reason `post_query` decodes its own body:
-/// axum's rejection is plain text, and a client that parses one error format should not
-/// need a second.
+/// NDJSON in, `{"ok":true,"ingested":N,"errors":[]}` out, optionally gzipped; single
+/// tenant, deliberately, as adding an identifier later breaks every shipper's config.
 pub(super) async fn post_ingest(
     State(server): State<Arc<Server>>,
     axum::Extension(permit): axum::Extension<Permit>,
@@ -150,9 +94,8 @@ pub(super) async fn post_ingest(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Response {
-    // `?received_at=<RFC 3339>`: the arrival time the ingest call is given, for a
-    // replay or a differential that needs two servers to stamp one body identically.
-    // Absent, it is now. Malformed, the body is refused rather than stamped with a guess.
+    // `?received_at=<RFC 3339>`: the arrival time, for a replay or a differential that needs
+    // two servers to stamp one body identically. Malformed, the body is refused, not guessed.
     let now = match received_at_of(uri.query()) {
         Ok(Some(at)) => at,
         Ok(None) => Utc::now(),
@@ -165,12 +108,8 @@ pub(super) async fn post_ingest(
     };
     let body = match body {
         Ok(body) => body,
-        // Two unrelated things behind one rejection, and only one of them is the client's
-        // to fix. Over the cap is the answer a shipper meets most often, and axum's
-        // wording for it ("length limit exceeded") names neither the limit nor the size to
-        // split to. A read that died halfway keeps axum's text: it has no number to
-        // report, and "you sent too much" would send a shipper off to fix a batch that was
-        // never too big.
+        // Over the cap is the answer a shipper meets most often, and axum's wording names
+        // neither the limit nor the size to split to. A read that died keeps axum's text.
         Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
             return fail(
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -183,35 +122,27 @@ pub(super) async fn post_ingest(
         }
         Err(rejection) => return fail(rejection.status(), &rejection.body_text()),
     };
-    // Non-UTF-8 header bytes are not a header this server understands. `None` reaches
-    // `decode` as "no encoding", so the body is rejected line by line rather than the
-    // request being refused on a guess about what the sender meant.
+    // Non-UTF-8 header bytes reach `decode` as "no encoding", so the body is rejected line
+    // by line rather than the request refused on a guess about what the sender meant.
     let encoding = headers
         .get(header::CONTENT_ENCODING)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
 
     let held = Arc::clone(&server);
-    // What says the sender has gone, to a body that is waiting for room in the log: set
-    // if this future is dropped before the task below has returned, which is what a
-    // connection that closes does to it.
+    // What says the sender has gone, to a body waiting for room in the log: set if this
+    // future is dropped before the task below has returned.
     let place = Arc::clone(&permit.body);
     let mut leaving = Leaving {
         server: &server,
         place: &place,
         armed: true,
     };
-    // The parse and the trie walk are CPU work, and the wait for the log's flush after
-    // them blocks, so none of it belongs on a runtime thread that also answers `/health`.
-    // Inflating joins them rather than running above: a gzip bomb is seconds of CPU, and
-    // spending it on a runtime thread would stall every other endpoint while the server
-    // was being attacked.
+    // The parse, the trie walk and the wait for the log's flush do not belong on a runtime
+    // thread that also answers `/health`; nor does inflating, a gzip bomb being seconds of CPU.
     let done = tokio::task::spawn_blocking(move || {
-        // Said from before the body is inflated until its answer is ready: while any
-        // body is in its task a query chooses its rows on its own thread, so the scan
-        // threads take no core from the parse and the walk - and none while the body
-        // waits on the log either, which is most of a small body's time. So one sender
-        // of small bodies back to back is enough to keep every scan on one thread.
+        // Held from before the body is inflated until its answer is ready: while any body is
+        // in its task a query scans on its own thread, so the scan takes no core from the parse.
         let _body = held.fan.as_deref().map(Fan::body);
         let decoded = decode(&body, encoding.as_deref(), held.api.max_decompressed_bytes)
             .map_err(IngestFailure::Body)?;
@@ -222,15 +153,11 @@ pub(super) async fn post_ingest(
     leaving.armed = false;
 
     match done {
-        // The one report that is not a 200: no line was taken, and every one was refused
-        // for a write the catalog could not make. Nothing landed that a retry could
-        // duplicate and nothing in the body is the sender's to fix, so it is told what
-        // the log's refusal tells it - keep the body, come back.
+        // The one report that is not a 200: no line was taken, and every one was refused for
+        // a write the catalog could not make, so the sender keeps the body and comes back.
         Ok(Ok(report)) if report.nothing_taken() => nothing_taken(&report),
-        // 200 even with errors in it. The body was accepted and part of it was stored;
-        // a 4xx would tell a shipper to retry the whole batch and duplicate the 497
-        // lines that landed, and there is nothing the client could have sent differently
-        // for the other 3 beyond not sending them.
+        // 200 even with errors in it: part of the body was stored, and a 4xx would tell a
+        // shipper to retry the whole batch and duplicate the lines that landed.
         Ok(Ok(report)) => (StatusCode::OK, Json(report.to_json())).into_response(),
         Ok(Err(IngestFailure::Body(e))) => fail(e.status(), &e.message()),
         // The log could not take the body, which is not the client's fault and not a
@@ -241,9 +168,8 @@ pub(super) async fn post_ingest(
             server.door.shed.log.fetch_add(1, Ordering::Relaxed);
             log_busy()
         }
-        // The body was let go because its sender had gone, so nobody reads this: the
-        // future that would have sent it is the one that was dropped. Not counted as a
-        // shed, which is a sender told to come back.
+        // The body was let go because its sender had gone, so nobody reads this. Not counted
+        // as a shed, which is a sender told to come back.
         Ok(Err(IngestFailure::Fatal(IngestError::Left))) => log_busy(),
         // The sender's to fix, as a body past the wire cap is: no retry of it will fit.
         Ok(Err(IngestFailure::Fatal(e @ IngestError::TooLarge { .. }))) => {
@@ -260,24 +186,7 @@ pub(super) async fn post_ingest(
 }
 
 /// Tells the log when a handler's future is dropped before its task has returned: the
-/// body's sender hung up.
-///
-/// **Only a body waiting for room in the log gives anything up for it.** One that is
-/// being parsed, or is already in the log's queue, goes on and is stored whole, as it
-/// always has: the log looks for room before it looks at this flag, and never looks at
-/// it for a body it has taken. But a body the log has no room for holds a permit for the
-/// parse while it waits, and one whose sender has gone would hold it for the whole wait
-/// with nobody to answer at the end of it - and its sender, having given up, has very
-/// likely sent the body again.
-///
-/// **The flag first, with no lock, and then the wake-up.** A body about to wait reads
-/// the flag under the log's queue lock and keeps that lock until it is parked; the
-/// wake-up takes the same lock after the flag is set. So the body sees the flag, or is
-/// parked when the wake-up comes: it is never left to wait out its time.
-///
-/// What this costs a request whose sender stays is two references and a flag on the
-/// handler's stack. The clone of the server and the task are made only in `drop`, and
-/// only when a sender has in fact left.
+/// sender hung up, and a body waiting for room would hold its permit for nobody.
 struct Leaving<'a> {
     server: &'a Arc<Server>,
     place: &'a Arc<Place>,
@@ -297,9 +206,8 @@ impl Drop for Leaving<'_> {
                 wal.wake_room();
             }
         };
-        // The wake-up takes the queue's lock, which the log's writer can keep for as
-        // long as moving a large body's lines takes: not a runtime worker's to wait on.
-        // With no runtime left to hand it to, this is not a worker either.
+        // The wake-up takes the queue's lock, which the log's writer can keep for a while:
+        // not a runtime worker's to wait on.
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => drop(runtime.spawn_blocking(wake)),
             Err(_) => wake(),
@@ -359,45 +267,11 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Admission control for `/ingest`: a 503 while the write-ahead log cannot write, then
-/// both permits, at once when they are free and after a bounded wait when they are not,
-/// or a 503 that says when to come back.
-///
-/// **A layer, not a check inside the handler.** A layer wraps the handler, so it runs
-/// before the extractors - before a byte of the body is pulled off the socket. Shedding in
-/// the handler would buffer `max_body_bytes` first and *then* refuse, spending the memory
-/// the shed exists to protect. And waiting here is waiting with the body unread: it stays
-/// in the kernel's buffers and at its sender, whose write blocks when those are full,
-/// which is the one place a body can wait at no cost to this process.
-///
-/// 503 and not 429: 429 claims a per-client quota and there is none here. This server is
-/// saturated, which is what 503 says and what `Retry-After` dates. Either makes Vector back
-/// off; only one is true.
-///
-/// What this must never do is take the body and go quiet. A shipper with no answer keeps
-/// the batch, times out, and opens another connection - so a merely slow server gathers
-/// connections until it is unreachable. Every wait here ends by `api.ingest_wait`, and a
-/// refusal is the kinder answer precisely because a client knows what to do with it.
-///
-/// **A refusal from here tells the client that the connection closes.** The body is still
-/// unread when it is answered, so the connection cannot carry another request and the
-/// server closes it. `say_close`, the outermost layer, puts `Connection: close` on the
-/// answer for that reason; without it a shipper that keeps its connection sends its next
-/// batch into a closed socket. The refusals do not set the header themselves: the handler
-/// returns two of them, `cannot_log` and `log_busy`, after the body was read, where the
-/// connection stays open.
+/// Admission control for `/ingest`: a layer, so a body is refused or kept waiting
+/// unread, and 503 not 429 because the server is saturated, not the client over a quota.
 pub(super) async fn admit(State(server): State<Arc<Server>>, mut request: Request, next: Next) -> Response {
-    // **First, and in the layer rather than in the handler**, for the reason the shed is
-    // here: a layer runs before the extractors, so a body this server cannot make durable
-    // is refused before ten megabytes of it are pulled off the socket. In the handler the
-    // `Bytes` extractor has already buffered it.
-    //
-    // Before the permit too. A server that cannot log has no use for the slot, and a
-    // shipper told "at capacity" would read that as "send fewer" when the answer is "send
-    // none until the disk is back". The flush tick asks the log to try again
-    // (`Wal::probe`), so the door opens within a tick of the disk coming back.
-    //
-    // **The log, and not the store.** A store that cannot write refuses nothing here.
+    // First, and before the permit: a server that cannot log has no use for the slot, and
+    // "at capacity" would read as "send fewer". The log, and not the store.
     if let Some(detail) = server.wal.as_ref().and_then(Wal::refusal) {
         return cannot_log(&detail);
     }
@@ -410,21 +284,15 @@ pub(super) async fn admit(State(server): State<Arc<Server>>, mut request: Reques
             Err(refusal) => return *refusal,
         },
     };
-    // **Handed to the handler, which hands them to its blocking task.** Held only here
-    // they went back the moment a client hung up - this future is dropped then - while
-    // the task they were meant to cover ran on: a sender that timed out and tried again
-    // took the freed permit and queued a second copy of its body beside the first.
+    // Handed to the handler, which hands them to its blocking task: held only here they
+    // would go back the moment a client hung up, while the task they cover ran on.
     request.extensions_mut().insert(permit);
     next.run(request).await
 }
 
 impl Server {
-    /// Both permits, when nothing has to be waited for: the buffers under twice their
-    /// limit, a permit for the parse free, and a place.
-    ///
-    /// Taken without waiting, and that does not jump the line at the door: a permit that
-    /// is given back goes to whoever has waited longest for it, and only one that nobody
-    /// is waiting for is there for this to take.
+    /// Both permits, when nothing has to be waited for; this does not jump the line, since
+    /// a permit given back goes first to whoever has waited longest.
     pub(super) fn admit_now(&self) -> Option<Permit> {
         if self.stores.buffers_full() {
             return None;
@@ -439,42 +307,15 @@ impl Server {
         Some(Permit::of(parse, place))
     }
 
-    /// The most bodies that may wait at the door at once, and `None` for no bound.
-    ///
-    /// **None at the default wait, as there never was one.** Nobody is in the line for
-    /// longer than a hundred milliseconds then, so it bounds itself, and a burst queues
-    /// for the moment it takes with no count held against it. A wait an operator has
-    /// raised is another matter: each waiter is a socket, with up to a receive buffer of
-    /// unread body behind it, kept for as long as the wait - and that needs a number. It
-    /// is the places, so there are never more bodies outside the door than may be inside.
+    /// The most bodies that may wait at the door at once: `None` at the default wait, which
+    /// bounds itself, and the places once an operator has raised it.
     pub(super) fn line_max(&self) -> Option<usize> {
         let default = Duration::from_millis(crate::settings::DEFAULT_INGEST_WAIT_MS as u64);
         (self.api.ingest_wait > default).then(|| ingest_bodies(&self.api))
     }
 
-    /// Both permits, with every wait in it, all before one deadline: for the buffers to
-    /// come back under twice their limit, for a permit for the parse, for a place. `Err`
-    /// is the refusal, already counted under its cause.
-    ///
-    /// **The body is unread throughout**, and nothing is held while it waits for the
-    /// buffers or for a permit but its turn. Waiting for a place it holds its permit for
-    /// the parse, which goes back when it is refused or dropped: a sender that goes away
-    /// costs nobody a permit.
-    ///
-    /// **A wait that has run out sheds nobody by itself.** What the body was waiting for
-    /// is looked at once more, after the wait: a flush empties the buffers before it
-    /// says so, and a permit can come back in the same instant. The body is shed only
-    /// for what is still not there, and told what that is. With no wait to give
-    /// (`--ingest-wait-ms 0`) that look is the first one, and nothing is waited for.
-    ///
-    /// **Every wait watches for the stop first.** Once shutdown has begun a waiter is
-    /// refused at once, and one that finds its permit and the stop ready together is
-    /// refused too - let in, it would be read and parsed only to be shed by a log that
-    /// has been told to hurry. So the stop is asked before anything else, every time.
-    ///
-    /// No lock is held across any wait here, and every wait is on a thing of the
-    /// runtime's own - a semaphore, a `Notify`, a timer, a token - so a waiter costs no
-    /// thread. Dropped - the connection went away - it leaves the line as it was.
+    /// Both permits, with every wait before one deadline and the body unread throughout;
+    /// `Err` is the refusal, already counted under its cause.
     pub(super) async fn admit_waiting(&self) -> Result<Permit, Box<Response>> {
         if let Some(max) = self.line_max() {
             if self.door.waiting.load(Ordering::Relaxed) >= max as u64 {
@@ -484,27 +325,19 @@ impl Server {
         }
         let waiting = Waiting::begin(&self.door);
         let until = waiting.since + self.api.ingest_wait;
-        // Whether the wait has run out: from the start, with no wait to give. Nothing
-        // is asked of a timer then. One set for a moment that is already here still
-        // takes a turn of the runtime's clock to say so, which is a wait of a
-        // millisecond for a body that was to have none.
+        // Whether the wait has run out: from the start, with no wait to give, since a timer
+        // set for a moment already here still takes a turn of the runtime's clock.
         let mut spent = self.api.ingest_wait.is_zero();
         let turned_away = || {
             self.door.shed.stopping.fetch_add(1, Ordering::Relaxed);
             Box::new(stopping())
         };
-        // The flush is rung once for this body. A flush that starts after the ring sees
-        // every row that filled the buffers before it; one that leaves them full has done
+        // The flush is rung once for this body: one that leaves the buffers full has done
         // what a flush can, and the tick will try again.
         let mut rung = false;
         let permit = loop {
-            // The buffers. Past twice their limit the flush is falling behind what
-            // arrives, even closing the largest buffers early, and a body taken now is
-            // memory the process may not have. A flush is on its way: the body waits for
-            // it, where it used to be shed with that flush a few milliseconds from done.
-            // If it is shed in the end, that is a shed and not a verdict on durability:
-            // the log could take the line, and the row it becomes is memory this process
-            // has run out of.
+            // Past twice their limit the flush is falling behind, and a body taken now is
+            // memory the process may not have: it waits for the flush that is on its way.
             loop {
                 // Listening before the look, so a flush that ends between the look and
                 // the wait is not missed.
@@ -530,9 +363,8 @@ impl Server {
                     self.flush_now.notify_one();
                     rung = true;
                 }
-                // Out of time, and the looks above were made after it ran out: the
-                // buffers are full now, the log can write and so can the store. Shed,
-                // with what the buffers hold at this moment.
+                // Out of time, and the looks above were made after it ran out: shed, with
+                // what the buffers hold at this moment.
                 if spent {
                     if self.stopping.is_cancelled() {
                         return Err(turned_away());
@@ -544,18 +376,13 @@ impl Server {
                     biased;
                     () = self.stopping.cancelled() => return Err(turned_away()),
                     () = &mut flushed => {}
-                    // Not shed from here. A flush brings the buffers down before it
-                    // rings `flushed`, so a wait can run out beside buffers that
-                    // already have room; and a log or a store that failed while this
-                    // body waited is the reason it is given, here as everywhere. So
-                    // round once more, for the same looks a body makes on arriving.
+                    // Not shed from here: a flush brings the buffers down before it rings
+                    // `flushed`, so round once more, for the looks a body makes on arriving.
                     () = tokio::time::sleep_until(until) => spent = true,
                 }
             }
-            // The permit for the parse, and then the place: in that order, so that
-            // running out of places means what its refusal says - the bodies inside are
-            // not being parsed, there is a permit free for that, they are waiting on the
-            // log. One deadline for both, so the refusal is no later for there being two.
+            // The permit for the parse and then the place, so that running out of places
+            // means the bodies inside are waiting on the log. One deadline for both.
             let parse = tokio::select! {
                 biased;
                 () = self.stopping.cancelled() => return Err(turned_away()),
@@ -573,10 +400,8 @@ impl Server {
             let Some(place) = place else {
                 return Err(Box::new(self.out_of_time(Wanted::Place)));
             };
-            // The buffers again, because a permit may have been waited for, and for as
-            // long as the whole wait: every body that passed the first look could
-            // otherwise be let in onto buffers that filled meanwhile. Full, the permits
-            // go back - a body waiting for a flush holds nothing - and it goes round.
+            // The buffers again, because they may have filled while a permit was waited for.
+            // Full, the permits go back - a body waiting for a flush holds nothing.
             if !self.stores.buffers_full() {
                 break Permit::of(parse, place);
             }
@@ -588,13 +413,8 @@ impl Server {
         Ok(permit)
     }
 
-    /// The refusal of a body whose wait at the door ran out with no permit, or with no
-    /// place, counted under what there was none of.
-    ///
-    /// **A log that has failed meanwhile is the reason, whatever was waited for.** And
-    /// while bodies inside are waiting for room in the log, that is the reason too: they
-    /// hold the permits, the log's disk or the store is what is behind, and a shipper
-    /// told "at capacity" would be told to send fewer when more permits would not help.
+    /// The refusal of a body whose wait at the door ran out, counted under what there was
+    /// none of; a failed or full log is the reason given, whatever was waited for.
     fn out_of_time(&self, wanted: Wanted) -> Response {
         if let Some(detail) = self.wal.as_ref().and_then(Wal::refusal) {
             return cannot_log(&detail);
@@ -617,14 +437,8 @@ impl Server {
     }
 }
 
-/// One permit of `from` for a body at the door, waited for until `until` and no longer.
-/// `None` is the wait run out with no permit.
-///
-/// With the wait already `spent` - run out while the body waited for the buffers, or
-/// none to give - nothing is waited for, and a permit is taken only if one is free at
-/// this moment. Asked for and not waited for, rather than raced against a timer that
-/// has already rung: the one that is free is then taken on every run, and the body is
-/// shed only when there is none.
+/// One permit of `from` for a body at the door, waited for until `until`; with the wait
+/// `spent` it is taken only if free now, not raced against a timer that has rung.
 async fn permit_by(
     from: &Arc<Semaphore>,
     until: tokio::time::Instant,
@@ -649,8 +463,7 @@ enum Wanted {
 }
 
 /// One body waiting at the door, counted for as long as this lives: however the wait
-/// ends - let in, refused, or dropped with its connection - the count goes back and the
-/// time it took is added up.
+/// ends, the count goes back and the time it took is added up.
 struct Waiting<'a> {
     door: &'a Door,
     since: tokio::time::Instant,
@@ -675,14 +488,8 @@ impl Drop for Waiting<'_> {
     }
 }
 
-/// Shutdown has begun: nobody is kept waiting from here on. Every body at the door is
-/// refused at once, and the log is told that no body waits for room - so a body already
-/// in the log is finished, one still being parsed is taken if the log has room when it
-/// gets there and shed (`log_busy`, counted under `shed.log`) if it has none, and a stop
-/// never takes as long as the longest wait.
-///
-/// The log's part takes its queue's lock, which is no runtime worker's to take: it is
-/// handed to the blocking pool.
+/// Shutdown has begun: every body at the door is refused at once and the log told that
+/// no body waits for room, so a stop never takes as long as the longest wait.
 pub(super) fn begin_stop(server: &Arc<Server>) {
     server.stopping.cancel();
     // A compaction hears of it now, while the requests in flight finish, and is waited
@@ -703,9 +510,8 @@ pub(super) fn begin_stop(server: &Arc<Server>) {
     }
 }
 
-/// One `/ingest` body's permits, as the door hands them to the handler: see `admit`.
-/// `parse` goes back once the body is parsed, routed and in the log's queue; `body` when
-/// its task returns.
+/// One `/ingest` body's permits, as the door hands them to the handler: `parse` goes
+/// back once the body is in the log's queue, `body` when its task returns.
 #[derive(Clone)]
 pub(super) struct Permit {
     pub(super) parse: Arc<tokio::sync::OwnedSemaphorePermit>,
@@ -731,14 +537,13 @@ impl Permit {
 /// still waiting for that answer.
 pub(super) struct Place {
     _permit: tokio::sync::OwnedSemaphorePermit,
-    /// The body's sender hung up before its answer was ready. What a body waiting for
-    /// room in the log looks at, to give the wait up.
+    /// Set when the body's sender hung up before its answer was ready, for a body waiting
+    /// for room in the log to give the wait up.
     pub(super) left: AtomicBool,
 }
 
 /// The refusal of a body that arrives while the server is stopping and would have had to
-/// wait: the shed's shape. The body is unread, and whatever takes this server's place
-/// can have it.
+/// wait: the shed's shape, the body unread.
 fn stopping() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -770,13 +575,8 @@ fn line_full(max: usize) -> Response {
         .into_response()
 }
 
-/// The refusal while the buffers are past twice their limit: the shed's shape, with what
-/// is held against what may be.
-///
-/// `failing` is the store's last write error while its flushes are failing: then the
-/// buffers are full because nothing leaves them, not because too much arrives, and the
-/// refusal says so - the remedy is the disk, not the shippers. The rows already
-/// acknowledged are in the write-ahead log either way.
+/// The refusal while the buffers are past twice their limit; with `failing`, the store's
+/// last write error, it says the remedy is the disk and not the shippers.
 fn buffers_full((held, limit): (u64, u64), failing: Option<String>) -> Response {
     let why = match failing {
         Some(error) => format!(
@@ -801,11 +601,8 @@ fn buffers_full((held, limit): (u64, u64), failing: Option<String>) -> Response 
         .into_response()
 }
 
-/// The shed of a body the write-ahead log had no room for - as many bodies between the
-/// door and their answer as may, or as many bytes in the log and not yet in the store:
-/// the log's disk or the store is behind what arrives (`/stats`
-/// `storage.wal.queue_bytes` against `unapplied_bytes` says which). Nothing of the body
-/// is in the log.
+/// The shed of a body the write-ahead log had no room for: the log's disk or the store
+/// is behind what arrives, and nothing of the body is in the log.
 fn log_busy() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -838,12 +635,8 @@ fn busy(permits: usize) -> Response {
         .into_response()
 }
 
-/// `{"q":"<trieql>"}` in, `query::result_json` out - the same JSON `--format json` prints.
-///
-/// The body is read as `Bytes` and decoded here rather than through `Json<QueryRequest>`,
-/// so that a malformed request body is answered with the same `{"ok":false,"error":...}`
-/// shape as a malformed query. axum's own rejection is plain text, and a client that
-/// parses one error format should not need a second.
+/// `{"q":"<trieql>"}` in, `query::result_json` out; the body is decoded here so a
+/// malformed one is answered in the same `{"ok":false,"error":...}` shape.
 pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response {
     let request: QueryRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
@@ -862,14 +655,8 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
         Err(e) => return fail(StatusCode::BAD_REQUEST, &error::chain(&e)),
     };
 
-    // What tells the scan to stop, and what sets it: this future dropped before the task
-    // below has returned. Three things drop it - the request's timeout and a shutdown's
-    // deadline, both in `track`, and a connection that closes - and after any of them the
-    // answer has nobody to go to.
-    //
-    // Said, and counted, when the scan finds it set and not when the task returns: a
-    // fetch of every row gives back what it had kept first, and a server that is
-    // stopping does not wait for that.
+    // Set when this future is dropped before the task below has returned - a timeout or
+    // a shutdown's deadline in `track`, or a closed connection. Counted when the scan sees it.
     let stop = {
         let (server, began, asked) = (Arc::clone(&server), Instant::now(), shortened(&request.q));
         Stop::watched(move || {
@@ -888,8 +675,7 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
     let held = Arc::clone(&server);
     let told = stop.clone();
     let done = tokio::task::spawn_blocking(move || {
-        // The scan, and then the answer put into JSON, which is half as long again for a
-        // fetch of every row: both ask the stop as they go.
+        // The scan and then the answer put into JSON both ask the stop as they go.
         let body = engine::execute_until(&held.trie, &held.stores, &query, &told).and_then(
             |result| {
                 query::result_json_until(&query, &result, &told)
@@ -910,9 +696,8 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
         Ok(Err(e @ engine::ExecError::Store(StoreError::Stopped))) => {
             fail(StatusCode::SERVICE_UNAVAILABLE, &error::chain(&e))
         }
-        // A bucket count over the cap is the client's to fix - a narrower range or a wider
-        // bucket - so it is a 400 beside the parse errors above, not a 500. A storage
-        // failure is the server's and stays one.
+        // A bucket count over the cap is the client's to fix, so it is a 400 beside the parse
+        // errors above; a storage failure is the server's and stays a 500.
         Ok(Err(e @ engine::ExecError::Buckets(_))) => {
             fail(StatusCode::BAD_REQUEST, &error::chain(&e))
         }
@@ -956,9 +741,8 @@ pub(super) fn shortened(q: &str) -> String {
 /// `POST /load`: what `kibbr load` sends when this server holds the data directory.
 #[derive(Debug, Deserialize)]
 struct LoadRequest {
-    /// Files, already expanded from any directory by the client, which is where the command
-    /// line was: each with the file name the load id hashes. The load itself puts them in
-    /// load order and keeps each file once, whoever sent them.
+    /// Files, already expanded from any directory by the client, each with the file name
+    /// the load id hashes.
     inputs: Vec<LoadInput>,
     #[serde(default)]
     replace_day: Option<String>,
@@ -976,9 +760,8 @@ struct LoadRequest {
     proceed: bool,
     #[serde(default)]
     max_arrival_share: Option<f64>,
-    /// The data directory the client meant, canonical. `LOCK` can still name the last
-    /// holder's address in the moment before a new holder announces its own, and a load
-    /// sent there would be committed into whatever that address now serves.
+    /// The data directory the client meant, canonical: `LOCK` can still name the last
+    /// holder's address in the moment before a new holder announces its own.
     #[serde(default)]
     data_dir: Option<std::path::PathBuf>,
 }
@@ -1048,12 +831,8 @@ fn load_options(request: LoadRequest) -> Result<load::Options, String> {
     })
 }
 
-/// Start a load job and answer at once with its number; `GET /load/<job>` says how it went.
-///
-/// **Not held open for the load.** A request that lasted the whole load would hold up a
-/// graceful shutdown for as long - axum waits for every connection - and a client that
-/// gave up would not stop it. The job runs on a thread of its own, the client polls, and
-/// a shutdown stops the job before its commit and waits for it.
+/// Start a load job and answer at once with its number: a request held open for the
+/// load would hold up a graceful shutdown, and a client that gave up would not stop it.
 pub(super) async fn post_load(State(server): State<Arc<Server>>, headers: HeaderMap, body: Bytes) -> Response {
     if server.stores.disk_store().is_none() {
         return fail(
@@ -1114,10 +893,8 @@ pub(super) async fn post_load(State(server): State<Arc<Server>>, headers: Header
                     .map(|d| format!(", replacing {}", kibbr_storage::store::disk::day_name(d)))
                     .unwrap_or_default()
             ));
-            // A panic is a failed job and not a job running for ever: left `running`, it
-            // would refuse every later load with a 409 and keep its client polling. Its
-            // staging stays - a panic past the commit record leaves the only copy there -
-            // and the next start finishes or removes it.
+            // A panic is a failed job and not a job running for ever, which would refuse every
+            // later load with a 409. Its staging stays for the next start to finish or remove.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 load::run(
                     &held.trie,
@@ -1192,9 +969,8 @@ pub(super) async fn get_load(
     Json(body).into_response()
 }
 
-/// Stop a running load before it commits, and wait for its thread: shutdown's first step
-/// after the last request. A load already inside its commit finishes it - that is a few
-/// renames - and one before it removes its staging directory.
+/// Stop a running load before it commits, and wait for its thread; one already inside
+/// its commit finishes it, and one before it removes its staging directory.
 pub(super) fn stop_loads(server: &Server) {
     let (running, jobs): (Option<std::thread::JoinHandle<()>>, Vec<Arc<LoadJob>>) = {
         let mut loads = server.loads.lock().unwrap_or_else(|e| e.into_inner());

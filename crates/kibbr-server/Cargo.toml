@@ -22,6 +22,5 @@ tracing.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
-# The samples and the failure hooks the storage crate's own tests are built on, for the
-# tests here that hold a server to the same ones.
+# The storage crate's samples and failure hooks, for the tests here that use them.
 kibbr-storage = { workspace = true, features = ["test-support"] }

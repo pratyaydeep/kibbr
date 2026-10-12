@@ -1,15 +1,7 @@
 //! What a server keeps about the compactions it runs, and the run itself.
 //!
-//! The rebuild is the store's (`store::disk::compact`): one day's small row groups read
-//! back, re-cut and swapped in with one manifest record. What is here is what is around
-//! it wherever it runs: which days a run takes and what it reports - and, inside a server,
-//! the job a client polls, the counters `/stats` shows and what the scheduler remembers of
-//! a day that failed. `kibbr compact`, the command, is the binary's: it runs the same
-//! `plan` and `run` alone, or asks the server that holds the directory.
-//!
-//! **A day, or every day that is due.** A run asked for a day compacts that day now,
-//! whatever its age. Without one it takes the days the store says are due - each the day
-//! after its last live row - and none being due is a run that did what it was asked.
+//! The rebuild is the store's (`store::disk::compact`); here is what is around it: which
+//! days a run takes, what it reports, and the jobs, counters and failures a server keeps.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
@@ -66,9 +58,8 @@ pub const NO_DISK: &str = "this store keeps its rows in memory; a compaction rew
 /// hashed them, which is what a failure is remembered against.
 pub type Planned = (i64, Option<u64>);
 
-/// The days a run takes: the one asked for, or every day that is due today, oldest first.
-/// The due listing is one short hold of the flush's lock, so this is called from the thread
-/// that will compact and never from the runtime.
+/// The days a run takes: the one asked for, or every day that is due, oldest first; the
+/// listing holds the flush's lock, so this is never called from the runtime.
 pub fn plan(store: &DiskStore, day: Option<i64>) -> Vec<Planned> {
     match day {
         Some(day) => vec![(day, None)],
@@ -87,14 +78,8 @@ pub struct Ran {
     pub failed: Vec<StoreError>,
 }
 
-/// Compact each planned day in turn, telling `each` how every one went.
-///
-/// **A failed day does not stop the run**; the days after it are still tried. A cancel
-/// does, between days as well as inside one - the store looks at the flag only once it is
-/// rebuilding, and a run of many small days would otherwise start every one of them.
-///
-/// **A day a load replaced meanwhile is a day with nothing to compact**, not a failure: its
-/// files are the load's, finished already, and the rebuilt ones were removed.
+/// Compact each planned day in turn, telling `each` how every one went; a failed day does
+/// not stop the run, a cancel does, and a day a load replaced has nothing to compact.
 pub fn run(
     store: &DiskStore,
     days: &[Planned],
@@ -158,23 +143,14 @@ struct Failure {
     error: String,
 }
 
-/// The compaction jobs a server has run, the one running, and what `/stats` says of them.
-///
-/// **One mutex, held for moments.** Everything here is behind the server's one lock on
-/// this struct, taken to start a job, to note how a day went and to answer `/stats` - never
-/// across a compaction, and never together with the store's flush lock, so `/stats` cannot
-/// queue behind a flush.
-///
-/// **A failed day is remembered**, so that a day that cannot be compacted - a corrupt row
-/// group, a full disk - is not read and re-encoded up to its fault on every look. The
-/// scheduler leaves it for the interval doubled per failure, a day at most, and tries at
-/// once when its inputs are no longer the ones that failed.
+/// The compaction jobs a server has run, the one running, and what `/stats` says of them,
+/// behind one mutex never held across a compaction or with the store's flush lock.
 #[derive(Default)]
 pub struct Jobs {
     next: u64,
     jobs: BTreeMap<u64, State>,
-    /// The thread of the last job a request started, and of the scheduler's last look.
-    /// Two, because the scheduler's thread exists before it knows there is a job to run.
+    /// The threads of the last requested job and of the scheduler's last look: two, because
+    /// the scheduler's exists before it knows there is a job to run.
     pub asked: Option<JoinHandle<()>>,
     pub scheduled: Option<JoinHandle<()>>,
     /// Set when shutdown begins: no job starts after it.
@@ -205,8 +181,8 @@ impl Jobs {
         self.stopping = true;
     }
 
-    /// A new running job's number, or `None` while one is running or once shutdown began.
-    /// Checked and taken in the one hold, so two callers cannot both be given a job.
+    /// A new running job's number, or `None` while one is running or once shutdown began,
+    /// checked and taken in the one hold so two callers cannot both be given a job.
     pub fn start(&mut self) -> Option<u64> {
         if self.stopping || self.running().is_some() {
             return None;
@@ -231,7 +207,7 @@ impl Jobs {
         self.jobs.get(&id).cloned()
     }
 
-    /// How a job ended. `tried` is whether it got as far as trying a day.
+    /// How a job ended; `tried` is whether it got as far as trying a day.
     pub fn finish(&mut self, id: u64, state: State, tried: bool) {
         if tried {
             self.runs += 1;
@@ -241,10 +217,8 @@ impl Jobs {
         }
     }
 
-    /// How one day went: the counters, and the memory of a failure.
-    ///
-    /// A cancel is the server stopping and a replaced day is a load's doing; neither says
-    /// anything about whether the day can be compacted, so neither is remembered.
+    /// How one day went: the counters, and the memory of a failure, which a cancel and a
+    /// replaced day are not.
     pub fn note(&mut self, planned: Planned, result: &Result<Compacted, StoreError>) {
         let (day, inputs) = planned;
         match result {
@@ -278,15 +252,8 @@ impl Jobs {
         }
     }
 
-    /// Forget the failures of every day not in `keep`: the days that still hold a file
-    /// compaction would take.
-    ///
-    /// A failure is otherwise dropped only by a later try of its day, and a day that
-    /// stopped having anything to compact some other way - a load replaced it, which is
-    /// what several refusals say to do - is never tried again: `last_error` would name it
-    /// until the server stopped. Not the due days: a day that is not due can still be
-    /// failing - one holding a file only a restart seals, or any day while a commit is
-    /// unsettled - and has to keep its error and its wait.
+    /// Forget the failures of every day not in `keep`, the days compaction could still take:
+    /// a day a load replaced is never tried again, and `last_error` would name it for ever.
     pub fn forget_except(&mut self, keep: &BTreeSet<i64>) {
         self.failed.retain(|day, _| keep.contains(day));
     }
@@ -300,12 +267,8 @@ impl Jobs {
         (!left.is_zero()).then_some(left)
     }
 
-    /// `/stats`'s `storage.compaction`.
-    ///
-    /// `last_error` is the latest failure among the days still failing: it clears when
-    /// that day is next compacted, or found with nothing to compact - by a try of it, or
-    /// by the scheduler's look (`forget_except`) - and not because another day went well
-    /// after it.
+    /// `/stats`'s `storage.compaction`; `last_error` is the latest among the days still
+    /// failing, and does not clear because another day went well.
     pub fn stats(&self) -> serde_json::Value {
         let last_error = self
             .failed
@@ -326,18 +289,8 @@ impl Jobs {
 const ENDED_UNSAID: &str = "the compaction thread ended without finishing; a file it wrote \
                             and had not named is removed by the next start";
 
-/// A running job's last word, said whatever ends its thread.
-///
-/// **A job left `running` is never looked at again**: every later request is a 409 naming
-/// it, the scheduler stands down on every look, and the `kibbr compact` that asked polls
-/// for as long as the server lives. So the thread holds one of these from the moment it
-/// has a job, and if it is dropped unsaid - a panic outside the one the thread catches -
-/// the job is failed.
-///
-/// **`finish` is the only lock a thread that ends well takes at its end.** A request that
-/// starts the next job joins this thread while it holds the jobs' lock, which it may do
-/// the moment this job stops being `running`; a drop that locked again after `finish`
-/// would wait on that request for ever, and the request on it.
+/// A running job's last word, said whatever ends its thread: dropped unsaid, the job is
+/// failed, since one left `running` refuses every later request with a 409.
 pub struct Ending<'a> {
     jobs: &'a Mutex<Jobs>,
     id: u64,
@@ -616,9 +569,8 @@ mod tests {
         assert_eq!(jobs.wait(day, Duration::from_secs(60)), None);
     }
 
-    /// A panic the thread does not catch - its own log line, with stderr gone - must not
-    /// leave the job `running`: the next request would be a 409 for as long as the server
-    /// lived, and the client that asked would poll as long.
+    /// A panic the thread does not catch must not leave the job `running`: the next request
+    /// would be a 409 for as long as the server lived.
     #[test]
     fn a_job_whose_thread_unwinds_is_failed_and_not_running() {
         let jobs = Mutex::new(Jobs::default());

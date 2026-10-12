@@ -15,10 +15,8 @@ fn server() -> Arc<Server> {
     Arc::new(server.expect("a server in memory"))
 }
 
-/// The wait is what keeps a compaction's last writes inside the directory's lock: a
-/// shutdown that dropped the thread's handle would let the lock go with the thread
-/// still writing. A thread that was told to stop is usually gone by the time it is
-/// waited for, so only one that takes its time shows the wait is there.
+/// The wait keeps a compaction's last writes inside the directory's lock. A thread told
+/// to stop is usually gone already, so only one that takes its time shows the wait.
 #[test]
 fn shutdown_waits_for_a_compaction_thread_still_running() {
     for by_request in [true, false] {
@@ -86,9 +84,8 @@ fn a_look_for_due_days_waits_while_a_load_job_runs() {
     thread.join().expect("the look's thread");
 }
 
-/// And while the last flush tick could not write: the data directory is made
-/// read-only under a row, so the tick that would write it fails, and writable again
-/// for the tick that clears it.
+/// And while the last flush tick could not write: the data directory is made read-only
+/// under a row, so the tick that would write it fails.
 #[cfg(unix)]
 #[test]
 fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
@@ -190,11 +187,8 @@ impl kibbr_storage::store::Store for Refusing {
     }
 }
 
-/// A row the store refuses after the log has its line is not an error and not a
-/// loss: it is held - the checkpoint stays behind it - and so is every later row of
-/// its template, though the store would take them by then. A row group cut around
-/// the one that was skipped would say its line was stored, and the replay that
-/// should store it would step over it. Other templates go on.
+/// A row the store refuses after the log has its line is held, and so is every later row
+/// of its template: a row group cut around it would say its line was stored.
 #[test]
 fn a_row_the_store_refuses_is_held_and_its_template_waits_with_it() {
     let shut = Arc::new(AtomicBool::new(true));
@@ -224,8 +218,7 @@ fn a_row_the_store_refuses_is_held_and_its_template_waits_with_it() {
 // ── A body of which nothing was taken ─────────────────────────────────────────────
 //
 // These call the handler itself, with the door's permits made by hand, so the status,
-// the headers and the body are the ones a client gets; nothing here needs a disk that
-// is full.
+// the headers and the body are the ones a client gets.
 
 /// What `/ingest` answers `body`: status, headers, and the JSON.
 fn answer(server: &Arc<Server>, body: &[u8]) -> (StatusCode, HeaderMap, Value) {
@@ -251,9 +244,8 @@ fn answer(server: &Arc<Server>, body: &[u8]) -> (StatusCode, HeaderMap, Value) {
     })
 }
 
-/// A server in memory whose catalog refuses every append: what a full disk under
-/// `catalog.log` looks like to a line that needs a new template. `known` is taken
-/// first, while there is no catalog to ask, so its template exists.
+/// A server in memory whose catalog refuses every append, as a full disk under
+/// `catalog.log` does; `known` is taken first, so its template exists.
 fn server_whose_catalog_cannot_write(tag: &str, known: &[u8]) -> Arc<Server> {
     let server = server();
     if !known.is_empty() {
@@ -274,7 +266,7 @@ fn server_whose_catalog_cannot_write(tag: &str, known: &[u8]) -> Arc<Server> {
 }
 
 /// No line taken, and every refusal the catalog's write: a 503, a `Retry-After`, and
-/// the errors still by line. It was a 200.
+/// the errors still by line.
 #[test]
 fn a_body_the_catalog_could_write_none_of_is_a_503_with_its_errors_by_line() {
     let server = server_whose_catalog_cannot_write("none", b"");
@@ -317,10 +309,8 @@ fn a_body_the_catalog_could_write_none_of_is_a_503_with_its_errors_by_line() {
     assert_eq!(server.trie.template_count(), 0, "a refused template exists");
 }
 
-/// Any line taken, or any line the sender got wrong, and the answer is the one it
-/// was: a 200 that lists what did not land. A 503 for the first would have the
-/// taken line sent and stored again; a 503 for the second would have the malformed
-/// line sent again for ever.
+/// Any line taken, or any line the sender got wrong, keeps the 200: a 503 would have a
+/// taken line stored again, or a malformed one sent again for ever.
 #[test]
 fn a_body_with_a_line_taken_or_a_malformed_line_keeps_its_200() {
     let known = b"{\"ts\":1705314600,\"known\":1}\n";
@@ -360,9 +350,8 @@ fn a_body_with_a_line_taken_or_a_malformed_line_keeps_its_200() {
     }
 }
 
-/// The rule counts every refusal and not the thousand the answer describes: a
-/// malformed line past the cap still makes the body a mix, and a body of catalog
-/// refusals past the cap is still all of them.
+/// The rule counts every refusal and not only those the answer describes: a malformed
+/// line past the cap still makes the body a mix.
 #[test]
 fn the_rule_counts_refusals_past_the_ones_the_answer_describes() {
     let server = server_whose_catalog_cannot_write("cap", b"");
@@ -383,22 +372,8 @@ fn the_rule_counts_refusals_past_the_ones_the_answer_describes() {
     assert_eq!(report["errors_omitted"], 2);
 }
 
-/// **A scan is shared between threads from a thread that may block, and never from a
-/// runtime worker.** Sharing a run of row groups out blocks the thread that asked
-/// until the run is chosen; on a worker that is every request in flight, stalled.
-///
-/// A server on disk whose queries may use four threads, with one template's day in
-/// two row groups, on a runtime of one worker. `post_query` is run as a task on that
-/// worker, as a request is: the one run its count shares out is shared out from
-/// another thread - the `spawn_blocking` thread the handler moves the query to.
-///
-/// **And the control**, so that this is known to be able to fail: the same query
-/// answered by a task that calls the engine itself. The run is then shared out from
-/// the worker. A worker and a blocking thread cannot be told apart from inside, which
-/// is why this is a test and not an assertion in the scan.
-///
-/// The scan threads are kept by a local declared before the runtime, as `run` keeps
-/// them, so that they are let go after it.
+/// A scan is shared out from a thread that may block, never from a runtime worker, where
+/// it would stall every request; the control shows the test can fail.
 #[test]
 fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
     let dir = std::env::temp_dir().join(format!("kibbr-serve-fan-{}", std::process::id()));
@@ -498,15 +473,8 @@ fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// **A server says what its queries may use**, in `/stats` and in its banner: the
-/// threads one query may choose a day's rows on, and the rows under which a run of
-/// row groups is never shared out. The default is half the cores, so it is not the
-/// same on two machines, and `scan_fan_outs` at 0 reads the same for a server with
-/// one thread as for one with four and nothing worth sharing out.
-///
-/// The threads said are the ones a scan can use, which is not always what was
-/// resolved: a server in memory has no scan to share whatever its flags came to, and
-/// a disk store told none or one has the query's own thread and no other.
+/// A server says what its queries may use, in `/stats` and its banner: the default is
+/// half the cores, and the threads said are the ones a scan can use, not those resolved.
 #[test]
 fn a_server_says_the_scan_threads_it_resolved_in_stats_and_in_its_banner() {
     let dir = std::env::temp_dir().join(format!("kibbr-serve-scan-{}", std::process::id()));
@@ -645,10 +613,8 @@ fn stats_of(server: &Arc<Server>) -> Value {
     })
 }
 
-/// **`/stats` says what is queued, what waited and what was shed, and under which
-/// cause.** `requests_shed` is what it always was - every body told to come back -
-/// and is the sum of the causes beside it, so a reader of the one number loses
-/// nothing and a reader of the six can tell a slow disk from too few permits.
+/// `/stats` says what is queued, what waited and what was shed, by cause; `requests_shed`
+/// is the sum of the causes, so a reader of the one number loses nothing.
 #[test]
 fn stats_say_what_is_queued_and_count_every_shed_under_its_cause() {
     let scratch = Scratch::new("stats-shed");
@@ -719,15 +685,11 @@ fn stats_say_what_is_queued_and_count_every_shed_under_its_cause() {
 
 // ── The door and the log, with a slow hop held ────────────────────────────────────
 //
-// A server on a data directory of the test's own, its router on a port of its own
-// inside a runtime the test owns, and plain sockets for clients. The slow hop is one
-// the test holds: the store's applier, kept still as a replace-a-day keeps it, or
-// the flush, which no task here runs. Nothing sleeps to let a thing happen - a state
-// is waited for, read from the gauges, and the wait's limit fails the test.
+// A server on a data directory and a port of the test's own, with plain sockets for
+// clients. Nothing sleeps to let a thing happen: a state is waited for, from the gauges.
 
 /// How long a body that a test expects to be let go may wait, and how long the test
-/// gives it. Far apart, so that being woken is the only way out in time: a waiter
-/// also looks again when its own wait runs out.
+/// gives it: far apart, so that being woken is the only way out in time.
 const LONG_WAIT: Duration = Duration::from_secs(60);
 const WOKEN_WITHIN: Duration = Duration::from_secs(10);
 
@@ -775,9 +737,8 @@ struct Listening {
 }
 
 impl Listening {
-    /// `permits` bodies parsed at once, `wait` at the door and for room in the log,
-    /// and `storage` over the defaults. No flush task and no signal: a test flushes
-    /// by hand and stops by `begin_stop`.
+    /// `permits` bodies parsed at once, `wait` at the door and for room in the log. No flush
+    /// task and no signal: a test flushes by hand and stops by `begin_stop`.
     fn start(tag: &str, permits: usize, wait: Duration, storage: Storage) -> Self {
         let api = ApiLimits {
             ingest_concurrency: permits,
@@ -847,9 +808,8 @@ impl Listening {
         result.expect("the query answers").count
     }
 
-    /// Hold the log's applier still, as a replace-a-day does: bodies are written to
-    /// the log and none is stored - or answered - until the guard is let go. Taken
-    /// after the server and so let go before it, whatever way the test ends.
+    /// Hold the log's applier still, as a replace-a-day does: bodies are written to the log
+    /// and none is stored or answered until the guard is let go.
     fn still(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
         let disk = self.server.stores.disk_store().expect("a disk store");
         disk.still()
@@ -929,11 +889,8 @@ impl Client {
         let _ = self.0.flush();
     }
 
-    /// The next answer on the connection, read by its `Content-Length`.
-    ///
-    /// In as few reads as the answer comes in, and not a byte at a time: the door
-    /// answers with the body unread and then closes, and what is left of an answer
-    /// in a socket that has been reset is not always there for a second read.
+    /// The next answer on the connection, read in as few reads as it comes in: the door
+    /// answers with the body unread and then closes, and a reset socket may not give a second.
     fn answer(&mut self) -> Answer {
         let mut raw = Vec::new();
         let mut chunk = [0u8; 4096];
@@ -984,14 +941,8 @@ impl Client {
     }
 }
 
-/// **A wait for room that runs out is a `503` on a connection that is kept.** The
-/// body was read and parsed before the log was found full, so nothing is left unread
-/// and the connection carries the next request; the answer says when to come back.
-///
-/// One request at a time, so that nothing here is a race: two bodies are parked in
-/// the log, which is then exactly full, both permits are back, and then one body is
-/// sent alone. The fifty milliseconds are how long the test takes - the applier is
-/// held throughout, so no speed turns the `503` into a `200`.
+/// A wait for room that runs out is a `503` on a connection that is kept: the body was
+/// read before the log was found full. The applier is held, so no speed makes it a `200`.
 #[test]
 fn a_wait_for_room_that_runs_out_is_a_503_on_a_kept_connection() {
     let bound = 2 * one_body();
@@ -1046,12 +997,8 @@ fn a_wait_for_room_that_runs_out_is_a_503_on_a_kept_connection() {
     assert_eq!(at.wal().queue_peak_bytes, bound);
 }
 
-/// **A slow applier makes senders wait, and none is shed.** Two permits, a log that
-/// holds two bodies, and eight senders of three bodies each, with the applier held
-/// still. Two bodies go into the log; the next two are parsed and wait for room,
-/// holding both permits; the other four wait at the door with their bodies unread.
-/// That is the one state the eight can settle in, and nothing in it has been refused
-/// or acknowledged. When the applier is let go every body lands.
+/// A slow applier makes senders wait, and none is shed: two bodies in the log, two parsed
+/// and waiting for room, four at the door, is the one state the eight can settle in.
 #[test]
 fn senders_wait_for_a_slow_applier_and_none_is_shed() {
     const SENDERS: usize = 8;
@@ -1100,14 +1047,8 @@ fn senders_wait_for_a_slow_applier_and_none_is_shed() {
     assert_eq!((at.parsing(), at.inside(), at.at_the_door()), (0, 0, 0));
 }
 
-/// **Every shed answer is one of two shapes, whichever way the timing fell.** The
-/// staging above with a wait of fifty milliseconds and one body a sender: two bodies
-/// get into the log, and the other six cannot while the applier is held. Which of
-/// the six were parsed first, and under which cause each was counted, is the
-/// scheduler's to decide and is not asserted. What is: each is a `503` that says when
-/// to come back, and is either the log's refusal on a connection that is kept - its
-/// body was read - or a refusal from the door on a connection that is closed; and
-/// the count of sheds is the count of `503`s, and the sum of its causes.
+/// Every shed answer is one of two shapes, whichever way the timing fell: the log's
+/// refusal on a kept connection, or the door's on a closed one. The causes are not asserted.
 #[test]
 fn every_shed_answer_is_one_of_two_shapes() {
     const SENDERS: usize = 8;
@@ -1159,9 +1100,8 @@ fn every_shed_answer_is_one_of_two_shapes() {
     assert_eq!(at.count(), 2 * PER_BODY as u64);
 }
 
-/// A log that holds one body, with one written and held at the applier, and one
-/// permit, which a second body holds while it waits for room: what the door looks
-/// like to whoever comes third. The two senders, in that order.
+/// One body in the log, held at the applier, and a second holding the one permit while
+/// it waits for room: what the door looks like to whoever comes third.
 fn one_in_the_log_one_waiting_for_room(
     at: &Listening,
 ) -> [std::thread::JoinHandle<Answer>; 2] {
@@ -1185,14 +1125,8 @@ fn one_at_a_time(tag: &str, wait: Duration) -> Listening {
     Listening::start(tag, 1, wait, storage)
 }
 
-/// **A request's timeout ends a body that does not arrive, and not an `/ingest` body
-/// that was read whole.** One body in the log, held at the applier for as long as
-/// the test likes: its handler has all of it and is waiting on the store. A second
-/// sender sends half of its body and stops. The second is answered `408` on a
-/// connection that closes, having held a permit for the length of the timeout and no
-/// longer; the first, whose time ran out sooner, is still waited for, and is
-/// answered `200` when the applier is let go - a `504` would have been for lines the
-/// log had taken.
+/// A request's timeout ends a body that does not arrive, and not an `/ingest` body that
+/// was read whole: a `504` for that one would be for lines the log had taken.
 #[test]
 fn a_body_that_does_not_arrive_is_timed_out_and_one_read_whole_is_not() {
     const TIMEOUT: Duration = Duration::from_millis(200);
@@ -1237,9 +1171,8 @@ fn a_body_that_does_not_arrive_is_timed_out_and_one_read_whole_is_not() {
     assert_eq!(at.server.timed_out.load(Ordering::Relaxed), 1);
 }
 
-/// **A query whose handler is dropped before its task has returned is told to stop;
-/// one whose task returned is not.** And whoever made the stop hears of it once,
-/// when a scan first finds it set - however many times it is asked after.
+/// A query whose handler is dropped before its task has returned is told to stop, and
+/// whoever made the stop hears of it once, when a scan first finds it set.
 #[test]
 fn a_query_nobody_waits_for_is_told_to_stop_and_says_so_once() {
     let heard = Arc::new(AtomicU64::new(0));
@@ -1276,9 +1209,8 @@ fn a_query_nobody_waits_for_is_told_to_stop_and_says_so_once() {
     assert_eq!(shortened("A\nB"), "A B");
 }
 
-/// **A sender that hangs up at the door holds nothing.** It has no permit and no
-/// place while it waits, so its going costs nobody anything. Its turn comes when the
-/// permit does: reading its body then fails, and the permit goes straight back.
+/// A sender that hangs up at the door holds nothing, no permit and no place; when its
+/// turn comes, reading its body fails and the permit goes straight back.
 #[test]
 fn a_sender_that_hangs_up_at_the_door_holds_nothing() {
     let at = one_at_a_time("door-left", LONG_WAIT);
@@ -1308,17 +1240,8 @@ fn a_sender_that_hangs_up_at_the_door_holds_nothing() {
     assert_eq!(at.shed(), 0);
 }
 
-/// **A stop refuses whoever is waiting and finishes whoever is inside.** One body in
-/// the log, one waiting for room, one at the door, each with a minute to wait. The
-/// stop answers the last two at once, while the applier is still held: the one that
-/// was parsed with the log's refusal on its kept connection, the one at the door
-/// with the door's, unread. The body in the log is finished and answered `200`. A
-/// body that is neither - still being parsed when the stop is said - has the test
-/// after this one.
-///
-/// The third body is where the order of the door's waits shows. The second body's
-/// permit reaches it after the stop was said; a door that looked at its permit
-/// before the stop would let it in to be read, parsed and shed by the log.
+/// A stop refuses whoever is waiting and finishes whoever is inside. The third body shows
+/// the order of the door's waits: a door that looked at its permit first would let it in.
 #[test]
 fn shutdown_refuses_whoever_is_waiting_and_finishes_whoever_is_inside() {
     let at = one_at_a_time("door-stop", LONG_WAIT);
@@ -1360,18 +1283,8 @@ fn shutdown_refuses_whoever_is_waiting_and_finishes_whoever_is_inside() {
     assert_eq!(at.count(), PER_BODY as u64);
 }
 
-/// **A body still being parsed when a stop begins is taken if the log has room for
-/// it, and shed at once if it has none.** It is neither waiting nor in the log. A
-/// stop finishes what the log has taken and keeps nobody waiting, so what this body
-/// is told depends on the room it finds when its parse ends. With none it is the
-/// log's shed, on its kept connection and counted under `log` - not the door's
-/// "stopping", which is for a body that was never read.
-///
-/// The second body holds the one permit, half sent, when the stop is said, and the
-/// rest of it is sent after. Whether the log has been told to hurry by the time the
-/// body gets there, or is told while it waits, the answer is the same and comes at
-/// once. The third body arrives whole after the stop and after the log has emptied:
-/// it has nothing to wait for, and is taken.
+/// A body still being parsed when a stop begins is taken if the log has room, and shed at
+/// once if not, as the log's shed and not the door's "stopping", which is for a body unread.
 #[test]
 fn a_body_being_parsed_at_a_stop_is_shed_if_the_log_has_no_room_for_it() {
     let at = one_at_a_time("stop-parsing", LONG_WAIT);
@@ -1419,15 +1332,8 @@ fn a_body_being_parsed_at_a_stop_is_shed_if_the_log_has_no_room_for_it() {
     assert_eq!(rejected, PER_BODY as u64);
 }
 
-/// **A log that fails answers every waiter with its reason.** One body in the log,
-/// two parsed and waiting for room, one at the door; the log's directory then takes
-/// no new file, and the applier is let go. The body in the log is `200`. Each of the
-/// other three is a `503` that names the write error, inside the time a waiter that
-/// was never woken would not make.
-///
-/// Nothing is asserted of the fourth body's connection. It is closed if the door
-/// refused it, and kept if the door let it through in the moment between the log
-/// being handed a body and that body's flush failing.
+/// A log that fails answers every waiter with its reason, in less time than a waiter never
+/// woken would take. The fourth body's connection may be closed or kept, and is not asserted.
 #[test]
 #[cfg(unix)]
 fn a_failed_log_answers_every_waiter_with_its_reason() {
@@ -1505,13 +1411,8 @@ fn tick(at: &Listening) -> kibbr_storage::store::FlushSummary {
     summary
 }
 
-/// **A body waits at the door while the buffers are past twice their limit, and is
-/// let in by the flush that brings them back.** It was shed at once, though the
-/// flush that would have let it in was a few milliseconds from done.
-///
-/// **And is not made to wait on a store that cannot write.** Nothing leaves the
-/// buffers then, so the wait could only end in the same refusal, later: it is given
-/// at once, with the store's error in it.
+/// A body waits at the door while the buffers are past twice their limit, and the flush
+/// lets it in; on a store that cannot write the wait could not end, so it is refused at once.
 #[test]
 #[cfg(unix)]
 fn a_body_waits_at_the_door_while_the_buffers_are_past_twice_their_limit() {
@@ -1563,17 +1464,8 @@ fn a_body_waits_at_the_door_while_the_buffers_are_past_twice_their_limit() {
     assert_eq!(at.shed(), 1);
 }
 
-/// **A body given its permit onto full buffers goes back to wait.** The door looks at
-/// the buffers before it waits for a permit, and a permit can be a long wait: without
-/// a second look, every body that passed the first could be let in onto buffers that
-/// filled meanwhile.
-///
-/// One permit. The first body is in the log with its rows not yet stored, so the
-/// buffers are empty; the second holds the permit, half sent; the third waits at the
-/// door for that permit. Then the first body's rows are stored - the buffers are
-/// full - and the second finishes. The permit passes to the third with no moment at
-/// which it is free, so the state waited for here - no permit in use, one body at
-/// the door - is one only a door that gave the permit back can reach.
+/// A body given its permit onto full buffers goes back to wait: a permit can be a long
+/// wait, and without a second look the buffers may have filled meanwhile.
 #[test]
 fn a_body_given_its_permit_onto_full_buffers_goes_back_to_wait() {
     let at = small_buffers("door-second-look", 1);
@@ -1612,11 +1504,8 @@ fn a_body_given_its_permit_onto_full_buffers_goes_back_to_wait() {
     assert_eq!(at.count(), 3 * PER_BODY as u64);
 }
 
-/// **The line at the door has no bound at the default wait, and one above it.** At
-/// a hundred milliseconds nobody is in the line for longer than that, and a burst
-/// queues for the moment it takes with no count held against it, as it always has.
-/// A wait an operator has raised keeps each waiter's socket for as long, and that
-/// needs a number: the places.
+/// The line at the door has no bound at the default wait, where nobody is in it for long;
+/// a wait an operator has raised keeps each waiter's socket, and is bounded by the places.
 #[test]
 fn the_line_has_no_bound_at_the_default_wait() {
     let with_wait = |ms: u64| {
@@ -1669,11 +1558,8 @@ fn the_line_has_no_bound_at_the_default_wait() {
     }
 }
 
-/// **The flush task says so when it has flushed, and that is what lets in a body
-/// waiting at the door.** The buffers are full, a body is waiting at the door, and
-/// only then is the task started - on a tick an hour long, so the flush it runs is
-/// the one it was rung for. Without its word to the door the body would wait out its
-/// minute beside buffers that had long been emptied.
+/// The flush task says so when it has flushed, which lets in a body waiting at the door;
+/// the tick is an hour long, so the flush it runs is the one it was rung for.
 #[test]
 fn the_flush_task_lets_in_a_body_waiting_at_the_door() {
     let storage = Storage {
@@ -1706,10 +1592,8 @@ fn the_flush_task_lets_in_a_body_waiting_at_the_door() {
 
 // ── The door's own decision, a look at a time ─────────────────────────────────────
 //
-// The tests below ask the door directly and turn it by hand: a body at the door is
-// a future, looked at only when the test looks at it. What happens between its first
-// look and its last is then in the test's order on every run, whatever the wait is
-// and however long the test takes over it - nothing is raced against the deadline.
+// The tests below ask the door directly and turn it by hand: a body at the door is a
+// future looked at only when the test looks, so nothing is raced against the deadline.
 
 /// A runtime for a body at the door that the test turns by hand.
 fn by_hand() -> tokio::runtime::Runtime {
@@ -1763,16 +1647,8 @@ fn full_buffers(tag: &str, wait: Duration) -> Listening {
     at
 }
 
-/// **A wait for the buffers that runs out sheds nobody by itself: the buffers are
-/// looked at once more.** A flush empties the buffers and only then says so to the
-/// door, so a body's wait can run out between the two - beside buffers that have
-/// room. It was shed there, and told that the buffers held nothing and were past
-/// their limit.
-///
-/// The flush here is the test's and says nothing to the door, so the only thing that
-/// brings the body back is its own deadline, and what it finds then is what the
-/// test put there: full buffers, and it is shed with what they hold; emptied ones,
-/// and it is let in. The twenty milliseconds are how long each half takes.
+/// A wait for the buffers that runs out looks at them once more: a flush empties them
+/// and only then tells the door, so a wait can run out beside buffers that have room.
 #[test]
 fn a_wait_for_the_buffers_that_runs_out_looks_at_them_once_more() {
     let at = full_buffers("door-last-look", Duration::from_millis(20));
@@ -1818,13 +1694,8 @@ fn a_wait_for_the_buffers_that_runs_out_looks_at_them_once_more() {
     );
 }
 
-/// **A store that stops writing while a body waits for the buffers is the reason
-/// the body is given.** The wait ran out into "the flush is behind what is
-/// arriving" whatever had happened during it; a store that cannot write is another
-/// thing to tell a shipper, and the door tells it to a body that arrives then.
-///
-/// The body is parked on healthy, full buffers; then a flush fails, with no word to
-/// the door; then the body's wait runs out.
+/// A store that stops writing while a body waits for the buffers is the reason the body
+/// is given, not "the flush is behind what is arriving".
 #[test]
 #[cfg(unix)]
 fn a_store_that_fails_during_a_wait_for_the_buffers_is_the_reason_given() {
@@ -1871,12 +1742,8 @@ fn a_store_that_fails_during_a_wait_for_the_buffers_is_the_reason_given() {
     assert_eq!(at.shed(), 1);
 }
 
-/// **With no wait to give, a body at the door waits for nothing.** It is let in or
-/// shed at its first look, whichever of the three it would have waited for is
-/// missing - not parked on a timer for a moment that has already come, which is a
-/// millisecond's wait for a body that was to have none.
-///
-/// Each answer here is the one look's: a body still pending after it fails the test.
+/// With no wait to give, a body at the door is let in or shed at its first look, not
+/// parked on a timer for a moment that has already come.
 #[test]
 fn with_no_wait_a_body_at_the_door_is_answered_at_its_first_look() {
     let at = full_buffers("door-no-wait", Duration::ZERO);
@@ -1931,14 +1798,8 @@ fn with_no_wait_a_body_at_the_door_is_answered_at_its_first_look() {
     assert_eq!(at.at_the_door(), 0);
 }
 
-/// **A sender that hangs up while its body waits for room frees its slot.** The body
-/// is parsed and holds the one permit, and the log has no room for it; its sender
-/// then closes the connection. The body gives up its wait - it does not sit on the
-/// permit for the minute it was allowed - nothing of it is in the log, and the next
-/// body takes the permit.
-///
-/// A body that is being parsed, or is already in the log, is another matter and is
-/// stored whole: this is only the body that has nowhere to go yet.
+/// A sender that hangs up while its body waits for room frees its slot: the body gives up
+/// its wait and its permit, and nothing of it is in the log.
 #[test]
 fn a_sender_that_hangs_up_while_waiting_for_room_frees_its_slot() {
     let at = one_at_a_time("room-hangup", LONG_WAIT);

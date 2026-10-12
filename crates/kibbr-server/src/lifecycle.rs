@@ -4,32 +4,22 @@ use super::*;
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────────────
 
-/// How a server's run ended, once it has stopped and wound down: what `run` returns.
-///
-/// **A stop that got this far lost nothing**, whichever way it went: every line a body
-/// was told `200` for is in the write-ahead log (`shutdown_sequence`). So there is no
-/// failure in here - a server that could not start, or could not finish, is an `Error` -
-/// and what is here is what a caller cannot learn any other way.
+/// How a server's run ended, once it has stopped and wound down; never a failure, since
+/// a stop that got this far lost nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Report {
     /// Where it listened: the port the system gave, where the settings asked for 0.
     pub addr: SocketAddr,
     /// Whether the shutdown deadline passed with requests still in flight, each then
-    /// answered 503 where it stood and let go. The wind-down ran either way.
+    /// answered 503 where it stood and let go.
     pub cut: bool,
 }
 
-/// Build the runtime and run the server until `cancel` is cancelled - by the caller, or
-/// by SIGTERM or SIGINT, which cancel the same token.
-///
-/// The runtime is built here rather than handed in, because it is the server's: its
-/// blocking pool is sized by the settings, and what outlives it is decided below. A
-/// caller is synchronous - every other command of the binary is, and none of them should
-/// pay for a thread pool to parse a file - and a test runs this on a thread of its own.
+/// Build the runtime and run the server until `cancel` is cancelled, by the caller or
+/// by SIGTERM or SIGINT; the runtime is built here because the settings size it.
 pub fn run(settings: Settings, cancel: CancellationToken) -> Result<Report> {
-    // The scan threads' last owner. Declared before the runtime, so let go after it: the
-    // pool's own `Drop` then runs here, on the calling thread, when no runtime thread
-    // exists and no `async fn` is on the stack (see `store::fan`).
+    // The scan threads' last owner. Declared before the runtime, so let go after it, on
+    // the calling thread when no runtime thread exists (see `store::fan`).
     let scan: OnceLock<Arc<Fan>> = OnceLock::new();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -37,13 +27,8 @@ pub fn run(settings: Settings, cancel: CancellationToken) -> Result<Report> {
         .build()
         .map_err(Error::Runtime)?;
     let report = runtime.block_on(serve(settings, cancel, &scan))?;
-    // Dropping a runtime waits for every thread of its blocking pool, for as long as
-    // each takes. After a stop that cut requests off, one may be a query's: its scan
-    // has been told to stop and does, at its next row group - but a thread that is
-    // putting two million rows into JSON, or is in a read a failing disk never
-    // answers, is not asked again. The wind-down is done and the directory's lock let
-    // go by now, and a query writes nothing, so such a thread is given a moment and
-    // then left for the exit.
+    // Dropping a runtime waits for every blocking thread. After a cut, one may be a query's
+    // that is not asked to stop again: it writes nothing, so it is given a moment and left.
     if report.cut {
         runtime.shutdown_timeout(CUT_OFF_GRACE);
     }
@@ -65,15 +50,12 @@ async fn serve(
         banner: how,
     } = settings;
     // Read-only, so it runs before the lock and the port: a data directory holding a
-    // segment from another format version is not served at all, and nothing is listening
-    // when the process exits over it. Everything that writes - catalog recovery, segment
-    // recovery - waits for the directory's LOCK below.
+    // segment from another format version is not served at all.
     if let Some(base) = storage.base_path.as_deref() {
         kibbr_storage::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
     }
     // Taken before anything is written and before the port: two servers on one directory
-    // - on two ports, or both on `--port 0` - would each append to the catalog and the
-    // manifest over the other's records. Held until this function returns.
+    // would each append to the catalog and the manifest over the other's records.
     let mut lock = match storage.base_path.as_deref() {
         Some(base) => {
             let mut lock = kibbr_storage::lock::DataLock::acquire(base)?;
@@ -119,8 +101,7 @@ async fn serve(
         let _ = scan.set(Arc::clone(fan));
     }
     // Where `kibbr load` finds this server - written once it can answer. An address of
-    // all interfaces is reached on loopback from the same machine, which is where the
-    // directory is.
+    // all interfaces is reached on loopback, which is where the directory is.
     if let Some(lock) = lock.as_mut() {
         let reach = if bound.ip().is_unspecified() {
             SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), bound.port())
@@ -134,17 +115,15 @@ async fn serve(
             ));
         }
     }
-    // Installed before the banner: a server that cannot hear SIGTERM will be killed by
-    // the SIGKILL that follows it, and a deploy is a bad place to discover that. The
-    // token is the caller's, so a signal and the caller stop the server the same way.
+    // Installed before the banner: a server that cannot hear SIGTERM is killed by the
+    // SIGKILL that follows. The token is the caller's, so both stop it the same way.
     let signals = signals(token.clone())?;
 
     banner(bound, &server, how);
     tokio::spawn(signals);
 
     // The clock the stores deliberately do not own. Held rather than detached: a tick
-    // still running after the final flush would write behind the `trie.json` snapshot, and
-    // the two would then disagree about what exists.
+    // after the final flush would write behind the `trie.json` snapshot.
     let flusher = tokio::spawn(flush_loop(Arc::clone(&server), token.clone()));
     // And the clock compaction is looked for by. Held for the same reason: a look after
     // the wind-down would start a compaction nothing waits for.
@@ -156,8 +135,7 @@ async fn serve(
         async move {
             token.cancelled().await;
             // Whoever is waiting - at the door, or for room in the log - is refused now,
-            // and a compaction is told to stop; the requests below then finish or, with
-            // no room in the log, are shed.
+            // and a compaction is told to stop.
             begin_stop(&server);
             // Shutdown, step one. Everything after this is the wind-down; the log names each
             // step so an operator can see which ones this build actually has.
@@ -190,11 +168,8 @@ async fn serve(
         }
         () = past_deadline => Some(server.in_flight.load(Ordering::Relaxed)),
     };
-    // Past the deadline with requests still in flight: each is answered 503 where it
-    // stands (`track`), and the wind-down below runs in the time that is left before
-    // whatever sent the signal sends the next one. Their answers are a few bytes each;
-    // a connection that will not take even that within the grace is left behind, open,
-    // for the process's exit to close.
+    // Past the deadline each request in flight is answered 503 where it stands (`track`); a
+    // connection that will not take even that within the grace is left for the exit to close.
     let cut = left.is_some();
     if let Some(left) = left {
         log_warn(&format!(
@@ -211,25 +186,18 @@ async fn serve(
         }
     }
 
-    // `axum::serve` returns once every connection it accepted has finished, so reaching
-    // this line *is* "in-flight requests complete first" - but for a body whose client
-    // hung up: its connection is finished and its blocking task is not. Every body's
-    // permit taken back is every such task returned - its lines in the log and applied,
-    // or refused - so the final flush below writes all there will be, and nothing of
-    // `/ingest` runs on beside the shutdown or after the directory's lock is let go.
+    // `axum::serve` returns once every connection has finished, but a body whose client hung
+    // up still has its blocking task: every permit taken back is every such task returned.
     let _ingest_done = server
         .ingest_bodies
         .acquire_many(ingest_bodies(&server.api) as u32)
         .await;
-    //
-    // Loads stop next: one past its commit finishes it, one before it removes its staging,
-    // so the final flush and the trie snapshot below see the directory as it will stay - a
-    // load committing beside them would publish rows the snapshot does not describe.
+    // Loads stop next, so the final flush and the trie snapshot below see the directory as
+    // it will stay.
     stop_loads(&server);
 
-    // The flush task is joined before the wind-down and not after: a tick arriving between
-    // the final flush and the trie snapshot would write rows the snapshot does not
-    // describe, and a tick beside the final flush would only queue behind it.
+    // Joined before the wind-down: a tick between the final flush and the trie snapshot
+    // would write rows the snapshot does not describe.
     let _ = flusher.await;
     // No look starts a compaction from here on; the one running, if any, has been told to
     // stop and is waited for inside the sequence, behind the final flush.
@@ -240,24 +208,8 @@ async fn serve(
     result.map(|()| Report { addr: bound, cut })
 }
 
-/// Ask every store whether a row group is due, every interval, until the token is
-/// cancelled.
-///
-/// **The tick no longer writes on its own account.** A row group closes at 8,192 rows,
-/// 8MB or the row group timeout, and the tick is what notices - so most ticks on a quiet
-/// server do nothing, and on a busy one the first tick after the 8,192nd row writes every
-/// row group then due and flushes each file it wrote to once.
-///
-/// It is also woken early, by an ingest body that left the buffers past their memory limit.
-///
-/// Two details that are not decoration:
-///
-/// - **`spawn_blocking`.** The flush is file I/O. On a runtime worker that blocks the
-///   whole executor, including `/health`, which is the endpoint an orchestrator reads to
-///   decide whether to kill the process.
-/// - **`MissedTickBehavior::Delay`.** The default fires catch-up ticks back to back after
-///   a slow flush, which turns one stall into a burst of them at exactly the moment the
-///   disk is already behind.
+/// Ask every store whether a row group is due, each interval or when woken. The
+/// flush is `spawn_blocking` so `/health` still answers; `Delay` so a stall is not a burst.
 pub(super) async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
     if !server.storage.is_durable() {
         return;
@@ -322,12 +274,7 @@ pub(super) async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
 }
 
 /// After a flush: ask a log that cannot write to try again, and move its checkpoint up
-/// behind the oldest row that is still only in memory.
-///
-/// **The checkpoint moves while the server runs**, here, every tick. Left to anything
-/// rarer - a shutdown, a compaction - the log would grow for as long as the process lived.
-/// What bounds it is the oldest row no row group holds yet: a buffered one, or one the
-/// store refused (`Held`), which waits for the next start.
+/// behind the oldest row still only in memory, every tick, or the log would grow.
 pub(super) fn move_checkpoint(server: &Server) -> Option<wal::Advanced> {
     let wal = server.wal.as_ref()?;
     wal.probe();
@@ -358,11 +305,8 @@ pub(super) fn move_checkpoint(server: &Server) -> Option<wal::Advanced> {
     moved
 }
 
-/// SIGTERM and SIGINT, both cancelling the one token that every long-running part of the
-/// server is watching.
-///
-/// Returns the future rather than spawning it, so a handler that could not be installed
-/// is an error at startup instead of a task that quietly never fires.
+/// SIGTERM and SIGINT, both cancelling the one token. Returned rather than spawned, so
+/// a handler that could not be installed is an error at startup.
 fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output = ()>, Error> {
     #[cfg(unix)]
     {
@@ -395,21 +339,8 @@ fn signals(token: CancellationToken) -> Result<impl std::future::Future<Output =
     }
 }
 
-/// The fixed shutdown order, with the steps a memory server does not have named as
-/// skipped.
-///
-/// ```text
-/// stop accepting → final flush → WAL checkpoint → trie.json → close stores → close WAL
-/// ```
-///
-/// Printing the skipped steps rather than omitting them is the point: an operator watching
-/// a clean shutdown scroll past should see exactly which durability they have and which
-/// they do not.
-///
-/// **No row depends on this running to the end.** Every line a body was told `200` for is
-/// in the write-ahead log, so a final flush that fails - or a `SIGKILL` that lands halfway
-/// through - costs the next start a replay and nothing else. The flush is still done: a
-/// clean stop then leaves every row in a sealed file and nothing to read back.
+/// The fixed shutdown order, the steps a memory server lacks printed as skipped
+/// so an operator sees which durability they have. No row depends on it finishing.
 fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
     log(if cut {
         "in-flight requests cut off at the shutdown deadline"
@@ -426,9 +357,7 @@ fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
             leaves => Some((leaves, server.stores.buffered())),
         };
         // Bounded by the open days and not by the templates: one flush and one seal per day
-        // file, however many templates' row groups went into it. Sealing a file per
-        // template per day took 349 seconds for 200,000 rows, where Kubernetes sends
-        // SIGKILL after 30.
+        // file, however many templates' row groups went into it.
         log(&format!(
             "final flush - {} row(s) into {} row group(s) in {} file(s), {} sealed, {} \
              byte(s), {:.2}s{}",
@@ -493,10 +422,8 @@ fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
     }
 
     let stores = &server.stores;
-    // Rows still buffered are rows that never reached a file, so they do not belong in a
-    // count of what was written. The line used to be `stores.rows()` whole, which after a
-    // failed final flush claimed 90,000 written where 85,000 were - the shutdown log
-    // contradicting the line above it.
+    // Rows still buffered never reached a file, so they do not belong in a count of what
+    // was written.
     let held = stores.rows();
     let unwritten = stores.buffered();
     let kept = if server.storage.is_durable() {
@@ -533,18 +460,14 @@ fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
         None => log("close WAL - skipped, storage is memory"),
     }
 
-    // **Always 0 once it gets here.** The exit code is the last thing a process says, and
-    // it used to be 1 for a final flush that could not write every row - rightly, while a
-    // buffered row was only ever in memory: 20,000 lines accepted, 10,625 back after a
-    // restart. Those rows are in the log now. A stop that leaves every acknowledged line
-    // durable has lost nothing, and an orchestrator told otherwise would be told a lie.
+    // Always 0 once it gets here: a stop that leaves every acknowledged line durable in
+    // the log has lost nothing, and an orchestrator told otherwise would be told a lie.
     log("exit 0");
     Ok(())
 }
 
-/// The threads one query of this server may choose a day's rows on, its own among them:
-/// what was resolved from the flag, the variable and the cores, and 1 where there is
-/// nobody to share with - the memory store, or a disk store told 0 or 1.
+/// The threads one query of this server may choose a day's rows on, its own among them;
+/// 1 where there is nobody to share with - the memory store, or a disk store told 0 or 1.
 pub(super) fn scan_threads(server: &Server) -> usize {
     server.fan.as_ref().map_or(1, |_| server.storage.scan_threads)
 }
@@ -593,22 +516,8 @@ fn ingest_line(server: &Server) -> String {
     )
 }
 
-/// The startup banner.
-///
-/// The binary writes it to stderr, and not stdout, so that `kibbr serve >/dev/null` still
-/// prints the paragraph about losing data. A warning a redirect can silence is a warning
-/// that will be silenced by the first person who pipes the process into a log file, and
-/// this is something to say rather than hide.
-///
-/// **An event like every other line this crate says**, under a target of its own
-/// (`BANNER`): the subscriber that writes lines of text writes this one bare, so the
-/// paragraph is the bytes it was while it was printed here, and a test that holds no
-/// subscriber hears nothing.
-///
-/// **Asked for as `Banner::Event` it is one event and not a paragraph**: a collector
-/// reading an object a line is given the address and the settings an alert would be
-/// written on as fields, and the one sentence that must not be lost - storage in memory -
-/// as a warning of its own.
+/// The startup banner, an event under `BANNER` that the binary writes bare to stderr, so
+/// `kibbr serve >/dev/null` still prints the paragraph about losing data.
 fn banner(addr: SocketAddr, server: &Server, how: Banner) {
     let limits = server.limits;
     if how == Banner::Event {
@@ -640,9 +549,8 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
         String::new(),
         format!("  listening   http://{addr}"),
         String::new(),
-        // Two paragraphs, one per storage mode, and the memory one is unchanged from when
-        // it was the only one. A warning that softens once a feature lands beside it is a
-        // warning nobody reads the second time.
+        // Two paragraphs, one per storage mode: a warning that softens once a feature lands
+        // beside it is a warning nobody reads the second time.
         match (&server.storage.base_path, &server.storage.trie_file) {
             (Some(base), trie_file) => format!(
                 "  storage     {}\n\
@@ -756,26 +664,18 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
     tracing::info!(target: BANNER, "{}", lines.join("\n"));
 }
 
-/// One lifecycle line: an `info` event of the process's log. The binary's subscriber
-/// writes it to stderr for the reason the banner is there - these are logs, and this
-/// surface's data goes out over HTTP.
-///
-/// **An event, and never `eprintln!`**, which panics when stderr is gone - the log
-/// collector at the other end of the pipe went away - and this is called from the flush
-/// task and from the threads a load and a compaction run on: the panic would end the work
-/// for want of somewhere to say it was being done. A subscriber drops a line it cannot
-/// write.
+/// One lifecycle line, an `info` event and never `eprintln!`, which panics when stderr
+/// is gone and would end the flush, load or compaction that called it.
 pub(super) fn log(message: &str) {
     tracing::info!("{message}");
 }
 
 /// A line an operator should read: something was skipped, delayed or left as it was.
-/// As text it is `log`'s line with `WARN` before the sentence, as it always was.
 pub(super) fn log_warn(message: &str) {
     tracing::warn!("{message}");
 }
 
-/// A line that says the server cannot do what it is for. `ERROR` before the sentence.
+/// A line that says the server cannot do what it is for.
 pub(super) fn log_error(message: &str) {
     tracing::error!("{message}");
 }

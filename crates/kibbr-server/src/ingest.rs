@@ -4,19 +4,15 @@ use super::*;
 
 // ── The ingest path ────────────────────────────────────────────────────────────────
 
-/// Why a body could not be turned into NDJSON, before any line of it was read.
-///
-/// Distinct from `DetectorError`, which is one bad line among good ones that still land.
-/// These three are the whole body. Answering a corrupt gzip with 500 per-line rejections
-/// would describe the symptom - unreadable bytes - rather than the fault, which is that
-/// nothing in the body was ever going to parse.
+/// Why a body could not be turned into NDJSON, before any line of it was read: a fault
+/// of the whole body, where a `DetectorError` is one bad line among good ones.
 pub(super) enum BodyError {
     /// A `Content-Encoding` this server cannot decode.
     Unsupported(String),
     /// `gzip`, but not gzip: wrong magic, a truncated stream, a failed CRC.
     Corrupt(String),
-    /// Valid gzip that inflates past the cap. Carries the compressed size because the
-    /// *ratio* identifies a bomb: 10 MB from 1 MB is a log batch, 10 GB from 1 MB is not.
+    /// Valid gzip that inflates past the cap, with the compressed size because the ratio
+    /// is what identifies a bomb.
     TooLarge { cap: usize, compressed: usize },
 }
 
@@ -53,19 +49,8 @@ impl BodyError {
     }
 }
 
-/// The body as NDJSON, decompressing first when the client said it was gzipped.
-///
-/// **Borrowed when there is nothing to do.** An unencoded body is the common case, and
-/// copying 10 MiB to hand it to the same reader buys nothing.
-///
-/// **The cap is enforced while inflating, not after.** `Read::take` is load bearing:
-/// without it the check that a body was too big happens after the allocation that killed
-/// the process. With it the reader stops at `cap + 1` bytes however the body was built -
-/// the extra byte being what separates "filled the cap" from "would have gone further".
-///
-/// `MultiGzDecoder`, not `GzDecoder`: concatenated members are a valid stream and a
-/// shipper that batches by appending produces them. `GzDecoder` stops silently after the
-/// first, dropping the rest of a batch and reporting success.
+/// The body as NDJSON, gunzipped when the client said so, the cap enforced while
+/// inflating; `MultiGzDecoder` because a shipper's concatenated members are one stream.
 pub(super) fn decode<'a>(
     body: &'a [u8],
     encoding: Option<&str>,
@@ -83,9 +68,8 @@ pub(super) fn decode<'a>(
     MultiGzDecoder::new(Cursor::new(body))
         .take(cap as u64 + 1)
         .read_to_end(&mut out)
-        // Every decoder failure arrives here as an `io::Error` - and arrives, rather than
-        // unwinding. A body is attacker-supplied input on a path a shipper hits thousands
-        // of times an hour, and a panic in it takes the server, not the body.
+        // Every decoder failure arrives here as an `io::Error`, not a panic: a body is
+        // attacker-supplied, and a panic in it takes the server, not the body.
         .map_err(|e| BodyError::Corrupt(e.to_string()))?;
 
     if out.len() > cap {
@@ -98,9 +82,6 @@ pub(super) fn decode<'a>(
 }
 
 /// One malformed line: `{"line":400,"msg":"..."}`.
-///
-/// The line number and the message are two fields, which is why `DetectorError` keeps
-/// them as two things - see its own note.
 pub(super) struct LineError {
     pub(super) line: usize,
     pub(super) msg: String,
@@ -112,10 +93,8 @@ pub(super) struct IngestReport {
     pub(super) errors: Vec<LineError>,
     /// Rejections past `MAX_REPORTED_ERRORS`, counted but not described.
     omitted: u64,
-    /// Of the lines rejected - described or not - the ones that parsed and were refused
-    /// because the catalog could not write the record they needed. Counted where the
-    /// append fails, by the error's type, and not read back out of a message. Not in the
-    /// JSON: it decides the status (`nothing_taken`).
+    /// Of the lines rejected, those that parsed and were refused because the catalog could
+    /// not write their record. Not in the JSON: it decides the status (`nothing_taken`).
     unwritten: u64,
 }
 
@@ -127,32 +106,23 @@ impl IngestReport {
             .map(|e| json!({ "line": e.line, "msg": e.msg }))
             .collect();
         let mut report = json!({
-            // "every line went in", not "the request was handled". A client that checks
-            // one field should be told that 3 of its 500 lines are missing; the count and
-            // the array are there for the client that wants to know which.
+            // "every line went in", not "the request was handled": a client that checks one
+            // field should be told that some of its lines are missing.
             "ok": self.errors.is_empty(),
             "ingested": self.ingested,
             "errors": errors,
         });
 
-        // Present only when something was actually dropped, so a clean body is still
-        // exactly `{"ok":true,"ingested":N,"errors":[]}` and no existing client sees a
-        // field it has never seen. One that is almost always zero teaches clients to
-        // ignore it, which is the opposite of what it is for.
+        // Present only when something was dropped: a field that is almost always zero
+        // teaches clients to ignore it.
         if self.omitted > 0 {
             report["errors_omitted"] = json!(self.omitted);
         }
         report
     }
 
-    /// No line of the body was taken, and every line was refused for a write this server
-    /// could not make. Then the answer is not a `200`: the sender got nothing wrong, has
-    /// nothing to drop, and should send the body again (`nothing_taken`).
-    ///
-    /// False for a body with no refusal at all - an empty one, or blank lines - and for
-    /// one where any refusal is the line's own: that line is refused the same way every
-    /// time it is sent. `omitted` is in the sum because the rule is about every line, and
-    /// `errors` stops at `MAX_REPORTED_ERRORS`.
+    /// Whether no line was taken and every refusal was a write this server could not make,
+    /// so the answer is not a `200` and the sender should send the body again.
     pub(super) fn nothing_taken(&self) -> bool {
         self.ingested == 0
             && self.unwritten > 0
@@ -165,50 +135,21 @@ impl IngestReport {
 pub(super) enum IngestFailure {
     /// The body could not be decoded: wrong encoding, corrupt gzip, or a bomb.
     Body(BodyError),
-    /// A lock poisoned mid-body. Fails every line after it too, so the body is abandoned
-    /// rather than answered with 500 copies of one message. A catalog append that fails
-    /// is not this: it costs its line, reported in `errors`, and the body goes on - and a
-    /// body that lost every line that way is refused from its report, with the errors
-    /// still in it, and not from here (`IngestReport::nothing_taken`). Nor is a store
-    /// that cannot take a row, which costs nothing and is not an error at all.
+    /// A lock poisoned mid-body, which fails every line after it too, so the body is
+    /// abandoned; a failed catalog append costs only its line (`IngestReport::nothing_taken`).
     Fatal(IngestError),
 }
 
-/// An NDJSON body into the database: parsed, routed, logged, applied.
-///
-/// A plain function, not an `Ingestor` - see the module header.
-///
-/// **The order is the durability.** Every line is parsed with nothing held; each is then
-/// routed to its template, which makes the template - or the widening the line causes -
-/// durable in the catalog first; then the body's lines go to the write-ahead log, whose
-/// record names that template; and this returns once the log has flushed them **and** the
-/// log's one applier has handed their rows to the store. The answer is sent after that:
-/// the flush is what makes a `200` true, and the wait for the applier is what lets a
-/// client that ingests and then queries see all of what it sent.
-///
-/// **Per-line error isolation.** A bad line is recorded against its number and
-/// the loop continues, so line 400 of 500 costs line 400 and nothing else. This is not a
-/// second copy of that logic: `db::read_lines` is the same loop the CLI reads files with,
-/// and the only thing this caller changes is where a rejection goes - to a `Vec` that
-/// becomes the response body, instead of to a stderr an HTTP client cannot read.
-///
-/// **A body the log cannot take is refused, and so is one the catalog could write
-/// nothing for.** Not a row the store cannot take: by then the line is durable, its
-/// sender is told `Ok`, and the failure is the applier's to log (`Held`). The error this
-/// returns cannot carry a store's - see `IngestError` - and is the log's, or the trie's
-/// lock poisoned, which fails every line after it too, so the body is abandoned rather
-/// than answered with 500 copies of one message. The catalog's refusal is not an error of
-/// this function: each line it cost is in the report, the report counts them, and the
-/// handler answers `503` when they are all there is (`IngestReport::nothing_taken`).
+/// An NDJSON body into the database, in the order that is the durability: parsed, routed
+/// to a template made durable, logged, and answered once the rows are applied.
 pub(super) fn ingest(
     server: &Server,
     body: &[u8],
     now: DateTime<Utc>,
     permit: Permit,
 ) -> Result<IngestReport, IngestError> {
-    // `place` is this body's place among those between the door and their answer, kept
-    // until this returns, and what says whether its sender is still there; `permit` is
-    // for the parse and the routing.
+    // `place` is this body's place between the door and its answer, and what says whether
+    // its sender is still there; `permit` is for the parse and the routing.
     let Permit {
         parse: permit,
         body: place,
@@ -222,10 +163,6 @@ pub(super) fn ingest(
     }
 
     // ── Half one: split and parse, holding nothing ─────────────────────────────────
-    //
-    // The lock used to be taken here, before the body had been split into lines, so every
-    // body's parse - which is most of the cost of a line - ran one at a time and ingest
-    // measured flat at 30,000 lines a second from one sender to eight.
     let mut parse_errors = Vec::new();
     let (parsed, stats) = db::parse_and_prepare(Cursor::new(body), &mut |e: DetectorError| {
         // Past the cap the rejection is counted and dropped. `stats.rejected` is
@@ -237,9 +174,8 @@ pub(super) fn ingest(
             });
         }
     })
-    // Reading a body already in memory does not fail. What can is a body with no newline
-    // in more than a line may hold, which the default body cap rules out and a larger
-    // `--max-body-bytes` does not: a message, and a 500.
+    // Reading a body in memory fails only on a line longer than a line may hold, which a
+    // larger `--max-body-bytes` allows: a message, and a 500.
     .map_err(|e| IngestError::Body(error::chain(&e)))?;
 
     // ── Half two: route each line to its template, durably ─────────────────────────
@@ -264,18 +200,15 @@ pub(super) fn ingest(
                 continue;
             }
             // The template's own lock is poisoned: nothing can say which template the
-            // line is, so there is no id to log it under. It used to be counted as
-            // ingested and stored nowhere.
+            // line is, so there is no id to log it under.
             Ok(None) => DetectorErrorKind::NotDurable {
                 detail: "the template's lock is poisoned".to_string(),
             },
-            // The line parsed and its template could not be made durable. Counted and
-            // reported exactly as a line that did not parse: to the client both are
-            // "this one is not in the database", and the message says which.
+            // The line parsed and its template could not be made durable: reported as a
+            // line that did not parse, and the message says which.
             Err(e @ TrieError::Catalog(_)) => {
-                // And counted apart, as a write that failed: a body of nothing but these
-                // is sent again, and a record that would not encode is no reason to -
-                // it would not encode the next time either.
+                // Counted apart, as a write that failed and is worth sending again; a record
+                // that would not encode would not encode the next time either.
                 if !matches!(e, TrieError::Catalog(CatalogError::Serialize { .. })) {
                     unwritten += 1;
                 }
@@ -297,14 +230,8 @@ pub(super) fn ingest(
 
     // ── Half three: the log, and then the rows ─────────────────────────────────────
     //
-    // With a log: the body's lines durable in one flush, then applied by the log's one
-    // applier in the log's order, and back here once both are done. With none - storage
-    // is memory - applied here, as it always was: nothing is durable, and the banner
-    // says so.
-    //
-    // **All of the body, or none of it.** A log that cannot take it has none of its
-    // lines, so the refusal is of the body: the sender keeps it, and sends it again
-    // without storing a line twice.
+    // With a log, the lines are durable in one flush and applied in the log's order; with
+    // none, applied here. All of the body or none of it, so a refused sender can resend.
     let ingested = lines.len() as u64;
     match &server.wal {
         Some(wal) => {
@@ -324,10 +251,8 @@ pub(super) fn ingest(
                     }
                 }
             };
-            // A log with no room for the body makes it wait for some, for as long as a
-            // body may be kept waiting, where it used to be shed at once - after it had
-            // been read, inflated, parsed and routed, all of which its sender's retry
-            // paid for again a second later.
+            // A log with no room makes the body wait, for as long as a body may be kept
+            // waiting: shed at once, its sender's retry pays for the parse again.
             let wait = wal::Wait {
                 at_most: server.api.ingest_wait,
                 left: &place.left,
@@ -335,18 +260,8 @@ pub(super) fn ingest(
             let ticket = wal
                 .enqueue(lines, db::arrival_nanos(now), wait)
                 .map_err(&refused)?;
-            // The permit is for the parse and the routing, which are what a core is
-            // short of. Held across the flush as well, a flush could never carry more
-            // bodies than there are cores - and it is there to carry whatever has queued.
-            // What bounds the bodies waiting from here is `ingest_bodies`, at the door.
-            //
-            // **Kept until the body is in the log's queue, and so across a wait for
-            // room.** A body waiting for room is a parsed body held in memory that the
-            // log's bound does not count; with its permit kept there are no more of
-            // those than there are permits, which is the memory the parse already had.
-            // And it is what carries the pressure back: once every permit is held by a
-            // body the log has no room for, the door lets nobody in, and every later
-            // sender waits there with its body unread.
+            // The permit is for the parse and the routing, so it is not held across the flush;
+            // kept across a wait for room, it bounds the parsed bodies held in memory.
             drop(permit);
             ticket.wait().map_err(&refused)?;
         }
@@ -358,12 +273,8 @@ pub(super) fn ingest(
         }
     }
 
-    // **The report is by line number, and it was already.** One pass numbered its
-    // rejections in the order it met them, which was line order; two passes meet them in
-    // two runs, so the merge has to put them back. Capping each half at
-    // `MAX_REPORTED_ERRORS` before the merge changes nothing: an error inside the merged
-    // first thousand has fewer than a thousand errors before it overall, so it has fewer
-    // than a thousand before it in its own half.
+    // Two passes meet their rejections in two runs, so the merge puts them back in line
+    // order; capping each half at `MAX_REPORTED_ERRORS` first loses nothing.
     let mut errors = parse_errors;
     errors.extend(apply_errors);
     errors.sort_by_key(|e| e.line);
