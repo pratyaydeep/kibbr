@@ -290,11 +290,8 @@ fn farm_flags_belong_to_farm() {
     }
 }
 
-/// Two of the four ways the hostile profile was unlike real logs, turned round: rows pile
-/// onto a few templates, and some columns carry two types. Also that every template has a
-/// time of its own, and that its ten-digit order ids, which name 2112, fall outside the
-/// epoch window and are read as the integers they are. Time order and the single day are
-/// `farm_is_one_day_in_time_order`'s.
+/// Rows pile onto a few templates, some columns carry two types, every template has a time
+/// of its own, and its ten-digit order ids fall outside the epoch window.
 #[test]
 fn farm_has_what_the_hostile_profile_lacks() {
     let records = parse_json(&farm(20_000, &[]));

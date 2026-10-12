@@ -6,8 +6,7 @@ use std::process::{Command, Stdio};
 fn kibbr() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kibbr"));
     // The fixture's labels are the *default* window's, so an exported one would turn the
-    // whole file red for a reason that has nothing to do with the build. The two tests
-    // that want a window set it back, after this.
+    // whole file red; the two tests that want a window set it back.
     cmd.env_remove("KIBBR__SCHEMA__EPOCH_WINDOW");
     cmd
 }
@@ -55,14 +54,8 @@ fn run_stdin(args: &[&str], input: &str) -> String {
     String::from_utf8(out.stdout).expect("stdout was not utf-8")
 }
 
-/// `parse` over stdin, returning stdout and stderr whatever the exit status.
-///
-/// `run_stdin` cannot stand in: it asserts the run succeeded, and a run that rejected
-/// a line exits non-zero by contract, so it would panic before the test asserted
-/// anything. It also leaves stderr uncaptured, which is where a rejection is reported.
-///
-/// Takes bytes rather than `&str` so a test can feed input that is not UTF-8, which is
-/// the whole point of some of them. `&str` and `&String` still pass unchanged.
+/// `parse` over stdin, returning stdout and stderr whatever the exit status: a rejected
+/// line exits non-zero and is reported on stderr. Bytes, so a test can feed non-UTF-8.
 fn run_stdin_rejecting(input: impl AsRef<[u8]>) -> (String, String) {
     let mut child = kibbr()
         .args(["parse", "-"])
@@ -143,12 +136,7 @@ fn every_fixture_value_gets_its_labelled_type() {
 }
 
 /// A fixture line that carries a `template` label gets that fingerprint, and no two
-/// labelled lines share a fingerprint or an id.
-///
-/// The pair this is for: `{"event=login":1}` and `{"event":"login"}`, a literal key and
-/// the promoted token it spells. Both read `event=login` until the `=` inside a key was
-/// escaped. `parse` builds no trie, so what this holds is the text; that the two are two
-/// leaves is `tests/decisions.rs`'s to show.
+/// labelled lines share one or an id: `{"event=login":1}` is not `{"event":"login"}`.
 #[test]
 fn every_labelled_fixture_line_gets_its_template() {
     let stdout = run(&["parse", "testdata/fixture.ndjson", "--json"]);
@@ -173,11 +161,8 @@ fn every_labelled_fixture_line_gets_its_template() {
     );
 }
 
-/// Escaping `=` moves no template that has none: the id and the fingerprint of each of
-/// 20,000 `--seed 42` lines, in order, are the ones the build before the escape gave
-/// them. No key in that data holds `=`. The id is hashed from the keys and would not
-/// move with the token text; the fingerprint is that text, and is what would. The digest
-/// is FNV-1a over each line's id in decimal, a space, its fingerprint and a newline.
+/// Escaping `=` moves no template that has none: the ids and fingerprints of `--seed 42`
+/// lines keep their digest (FNV-1a over `id fingerprint\n`).
 #[test]
 fn seed_42_template_ids_are_the_ones_before_the_equals_escape() {
     let lines = run(&["gen-logs", "--lines", "20000", "--seed", "42"]);
@@ -228,11 +213,8 @@ fn parse_under_window(window: &str, input: &str) -> (bool, Vec<String>, String) 
     )
 }
 
-/// The window is a setting, and the fixture's labels are its default: moved to the
-/// twenty-second century, the same digits swap sides.
-///
-/// A leading zero is not an epoch under any window: moved back to the 1970s, where every
-/// ten digits naming a moment inside it start with a zero, rule 2 reads none of them.
+/// The window is a setting, and the fixture's labels are its default; a leading zero is
+/// not an epoch under any window.
 #[test]
 fn the_epoch_window_is_a_setting() {
     let input = concat!(
@@ -275,9 +257,8 @@ fn the_epoch_window_is_a_setting() {
     assert_eq!(types, ["Int64", "Int64", "Int64", "Int64"]);
 }
 
-/// A window reaching past 2262 admits digits whose moment an `i64` of nanoseconds cannot
-/// hold. They are not a `Datetime` clamped to the last instant it has: they fall through
-/// to rule 6, as digits outside the window do.
+/// A window reaching past 2262 admits digits an `i64` of nanoseconds cannot hold: they
+/// fall through to rule 6 rather than clamp to the last instant.
 #[test]
 fn digits_past_the_last_nanosecond_are_not_a_datetime_under_any_window() {
     let input = concat!(
@@ -391,16 +372,8 @@ fn json_record(line: &str) -> serde_json::Value {
     serde_json::from_str(line).unwrap_or_else(|e| panic!("record was not JSON: {e}\n{line}"))
 }
 
-/// An instant a `Datetime` cannot hold is not a `Datetime`: it is text, not the nearest
-/// instant the type does hold.
-///
-/// `Datetime` is i64 unix nanoseconds, so it spans 1677 to 2262 while RFC 3339 spans
-/// year 0 to 9999. Clamped, a year-9999 line came back as 2262 and a year-1 line as
-/// 1677 - another value, not another spelling - and every one past an end compared equal
-/// to every other.
-///
-/// The label alone cannot show that the two edges are held exactly rather than clamped
-/// onto themselves, so the instant is checked too.
+/// An instant a `Datetime` cannot hold is text, not the nearest instant the type does
+/// hold; the two edges are checked to the nanosecond, so they are held, not clamped.
 #[test]
 fn an_instant_past_either_end_of_the_range_is_text() {
     let cases = [
@@ -462,12 +435,6 @@ fn keys(record: &serde_json::Value) -> Vec<String> {
 
 /// A dotted literal key and the nested path that spells the same thing are two keys,
 /// and both values survive.
-///
-/// Flattening joins segments with `.`, so `{"a.b":1}` and `{"a":{"b":2}}` both used to
-/// produce the three characters `a.b`. Together on one line that is one key twice: the
-/// `keys` array held a duplicate, the fingerprint repeated a segment, and one of the two
-/// values was dropped with no diagnostic. Which one it was depended on field order,
-/// since last-wins into the map is the only thing that decided it.
 #[test]
 fn a_dotted_literal_key_and_a_nested_path_stay_distinct() {
     // Both orders: the two keys must not depend on which arrived first.
@@ -485,10 +452,8 @@ fn a_dotted_literal_key_and_a_nested_path_stay_distinct() {
     }
 }
 
-/// The two spellings are different shapes, so they are different templates.
-///
-/// This is the same fault seen from the trie's side: sharing a template id means sharing
-/// a leaf, and one leaf cannot describe both a nested object and a flat dotted field.
+/// The two spellings are different shapes, so they are different templates: one leaf
+/// cannot describe both a nested object and a flat dotted field.
 #[test]
 fn a_dotted_literal_key_and_a_nested_path_are_different_templates() {
     let parsed = run_stdin(
@@ -504,11 +469,8 @@ fn a_dotted_literal_key_and_a_nested_path_are_different_templates() {
     );
 }
 
-/// Promotion reads the leaf segment, not the text after the last dot.
-///
-/// `{"a.event":"login"}` is a field called `a.event`, not a field `event` nested under
-/// `a`. Splitting the rendered key to find the leaf promoted it into the fingerprint as
-/// though the sender had nested it.
+/// Promotion reads the leaf segment, not the text after the last dot: `{"a.event":"login"}`
+/// is a field called `a.event`, not `event` nested under `a`.
 #[test]
 fn a_dotted_literal_key_is_not_promoted_as_though_it_were_nested() {
     let parsed = run_stdin(
@@ -517,14 +479,12 @@ fn a_dotted_literal_key_is_not_promoted_as_though_it_were_nested() {
     );
     let records: Vec<_> = parsed.lines().map(json_record).collect();
     assert_eq!(records[0]["fingerprint"], "a\\.event");
-    // The nested one is promoted, as it was before, and reads exactly as it did.
+    // The nested one is promoted.
     assert_eq!(records[1]["fingerprint"], "a.event=login");
 }
 
-/// A backslash in a key is data, and must not be able to forge a separator.
-///
-/// Escaping `.` alone leaves `{"a\\":{"b":1}}` and `{"a\\.b":1}` rendering alike, which
-/// is the original collision reintroduced one character over.
+/// A backslash in a key is data, and must not be able to forge a separator: escaping `.`
+/// alone leaves `{"a\\":{"b":1}}` and `{"a\\.b":1}` rendering alike.
 #[test]
 fn a_backslash_in_a_key_cannot_forge_a_separator() {
     let line = r#"{"a\\":{"b":1},"a\\.b":2}"#;
@@ -561,13 +521,8 @@ fn insert_path(
     true
 }
 
-/// The invariant `keys` is required to hold, over every pair of awkward paths that can
-/// share a line: it is a set, and no value goes missing.
-///
-/// Exhaustive rather than sampled. The space that matters here is small and entirely
-/// about where separators and backslashes fall, so enumerating it covers more than
-/// random documents would - and the same pairs run on every future change to the
-/// encoding, which is the part worth keeping.
+/// The invariant `keys` holds over every pair of awkward paths that can share a line: it
+/// is a set, and no value goes missing. Exhaustive, because the space is small.
 #[test]
 fn no_two_key_paths_on_one_line_ever_collide() {
     let paths: &[&[&str]] = &[
@@ -646,12 +601,6 @@ fn no_two_key_paths_on_one_line_ever_collide() {
 
 /// A fingerprint is what a human reads. The template id is the identity, and two
 /// different shapes must not share one however alike they read.
-///
-/// `tokens.join(" | ")` was the identity, and `" | "` is not a separator a key is
-/// obliged to stay out of - nor is `=`, nor is "having a name at all". Each pair below
-/// is two genuinely different shapes that the joined text could not tell apart. Sharing
-/// a template id means sharing a leaf once the trie exists, and the column store is then
-/// handed two schemas for one place.
 #[test]
 fn two_shapes_that_read_alike_are_not_one_template() {
     for (first, second, what) in [
@@ -683,9 +632,8 @@ fn two_shapes_that_read_alike_are_not_one_template() {
     }
 }
 
-/// The other half of the same claim: separating those shapes must not have split the
-/// shapes that really are one. A template id still depends on nothing but the key set
-/// and the promoted values.
+/// Separating those shapes must not have split the shapes that really are one: a
+/// template id depends on nothing but the key set and the promoted values.
 #[test]
 fn the_same_shape_still_gets_one_template() {
     let parsed = run_stdin(
@@ -716,8 +664,8 @@ fn the_same_shape_still_gets_one_template() {
     );
 }
 
-/// Two empty objects genuinely do flatten to no keys, and stay one template. The empty
-/// key was never the same claim as the empty object, which is why only one of them moved.
+/// Two empty objects genuinely do flatten to no keys, and stay one template; the empty
+/// key is not the same claim as the empty object.
 #[test]
 fn an_object_that_flattens_to_no_keys_is_one_template() {
     let parsed = run_stdin(&["parse", "-", "--json"], "{}\n{\"a\":{\"b\":{}}}\n");
@@ -807,10 +755,8 @@ fn nested_array(depth: usize) -> String {
     format!("{{\"d\":{}1{}}}", "[".repeat(depth), "]".repeat(depth))
 }
 
-/// The depth rules are enforced on the raw bytes, before `serde_json` builds anything,
-/// so they stay reachable at any depth. Checked after parsing instead, `serde_json`'s
-/// own 128-container limit fires first and reports valid-but-deep JSON as malformed -
-/// the diagnostic getting less accurate exactly as the input gets more hostile.
+/// The depth rules are enforced on the raw bytes, before `serde_json` builds anything:
+/// its own 128-container limit would report valid-but-deep JSON as malformed.
 #[test]
 fn depth_past_the_serde_limit_still_reports_the_depth_rule() {
     for depth in [9, 500, 100_000] {
@@ -826,9 +772,8 @@ fn depth_past_the_serde_limit_still_reports_the_depth_rule() {
     }
 }
 
-/// Arrays are stored whole, so the object limit does not apply inside them - but a
-/// ceiling still does, because the array is materialised before it is stored and
-/// materialising it is recursive.
+/// Arrays are stored whole, so the object limit does not apply inside them, but
+/// materialising one is recursive, so a ceiling still does.
 #[test]
 fn array_nesting_has_its_own_ceiling() {
     let (stdout, _) = run_stdin_rejecting(format!("{}\n", nested_array(64)));
@@ -883,11 +828,8 @@ fn a_depth_rejection_does_not_stop_the_file() {
 /// One line of good input, so a rejection test can show the run carried on around it.
 const FIRST: &[u8] = b"{\"first\":1}\n";
 
-/// Bytes that are not UTF-8 are an encoding fault, named as one and located to the byte.
-///
-/// `serde_json` calls these `invalid unicode code point`, which describes the symptom and
-/// sends the operator to look at their JSON. The fault is in whatever wrote the line, and
-/// the byte value is most of the diagnosis: `0xff` here says UTF-16 or latin-1.
+/// Bytes that are not UTF-8 are an encoding fault, named as one and located to the byte:
+/// the fault is in whatever wrote the line, and the byte value is most of the diagnosis.
 #[test]
 fn invalid_utf8_is_reported_as_an_encoding_fault_with_its_byte() {
     // The bad bytes sit at different offsets in a value and in a key.
@@ -913,8 +855,7 @@ fn invalid_utf8_is_reported_as_an_encoding_fault_with_its_byte() {
 }
 
 /// A bad byte outside a string is the case `serde_json` cannot see at all: it reports
-/// `expected value`, because a byte that cannot begin a token is all it knows. Asking the
-/// bytes directly is what turns that back into the encoding fault it is.
+/// `expected value`, so the bytes are asked directly.
 #[test]
 fn a_bad_byte_outside_a_string_is_still_an_encoding_fault() {
     let (_, stderr) = run_stdin_rejecting([FIRST, b"{\"a\":\xff}\n"].concat());
@@ -927,10 +868,6 @@ fn a_bad_byte_outside_a_string_is_still_an_encoding_fault() {
 
 /// A line can be malformed *and* fail to decode, independently. Both are true, so both
 /// are reported - dropping either costs the operator a second run to find it.
-///
-/// The syntax error is at column 8 and the bad byte at offset 28. `valid_up_to` is the
-/// boundary of what `serde_json` was entitled to judge: column 8 is inside the region
-/// that decoded cleanly, so its verdict is sound and leads.
 #[test]
 fn a_line_that_is_both_malformed_and_undecodable_reports_both() {
     let (_, stderr) =
@@ -957,11 +894,8 @@ fn a_bad_byte_before_a_syntax_error_reports_only_the_encoding_fault() {
     assert!(!stderr.contains("also contains"), "{stderr}");
 }
 
-/// A write cut mid-character is a truncated line, not an encoding fault.
-///
-/// The done-when is that both cuts report the same thing: one lands inside a two-byte
-/// character and one just after it, but the cause is identical - the line ended early -
-/// and the diagnosis must not turn on where the knife fell.
+/// A write cut mid-character is a truncated line, not an encoding fault: a cut inside a
+/// two-byte character and one just after it must report the same thing.
 #[test]
 fn a_line_cut_mid_character_reports_truncation_not_encoding() {
     for cut in [&b"{\"a\":\"caf\xc3"[..], &b"{\"a\":\"caf\xc3\xa9"[..]] {
@@ -987,12 +921,8 @@ fn an_ordinary_syntax_error_carries_no_encoding_note() {
     assert!(!stderr.contains("UTF-8"), "{stderr}");
 }
 
-/// A rejection is one line, and the only line number on it is the real one.
-///
-/// `serde_json` appends `at line {line} column {column}` to its own messages, and that
-/// line is always 1 - it is handed one line at a time. Printed under a rejection against
-/// line 6, it reads as a contradiction. The position it does know is worth keeping, so
-/// the suffix is cut and the column reported as an offset into the line.
+/// A rejection is one line, and the only line number on it is the real one: `serde_json`'s
+/// `at line 1 column N` suffix is cut and the column reported as an offset into the line.
 #[test]
 fn a_syntax_rejection_reports_one_position_and_it_is_ours() {
     let input = [
@@ -1029,11 +959,8 @@ fn a_syntax_rejection_reports_one_position_and_it_is_ours() {
     );
 }
 
-/// A byte order mark is a marker, not content, and it is dropped wherever it appears.
-///
-/// The mark is invisible in an editor, so a line rejected for carrying one looks like a
-/// line rejected for nothing. `run_stdin` asserts the run succeeded, which is the whole
-/// of the done-when: not one line lost, and the exit code says so.
+/// A byte order mark is a marker, not content, and it is dropped wherever it appears;
+/// invisible in an editor, a line rejected for one looks rejected for nothing.
 #[test]
 fn a_byte_order_mark_is_stripped_wherever_it_appears() {
     // At the head of the file, on a payload line, and on one that ends CRLF - the mark
@@ -1046,10 +973,6 @@ fn a_byte_order_mark_is_stripped_wherever_it_appears() {
 
 /// The mark is stripped before the line is parsed, so it neither hides a fault further
 /// along nor shifts the offset reported for one.
-///
-/// Without the strip this reads `offset 0: expected value`, which points at the marker
-/// instead of the trailing comma and sends the operator to the wrong end of the line.
-/// The offset here is the one the same line gets with no mark on it at all.
 #[test]
 fn a_byte_order_mark_does_not_hide_the_rest_of_the_line() {
     let (_, stderr) = run_stdin_rejecting([FIRST, "\u{feff}{\"a\":1,}\n".as_bytes()].concat());
@@ -1067,11 +990,8 @@ fn a_line_of_only_a_byte_order_mark_counts_as_blank() {
     assert!(parsed.contains("1 blank lines skipped"), "{parsed}");
 }
 
-/// Only a leading mark, and only the UTF-8 encoding of one.
-///
-/// U+FEFF inside a string is a character the line is entitled to carry, and a UTF-16
-/// mark is a line written in an encoding this does not read - which is worth saying as
-/// an encoding fault, because `0xff` is most of that diagnosis.
+/// Only a leading mark, and only the UTF-8 encoding of one: U+FEFF inside a string is a
+/// character, and a UTF-16 mark is an encoding fault.
 #[test]
 fn only_a_leading_utf8_mark_is_stripped() {
     let parsed = run_stdin(&["parse", "-", "--json"], "{\"a\":\"\u{feff}x\"}\n");
@@ -1098,7 +1018,6 @@ fn json_output_is_stable_across_runs() {
     assert_eq!(a.lines().count(), 100);
 }
 
-/// `--limit` stops after N lines.
 #[test]
 fn limit_stops_early() {
     let logs = run(&["gen-logs", "--lines", "50", "--seed", "1"]);

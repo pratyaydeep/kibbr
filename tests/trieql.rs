@@ -1,10 +1,7 @@
 //! The TrieQL parser, from outside the binary: the grammar's own examples parse, a
 //! malformed query reports a position inside the query, and nothing makes it panic.
-//!
-//! That a TrieQL query and the flags it translates return the same `QueryResult` is
-//! `scripts/check/parser_equivalence.sh`, over a hundred generated combinations rather than the
-//! handful anyone would write here. What is pinned below is the translation itself, one
-//! case per grammar clause.
+//! That a query and the flags it translates answer alike is
+//! `scripts/check/parser_equivalence.sh`; pinned below is one case per grammar clause.
 
 use std::process::{Command, Output, Stdio};
 
@@ -104,9 +101,8 @@ fn every_production_parses() {
     }
 }
 
-/// The grammar is a closed list. Everything here is something a query language obviously
-/// ought to have and the grammar does not list. Each has to be a parse error rather than
-/// a quietly accepted extension.
+/// The grammar is a closed list: everything here is something a query language ought to
+/// have, and each has to be a parse error rather than a quietly accepted extension.
 #[test]
 fn nothing_outside_the_grammar_parses() {
     for q in [
@@ -157,14 +153,12 @@ fn reported_position(stderr: &str) -> usize {
         .unwrap_or_else(|| panic!("unparseable position in the error:\n{stderr}"))
 }
 
-/// Every malformed query names a byte in `0..=len`, where the one-past-the-end value is
-/// "the query stopped early". A position outside that is a position pointing at someone
-/// else's text.
+/// Every malformed query names a byte in `0..=len`, one past the end meaning "the query
+/// stopped early": a position outside that points at someone else's text.
 #[test]
 fn errors_report_a_position_inside_the_query() {
     // Multibyte on purpose in several of these: a parser counting characters where it
-    // promised bytes lands short, and a parser slicing bytes where it should count
-    // characters panics.
+    // promised bytes lands short, and one slicing bytes where it should count panics.
     for q in [
         "",
         " ",
@@ -216,11 +210,8 @@ fn errors_report_a_position_inside_the_query() {
 
 // ── Never panics ───────────────────────────────────────────────────────────────────
 
-/// Whatever goes in, what comes out is a parse error or a query - never a panic. 101 is
-/// the exit code of a Rust panic, and it is the only outcome this rejects.
-///
-/// A NUL byte cannot be passed through `argv` at all, so the one input this surface
-/// cannot carry is checked against the parser directly, in `crates/kibbr-engine/src/trieql.rs`.
+/// Whatever goes in, what comes out is a parse error or a query, never a panic (exit 101).
+/// A NUL cannot pass through `argv`: `crates/kibbr-engine/src/trieql.rs` checks that one.
 #[test]
 fn no_input_panics() {
     let mut hostile: Vec<String> = vec![
@@ -246,8 +237,7 @@ fn no_input_panics() {
     ];
 
     // Deep, long, and wide. The grammar has no recursive production, so none of these can
-    // reach the stack - which is the claim, and it is worth an assertion rather than a
-    // reading of the grammar.
+    // reach the stack - worth an assertion rather than a reading of the grammar.
     hostile.push("{".repeat(100_000));
     hostile.push(format!(
         "COUNT LOG {}{}",
@@ -284,14 +274,8 @@ fn no_input_panics() {
 
 // ── The translation ────────────────────────────────────────────────────────────────
 
-/// One case per grammar clause, against the flags that already meant it. The generated
-/// hundred are in `scripts/check/parser_equivalence.sh`; these are the ones a reader can check
-/// by eye.
-///
-/// Every value here is one the fixture actually holds. A pattern that matches no template
-/// answers `exists: false, count: 0, rows: [], groups: []` whatever the mode asked
-/// for, so a pair built on a value that is not there agrees with itself and checks
-/// nothing - which is what `answers_rows` is asserting against.
+/// One case per grammar clause, against the flags that meant it. Every value is one the
+/// fixture holds: a pattern matching no template agrees with itself and checks nothing.
 #[test]
 fn trieql_answers_what_the_flags_answer() {
     let pairs: [(&str, &[&str]); 8] = [
@@ -396,13 +380,8 @@ fn group_by_settles_the_mode_under_either_verb() {
     }
 }
 
-/// `SINCE` narrows.
-///
-/// The fixture is from 2024 and the window is relative to now, so an hour-wide one is
-/// empty on both surfaces - which is evidence the clause was applied only alongside the
-/// same query without it, which is not. Without the first assertion a parser that read
-/// `SINCE` and threw it away would pass this, as `scripts/check/parser_equivalence.sh` found
-/// when that mutation was tried against it.
+/// `SINCE` narrows. The fixture is from 2024, so an hour-wide window is empty on both
+/// surfaces - evidence only beside the same query without the clause, which is not empty.
 #[test]
 fn since_narrows_the_window() {
     let all = answer(&[r#"COUNT LOG {}"#, "--format", "json"]);
@@ -415,8 +394,7 @@ fn since_narrows_the_window() {
     );
 }
 
-/// Keywords are case-insensitive; the duration's unit is not, because the grammar spells
-/// it out and `--since` reads it the same way. The pair that matters is the second one:
+/// Keywords are case-insensitive; the duration's unit is not. The second pair matters:
 /// the two surfaces have to refuse the same input, not merely accept the same input.
 #[test]
 fn keywords_ignore_case_and_duration_units_do_not() {

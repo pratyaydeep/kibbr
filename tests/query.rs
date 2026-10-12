@@ -1,31 +1,22 @@
 //! "No such template" and "that template exists but zero rows matched" are two answers,
-//! not one.
-//!
-//! Both have `count: 0`, so a result that carries only a count cannot tell them apart and
-//! nothing downstream can either. Pinned this early because retrofitting it means
-//! touching the Elasticsearch translation layer too - by then an unknown field and an
-//! empty result have already been the same response for several releases.
-//!
-//! Pinned here rather than left to the differential in `scripts/check/agree.sh`, because that
-//! script judges the engine against the oracle: if the distinction were dropped from
-//! both, they would keep agreeing. These assertions are against the observable answer.
+//! not one. Both have `count: 0`, so a result that carries only a count cannot tell
+//! them apart. Pinned here because the differential judges the engine against the oracle:
+//! dropped from both, they would keep agreeing.
 
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-/// The worked example: three templates, one promoted dimension (`event`), and
-/// `user_id` on all three - which is what gives both a promoted and a non-promoted route
-/// to each of the two answers.
+/// The worked example: three templates, one promoted dimension (`event`), and `user_id`
+/// on all three, so each answer has a promoted and a non-promoted route.
 const FIXTURE: &str = include_str!("../testdata/sample_logs.ndjson");
 
 fn kibbr() -> Command {
     Command::new(env!("CARGO_BIN_EXE_kibbr"))
 }
 
-/// Runs a query with the fixture on stdin. Feeds from a separate thread for the same
-/// reason `tests/trie.rs` does: writing inline deadlocks once the input outgrows a pipe
-/// buffer.
+/// Runs a query with the fixture on stdin, fed from a separate thread: writing inline
+/// deadlocks once the input outgrows a pipe buffer.
 fn query(args: &[&str]) -> String {
     use std::io::Write;
 
@@ -70,9 +61,8 @@ const UNKNOWN: &[&[&str]] = &[
     &["--match", "reason=*", "--match", "pay_id=*"],
 ];
 
-/// Patterns naming a template that does exist and holds no matching row. Both routes are
-/// here because they are settled in different places: the window and the value both in
-/// the scan, neither by the walk.
+/// Patterns naming a template that does exist and holds no matching row: the window and
+/// the value are both settled in the scan, neither by the walk.
 const KNOWN_BUT_EMPTY: &[&[&str]] = &[
     // The template's one row sits outside the window.
     &[

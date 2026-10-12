@@ -1,21 +1,8 @@
 //! `kibbr serve` from outside: every endpoint answers, a body with three bad lines in it
 //! reports exactly those three, and a signal mid-request exits 0.
-//!
-//! **Two ways a server is started here.** A test that only asks a server things over
-//! HTTP runs one in this process (`Served`): the server crate's `run`, on a thread, given
-//! the settings the command line would have resolved and a token to stop it by. A test
-//! that needs a process starts the binary (`Server`): one that sends a signal, kills it,
-//! reads its exit code or what it wrote to stderr as it stopped, or starts it again on
-//! the directory it left.
-//!
-//! HTTP is spoken over a bare `TcpStream` rather than through a client crate. The
-//! contract is a status line and a JSON body, and a test that asserts on
-//! those directly is a test that cannot be satisfied by a client library's idea of what
-//! the server meant. `Connection: close` makes the body "read to EOF", which is the whole
-//! of the parsing needed.
-//!
-//! The corpus comes from `gen-logs` - real generated data, seeded, with the
-//! three corruptions written in at known line numbers.
+//! A test that only asks things over HTTP runs the server in this process (`Served`); one
+//! that signals, kills or restarts it starts the binary (`Server`). HTTP is a bare
+//! `TcpStream`: the contract is a status line and a JSON body, asserted on directly.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -44,11 +31,8 @@ struct Server {
     banner: String,
 }
 
-/// A data directory of this test's own.
-///
-/// Storage defaults to disk, so a server started with no `--data-dir` would write into
-/// whatever directory `cargo test` happened to run from - and every test in this file
-/// would then share one database. Each gets its own, removed when the server is dropped.
+/// A data directory of this test's own: storage defaults to disk, so with no `--data-dir`
+/// every test in this file would share whatever directory `cargo test` ran from.
 fn scratch_dir() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -61,11 +45,8 @@ fn scratch_dir() -> PathBuf {
 }
 
 impl Server {
-    /// Start on port 0 and read back the port the OS chose.
-    ///
-    /// Not a fixed port: two of these tests run concurrently under `cargo test`, and
-    /// 7700 is also where a developer's own `kibbr serve` is. The banner prints the
-    /// bound address precisely so something can read it.
+    /// Start on port 0 and read back the port the OS chose: tests run concurrently, and 7700
+    /// is where a developer's own `kibbr serve` is.
     fn start() -> Self {
         Self::start_with(&[])
     }
@@ -114,16 +95,14 @@ impl Server {
         }
         let port = port.unwrap_or_else(|| panic!("no listening line in banner:\n{banner}"));
 
-        // The backstop changes what an unlimited `MATCH` means on this surface, so the
-        // banner names it beside the endpoints rather than leaving it to be discovered
-        // from a truncated answer.
+        // The backstop changes what an unlimited `MATCH` means on this surface, so the banner
+        // names it rather than leaving it to be discovered from a truncated answer.
         assert!(
             banner.contains("max rows"),
             "banner does not name the backstop:\n{banner}"
         );
-        // The banner is the one place a person is told what survives, so its saying so is
-        // part of the contract and not decoration. The two modes say different things and
-        // both have to say theirs - see `the_banner_names_what_survives_in_either_mode`.
+        // The banner is the one place a person is told what survives, so its saying so is part
+        // of the contract, in either storage mode.
         assert!(
             banner.contains("STORAGE IS IN MEMORY") || banner.contains("storage     "),
             "banner does not say where storage is:\n{banner}"
@@ -209,16 +188,8 @@ impl Drop for Server {
 
 // ── A running server: the library, in this process ─────────────────────────────────
 
-/// A server run by `kibbr_server::run` on a thread of this process, for a test that only
-/// asks it things over HTTP: what `Server` is, without the process.
-///
-/// **Its settings are the ones the command line resolves**: `config::settings`, given
-/// the flags a test would have typed, so a default here is the binary's default and a
-/// flag is refused or floored as the binary would.
-///
-/// **It is stopped as a signal stops one** - the token cancelled, the in-flight requests
-/// waited for, the final flush, the checkpoint - and a stop that fails fails the test.
-/// `Server`'s drop is a `kill -9`.
+/// A server run by `kibbr_server::run` on a thread of this process, with the settings the
+/// command line resolves, and stopped as a signal stops one: a stop that fails fails the test.
 struct Served {
     port: u16,
     data_dir: Option<PathBuf>,
@@ -228,9 +199,8 @@ struct Served {
     run: Option<std::thread::JoinHandle<kibbr_server::Result<kibbr_server::Report>>>,
 }
 
-/// What one thread's events say, each as its message. A server says its start and its
-/// stop on the thread `run` was called on, and the banner is one of those events: this
-/// is how a test hears the port, where the binary's own subscriber writes it to stderr.
+/// What one thread's events say, each as its message: the banner is one of those events,
+/// and this is how a test hears the port.
 struct Hear(std::sync::Mutex<std::sync::mpsc::Sender<String>>);
 
 impl tracing::Subscriber for Hear {
@@ -377,11 +347,8 @@ fn request(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String) {
     (status, body)
 }
 
-/// The same, with the response headers kept.
-///
-/// Only the viewer needs them: `/` is the one endpoint whose content type is part of what
-/// it promises, because a browser that is handed `application/json` renders the page as
-/// text rather than as a page.
+/// The same, with the response headers kept: `/` is the one endpoint whose content type
+/// is part of what it promises.
 fn request_raw(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String, String) {
     request_with(port, method, path, body, &[])
 }
@@ -407,10 +374,8 @@ fn request_with(
         body.len()
     );
     socket.write_all(head.as_bytes()).expect("failed to write");
-    // Write errors are not failures here. A server that refuses a body before reading it -
-    // 413 on the wire cap, 503 on a shed - answers and closes while this is still
-    // writing, and the write end breaks. Whether the *answer* survives that is the thing
-    // being tested, so the read below is what decides it.
+    // Write errors are not failures here: a server that refuses a body before reading it
+    // answers and closes mid-write, and whether the answer survives is what the read decides.
     let _ = socket.write_all(body);
     let _ = socket.flush();
 
@@ -436,11 +401,8 @@ fn json(text: &str) -> serde_json::Value {
 
 // ── The corpus ─────────────────────────────────────────────────────────────────────
 
-/// `LINES` generated lines with `BAD` corrupted, one per failure kind.
-///
-/// Three kinds rather than three copies of one: the endpoint has to report the *line*
-/// correctly whatever went wrong on it, and a truncated document, a non-object and a
-/// bad byte take three different routes to `DetectorError`.
+/// `LINES` generated lines with `BAD` corrupted, one per failure kind: a truncated
+/// document, a non-object and a bad byte take three different routes to `DetectorError`.
 fn corpus() -> Vec<u8> {
     let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", &LINES.to_string(), "--seed", "42"])
@@ -470,17 +432,8 @@ fn corpus() -> Vec<u8> {
     body
 }
 
-/// A request whose answer may arrive *before* the body has finished being sent.
-///
-/// `request_with` cannot do this, for a reason worth writing down: `Connection: close`
-/// makes the server close the socket as soon as it has answered, and closing one with
-/// unread bytes still in its receive buffer is a TCP reset - which discards the response
-/// already sitting in the client's buffer. The client sees a connection error where the
-/// server sent a perfectly good 503.
-///
-/// So this speaks `keep-alive`, as real clients do, and reads by `Content-Length` rather
-/// than to EOF. It also tolerates the write failing: a refused body is never read, so the
-/// write end breaks mid-send. That is the shape of a refusal, not a failure of one.
+/// A request whose answer may arrive *before* the body has finished being sent: it speaks
+/// `keep-alive`, since closing a socket with unread bytes is a TCP reset that loses the answer.
 fn request_early(port: u16, path: &str, body: &[u8]) -> (u16, String, String) {
     let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
     // Before the write, not after: macOS refuses the option on a socket whose write end
@@ -499,9 +452,8 @@ fn request_early(port: u16, path: &str, body: &[u8]) -> (u16, String, String) {
     let _ = socket.write_all(body);
     let _ = socket.flush();
 
-    // Read to the end of the headers, then exactly the body the length promises. Reading
-    // to EOF would hang: a keep-alive connection has no EOF until the server gives up on
-    // it, which is long after the answer arrived.
+    // Read to the end of the headers, then exactly the body the length promises: a
+    // keep-alive connection has no EOF until the server gives up on it.
     let mut raw = Vec::new();
     let mut byte = [0u8; 1];
     let split = loop {
@@ -643,11 +595,8 @@ fn three_bad_lines_report_exactly_those_three() {
         assert!(!msg.is_empty(), "rejection has no message: {e}");
     }
 
-    // **In line order, and that is a contract now rather than an accident.** It used to
-    // be one pass numbering its rejections in the order it met them; parsing moved out of
-    // the store lock, so a body is now met twice - once to parse and once to apply -
-    // and the report has to put the two runs back into the order an operator would count
-    // them in.
+    // In line order, and that is a contract: a body is met twice - once to parse and once
+    // to apply - and the report has to put the two runs back into an operator's order.
     assert!(
         lines.windows(2).all(|pair| pair[0] < pair[1]),
         "the report is not in line order: {lines:?}"
@@ -703,10 +652,7 @@ fn a_bad_query_is_a_400() {
 // ── Shutdown ───────────────────────────────────────────────────────────────────────
 
 /// Graceful shutdown: the signal stops new work, the request already running finishes, exit 0.
-///
-/// The body is large enough that it cannot complete inside the window before the signal,
-/// so the request really is in flight when SIGINT lands. If it were not, the test would
-/// still pass - and would be testing nothing - which is why the size is not marginal.
+/// The body is large enough that the request really is in flight when SIGINT lands.
 #[test]
 fn a_signal_lets_the_in_flight_request_finish() {
     let server = Server::start();
@@ -758,8 +704,7 @@ fn sigterm_exits_zero() {
 // ── The backstop, over HTTP ────────────────────────────────────────────────────────
 
 /// A client that names no `LIMIT` gets a page and a way to continue it, not an answer
-/// quietly short of the truth. This is the surface the backstop exists for: the CLI's
-/// caller is one person at one terminal, and this one's is anything that can open a socket.
+/// quietly short of the truth: this surface's caller is anything that can open a socket.
 #[test]
 fn an_unlimited_query_is_backstopped_and_pages_to_completion() {
     let server = Served::start_with(ServeFlags {
@@ -803,13 +748,8 @@ fn rows_as_text(result: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-/// The viewer is one file, and this is the claim.
-///
-/// "Nothing to deploy alongside" is the whole reason it is `include_str!`'d, and it stops
-/// being true the moment a stylesheet, a script or a font is fetched from somewhere else -
-/// at which point the tool works on the machine it was written on and fails on the network
-/// it was needed on. Asserted here rather than trusted, because adding a `<script src>` is
-/// a one-line change that nothing else would notice.
+/// The viewer is one file, with nothing to deploy alongside: asserted here, because adding
+/// a `<script src>` is a one-line change that nothing else would notice.
 #[test]
 fn the_viewer_fetches_nothing_else() {
     let server = Served::start();
@@ -837,10 +777,7 @@ fn the_viewer_fetches_nothing_else() {
 
 // ── Compressed bodies ──────────────────────────────────────────────────────────────
 
-/// gzip in, the same answer out - line numbers included.
-///
-/// The line numbers are the point, not the count: a decoder that dropped a member or
-/// mangled a boundary would still report a plausible `ingested`. Only the three known-bad
+/// gzip in, the same answer out - line numbers included: only the three known-bad
 /// *positions* pin that the reader saw the body that was sent.
 #[test]
 fn a_gzipped_body_ingests_identically() {
@@ -887,11 +824,8 @@ fn x_gzip_is_gzip() {
     assert_eq!(json(&body)["ingested"], 497);
 }
 
-/// A body that says gzip and is not is a 400 - and the server is still there afterwards.
-///
-/// The second half is the half worth having. `/ingest` is reachable by anything that can
-/// open a socket, and a decoder that unwinds on malformed input turns one bad shipper
-/// config into everyone's outage. So each body is followed by a `/health`.
+/// A body that says gzip and is not is a 400 - and the server is still there afterwards:
+/// a decoder that unwinds on malformed input turns one bad shipper config into an outage.
 #[test]
 fn a_corrupt_gzip_body_is_a_400_and_not_a_panic() {
     let server = Served::start();
@@ -999,11 +933,8 @@ fn a_body_over_the_wire_cap_is_413() {
     assert_eq!(status, 200);
 }
 
-/// The decompressed cap, measured while inflating - the check the wire cap cannot make.
-///
-/// ~8 KiB on the wire, 8 MiB inflated. It passes the wire cap by three orders of
-/// magnitude, which is the shape of the attack: the first check cannot see it, and without
-/// the second the process allocates until it dies.
+/// The decompressed cap, measured while inflating - the check the wire cap cannot make,
+/// and without it the process allocates until it dies.
 #[test]
 fn a_gzip_bomb_is_refused_while_inflating() {
     let server = Served::start_with(ServeFlags {
@@ -1051,13 +982,8 @@ fn a_gzip_bomb_is_refused_while_inflating() {
 
 // ── Backpressure ───────────────────────────────────────────────────────────────────
 
-/// Past capacity, `/ingest` answers 503 with a `Retry-After` - it does not go quiet.
-///
-/// The status is what makes a shipper back off. What this replaces is not a different
-/// status but *no answer*: the body is accepted, the request runs long, the shipper times
-/// out, keeps the batch and opens another connection - so load on an already-slow server
-/// goes up. That failure has no assertion that catches it after the fact, which is why
-/// this pins the answer rather than a latency.
+/// Past capacity, `/ingest` answers 503 with a `Retry-After` - it does not go quiet: with
+/// no answer the shipper times out, keeps the batch and reconnects, so load goes up.
 #[test]
 fn past_capacity_ingest_sheds_with_retry_after() {
     // One permit, and bodies big enough that holding it is measurable.
@@ -1068,13 +994,8 @@ fn past_capacity_ingest_sheds_with_retry_after() {
     });
     let port = server.port;
 
-    // Big enough that one body holds the permit for far longer than the 100ms a queued
-    // sender waits, and small enough that the one body that gets the permit still answers
-    // inside `request_early`'s read timeout - a debug build walking hostile lines is the
-    // slowest this ever runs, and these lines got slower: the generator draws ten-digit
-    // ids across the whole ten-digit range, so those columns now hold both the type a
-    // value inside the epoch window gets and the type one outside it gets, and a column
-    // carrying two types seals a segment every time the type changes.
+    // Big enough that one body holds the permit far longer than a queued sender waits, and
+    // small enough that the body with the permit still answers inside the read timeout.
     let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
         .args(["gen-logs", "--lines", "20000", "--seed", "11"])
         .output()
@@ -1128,9 +1049,8 @@ fn past_capacity_ingest_sheds_with_retry_after() {
     assert_eq!(stats["ingest"]["ingest_concurrency"], 1);
 }
 
-/// With no wait at all the shed is the one it was with a hundred milliseconds, and at
-/// once: a body that finds no permit free is answered `503` with a `Retry-After`, every
-/// body is answered one way or the other, and the count of sheds is the count of `503`s.
+/// With no wait at all a body that finds no permit free is answered `503` with a
+/// `Retry-After` at once, and the count of sheds is the count of `503`s.
 #[test]
 fn with_no_wait_a_body_past_capacity_is_shed_at_once() {
     let server = Served::start_with(ServeFlags {
@@ -1192,9 +1112,8 @@ fn with_no_wait_a_body_past_capacity_is_shed_at_once() {
     assert_eq!(causes, shed.len() as u64, "{ingest}");
 }
 
-/// A wait past thirty seconds would keep a body longer than its sender waits for an
-/// answer, and a log that may hold nothing would refuse every body after the first: the
-/// server says so and does not start, by the flag and by the variable.
+/// A wait past thirty seconds would outlast its sender, and a log that may hold nothing
+/// would refuse every body: the server does not start, by the flag and by the variable.
 #[test]
 fn a_wait_past_thirty_seconds_and_a_log_bound_of_nothing_are_refused_at_the_start() {
     let refused = |flag: &[&str], variable: Option<(&str, &str)>, want: &str| {
@@ -1223,9 +1142,7 @@ fn a_wait_past_thirty_seconds_and_a_log_bound_of_nothing_are_refused_at_the_star
 }
 
 /// What was resolved is said where an operator looks for it: `/stats`, and the banner.
-/// With nothing set, the hundred milliseconds and the 256 MiB a server always had, and no
-/// bound on the line at the door, which never had one; with the wait raised, the bound
-/// that comes with it - as many as may be between the door and their answer.
+/// With the wait raised, so is the bound that comes with it on the line at the door.
 #[test]
 fn stats_and_the_banner_say_the_wait_and_the_logs_bound_that_were_resolved() {
     let server = Served::start();
@@ -1279,13 +1196,7 @@ fn stats_and_the_banner_say_the_wait_and_the_logs_bound_that_were_resolved() {
 }
 
 /// Bodies back to back onto buffers that hold next to nothing, with a wait long enough to
-/// ride out any flush: every one is taken, and none is shed.
-///
-/// Each body leaves the buffers past twice their limit, so the one behind it finds them
-/// full at the door. It used to be refused there at once, though the flush that would let
-/// it in was already running; now it waits for that flush, and the flush says when it is
-/// done. Were that never said, a body at the door would wait out its thirty seconds and
-/// be refused, and this would not see fifty `200`s.
+/// ride out any flush: each waits at the door for the flush, and none is shed.
 #[test]
 fn bodies_wait_at_the_door_for_the_flush_and_every_one_lands() {
     const BODIES: usize = 50;
@@ -1352,20 +1263,8 @@ fn lock_data(base: &Path) -> Vec<PathBuf> {
     locked
 }
 
-/// A store that cannot write refuses nothing and loses nothing.
-///
-/// **The rule that is easy to get backwards.** A line is in the write-ahead log, flushed,
-/// before it is acknowledged, so a store that then cannot take its row has failed at
-/// nothing the sender needs to hear about: `/ingest` goes on answering `200`, `/health`
-/// says degraded, the shutdown exits 0, and the next start puts the rows back from the
-/// log. Before the log it was the other way round, and had to be - a `200` meant
-/// *buffered*, and on a full disk every batch got one and `COUNT LOG {}` was 0 after a
-/// restart - so this used to assert a `503` and an exit code of 1.
-///
-/// The disk is made unwritable rather than full, which is the same errno's worth of
-/// difference: `data/` and its day directories are set read-only after the first day's file
-/// is open, and the second line is of the next day - whose file needs a new directory in
-/// `data/`, which will not take one. The log is beside `data/`, and still writes.
+/// A store that cannot write refuses nothing and loses nothing: a line is in the
+/// write-ahead log before it is acknowledged, so the next start puts the rows back.
 #[test]
 #[cfg(unix)]
 fn a_store_that_cannot_write_refuses_nothing_and_loses_nothing() {
@@ -1461,12 +1360,8 @@ fn a_store_that_cannot_write_refuses_nothing_and_loses_nothing() {
     assert_eq!(xs, ["\"N/A\"", "1", "3"]);
 }
 
-/// A sender that hangs up does not take its body's place with it. The body's task runs
-/// on, and the permits are the task's: a second body is shed while the first is still
-/// being parsed - where they used to go back at the hang-up, and a sender that timed out
-/// and tried again had a second copy of its body parsed beside the first. And a stop
-/// waits for such a body: the final flush stores it whole, where an exit half way
-/// through would have stored whatever part of it had got that far.
+/// A sender that hangs up does not take its body's place with it: the permits are the
+/// task's, so a second body is shed, and a stop waits and stores the first whole.
 #[test]
 fn a_body_whose_sender_hung_up_keeps_its_place_and_is_stored_whole() {
     // Enough lines that the body is in hand for several times as long as the second
@@ -1477,9 +1372,8 @@ fn a_body_whose_sender_hung_up_keeps_its_place_and_is_stored_whole() {
         .flat_map(|n| format!("{{\"ts\": 1705314600, \"n\": {n}}}\n").into_bytes())
         .collect();
     {
-        // Sent whole, and the socket closed with no answer read - a moment later, as a
-        // sender that gives up waiting does. One that closes with the last byte is not
-        // this case: the server drops such a request before it has read the body out.
+        // Sent whole, and the socket closed a moment later with no answer read, as a sender
+        // that gives up waiting does; closed with the last byte, the request is dropped unread.
         let mut socket = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
         let head = format!(
             "POST /ingest HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\
@@ -1515,9 +1409,7 @@ fn a_body_whose_sender_hung_up_keeps_its_place_and_is_stored_whole() {
 }
 
 /// A body whose lines, as log records, are more than one write of the log holds is the
-/// sender's to split: a `413` that says so, decided from the bytes before a line of it is
-/// parsed. Twenty-six million `{}` lines are 78MB on the wire and 1.09GB as records; an
-/// answer after the parse would have cost gigabytes of memory to refuse.
+/// sender's to split: a `413` decided from the bytes, before a line of it is parsed.
 #[test]
 fn a_body_past_what_the_log_writes_at_once_is_a_413_and_is_not_parsed() {
     let server = Served::start_with(ServeFlags {
@@ -1549,10 +1441,6 @@ fn a_body_past_what_the_log_writes_at_once_is_a_413_and_is_not_parsed() {
 
 /// The refusal that is left: a body the write-ahead log cannot take. Nothing of it is
 /// stored. And the first write that succeeds clears it.
-///
-/// The log is made unable to write the way the store was: its directory read-only, with a
-/// segment size of one byte so the next flush has to make a new segment there. The open
-/// one still takes the first line.
 #[test]
 #[cfg(unix)]
 fn a_log_that_cannot_write_refuses_and_the_first_write_clears_it() {
@@ -1660,9 +1548,8 @@ fn while_the_log_cannot_write_the_door_refuses_and_health_says_why() {
     );
 }
 
-/// A server whose stderr the test holds both ends of, where `Server` holds the end it
-/// reads. Killed, and its log's directory made writable again so that it can be removed,
-/// however the test ends.
+/// A server whose stderr the test holds both ends of; killed, and its log's directory
+/// made writable again so that it can be removed, however the test ends.
 #[cfg(unix)]
 struct Unheard {
     child: Child,
@@ -1681,9 +1568,8 @@ impl Drop for Unheard {
     }
 }
 
-/// One request on a thread of its own, and where its answer will arrive: for a caller
-/// that waits only so long, so that a server which does not answer is a finding and not a
-/// test that never ends.
+/// One request on a thread of its own, and where its answer will arrive: a server which
+/// does not answer is then a finding and not a test that never ends.
 #[cfg(unix)]
 fn request_apart(
     port: u16,
@@ -1698,15 +1584,8 @@ fn request_apart(
     rx
 }
 
-/// The log's first failure is named from the first refusal on: by the door's `503`, by
-/// `/stats`, by `/health`, and to the body that met it. None of them is told the log
-/// cannot write before there is a reason to give, and none waits for the line about it
-/// to reach stderr.
-///
-/// So stderr is made unable to take a byte before the log fails. Whatever the server
-/// does only once it has written that line has then not happened, for as long as this
-/// looks: a reason stored after it is not there to be read, and a body refused after it
-/// is not answered.
+/// The log's first failure is named from the first refusal on - by the door's `503`,
+/// `/stats`, `/health` - and none waits for the line about it to reach stderr, stopped here.
 #[test]
 #[cfg(unix)]
 fn the_first_503_names_the_logs_write_error_and_so_do_stats_and_health() {
@@ -1721,8 +1600,7 @@ fn the_first_503_names_the_logs_write_error_and_so_do_stats_and_health() {
     const ANSWER: Duration = Duration::from_secs(5);
 
     // A socket pair where `Server` has a pipe: a socket can be told not to wait, so the
-    // test learns that it is full from the write that would have had to, and not from
-    // how long a write has been taking.
+    // test learns that it is full from the write that would have had to.
     let (ours, theirs) = UnixStream::pair().expect("socket pair");
     let dir = scratch_dir();
     let child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
@@ -1767,8 +1645,7 @@ fn the_first_503_names_the_logs_write_error_and_so_do_stats_and_health() {
     fs::set_permissions(&wal, fs::Permissions::from_mode(0o555)).expect("chmod");
 
     // Stderr, filled to the last byte: in blocks, and then a byte at a time, until a
-    // write says it would have to wait. The server's end is this same socket, and waits
-    // again once this has stopped asking it not to.
+    // write says it would have to wait.
     theirs.set_nonblocking(true).expect("nonblocking");
     for block in [&[b'\n'; 1024][..], b"\n"] {
         loop {
@@ -1845,20 +1722,8 @@ fn the_first_503_names_the_logs_write_error_and_so_do_stats_and_health() {
 
 // ── After a kill ───────────────────────────────────────────────────────────────────
 
-/// `kill -9` loses no acknowledged line and stores none twice - whichever side of the
-/// checkpoint the line is on. `scripts/fault/crash_test.sh` is the full version of this, twenty
-/// kills at drawn moments; this is the two cases it rests on, each made on purpose.
-///
-/// **Rows in a row group, and a checkpoint that does not know.** Every line is flushed
-/// into a row group, the server is killed, and the checkpoint file is deleted: the log
-/// still holds every line, and nothing but the row groups' own ranges says they are
-/// stored. A replay that went by the checkpoint would store all of them again.
-///
-/// **Rows in memory only.** Then three lines more, under the default wait so no row group
-/// takes them, and a kill: they come back from the log, and the rest are skipped again.
-/// The log's newest segment is given a torn record first - a frame whose length says more
-/// than is there, as a write the kill cut short leaves - and the start must warn and
-/// carry on.
+/// `kill -9` loses no acknowledged line and stores none twice, whichever side of the
+/// checkpoint it is on: rows in a row group, then rows in memory and a torn record.
 #[test]
 fn a_kill_loses_no_acknowledged_line_and_stores_none_twice() {
     let fast = ["--row-group-timeout-ms", "100", "--flush-interval-ms", "50"];
@@ -1968,10 +1833,8 @@ fn the_open_segment_cap_is_reported() {
     assert_eq!(server.query("COUNT LOG {}")["count"], want);
 }
 
-/// A query's `meta` counts segment files read, and leaves under the name that used to
-/// mean files.
-///
-/// `files_opened` reported 870 where 16,694 segment files were read.
+/// A query's `meta` counts segment files read as `files_opened`, not leaves: those are
+/// `leaves_opened`.
 #[test]
 fn files_opened_counts_segment_files_and_leaves_opened_takes_the_old_meaning() {
     let server = Served::start_with(ServeFlags {
@@ -2002,12 +1865,8 @@ fn files_opened_counts_segment_files_and_leaves_opened_takes_the_old_meaning() {
 
 // ── A connection the server is about to close ──────────────────────────────────────
 
-/// One connection kept across requests, as a shipper keeps one: each answer is read by its
-/// `Content-Length`, and the next request goes down the same socket.
-///
-/// `honour` is whether it does what `Connection: close` in an answer asks - opens a new
-/// connection for the next request. Either way it opens one after a request that got no
-/// answer, which is all a client can do then.
+/// One connection kept across requests, as a shipper keeps one. `honour` is whether it
+/// opens a new connection when an answer says `Connection: close`.
 struct Kept {
     port: u16,
     honour: bool,
@@ -2168,12 +2027,8 @@ impl Drop for Writable {
     }
 }
 
-/// A refusal after which the server closes the connection says `Connection: close`.
-///
-/// The door refuses a body before it is read, and a connection with a request half read
-/// cannot carry another: the server closes it. A shipper that is not told sends its next
-/// batch into the closed socket and gets no answer at all - every other body, with the log
-/// failing, where each should have been a 503 it knows what to do with.
+/// A refusal after which the server closes the connection says `Connection: close`: a
+/// shipper that is not told sends its next batch into the closed socket and gets no answer.
 #[test]
 #[cfg(unix)]
 fn a_refusal_that_closes_the_connection_says_so() {
@@ -2200,9 +2055,8 @@ fn a_refusal_that_closes_the_connection_says_so() {
     let answers: Vec<_> = (0..12)
         .map(|_| kept.send("POST", "/ingest", &body))
         .collect();
-    // 2. And one that does not. What it loses is reported and not asserted: the server
-    //    said what it would do, and a client that sends into a closed socket anyway is not
-    //    this server's to fix.
+    // 2. And one that does not. What it loses is reported and not asserted: a client that
+    //    sends into a closed socket anyway is not this server's to fix.
     let mut deaf = Kept::new(server.port, false);
     let unanswered = (0..12)
         .filter(|_| deaf.send("POST", "/ingest", &body).is_err())
@@ -2249,12 +2103,7 @@ fn a_refusal_that_closes_the_connection_says_so() {
 }
 
 /// And an answer that says nothing of the kind leaves the connection open: the header is
-/// the truth both ways. Every request here goes down a kept connection whose client does
-/// as it is told, so each is answered - whatever was refused before it, read or unread.
-///
-/// The bodies left unread are far past what the server reads in one go (about 400KB): one
-/// that is a little over its limit can be read to its end by the read that crosses the
-/// limit, and then the connection stays open and the answer rightly does not say `close`.
+/// the truth both ways. The unread bodies are far past what the server reads in one go.
 #[test]
 fn a_kept_connection_is_closed_only_where_the_answer_says_so() {
     let server = Served::start_with(ServeFlags {
@@ -2316,10 +2165,7 @@ fn a_kept_connection_is_closed_only_where_the_answer_says_so() {
     );
 }
 
-/// A client of HTTP/1.0 that asked for its connection to be kept is told the same.
-///
-/// It is the one client an answer has to say `keep-alive` to, and the answer to a body
-/// left unread said it too - on a connection the server then closed. Here it says `close`
+/// A client of HTTP/1.0 that asked for its connection to be kept is told the same: `close`
 /// in place of `keep-alive`, and `keep-alive` wherever the connection is in fact kept.
 #[test]
 fn a_kept_connection_of_http_1_0_is_told_the_same() {

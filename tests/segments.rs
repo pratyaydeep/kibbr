@@ -1,13 +1,6 @@
-//! What the storage format is observable as, from outside the process.
-//!
-//! The bytes are checked where they are written - `crates/kibbr-storage/src/store/v3/` - and what the store
-//! does with them in `crates/kibbr-storage/src/store/disk.rs`. This file asks only what a client can ask: is a
-//! row in the answer before it is on disk, does a schema change cost anything, does a
-//! query say what it pruned, and does a data directory from an earlier layout stop the
-//! server rather than being half-read.
-//!
-//! HTTP over a bare `TcpStream`, as in `serve.rs` and `restart.rs` and for the same
-//! reason: the contract is a status line and a JSON body.
+//! What the storage format is observable as, from outside the process: is a row in
+//! the answer before it is on disk, does a schema change cost anything, does a query say
+//! what it pruned, and does a data directory from an earlier layout stop the server.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -217,9 +210,8 @@ fn one_template(count: usize) -> Vec<u8> {
 
 // ── Visibility ─────────────────────────────────────────────────────────────────────
 
-/// A row group closes at 8,192 rows, 8MB or the timeout - one line is nowhere near any of
-/// them, and still has to be in the answer immediately. The thresholds say when bytes
-/// reach the disk, not when a row exists.
+/// One line is nowhere near any row-group threshold and still has to be in the answer
+/// immediately: the thresholds say when bytes reach the disk, not when a row exists.
 #[test]
 fn one_line_is_queryable_before_any_row_group_closes() {
     let db = Db::new();
@@ -242,8 +234,7 @@ fn one_line_is_queryable_before_any_row_group_closes() {
 // ── A schema change ────────────────────────────────────────────────────────────────
 
 /// A row group records the type each of its columns actually used, so a column that
-/// widens costs nothing: no file is sealed and none is opened, and each row keeps the type
-/// and the spelling it arrived with rather than the first ones being rewritten as text.
+/// widens costs no file, and each row keeps the type and the spelling it arrived with.
 #[test]
 fn a_widening_column_costs_no_file_and_each_row_keeps_its_type() {
     let db = Db::new();
@@ -283,9 +274,8 @@ fn a_widening_column_costs_no_file_and_each_row_keeps_its_type() {
 
 // ── Pruning, as the answer reports it ──────────────────────────────────────────────
 
-/// A window that covers one row group reads one, and says so.
-///
-/// Reported in `meta` because a prune nobody can see is a prune nobody notices stopping.
+/// A window that covers one row group reads one, and says so in `meta`: a prune nobody
+/// can see is a prune nobody notices stopping.
 #[test]
 fn a_window_over_one_row_group_reads_one_and_says_so() {
     let db = Db::new();
@@ -344,27 +334,8 @@ fn cores() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
-/// **A query answers the same whether its scan is shared between threads or not**, asked
-/// of the binary over HTTP.
-///
-/// One directory with a day of three row groups in one template, served three times:
-/// with nothing said; with `--scan-threads 1`, so every query chooses its rows on its own
-/// thread; and with as many scan threads as four cores allow and `--scan-fan-rows 0`, so
-/// every run of two row groups or more is shared out. A count by a term, a count under
-/// a window that prunes one row group, a grouping, and a fetch followed page by page to
-/// its end answer the same JSON from all three, but for how long each took: the count,
-/// the rows in their order, the groups, the cursor, and every counter of the scan.
-///
-/// `/stats` says how many runs were shared out: none by the second server, and some by
-/// the third - without which this would be three servers answering on one thread each.
-/// A machine with one core has no third server to start: it is refused, and that is held
-/// by `more_scan_threads_than_the_machine_has_cores_are_refused_at_the_start`.
-///
-/// **And each server says what it resolved**, in `/stats` beside that count and in its
-/// banner: the threads one query may use and the rows under which a run is never shared
-/// out. The default depends on the machine, and a count of no runs shared out reads the
-/// same for one thread as for four with nothing worth sharing, so without the two
-/// numbers nobody outside the process can tell which they are looking at.
+/// **A query answers the same whether its scan is shared between threads or not**, and
+/// `/stats` says how many runs were shared out and what each server resolved.
 #[test]
 fn a_scan_shared_between_threads_answers_what_one_thread_answers() {
     let db = Db::new();
@@ -378,7 +349,6 @@ fn a_scan_shared_between_threads_answers_what_one_thread_answers() {
     first.ingest(&one_template(20_000));
     first.shutdown();
 
-    // Every answer to the questions, the fetch page by page; and what /stats says.
     let asked = |extra: &[&str]| -> (Vec<serde_json::Value>, u64) {
         let said = |server: &Server, key: &str| -> u64 {
             server.stats()["queries"][key]
@@ -473,9 +443,8 @@ fn a_scan_shared_between_threads_answers_what_one_thread_answers() {
     assert_eq!(together, plain);
 }
 
-/// More scan threads than the machine has cores would only take turns on the same
-/// cores, and the first query to need them would wait while they were started. The
-/// server says so and does not start: by the flag, and by the variable.
+/// More scan threads than the machine has cores would only take turns on the same cores:
+/// the server says so and does not start, by the flag and by the variable.
 #[test]
 fn more_scan_threads_than_the_machine_has_cores_are_refused_at_the_start() {
     let db = Db::new();
@@ -532,9 +501,7 @@ fn closed_by(server: &Server, want: (u64, u64), within: std::time::Duration) -> 
 }
 
 /// A tick closes as many full row groups as a buffer holds and no more: the rows past the
-/// last full one wait to fill a row group of their own or for the timeout. A tick that
-/// closed the whole buffer once it held 8,192 rows made a short row group of whatever
-/// had arrived past them, and under steady ingest up to half the row groups were short.
+/// last full one wait to fill a row group of their own or for the timeout.
 #[test]
 fn a_tick_closes_only_full_row_groups_and_the_rest_waits_for_the_timeout() {
     // A tick every millisecond, landing all through the body, and a timeout that never
@@ -594,9 +561,8 @@ fn a_tick_closes_only_full_row_groups_and_the_rest_waits_for_the_timeout() {
     );
 }
 
-/// Seven columns of one template whose every value is new - sixteen hex digits mixed out of
-/// the row's number - so no encoding makes one column much smaller than another, and a
-/// time column beside them.
+/// Seven columns of one template whose every value is new, so no encoding makes one column
+/// much smaller than another, and a time column beside them.
 fn seven_even_columns(count: usize) -> Vec<u8> {
     let mix = |mut z: u64| {
         z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -623,9 +589,8 @@ fn seven_even_columns(count: usize) -> Vec<u8> {
     out
 }
 
-/// Naming one column of eight reads its chunks and the timestamp's, nothing else.
-/// `bytes_read` is the only place that is visible. The columns are of even size whatever
-/// their encoding, so reading two of eight is far less than reading them all.
+/// Naming one column of eight reads its chunks and the timestamp's, nothing else, and
+/// `bytes_read` is the only place that is visible.
 #[test]
 fn naming_one_column_reads_far_fewer_bytes_than_the_whole_row() {
     let db = Db::new();
@@ -653,12 +618,8 @@ fn naming_one_column_reads_far_fewer_bytes_than_the_whole_row() {
 
 // ── The layout this replaces ───────────────────────────────────────────────────────
 
-/// A data directory from before format v3 - a directory per template - is refused, by
-/// path, with a non-zero exit.
-///
-/// There is no migration, so the alternative to refusing is reading bytes whose meaning
-/// has to be guessed. Non-zero exit: a server that starts and answers `count: 0` over
-/// somebody's data is the worse outcome.
+/// A data directory from before format v3 - a directory per template - is refused by path
+/// with a non-zero exit: there is no migration, and answering `count: 0` over data is worse.
 #[test]
 fn a_per_template_data_directory_is_refused_by_path() {
     let db = Db::new();
@@ -746,10 +707,8 @@ fn a_data_file_from_a_pre_rename_build_is_refused_by_path() {
 
 // ── The banner ─────────────────────────────────────────────────────────────────────
 
-/// What the operator is told a crash costs. It changed with the format - rows wait for a
-/// row group, not for the next tick - and again with the write-ahead log: nothing that was
-/// acknowledged. A banner still promising the flush interval, or still warning of a lost
-/// row group, would be describing something nothing implements.
+/// What the operator is told a crash costs: nothing that was acknowledged. A banner
+/// promising the flush interval would be describing something nothing implements.
 #[test]
 fn the_banner_states_the_row_group_window_and_not_the_flush_interval() {
     let db = Db::new();

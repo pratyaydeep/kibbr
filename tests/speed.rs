@@ -1,16 +1,7 @@
-//! `kibbr bench`, from outside the process.
-//!
-//! The command's numbers are a machine's, so nothing here holds a timing to more than
-//! "positive". What is held is what must be true of a result on any machine: the table
-//! has the eight rows a reader is told to expect, every number in it is the middle of
-//! the runs and every run's number is the nearest rank of samples that are in the file,
-//! ingest is the server's count over the server's clock, the answers are the data's, a
-//! query under ingest was asked at its place, and the loaded directory is loaded once and
-//! never written again.
-//!
-//! Every run here is `--unchecked`: the test binary is a debug build, and other tests'
-//! servers are alive beside it, which a checked run would wait for and then be disturbed
-//! by.
+//! `kibbr bench`, from outside the process. Its numbers are a machine's, so nothing here
+//! holds a timing to more than "positive": what is held is what must be true on any machine.
+//! Every run is `--unchecked`: the test binary is a debug build, and other tests' servers
+//! are alive beside it, which a checked run would wait for and then be disturbed by.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -79,9 +70,8 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).expect("the output was not utf-8")
 }
 
-/// A line with every count in it replaced by `N`, a number with a point in it being one
-/// `N`, and every run of spaces one space: what a line says, whatever was measured and
-/// however wide its columns then are.
+/// A line with every count replaced by `N` and every run of spaces one space: what a line
+/// says, whatever was measured and however wide its columns then are.
 fn shape(line: &str) -> String {
     let mut out = String::new();
     let mut chars = line.chars().peekable();
@@ -96,7 +86,6 @@ fn shape(line: &str) -> String {
             out.push(c);
             continue;
         }
-        // The rest of the number: digits, and a comma or a point that stands between two.
         while let Some(&next) = chars.peek() {
             let joins = (next == ',' || next == '.') && {
                 let mut ahead = chars.clone();
@@ -296,7 +285,6 @@ fn a_bench_run_prints_the_eight_rows_and_saves_every_sample_behind_them() {
         "the eight rows, less the scan and plan rows, and the note under them, in:\n{}",
         table.join("\n")
     );
-    // As they are printed, each row begins with its name.
     for (line, name) in table[2..10].iter().zip([
         "ingest lines/s  ",
         "S1 promoted value   p50 / p99  ",
@@ -726,8 +714,7 @@ fn a_profile_the_bench_does_not_measure_is_refused_by_name() {
 }
 
 /// **`--threads T` is `--scan-threads T` on every server the bench starts, and the result
-/// says so.** Asked for a count that is not this machine's default, so that a flag which
-/// reached no server would leave the default in `/stats`.
+/// says so.** A count that is not the default, so a flag that reached no server shows.
 #[test]
 fn the_threads_asked_for_reach_every_server_and_are_in_the_result() {
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);

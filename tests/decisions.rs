@@ -1,27 +1,15 @@
-//! The things the query language left open, pinned against the observable answer.
-//!
-//! Each of these is a choice rather than a discovery, so nothing in the source can be read
-//! to check it and no differential can find it: the engine and the oracle would agree just
-//! as happily on the opposite choice. `scripts/check/parser_equivalence.sh` pins the ones that
-//! need a corpus; these are the ones that need a shaped fixture, and `--exists`, which the
-//! grammar cannot spell and that script therefore does not cover.
-//!
-//! - **LIMIT and paging.** A limit bounds rows returned, not rows counted; a `MATCH` that
-//!   asks for no limit gets the `max_rows` backstop as a page rather than a truncation; and
-//!   `AFTER` walks the rest without gaps or repeats.
-//! - **Row order.** `ts` descending; rows that cannot be placed in time last.
-//! - **A template with no `ts` column, under a time filter.** `exists: true, count: 0`.
-//! - **`--exists` with a time clause.** A liveness check that reads one row, not a
-//!   contradiction and not a walk that ignored the clause.
+//! The things the query language left open, pinned against the observable answer: each is
+//! a choice, so no differential can find it - engine and oracle would agree on the opposite.
+//! Covered: LIMIT and paging, row order, a template with no `ts` under a time filter, and
+//! `--exists` with a time clause.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-/// Two templates and no overlap between them: `beat` has no `ts` at all, `hit` has one on
-/// every row. Five `hit` rows, so a limit has something to truncate and an order to get
-/// wrong.
+/// Two templates: `beat` has no `ts` at all, `hit` has one on every row. Five `hit` rows,
+/// so a limit has something to truncate and an order to get wrong.
 const FIXTURE: &str = concat!(
     r#"{"event":"beat","node":"a"}"#,
     "\n",
@@ -100,10 +88,8 @@ fn json_of(out: &std::process::Output) -> Value {
     serde_json::from_slice(&out.stdout).expect("query did not emit JSON")
 }
 
-/// Every row rendered, so rows with no `n` column are still comparable.
 /// Every row as text, less `_received_at`: the CLI rebuilds its database per invocation,
-/// so a row on arrival time is stamped afresh by every page, and the stamp is
-/// not what these comparisons are about.
+/// so a row on arrival time is stamped afresh by every page.
 fn rows_as_text(result: &Value) -> Vec<String> {
     result["rows"]
         .as_array()
@@ -155,9 +141,8 @@ fn a_limit_takes_the_newest_rows_not_the_first() {
     );
 }
 
-/// A template with no `ts` column is on arrival time, which is `now` - so its
-/// rows are the newest, come first, and among themselves keep the order they were
-/// ingested in: they share one instant, and the tiebreak is insertion order.
+/// A template with no `ts` column is on arrival time, so its rows are the newest and come
+/// first; they share one instant, and the tiebreak is insertion order.
 #[test]
 fn rows_with_no_timestamp_sort_first_in_insertion_order() {
     let all = query(&["MATCH LOG {}"]);
@@ -167,7 +152,6 @@ fn rows_with_no_timestamp_sort_first_in_insertion_order() {
         .map(|row| row["event"].as_str().expect("event is a string"))
         .collect();
     assert_eq!(events, ["beat", "beat", "hit", "hit", "hit", "hit", "hit"]);
-    // Insertion order among the rows sharing an arrival instant.
     let nodes: Vec<&str> = rows
         .iter()
         .filter_map(|row| row.get("node").and_then(Value::as_str))
@@ -193,11 +177,7 @@ fn a_limit_bounds_the_rows_and_not_the_count() {
     assert_eq!(whole["meta"]["truncated"], false);
 }
 
-/// `COUNT` returns no rows, so a limit has nothing to bound there and does not silently
 /// The count in the group whose keys are exactly `want`, or a panic naming what was there.
-///
-/// `groups` is a list because a bucket that exists and is empty has to be expressible, so
-/// a group is found by its keys rather than looked up by one.
 fn group(result: &Value, want: &[(&str, &str)]) -> u64 {
     let groups = result["groups"].as_array().expect("groups is an array");
     groups
@@ -208,7 +188,7 @@ fn group(result: &Value, want: &[(&str, &str)]) -> u64 {
         .expect("a count")
 }
 
-/// halve an answer whose whole point is to be a total.
+/// `COUNT` returns no rows, so a limit has nothing to bound there and does not halve a total.
 #[test]
 fn a_limit_does_not_change_a_count() {
     assert_eq!(query(&[r#"COUNT LOG {"event":"hit"}"#])["count"], 5);
@@ -252,14 +232,8 @@ fn the_largest_limit_is_every_row() {
     assert_eq!(all["meta"]["next_cursor"], Value::Null);
 }
 
-/// A `MATCH` that asks for no limit and stays under the backstop gets every matching row
-/// and no cursor: seven rows are well inside the 10,000-row default, so nothing is
-/// withheld. `--max-rows 0` is the same answer with no backstop in reach at all.
-///
-/// The two answers differ only in `limit_source`, which is the field's meaning: it names
-/// who set the page size, not whether the page filled. `truncated` is the one that says
-/// whether it fired, and both readings are needed - a backstop in force that did not bite
-/// is a different fact from no backstop at all.
+/// A `MATCH` with no limit under the backstop gets every row and no cursor. `limit_source`
+/// names who set the page size, `truncated` whether it fired - both readings are needed.
 #[test]
 fn a_match_with_no_limit_returns_everything_under_the_backstop() {
     for (args, source) in [
@@ -279,9 +253,7 @@ fn a_match_with_no_limit_returns_everything_under_the_backstop() {
 // ── The max_rows backstop ──────────────────────────────────────────────────────────
 
 /// A `MATCH` naming no `LIMIT` is cut at the backstop, and the answer says so twice:
-/// `truncated` that the page is short of the answer, `limit_source` that the server and not
-/// the query decided it. One field cannot carry both - a caller that asked for three rows
-/// and got three has what it wanted, and this caller has been told to narrow its query.
+/// `truncated` that the page is short, `limit_source` that the server decided it.
 #[test]
 fn the_backstop_cuts_an_unlimited_match_and_says_who_cut_it() {
     let capped = query(&["--max-rows", "3", "MATCH LOG {}"]);
@@ -321,9 +293,8 @@ fn a_backstopped_answer_pages_to_completion() {
     assert_eq!(paged, whole);
 }
 
-/// A caller's own `LIMIT` is honoured above the backstop rather than clamped to it. The
-/// backstop is for the query that named nothing; a query that named four rows asked a
-/// question, and answering three of it would be the server editing the request.
+/// A caller's own `LIMIT` is honoured above the backstop rather than clamped to it: the
+/// backstop is for the query that named nothing.
 #[test]
 fn a_callers_limit_is_honoured_above_the_backstop() {
     let over = query(&["--max-rows", "2", r#"MATCH LOG {"event":"hit"} LIMIT 4"#]);
@@ -371,9 +342,8 @@ fn the_environment_sets_the_backstop_and_the_flag_beats_it() {
 
 // ── Paging ─────────────────────────────────────────────────────────────────────────
 
-/// A cursor is issued only when rows were actually withheld. `rows_returned == limit` is
-/// not that fact: the fixture has five `hit` rows, so `LIMIT 5` fills the page exactly and
-/// still has nothing after it. A cursor there would page into an empty answer.
+/// A cursor is issued only when rows were withheld, which `rows_returned == limit` does not
+/// say: `LIMIT 5` over five rows fills the page and has nothing after it.
 #[test]
 fn a_cursor_is_issued_only_when_there_is_a_next_page() {
     let short = query(&[r#"MATCH LOG {"event":"hit"} LIMIT 2"#]);
@@ -435,10 +405,8 @@ fn rows_sharing_an_instant_page_without_gaps() {
     assert_eq!(paged, all);
 }
 
-/// Two templates whose key sets read alike with a NUL after each key - the one key
-/// `a\0b`, and the two keys `a` and `b` - are two leaves to the order all the same. Their
-/// rows share an instant, so only the leaf's key separates them; when both leaves had one
-/// key, a page that stopped on the first row answered the next with nothing.
+/// Two templates whose key sets read alike with a NUL after each key - `a\0b`, and `a` with
+/// `b` - are two leaves, and with one instant shared only the leaf's key separates their rows.
 #[test]
 fn rows_of_two_templates_that_spell_alike_page_without_gaps() {
     const LINES: &str = concat!(
@@ -467,9 +435,8 @@ fn rows_of_two_templates_that_spell_alike_page_without_gaps() {
     assert_eq!(whole, [1, 2]);
 }
 
-/// A key that spells a promoted token, beside the promoted token it spells. The two lines
-/// are two shapes - one key `event=login` holding a number, one key `event` promoted with
-/// the value `login` - and both read `event=login`.
+/// A key that spells a promoted token, beside the promoted token it spells: two shapes,
+/// and both read `event=login`.
 const SPELLED_ALIKE: &str = concat!(r#"{"event=login":1}"#, "\n", r#"{"event":"login"}"#, "\n",);
 
 fn over_spelled_alike(args: &[&str]) -> Value {
@@ -482,8 +449,8 @@ fn over_spelled_alike(args: &[&str]) -> Value {
     json_of(&out)
 }
 
-/// They are two templates to the engine, as they are to the oracle. They were one: the
-/// two tokens were one trie edge, so the lines shared a leaf holding both columns.
+/// They are two templates to the engine, as they are to the oracle: the two tokens are
+/// not one trie edge.
 #[test]
 fn a_key_spelling_a_promoted_token_is_its_own_template() {
     let engine = over_spelled_alike(&["MATCH LOG {}"]);
@@ -507,9 +474,7 @@ fn a_promoted_value_does_not_count_the_key_that_spells_it() {
     let rows = over_spelled_alike(&[r#"MATCH LOG {"event":"login"}"#]);
     assert_eq!(rows_as_text(&rows), [r#"{"event":"login"}"#]);
 
-    // The count was right while the two shared a leaf - the scan filtered the rows. What
-    // was wrong was the shape: one leaf held both columns, so a pattern naming both found
-    // a template no line has.
+    // A pattern naming both keys names a template no line has: the two do not share a leaf.
     for extra in [&[][..], &["--reference"]] {
         let mut args = vec![r#"COUNT LOG {"event":"login","event=login":*}"#];
         args.extend_from_slice(extra);
@@ -520,13 +485,8 @@ fn a_promoted_value_does_not_count_the_key_that_spells_it() {
     }
 }
 
-/// The oracle pages both rows. Its tiebreak is the leaf's key, hashed from the same
-/// tokens, so the two rows - one instant, two templates - carried one rank, and the page
-/// after the first was empty. The engine is asked the same and has to agree.
-///
-/// The lines carry a `ts` here and nowhere else in this group: a row with none takes its
-/// arrival time, the CLI stamps that afresh on every invocation, and a cursor from one
-/// invocation then names an instant every row of the next is newer than.
+/// Two rows of one instant and two templates must not carry one rank, in the oracle or the
+/// engine. The lines carry a `ts` because arrival time is stamped afresh per invocation.
 #[test]
 fn rows_of_a_key_and_the_promoted_token_it_spells_page_without_gaps() {
     const LINES: &str = concat!(
@@ -579,11 +539,8 @@ fn a_key_holding_an_equals_sign_comes_back_as_it_went_in() {
     }
 }
 
-/// A promoted key under a parent whose name holds `=` is still settled by the path. Its
-/// token is `a\=b.event=login`, and the walk has to split it at the bare `=` and read the
-/// key back as `a=b.event` - split at the first `=` it is no column at all, the term is
-/// left to the scan, and a value no template holds is reported as a template with no
-/// rows where the oracle reports no template.
+/// A promoted key under a parent whose name holds `=` is still settled by the path: its
+/// token `a\=b.event=login` is split at the bare `=`, not the first.
 #[test]
 fn a_promoted_key_under_a_parent_holding_an_equals_sign_is_settled_by_the_path() {
     const LINES: &str = concat!(
@@ -615,10 +572,8 @@ fn a_promoted_key_under_a_parent_holding_an_equals_sign_is_settled_by_the_path()
     }
 }
 
-/// A promoted value that begins the way a pattern's key goes on does not hide the leaf.
-/// The pattern names the literal key `event=login`; the line's promoted token is
-/// `event=login=z`, which starts with the pattern's key and a `=`, and the walk took it
-/// for another value of that key and dropped the subtree.
+/// A promoted value that begins the way a pattern's key goes on does not hide the leaf:
+/// `event=login=z` is not another value of the literal key `event=login`.
 #[test]
 fn a_promoted_value_that_spells_the_rest_of_a_key_does_not_hide_its_leaf() {
     const LINES: &str = concat!(r#"{"event":"login=z","event=login":"q"}"#, "\n");
@@ -643,7 +598,6 @@ fn a_cursor_from_another_query_is_refused() {
         .as_str()
         .expect("a cursor for a truncated page");
 
-    // Same cursor, different pattern.
     let out = raw(&[&format!(r#"MATCH LOG {{}} LIMIT 2 AFTER "{c}""#)]);
     assert!(!out.status.success(), "a foreign cursor was accepted");
 
@@ -654,10 +608,8 @@ fn a_cursor_from_another_query_is_refused() {
     assert_eq!(ok["meta"]["rows_returned"], 2);
 }
 
-/// "Another query" is another pattern, however alike the two print. The wildcard and the
-/// quoted star are both `event=*` to `--explain`, and a value may hold the `=` or the NUL
-/// that would otherwise read as the end of a term; the guard is over the terms themselves,
-/// so each of these refuses the other's cursor.
+/// "Another query" is another pattern, however alike the two print: the guard is over the
+/// terms themselves, so each of these refuses the other's cursor.
 #[test]
 fn a_cursor_from_a_pattern_that_prints_the_same_is_refused() {
     for (issued_by, sent_to) in [
@@ -682,9 +634,8 @@ fn a_cursor_from_a_pattern_that_prints_the_same_is_refused() {
     }
 }
 
-/// A cursor carrying any other version prefix is refused before its rank is read. Nothing
-/// reads a superseded layout and nothing translates one: the components mean different
-/// things across a version, so resolving it would answer confidently from the wrong row.
+/// A cursor carrying any other version prefix is refused before its rank is read: the
+/// components mean different things across a version.
 #[test]
 fn a_cursor_from_another_version_is_refused() {
     let page = query(&[r#"MATCH LOG {"event":"hit"} LIMIT 2"#]);
@@ -765,10 +716,8 @@ fn exists_without_a_window_reads_nothing() {
     let out = query(&["--exists", "--match", "event=hit"]);
     assert_eq!(out["exists"], true);
     assert_eq!(out["meta"]["rows_scanned"], 0);
-    // `leaves_opened`, and `files_opened` beside it. The second cannot fail on this
-    // surface - the CLI's store is in memory and reads no file whatever the query - so
-    // pinning it alone would have been a check that passed however the walk behaved.
-    // `leaves_opened` is what says the walk opened nothing.
+    // `leaves_opened` beside `files_opened`: the CLI's store is in memory and reads no file
+    // whatever the query, so the second alone could not fail.
     assert_eq!(out["meta"]["leaves_opened"], 0);
     assert_eq!(out["meta"]["files_opened"], 0);
 }

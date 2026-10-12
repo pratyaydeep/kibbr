@@ -1,17 +1,6 @@
-//! What the *next* process sees.
-//!
-//! Every test here ingests under one server, stops it, and starts another on the same
-//! directory. None of it is observable from inside a single process: a store that never
-//! reopened its files can hold the right answer in memory and have written nothing.
-//!
-//! The questions, one per test - do the rows come back, is `trie.json` really nothing but
-//! a snapshot once `catalog.log` exists, does a damaged snapshot with no catalog still warn
-//! rather than crash, does a cursor issued before the restart still name the same row
-//! after it, are ids that a directory already holds ever handed out twice, and do the two
-//! column types the segment format cannot spell survive.
-//!
-//! HTTP over a bare `TcpStream`, as in `serve.rs` and for the same reason: the contract is
-//! a status line and a JSON body.
+//! What the *next* process sees: every test ingests under one server, stops it, and starts
+//! another on the same directory. None of it is observable from inside a single process - a
+//! store that never reopened its files can hold the right answer in memory.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -26,11 +15,8 @@ const LINES: usize = 500;
 
 // ── A database, and the servers started on it ──────────────────────────────────────
 
-/// A data directory that outlives every server started on it.
-///
-/// In `serve.rs` the directory belongs to the `Server` and dies with it, which is right
-/// there and wrong here: these tests need the bytes to still be on disk when the process
-/// that wrote them is gone. So the directory is the fixture and the servers are borrowed.
+/// A data directory that outlives every server started on it: these tests need the bytes
+/// on disk when the process that wrote them is gone.
 struct Db {
     dir: PathBuf,
 }
@@ -51,9 +37,8 @@ impl Db {
         self.start_with(&[])
     }
 
-    /// A server used for one read and then dropped - which kills it rather than stopping
-    /// it. Fine for a process that ingested nothing: there is nothing unflushed to lose,
-    /// and the restart tests are about what the *next* process sees.
+    /// A server used for one read and then dropped, which kills it rather than stopping it:
+    /// fine for a process that ingested nothing.
     fn start_and_keep(&self) -> Server {
         self.start()
     }
@@ -148,8 +133,7 @@ impl Server {
     }
 
     /// SIGTERM, then wait for the exit - the graceful path, which is the one that writes
-    /// `trie.json` and runs the final flush. Surviving `kill -9` is the WAL's job, not
-    /// this file's subject.
+    /// `trie.json` and runs the final flush.
     fn shutdown(mut self) -> String {
         let ok = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
@@ -237,13 +221,8 @@ fn rows_as_text(result: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-/// The queries compared across a restart.
-///
-/// Chosen to read through different paths rather than to be many: a count that never
-/// materialises a row, a full scan that materialises every one in order, a filter that
-/// selects, a grouped aggregate, and a bucketed one that touches the timestamp column.
-/// An answer that survived a restart in one of these and not the others is a store that
-/// wrote some of its columns.
+/// The queries compared across a restart, chosen to read through different paths: an
+/// answer that survived in one and not the others is a store that wrote some of its columns.
 const BATTERY: [&str; 5] = [
     "COUNT LOG {}",
     "MATCH LOG {} LIMIT 100000",
@@ -252,12 +231,8 @@ const BATTERY: [&str; 5] = [
     "COUNT LOG {} GROUP BY time(1h)",
 ];
 
-/// Everything about an answer that a restart must not change.
-///
-/// `meta` is deliberately excluded: it carries the duration and the files opened, which
-/// differ between a store answering from its write buffer and the same store answering
-/// from the files it flushed - and differing there is the correct behaviour, not a
-/// regression.
+/// Everything about an answer that a restart must not change. `meta` is excluded: its
+/// duration and files opened rightly differ between the write buffer and flushed files.
 fn answer(server: &Server, q: &str) -> String {
     let full = server.query(q);
     serde_json::json!({
@@ -311,13 +286,8 @@ fn a_restart_answers_every_query_identically() {
 
 // ── A damaged snapshot ─────────────────────────────────────────────────────────────
 
-/// `trie.json` is a snapshot nothing depends on. Delete it, truncate it by hand: with a
-/// catalog beside it the next start reads the catalog, warns about nothing, and answers
-/// every query as before.
-///
-/// Before the catalog this file was the *only* thing on disk that could rebuild a trie,
-/// so losing it made every row unreachable - 2,000 rows, delete the file, restart, every
-/// query 0. This is the test for that.
+/// `trie.json` is a snapshot nothing depends on: deleted or truncated, with a catalog
+/// beside it the next start warns about nothing and answers every query as before.
 #[test]
 fn a_damaged_or_missing_trie_json_changes_no_answer_when_a_catalog_exists() {
     let db = Db::new();
@@ -363,10 +333,8 @@ fn a_damaged_or_missing_trie_json_changes_no_answer_when_a_catalog_exists() {
     assert!(db.trie_json().exists());
 }
 
-/// No catalog and a truncated `trie.json`: the state a data directory from before the
-/// catalog is in after a machine lost power mid-write. A WARN and an empty trie, never a
-/// hard failure - what that rules out is a crash loop, a process that cannot start because
-/// of a file it wrote itself and that an operator cannot fix without knowing the format.
+/// No catalog and a truncated `trie.json`, as a pre-catalog directory is after power loss
+/// mid-write: a WARN and an empty trie, never a crash loop an operator cannot fix.
 #[test]
 fn no_catalog_and_a_truncated_trie_json_warns_and_starts_clean() {
     let db = Db::new();
@@ -392,9 +360,8 @@ fn no_catalog_and_a_truncated_trie_json_warns_and_starts_clean() {
         second.banner
     );
 
-    // Started, not merely warned: it is serving, which is the half a crash loop fails.
-    // `status: "ok"` is the other half - a lost snapshot is not a store that cannot
-    // write, and `/health` says which of the two this is.
+    // Started, not merely warned: it is serving, and `status: "ok"` because a lost snapshot
+    // is not a store that cannot write.
     let (status, body) = second.get("/health");
     assert_eq!(status, 200);
     assert_eq!(
@@ -416,8 +383,7 @@ fn no_catalog_and_a_truncated_trie_json_warns_and_starts_clean() {
     let report = second.ingest(&corpus());
     assert_eq!(report["ingested"], LINES as u64);
     // `LINES`, not twice it: the relearned templates take fresh ids and so fresh
-    // directories, leaving the orphans unread. Losing both files loses the rows they
-    // described - which is the documented cost of starting empty.
+    // directories, leaving the orphans unread.
     assert_eq!(second.query("COUNT LOG {}")["count"], LINES as u64);
 
     // The next start has a catalog to read: the damage does not persist. The orphan
@@ -432,9 +398,8 @@ fn no_catalog_and_a_truncated_trie_json_warns_and_starts_clean() {
     assert_eq!(third.query("COUNT LOG {}")["count"], LINES as u64);
 }
 
-/// A data directory from before the catalog: `trie.json` and no `catalog.log`. The first
-/// start writes the catalog from the snapshot, once, says so, and serves from the catalog;
-/// the second start does not need the snapshot at all.
+/// A data directory from before the catalog, `trie.json` and no `catalog.log`: the first
+/// start writes the catalog from the snapshot, once, and the second needs no snapshot.
 #[test]
 fn a_trie_json_with_no_catalog_is_migrated_once() {
     let db = Db::new();
@@ -484,8 +449,7 @@ fn a_trie_json_with_no_catalog_is_migrated_once() {
     assert_eq!(before, again);
 }
 
-/// `Uuid` and `Ip` exist only in the catalog: the segment type byte has no value for them
-/// so before it they came back from a restart as whatever the segment said.
+/// `Uuid` and `Ip` exist only in the catalog: the segment type byte has no value for them.
 #[test]
 fn uuid_and_ip_column_types_survive_a_restart() {
     let db = Db::new();
@@ -533,13 +497,8 @@ fn column_types(server: &Server) -> serde_json::Map<String, serde_json::Value> {
 
 // ── A cursor across a restart ──────────────────────────────────────────────────────
 
-/// Cursors are **durable**, not session-scoped: all three components are properties of the
-/// row rather than positions in a structure a restart rebuilds, so a cursor must resolve to
-/// the same row in the next process. The reasoning is at the `Cursor` definition.
-///
-/// This is the test that decision has to earn. It rules out the failure that produces
-/// plausible wrong answers rather than errors: a cursor resolving *nearly* right after a
-/// restart silently skips or repeats rows, and the caller's answer looks complete.
+/// Cursors are **durable**, not session-scoped: a cursor must resolve to the same row in the
+/// next process, since one resolving *nearly* right silently skips or repeats rows.
 #[test]
 fn a_cursor_issued_before_a_restart_resolves_identically_after_one() {
     let db = Db::new();
@@ -554,9 +513,8 @@ fn a_cursor_issued_before_a_restart_resolves_identically_after_one() {
         .expect("a backstopped page carried no cursor")
         .to_string();
 
-    // What the rest of the answer is, read without a restart in the way. Paging to
-    // completion here rather than taking one page: a cursor that resolves to the right
-    // row and then reads the partitions in a different order is still wrong.
+    // Paged to completion rather than one page: a cursor that resolves to the right row and
+    // then reads the partitions in a different order is still wrong.
     let uninterrupted = page_to_completion(&first, &cursor);
     assert!(!uninterrupted.is_empty(), "the cursor resumed nothing");
 
@@ -569,8 +527,7 @@ fn a_cursor_issued_before_a_restart_resolves_identically_after_one() {
         "the same cursor named a different answer after a restart"
     );
 
-    // The whole answer, as the sum of what the cursor handed back on each side. Paging
-    // that agrees with itself but not with the unpaged query is agreement on a wrong
+    // Paging that agrees with itself but not with the unpaged query is agreement on a wrong
     // answer.
     let mut whole_by_paging = rows_as_text(&page);
     whole_by_paging.extend(resumed);
@@ -595,11 +552,8 @@ fn page_to_completion(server: &Server, cursor: &str) -> Vec<String> {
     rows
 }
 
-/// A cursor is still read against the query that issued it, restart or not.
-///
-/// The durability decision widens what a cursor may outlive; it does not widen what one
-/// may be pointed at. Kept here because the guard is easy to lose exactly when the cursor
-/// stops being session state - there is no session left to check it against.
+/// A cursor is still read against the query that issued it, restart or not: durability
+/// widens what a cursor may outlive, not what it may be pointed at.
 #[test]
 fn a_cursor_read_against_another_query_is_refused_after_a_restart() {
     let db = Db::new();
@@ -622,13 +576,8 @@ fn a_cursor_read_against_another_query_is_refused_after_a_restart() {
     );
 }
 
-/// A key holding `=` is the same template after a restart as before it.
-///
-/// The trie's edge for such a key is escaped (`k\=v`), and the catalog holds the key, not
-/// the label. Replayed without the escape the template came back under the bare label:
-/// the next line of that shape missed it and became a second template, the start after
-/// that found two records with one path and dropped the second with its rows, and the
-/// literal key `event=login` came back sharing a leaf with the promoted `event=login`.
+/// A key holding `=` is the same template after a restart as before it: the trie's edge
+/// is escaped (`k\=v`) and the catalog holds the key, so replay must escape it again.
 #[test]
 fn a_key_holding_an_equals_sign_is_the_same_template_after_a_restart() {
     const LINES: &[u8] = concat!(
@@ -678,26 +627,14 @@ fn a_key_holding_an_equals_sign_is_the_same_template_after_a_restart() {
 
 // ── Ids a lost snapshot leaves spent ───────────────────────────────────────────────
 
-/// A relearned template must never be handed a template id that a leaf directory already
-/// holds.
-///
-/// Ids come from a counter, and leaf directories are *named* by id, so losing both the
-/// catalog and `trie.json` restarts the counter over directories that still exist. Whether that collides depends
-/// on the order lines arrive in: relearn the same key sets in a different order and
-/// template *n* is now a different key set from the one whose rows sit in `leaf_n`.
-///
-/// The symptom is the reason this is a test rather than a comment. The two key sets merge
-/// into one directory, so `MATCH LOG {}` still returns every row and looks entirely
-/// correct, while a *filtered* query prunes to the template the trie names and misses the
-/// rows in the directory it actually opened - a plausible wrong answer, with no error
-/// anywhere. Both halves are asserted below, because only the second one ever failed.
+/// A relearned template must never be handed an id a leaf directory already holds: two key
+/// sets merged into one directory answer `MATCH LOG {}` right and a filtered query wrong.
 #[test]
 fn a_relearned_template_never_reuses_a_leaf_directory() {
     let db = Db::new();
 
-    // Two shapes, ingested in one order and then the other. Hand-written rather than
-    // generated: the whole mechanism is which key set is *seen first*, and that is
-    // exactly what a seeded generator holds fixed.
+    // Hand-written rather than generated: the mechanism is which key set is *seen first*,
+    // and that is exactly what a seeded generator holds fixed.
     let alpha_then_beta: &[u8] = b"{\"ts\":\"2024-01-15T10:00:00Z\",\"alpha\":\"a1\"}\n\
                                    {\"ts\":\"2024-01-15T10:00:01Z\",\"beta\":42}\n";
     let beta_then_alpha: &[u8] = b"{\"ts\":\"2024-01-15T10:00:02Z\",\"beta\":43}\n\
@@ -716,8 +653,8 @@ fn a_relearned_template_never_reuses_a_leaf_directory() {
     let second = db.start();
     assert_eq!(second.ingest(beta_then_alpha)["ingested"], 2);
 
-    // Fresh ids. This is the fix: nothing relearned may land on a directory that the
-    // templates from before the loss are still using.
+    // Fresh ids: nothing relearned may land on a directory that the templates from before
+    // the loss are still using.
     let after = template_ids(&second);
     assert_eq!(after.len(), 2);
     for id in &after {
@@ -728,8 +665,8 @@ fn a_relearned_template_never_reuses_a_leaf_directory() {
         );
     }
 
-    // The filtered query, which is where reuse used to go quiet: `a2` was ingested by
-    // this server and must be found by a query that names its column.
+    // The filtered query, where reuse goes quiet: `a2` was ingested by this server and must
+    // be found by a query that names its column.
     let hit = second.query(r#"MATCH LOG { "alpha": "a2" } LIMIT 100"#);
     assert_eq!(hit["count"], 1, "a filtered query missed a row it ingested");
 

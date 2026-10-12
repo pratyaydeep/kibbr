@@ -1,20 +1,8 @@
-//! `kibbr compact`, from outside the process.
-//!
-//! A compaction changes nothing a query can see, so most of what is worth checking is what
-//! it leaves on disk and what it says it did: one `replace` record in `manifest.log`, the
-//! day's directory holding exactly the files that record leaves live, a report whose
-//! numbers are the manifest's and the directory's - and, the second time, nothing at all.
-//! So every test builds a day through the live door, as a server that ran all day would
-//! have left it, and reads `manifest.log` and `data/<day>/` directly, as `load.rs` does.
-//!
-//! The command runs alone or as a client of the server holding the directory, and a
-//! server also compacts by itself on a timer; each of the three is run here against the
-//! real binary. What only a running compaction can show - a second job refused, a stop in
-//! the middle - is run against a day large enough that a debug build is still rebuilding
-//! it when the next request arrives, and says what it saw when it was not.
-//!
-//! Every command runs against a deadline, and HTTP is a bare `TcpStream`, for the reasons
-//! `load.rs` gives.
+//! `kibbr compact`, from outside the process: a compaction changes nothing a query
+//! can see, so what is checked is what it leaves on disk and what it says it did.
+//! Every test builds a day through the live door and reads `manifest.log` and
+//! `data/<day>/` directly, as `load.rs` does; the command is run alone, as a client of a
+//! server, and by the server's own timer.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -69,10 +57,8 @@ const LIVE: &[&str] = &[
 /// A server that compacts only when asked.
 const NO_SCHEDULE: &[&str] = &["--compact-interval-ms", "0"];
 
-/// The environment in which no day can be compacted: a compaction is refused, before it
-/// writes anything, unless the volume has room for the day a second time beside the buffer
-/// limit - and no volume has room beside this one. Nothing else reads the limit until the
-/// buffers hold that much.
+/// The environment in which no day can be compacted: a compaction is refused unless the
+/// volume has room for the day again beside the buffer limit, and none has beside this.
 const NO_ROOM: &[(&str, &str)] = &[("KIBBR__STORAGE__MAX_BUFFER_BYTES", "900000000000000")];
 
 // ── A scratch root: a data directory, and captured output ──────────────────────────
@@ -94,11 +80,8 @@ impl Db {
         Self { root }
     }
 
-    /// A data directory holding `lines` farm lines as the live door leaves them: many
-    /// short row groups over several files, every file sealed and none finished.
-    ///
-    /// Sent a thousand lines at a time, each body on disk before the next is sent, so
-    /// every template's rows are cut into a row group a body rather than one for the day.
+    /// A data directory holding `lines` farm lines as the live door leaves them: many short
+    /// row groups over several files, sealed and unfinished - a row group a body per template.
     fn with_live_day(lines: usize) -> Self {
         Self::with_live(&[farm(lines, 7)])
     }
@@ -238,8 +221,7 @@ impl Db {
         fs::read(self.base().join("manifest.log")).unwrap_or_default()
     }
 
-    /// Every record in `manifest.log`, in order: `[len u32 LE][crc u32 LE][JSON]` frames
-    /// from offset 0, as `load.rs` walks them.
+    /// Every record in `manifest.log`, in order, as `load.rs` walks them.
     fn manifest(&self) -> Vec<Value> {
         let bytes = self.manifest_bytes();
         let mut out = Vec::new();
@@ -344,10 +326,8 @@ impl Db {
         (paths, bytes)
     }
 
-    /// The day was compacted once since `before`: one record more, a `replace` no load
-    /// could be mistaken for, taking out exactly the files that were live and putting in
-    /// finished ones under paths never used - and the directory holds those and no others.
-    /// Returns the files it added.
+    /// The day was compacted once since `before`: one `replace` record, retiring exactly the
+    /// live files for finished ones under new paths, and the directory holds only those.
     fn assert_compacted(
         &self,
         records_before: usize,
@@ -395,9 +375,7 @@ impl Db {
     }
 
     /// Every data file given the modification time of the midnight that ended the farm's
-    /// day - the later of the two, where a test has two - which is what a start reads "the
-    /// last live row" from: the days a server finds when the last row was written before
-    /// today.
+    /// day, which is what a start reads "the last live row" from.
     fn backdate(&self) {
         let ended = UNIX_EPOCH + Duration::from_secs(DAY_ENDED);
         for path in self.on_disk_of(OLDER).into_iter().chain(self.on_disk()) {
@@ -639,8 +617,7 @@ impl Server {
     }
 
     /// SIGTERM, then wait for the exit - the graceful path, which closes every row group
-    /// and seals every file. Returns everything the server wrote to stderr after its
-    /// banner.
+    /// and seals every file. Returns the server's stderr after its banner.
     fn shutdown(mut self) -> String {
         let ok = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
@@ -757,9 +734,8 @@ fn number(text: &str) -> u64 {
         .unwrap_or_else(|_| panic!("`{text}` is not a count"))
 }
 
-/// The seven counts of `compacted <day>: N rows, N row groups in N file(s) (N bytes) -> N
-/// row groups in N file(s) (N bytes), in N.Ns`, in the order the line gives them; the
-/// line must be exactly that.
+/// The seven counts of the line a compacted day prints, in the order it gives them; the
+/// line must be exactly that shape.
 fn counts_of(line: &str) -> [u64; 7] {
     let shape = |rest: &str| -> Option<[u64; 7]> {
         let rest = rest.strip_prefix(&format!("compacted {DAY}: "))?;
@@ -785,8 +761,7 @@ fn counts_of(line: &str) -> [u64; 7] {
 // ── Alone ──────────────────────────────────────────────────────────────────────────
 
 /// No server holds the directory, so the command takes it and compacts. Everything is
-/// read before any server starts: a start deletes what the manifest does not name, and
-/// the command has to have left the directory right by itself.
+/// read before any server starts, since a start deletes what the manifest does not name.
 #[test]
 fn a_compaction_alone_rebuilds_a_live_day_and_a_second_one_changes_nothing() {
     let db = Db::with_live_day(LINES);
@@ -875,8 +850,7 @@ fn a_compaction_alone_rebuilds_a_live_day_and_a_second_one_changes_nothing() {
 }
 
 /// With no `--day`, the days that are due: a day whose last live row was written before
-/// today. The day here was written today until its files are dated the midnight it ended,
-/// and compacting alone is then what a server's own look would have done.
+/// today. The day here is due only once its files are dated the midnight it ended.
 #[test]
 fn compact_with_no_day_takes_a_day_whose_last_live_row_was_before_today() {
     let started_on = today();
@@ -905,9 +879,8 @@ fn compact_with_no_day_takes_a_day_whose_last_live_row_was_before_today() {
     assert_eq!(strings(&days[0]["removed"]), before);
 }
 
-/// The house wording, before anything is opened: a refused command makes no directory,
-/// takes no lock, runs no recovery and writes no manifest - alone, or beside a server it
-/// would have asked.
+/// A refused command makes no directory, takes no lock, runs no recovery and writes no
+/// manifest - alone, or beside a server it would have asked.
 #[test]
 fn a_day_that_is_not_a_date_is_refused_before_anything_is_touched() {
     let db = Db::new();
@@ -934,11 +907,8 @@ fn a_day_that_is_not_a_date_is_refused_before_anything_is_touched() {
     );
 }
 
-/// A compaction makes nothing new, so a path that is not a data directory is a mistake -
-/// a mistyped path, another working directory - and is refused with exit 1 before
-/// anything is made there. Opened as a start opens a directory, it would become an empty
-/// database that is compacted successfully for ever, and whatever was under its `data/`
-/// would be deleted as files no manifest names.
+/// A compaction makes nothing new, so a path that is not a data directory is refused
+/// before anything is made there: opened as a start opens one, its `data/` would be deleted.
 #[test]
 fn a_path_that_is_not_a_data_directory_is_refused_and_nothing_is_made_or_deleted() {
     let db = Db::new();
@@ -1023,10 +993,8 @@ fn read_whole(path: &Path) -> Result<(), FormatError> {
     Ok(())
 }
 
-/// Turn over 8 bytes inside the first column chunk of a data file's first row group: the
-/// chunk's CRC no longer holds, and the day cannot be rebuilt. The place is found through
-/// the footer and the row group's header, not by the file's length - the middle of a file
-/// is a schema record on some runs, which nothing reads back.
+/// Turn over 8 bytes inside the first column chunk of a data file's first row group, so
+/// its CRC no longer holds; found through the footer, since mid-file may be a schema record.
 fn damage(path: &Path) {
     let said = |e| panic!("{}: {e}", path.display());
     read_whole(path).unwrap_or_else(|e| panic!("refused before it was damaged: {e}"));
@@ -1093,10 +1061,8 @@ fn compact_with_no_day_takes_every_day_that_is_due() {
     assert_eq!(db.manifest().len(), records + 2);
 }
 
-/// Of two days due, the older cannot be rebuilt - a row group of it is damaged. It is
-/// said, the day after it is compacted all the same, and the command is exit 1: a run
-/// that stopped at the first failure would leave every later day small for as long as
-/// the bad one stayed bad.
+/// Of two days due, the older cannot be rebuilt. The day after it is compacted all the
+/// same and the command is exit 1: stopping at the first failure would starve later days.
 #[test]
 fn a_day_that_fails_does_not_stop_the_days_after_it() {
     let db = Db::with_live(&[farm_on(OLDER, LINES, 11), farm(LINES, 7)]);
@@ -1142,10 +1108,8 @@ fn a_day_that_fails_does_not_stop_the_days_after_it() {
     assert_eq!(db.manifest_bytes(), manifest);
 }
 
-/// A day that cannot be compacted is exit 1 with nothing on stdout and nothing changed -
-/// from the command alone, from the command asking a server, and in what the server
-/// then says of the job and of itself. Exit 0 here is a cron job reporting success on a
-/// day that was never rebuilt.
+/// A day that cannot be compacted is exit 1 with nothing on stdout and nothing changed,
+/// alone and through a server: exit 0 is a cron job reporting success on a day never rebuilt.
 #[test]
 fn a_day_that_cannot_be_compacted_is_exit_1_alone_and_through_a_server() {
     let db = Db::with_live_day(LINES);
@@ -1199,9 +1163,8 @@ fn a_day_that_cannot_be_compacted_is_exit_1_alone_and_through_a_server() {
 
 // ── Through a server ───────────────────────────────────────────────────────────────
 
-/// A server holds the directory, so the command asks it and prints its report. The day
-/// answers the same on that server with no restart, the report's numbers are the
-/// manifest's and the directory's, and `/stats` counts the day once.
+/// A server holds the directory, so the command asks it and prints its report: its
+/// numbers are the manifest's and the directory's, and `/stats` counts the day once.
 #[test]
 fn a_compaction_through_a_server_reports_what_the_manifest_and_stats_say() {
     let db = Db::with_live_day(LINES);
@@ -1288,9 +1251,8 @@ fn a_compaction_through_a_server_reports_what_the_manifest_and_stats_say() {
     assert_eq!(server.row_groups(), groups_after);
 }
 
-/// `/compact` rewrites a day on the server's cores: it is taken only with the token the
-/// server wrote to its `LOCK`, only for the directory the server serves, and only for a
-/// day that is one.
+/// `/compact` rewrites a day on the server's cores: it is taken only with the token from
+/// `LOCK`, only for the directory the server serves, and only for a day that is one.
 #[test]
 fn a_compact_request_needs_the_lock_token_and_the_servers_own_directory() {
     let db = Db::with_live_day(LINES);
@@ -1385,10 +1347,8 @@ fn a_server_with_no_data_directory_refuses_a_compaction() {
     assert!(text.contains("keeps its rows in memory"), "{text}");
 }
 
-/// One compaction at a time. Nothing outside the process can hold a compaction open, so
-/// this asks for a second while the first is rebuilding a day large enough to still be at
-/// it, and holds whichever answer comes to what it implies: a 409 names the job that is
-/// running; a 202 means the first was no longer running, and it must then say so itself.
+/// One compaction at a time. Nothing outside the process can hold one open, so the second
+/// is asked mid-rebuild: a 409 names the running job; a 202 means the first had ended.
 #[test]
 fn a_second_compaction_is_refused_while_one_is_running() {
     let db = Db::with_live_day(MANY_LINES);
@@ -1431,10 +1391,8 @@ fn a_second_compaction_is_refused_while_one_is_running() {
     assert_eq!(server.count(ALL), MANY_LINES as u64);
 }
 
-/// A server whose stderr has gone - the log collector at the other end of the pipe went
-/// away - still compacts, and its job still ends: a log line that cannot be written is
-/// dropped, where it used to end the job's thread with the job left `running`, every
-/// later request a 409 and the command that asked polling for good.
+/// A server whose stderr has gone still compacts, and its job still ends: a log line that
+/// cannot be written is dropped, not left to end the job's thread with the job `running`.
 #[test]
 fn a_compaction_job_ends_when_the_servers_stderr_is_closed() {
     let db = Db::with_live_day(LINES);
@@ -1462,12 +1420,8 @@ fn a_compaction_job_ends_when_the_servers_stderr_is_closed() {
 
 // ── By the server's own clock ──────────────────────────────────────────────────────
 
-/// A day is due the day after its last live row, and a start reads that from the newest
-/// of the day's unfinished files. So one directory's files are dated the midnight the day
-/// ended and the other's left as written - today - and both are served with a look every
-/// 100 ms: the first is compacted with nobody asking, and the second is still as the live
-/// door left it a dozen looks later. The first is served without a look before that, and
-/// is left alone: a day being due is not what compacts it.
+/// A day is due the day after its last live row, read from its newest unfinished file:
+/// a backdated day is compacted with nobody asking, and one written today is left alone.
 #[test]
 fn the_scheduler_compacts_a_day_that_ended_and_leaves_one_written_today() {
     let ended = Db::with_live_day(LINES);
@@ -1563,11 +1517,8 @@ fn the_scheduler_compacts_a_day_that_ended_and_leaves_one_written_today() {
     control_server.shutdown();
 }
 
-/// A day that is due and cannot be compacted is not tried on every look: it is left
-/// for the interval doubled per failure. Looked for every 100 ms, a second and a half
-/// after its first failure it has been tried three or four times, not sixteen - and the
-/// server takes lines as it did, because a compaction that fails is not a write that
-/// failed.
+/// A day that is due and cannot be compacted is left for the interval doubled per
+/// failure, and the server takes lines as it did: a failed compaction is not a failed write.
 #[test]
 fn a_day_that_keeps_failing_is_left_longer_each_time() {
     let db = Db::with_live_day(LINES);
@@ -1610,10 +1561,8 @@ fn a_day_that_keeps_failing_is_left_longer_each_time() {
     assert!(log.contains("; the day is left for "), "{log}");
 }
 
-/// `/stats`'s `last_error` is the days still failing. A day that failed and was then
-/// loaded again whole - what a refusal tells an operator to do - has nothing left to
-/// compact and is never tried again, so it is the next look that drops its error, not a
-/// later success.
+/// `/stats`'s `last_error` is the days still failing: a failed day loaded again whole has
+/// nothing left to compact, so the next look drops its error, not a later success.
 #[test]
 fn last_error_clears_once_the_day_has_nothing_left_to_compact() {
     let db = Db::with_live_day(LINES);
@@ -1652,9 +1601,8 @@ fn last_error_clears_once_the_day_has_nothing_left_to_compact() {
     server.shutdown();
 }
 
-/// `serve --compact-interval-ms` overrides its variable, so it is not refused for what
-/// the variable holds; without the flag the variable is the setting, and one that is not
-/// a number is refused rather than read as the default.
+/// `serve --compact-interval-ms` overrides its variable, so it is not refused for what the
+/// variable holds; without the flag a variable that is not a number is refused.
 #[test]
 fn the_compact_interval_flag_wins_over_a_malformed_variable() {
     let db = Db::new();
@@ -1672,11 +1620,8 @@ fn the_compact_interval_flag_wins_over_a_malformed_variable() {
 
 // ── Shutdown ───────────────────────────────────────────────────────────────────────
 
-/// SIGTERM while a compaction is rebuilding a day: the server stops it, waits for it and
-/// exits 0, and the directory is whole the moment the process is gone - the day's old
-/// files or its new ones, never a rebuilt file nobody named - with every row in it once.
-/// Which of the two depends on where the signal found it, and the manifest says which:
-/// the new ones only when the job's own line says it was done before the signal came.
+/// SIGTERM while a compaction is rebuilding a day: the server stops it and exits 0, and
+/// the directory holds the day's old files or its new ones, with every row in it once.
 #[test]
 fn a_server_told_to_stop_mid_compaction_exits_0_and_keeps_every_row_once() {
     let db = Db::with_live_day(MANY_LINES);

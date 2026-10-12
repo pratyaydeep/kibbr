@@ -1,23 +1,8 @@
-//! `kibbr load`, the bulk door, from outside the process.
-//!
-//! The loader and the server are separate processes on one data directory, and almost
-//! everything worth checking is what one of them leaves for the other: a load run alone
-//! must be served by the next server, a load sent to a running server must be in its
-//! answers at once, and a refused load must leave nothing - no rows, no files, no staging
-//! directory, and not its id either, or the corrected retry is refused as a repeat. So
-//! every test runs the real binary, usually more than once.
-//!
-//! Two files of the data directory are read directly. `manifest.log`, because compaction
-//! skips a file by its `finished` flag and startup deletes every file the manifest does not
-//! name, so which files are live and flagged is the fact itself. And `data/<day>/`, because
-//! a retired file still there after a restart is bytes nothing will ever read or delete.
-//!
-//! Every command runs against a deadline. A client polling a job that never finishes, or a
-//! second server that starts when it should have refused, would otherwise hang the suite
-//! rather than fail it.
-//!
-//! HTTP over a bare `TcpStream`, as in `restart.rs` and `segments.rs` and for the same
-//! reason: the contract is a status line and a JSON body.
+//! `kibbr load`, the bulk door, from outside the process: every test runs the real
+//! binary, since what matters is what the loader and the server leave for each other.
+//! `manifest.log` and `data/<day>/` are read directly: which files are live and flagged
+//! finished is the fact itself. Every command runs against a deadline, so a hang fails
+//! the suite rather than stalling it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -51,10 +36,8 @@ const REFUSAL_DEADLINE: Duration = Duration::from_secs(15);
 
 // ── A scratch root: inputs, a data directory, and captured output ──────────────────
 
-/// `in/` holds the inputs, `store/` is the data directory, `runs/` each command's output.
-///
-/// Inputs sit outside the data directory so a directory load cannot pick up the store's
-/// own files, and the root outlives every process started on it, as in `restart.rs`.
+/// `in/` holds the inputs, `store/` is the data directory, `runs/` each command's output:
+/// inputs sit outside the store so a directory load cannot pick up the store's own files.
 struct Db {
     root: PathBuf,
 }
@@ -183,20 +166,16 @@ impl Db {
 
     // ── The directory's own files ──
 
-    /// Whatever is under `staging/`. Empty or absent after any load has exited: a
-    /// leftover is either a move the loader never finished - rows the next startup, not
-    /// this command, puts in place - or bytes nothing will ever delete.
+    /// Whatever is under `staging/`. Empty or absent after any load has exited: a leftover
+    /// is a move the loader never finished, or bytes nothing will ever delete.
     fn staging(&self) -> Vec<PathBuf> {
         fs::read_dir(self.base().join("staging"))
             .map(|entries| entries.flatten().map(|e| e.path()).collect())
             .unwrap_or_default()
     }
 
-    /// Every record in `manifest.log`, in order.
-    ///
-    /// Frames are `[len u32 LE][crc u32 LE][JSON]` from offset 0. The CRC is not rechecked:
-    /// a payload that is not whole JSON ends the walk, which is what a torn tail looks
-    /// like, and these tests never tear one.
+    /// Every record in `manifest.log`, in order. The CRC is not rechecked: a payload
+    /// that is not whole JSON ends the walk, as a torn tail would.
     fn manifest(&self) -> Vec<Value> {
         let bytes = fs::read(self.base().join("manifest.log")).unwrap_or_default();
         let mut out = Vec::new();
@@ -548,9 +527,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
-/// The load id of one input: FNV-1a 64 over its file name, a 0 byte, the decompressed
-/// length and the FNV-1a 64 of the decompressed bytes, both u64 LE; 0 is taken as 1.
-/// Nothing about the compression or the directory enters it.
+/// The load id of one input: nothing about the compression or the directory
+/// enters it.
 fn load_id(name: &str, content: &[u8]) -> String {
     let mut input = name.as_bytes().to_vec();
     input.push(0);
@@ -661,12 +639,8 @@ fn a_load_writes_full_row_groups() {
 
 // ── Repeats ────────────────────────────────────────────────────────────────────────
 
-/// Kibbr keeps no row identity, so a file loaded twice would be every row twice with
-/// nothing to tell them apart. The id is derived from the input's names and bytes, and a
-/// known one is refused before anything is written.
-///
-/// The first load prints the summary line rather than `--json`: that line is what an
-/// operator reads, and the id it prints is the one the refusal must name.
+/// Kibbr keeps no row identity, so a file loaded twice would be every row twice: a known
+/// id is refused before anything is written, and the refusal names it.
 #[test]
 fn a_repeated_load_is_refused_and_names_the_load() {
     let db = Db::new();
@@ -692,8 +666,7 @@ fn a_repeated_load_is_refused_and_names_the_load() {
 }
 
 /// Same file name, same decompressed bytes: the same load, whatever the compression and
-/// whichever directory it sits in - an archive re-fetched and recompressed under the name
-/// it had. (Renamed, it would be a new load: the id is over names.)
+/// whichever directory it sits in. (Renamed, it would be a new load: the id is over names.)
 #[test]
 fn the_same_lines_gzipped_under_the_same_name_are_the_same_load() {
     let db = Db::new();
@@ -716,12 +689,8 @@ fn the_same_lines_gzipped_under_the_same_name_are_the_same_load() {
 
 // ── Through a server ───────────────────────────────────────────────────────────────
 
-/// A server holds the directory, so the command is a client: it reads the address from
-/// LOCK, posts the job, polls and prints the same report.
-///
-/// The count straight after is what proves the server ran it. A load that ignored the
-/// lock and wrote the directory itself would reach this server only at its next start,
-/// and would be a second writer of the catalog besides.
+/// A server holds the directory, so the command is a client: the count straight
+/// after proves the server ran it, not a second writer the server sees at its next start.
 #[test]
 fn a_load_through_a_running_server_is_answered_at_once() {
     let db = Db::new();
@@ -746,9 +715,8 @@ fn a_load_through_a_running_server_is_answered_at_once() {
     assert_eq!(db.count(ALL), LINES as u64);
 }
 
-/// Stdin is spooled to a temp file before it is sent to a server. The id must still be
-/// the stream's, not the spool file's: named after the temp file, the same archive piped
-/// twice would be two loads and every row twice.
+/// Stdin is spooled to a temp file before it is sent to a server; the id must still be
+/// the stream's, or the same archive piped twice would be two loads and every row twice.
 #[test]
 fn the_same_stream_piped_twice_through_a_server_is_refused_the_second_time() {
     let db = Db::new();
@@ -766,14 +734,8 @@ fn the_same_stream_piped_twice_through_a_server_is_refused_the_second_time() {
     assert_eq!(server.count(ALL), LINES as u64);
 }
 
-/// A query running while a server commits a load counts all of the load or none of it.
-///
-/// The commit swaps every template's file set in one step; what could tear is the reader.
-/// A query that looked at each template's rows as it reached it, and was in flight across
-/// that step, counted the templates it reached after the commit with the load and the
-/// ones before without: measured, four such answers in every round of six hundred, from
-/// four clients - one per client in flight at the instant. So the only valid counts are
-/// the one before and the one after.
+/// A query running while a server commits a load counts all of the load or none of it:
+/// the commit is one step, so a reader in flight across it must not see it per template.
 #[test]
 fn a_query_in_flight_across_a_commit_counts_all_of_the_load_or_none() {
     let db = Db::new();
@@ -831,14 +793,8 @@ fn a_query_in_flight_across_a_commit_counts_all_of_the_load_or_none() {
 
 // ── Replace-a-day ──────────────────────────────────────────────────────────────────
 
-/// One source per day, and `--replace-day` is how the source changes: the day as it
-/// arrived live, swapped for a clean load of the same lines from the archive. The count
-/// must not move; twice it would be both sources counted.
-///
-/// The live door's files are sealed first, by a graceful restart, so the retired set is
-/// known before the load runs. A replace would also write and seal the day's rows still in
-/// memory before retiring them - the next test - and sealing first keeps `replaced`
-/// comparable to what the restart left.
+/// One source per day, and `--replace-day` is how the source changes: the count
+/// must not move. The live files are sealed first, so the retired set is known.
 #[test]
 fn replace_day_through_a_server_leaves_the_day_count_unchanged() {
     let db = Db::new();
@@ -879,9 +835,8 @@ fn replace_day_through_a_server_leaves_the_day_count_unchanged() {
     db.assert_day_is(DAY, &strings(&report["files"]));
 }
 
-/// The same, with the live door still holding the day: rows in its buffers and its day
-/// file open. The replace writes and seals them first, then retires them with the rest, so
-/// the day is the load's alone - counted once, before a restart and after.
+/// The same, with the live door still holding the day: the replace writes and seals its
+/// rows first, then retires them with the rest, so the day is counted once.
 #[test]
 fn replace_day_on_a_warm_server_retires_the_rows_still_in_memory() {
     let db = Db::new();
@@ -907,17 +862,12 @@ fn replace_day_on_a_warm_server_retires_the_rows_still_in_memory() {
     db.assert_day_is(DAY, &strings(&report["files"]));
 }
 
-/// A tick an hour away: nothing flushes and the write-ahead log's checkpoint does not
-/// move, so every line a server took is still in its log, past the checkpoint, when the
-/// server is killed.
+/// A tick an hour away: nothing flushes and the log's checkpoint does not move, so every
+/// line a server took is still in its log when the server is killed.
 const NO_TICK: [&str; 2] = ["--flush-interval-ms", "3600000"];
 
-/// A day replaced and then a `kill -9`: the day is still the load's alone. The lines the
-/// live door took of it are all in the write-ahead log, past its checkpoint, and the row
-/// groups that held them went with the files the replace retired - so nothing covers
-/// them, and a replay that stored every line no row group covers would bring the whole
-/// day back beside the load that replaced it. The replace's record says what it retired,
-/// and the replay goes by that.
+/// A day replaced and then a `kill -9`: the day is still the load's alone. The replay
+/// goes by what the replace's record retired, not by which lines no row group covers.
 #[test]
 fn a_kill_after_a_replace_does_not_bring_the_replaced_day_back() {
     let db = Db::new();
@@ -948,11 +898,8 @@ fn a_kill_after_a_replace_does_not_bring_the_replaced_day_back() {
     );
 }
 
-/// The same with no server holding the directory when the day is replaced: the server was
-/// killed first, with every line of the day still only in its log, and `kibbr load` takes
-/// the directory itself. It stores none of those lines - they are the next server's to
-/// put back - but its replace is of everything the log held of the day, and the next
-/// start puts none of that back.
+/// The same with the server killed first and `kibbr load` taking the directory itself: its
+/// replace is of everything the log held of the day, and the next start puts none back.
 #[test]
 fn a_replace_run_alone_after_a_kill_replaces_what_the_log_held_of_the_day() {
     let db = Db::new();
@@ -1036,9 +983,8 @@ fn a_file_reached_twice_is_loaded_once() {
     }
 }
 
-/// `/load` reads files with the server's permissions and serves their rows: it is taken
-/// only with the token the server wrote to its `LOCK`. Without it, the answer is the same
-/// whether the path named exists or not. With it, a file named twice is loaded once.
+/// `/load` reads files with the server's permissions, so it takes the token the server
+/// wrote to `LOCK`; refused, the answer does not say whether the path exists.
 #[test]
 fn a_load_request_without_the_lock_token_is_refused() {
     let db = Db::new();
@@ -1144,10 +1090,8 @@ fn a_repeated_load_is_allowed_with_replace_day_and_leaves_the_count_unchanged() 
     db.assert_day_is(DAY, &strings(&second["files"]));
 }
 
-/// A replace names one day, and a row on another day would be published without
-/// replacing anything there - a second source for that day, silently. So it refuses the
-/// whole input, and refused means nothing at all: no rows, no staging, no manifest
-/// record, and no id, or the same file loaded properly next is called a repeat.
+/// A row on another day would be a second source for that day, silently, so the whole
+/// input is refused and leaves nothing - not even its id, or the retry is a repeat.
 #[test]
 fn replace_day_with_a_row_outside_the_day_is_refused_and_loads_nothing() {
     let db = Db::new();
@@ -1170,13 +1114,8 @@ fn replace_day_with_a_row_outside_the_day_is_refused_and_loads_nothing() {
 
 // ── Arrival time ───────────────────────────────────────────────────────────────────
 
-/// A row with no time of its own takes its arrival time, and for a file of old lines that
-/// is the wrong day by construction - every row filed under today. The loader samples the
-/// head of the input and stops unless told to proceed.
-///
-/// Checked in both modes, since the check runs in whichever process runs the load, and a
-/// client that dropped `--proceed` on its way to the server would refuse forever. The
-/// refusals record no id either: the `--proceed` load at the end is not a repeat.
+/// A row with no time of its own takes its arrival time, the wrong day for old lines, so
+/// the loader stops unless told to proceed - alone and through a server alike.
 #[test]
 fn a_head_of_rows_without_a_time_is_refused_unless_told_to_proceed() {
     let db = Db::new();
@@ -1250,10 +1189,8 @@ fn untimed(count: usize) -> Vec<u8> {
         .into_bytes()
 }
 
-/// The check reads every row, not a sample of the head: 10,500 rows with a time of their
-/// own, then 5,250 without. The first 10,000 are clean, so only a count over the whole
-/// input finds the third that would be filed under the load's arrival day. Stopped, it
-/// leaves nothing - no manifest record, no staging, no id - alone and through a server.
+/// The check reads every row, not a sample of the head: the first 10,000 are clean, so
+/// only a count over the whole input finds the untimed third. Stopped, it leaves nothing.
 #[test]
 fn an_untimed_tail_after_a_clean_head_stops_the_load() {
     let db = Db::new();
@@ -1297,9 +1234,7 @@ fn a_later_file_with_no_time_stops_the_load() {
 }
 
 /// With `--proceed` the same input commits, and the report's count is the rows stored at
-/// arrival time - every one of them on the `--received-at` day, where no line's own time
-/// falls - not how many of the head were. The line an operator reads says the same: the
-/// count, the share and the day, and that the limit was passed on purpose.
+/// arrival time, not how many of the head were; the line an operator reads says the same.
 #[test]
 fn proceeding_past_the_share_reports_every_row_stored_at_arrival_time() {
     let db = Db::new();
@@ -1345,9 +1280,8 @@ fn proceeding_past_the_share_reports_every_row_stored_at_arrival_time() {
 
 // ── Memory ─────────────────────────────────────────────────────────────────────────
 
-/// `--load-buffer-bytes` reaches a server's load: at 64KiB a farm day's rows are written in
-/// many more, smaller row groups than at the default - and every one of them is still
-/// stored once.
+/// `--load-buffer-bytes` reaches a server's load: at 64KiB a farm day's rows are written
+/// in more, smaller row groups than at the default, and each is still stored once.
 #[test]
 fn a_small_load_buffer_is_passed_to_the_server_and_loses_no_row() {
     let bytes = farm(FARM_LINES, 1);
@@ -1433,12 +1367,8 @@ fn a_second_server_on_a_held_directory_exits_naming_lock() {
     assert_eq!(request(server.port, "GET", "/health", b"").0, 200);
 }
 
-/// A load running alone holds LOCK for its whole run: a server started meanwhile would be
-/// a second writer, and a second load has no server to be a client of. Both exit naming
-/// LOCK.
-///
-/// `--max-mb-per-sec` holds the load open about five seconds, which is also the test of
-/// the throttle.
+/// A load running alone holds LOCK for its whole run, so a server or a second load started
+/// meanwhile exits naming it. `--max-mb-per-sec` holds the load open, which tests the throttle.
 #[test]
 fn a_load_running_alone_holds_the_directory_against_a_server_and_another_load() {
     let db = Db::new();
@@ -1510,8 +1440,7 @@ fn a_load_running_alone_holds_the_directory_against_a_server_and_another_load() 
 // ── Inputs ─────────────────────────────────────────────────────────────────────────
 
 /// A directory is every regular file under it, recursively, each told apart by its first
-/// bytes rather than its name; names starting with `.` are skipped, which is where editors
-/// and sync tools leave their own files.
+/// bytes rather than its name; names starting with `.` are skipped.
 #[test]
 fn a_directory_of_plain_and_zstd_files_loads_every_line_of_both() {
     let db = Db::new();

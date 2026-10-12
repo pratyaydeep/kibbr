@@ -1,13 +1,6 @@
-//! `GROUP BY time(...)`: the answer an operator actually sees.
-//!
-//! The arithmetic is checked in `crates/kibbr-engine/src/engine.rs`, where a property test can run hundreds of
-//! ranges against one in-process database. What is checked here is everything the engine
-//! cannot see about itself: that an empty hour reaches the terminal as zeros, that a
-//! refusal is a refusal and not a short chart, and that the two surfaces and the three
-//! formats all say the same thing about the same buckets.
-//!
-//! The fixture is written from here rather than read from a file, so the empty hour is
-//! visible in the source of the test that asserts on it.
+//! `GROUP BY time(...)` as an operator sees it: what the engine cannot see about itself.
+//! An empty hour reaches the terminal as zeros, a refusal is a refusal and not a short
+//! chart, and the two surfaces and the three formats agree about the same buckets.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -88,8 +81,8 @@ fn buckets(result: &Value) -> Vec<(String, u64)> {
         .collect()
 }
 
-/// The done-when: an hour with no rows in it reads as zeros, not as an hour that is not
-/// there. A gap and a zero are different statements, and only one of them is true here.
+/// An hour with no rows in it reads as zeros, not as an hour that is not there: a gap
+/// and a zero are different statements.
 #[test]
 fn an_empty_hour_reads_as_zeros() {
     let result = json(&[&format!(
@@ -109,7 +102,6 @@ fn an_empty_hour_reads_as_zeros() {
         );
     }
 
-    // The silent hour is twelve zeros, and every bucket either side is populated.
     let (quiet, loud): (Vec<_>, Vec<_>) = got
         .iter()
         .partition(|(bucket, _)| bucket.starts_with("2024-01-15T10:"));
@@ -141,9 +133,8 @@ fn the_table_prints_the_empty_buckets() {
     assert!(text.contains("36 groups"), "{text}");
 }
 
-/// Boundaries are floored against the epoch, so two queries over overlapping ranges put
-/// their bars in the same places. A chart that shifts when the range is nudged is the bug
-/// this prevents, and it is one nobody reports clearly.
+/// Boundaries are floored against the epoch, so a chart does not shift when the range is
+/// nudged.
 #[test]
 fn boundaries_do_not_move_when_the_range_is_nudged() {
     let counts = |from: &str, to: &str| -> Vec<(String, u64)> {
@@ -172,7 +163,6 @@ fn boundaries_do_not_move_when_the_range_is_nudged() {
                 assert_eq!(count, same, "{from}..{to}: {bucket} disagrees");
             }
         }
-        // A boundary lands on a quarter hour whatever the range was.
         assert!(nudged.iter().all(|(at, _)| {
             let minute: u32 = at[14..16].parse().expect("a minute");
             minute.is_multiple_of(15)
@@ -209,9 +199,8 @@ fn a_second_key_is_zero_filled_for_every_series() {
     }
 }
 
-/// Every template has a time axis. One with no time column is on arrival time,
-/// which is `now` and outside a window over 2024 - so the answer is found, counts zero,
-/// and carries the window's buckets zero-filled rather than none: the axis is there.
+/// A template with no time column is on arrival time, which is outside a window over 2024:
+/// found, counts zero, and the window's buckets zero-filled rather than none.
 #[test]
 fn a_template_with_no_ts_column_is_on_arrival_time() {
     let result = json(&[&format!(
@@ -225,9 +214,8 @@ fn a_template_with_no_ts_column_is_on_arrival_time() {
     assert!(got.iter().all(|(b, n)| b != "(null)" && *n == 0), "{got:?}");
 }
 
-/// With no window the rows on arrival time are in `count`, and they land in the bucket
-/// their arrival falls in - the newest one - rather than in a `null` bucket of their own.
-/// Days, because the axis now runs from the fixture's 2024 to today.
+/// With no window, rows on arrival time land in the bucket their arrival falls in, not in
+/// a `null` bucket of their own; days, because the axis runs from 2024 to today.
 #[test]
 fn rows_on_arrival_time_land_in_the_newest_bucket() {
     let result = json(&["COUNT LOG {} GROUP BY time(1d)"]);

@@ -1,17 +1,12 @@
-//! `kibbr bench-storage`, from outside the process.
-//!
-//! The command's numbers are a disk's, so what is held here is what must be true of them on
-//! any disk: the two tables are there in the shape a reader is told to expect, the live day
-//! holds every row before compaction and after it, and compaction leaves it in fewer row
-//! groups and fewer bytes - as few row groups as the bulk door cut the same lines into.
+//! `kibbr bench-storage`, from outside the process: its numbers are a disk's, so what is
+//! held here is what must be true of them on any disk.
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Farm lines, one day: more than a day has flushes, so the live day is flushed 1,440
-/// times and not once a line, and few enough that either door stores each template as
-/// one row group.
+/// Farm lines, one day: more than a day has flushes, and few enough that either door
+/// stores each template as one row group.
 const LINES: u64 = 1_500;
 
 /// The flushes in a day that is flushed once a minute.
@@ -92,7 +87,6 @@ fn block(lines: &[&str], first: &str) -> Vec<(String, u64)> {
         .iter()
         .take(1 + PARTS.len())
         .map(|line| {
-            // The name is the first 24 columns after the indent; the bytes are the next 14.
             let name = line[2..26].trim().to_string();
             let bytes = line[26..40].trim().replace(',', "");
             (name, bytes.parse().expect("a row's bytes"))
@@ -200,7 +194,6 @@ fn a_live_day_is_measured_before_and_after_compaction_and_is_smaller_after() {
                 .collect::<Vec<_>>(),
             [&[total], PARTS].concat()
         );
-        // The parts are the whole: the five of the data files, and the three of the total.
         let bytes = |name: &str| block.iter().find(|(n, _)| n == name).map_or(0, |(_, b)| *b);
         assert_eq!(
             bytes("data files"),
@@ -243,6 +236,5 @@ fn a_live_day_is_measured_before_and_after_compaction_and_is_smaller_after() {
         )
     );
 
-    // The command's own scratch directory goes with it.
     assert!(!scratch.0.join("scratch").exists());
 }

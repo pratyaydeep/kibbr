@@ -1,10 +1,6 @@
-//! The trie, tested through the binary. Nothing here reaches inside the crate.
-//!
-//! The load-bearing test is `the_tree_is_stable_across_input_orderings`: a stability test
-//! that only re-runs the same file passes without the type join ever having been written,
-//! because every column would be typed by whichever line happened to create the template
-//! and that line would be the same line both times. Feeding the same lines in a different
-//! order is what makes the join observable.
+//! The trie, tested through the binary. The load-bearing test is
+//! `the_tree_is_stable_across_input_orderings`: re-running the same file passes without the
+//! type join, and feeding the same lines in a different order is what makes it observable.
 
 use std::process::{Command, Stdio};
 
@@ -60,12 +56,8 @@ fn demo(input: &str) -> String {
     run_stdin(&["demo", "-"], input)
 }
 
-/// The tree with every leaf's template id blanked.
-///
-/// Ids come from an `AtomicU64` fetch-and-increment, so they are handed out in the order
-/// templates were first seen and a reordered file moves them - the one field in the
-/// output that cannot be both order-independent and a counter. What has to hold across
-/// orderings is the shape and the column types, and this is what isolates them.
+/// The tree with every leaf's template id blanked: ids are handed out in the order
+/// templates were first seen, so a reordered file moves them and nothing else.
 fn without_ids(tree: &str) -> String {
     let mut out = String::with_capacity(tree.len());
     for line in tree.lines() {
@@ -110,9 +102,8 @@ fn the_tree_is_stable_across_input_orderings() {
     let forwards = lines.join("\n") + "\n";
     let backwards = lines.iter().rev().copied().collect::<Vec<_>>().join("\n") + "\n";
 
-    // Neither forwards nor backwards: every seventh line, seven times over. Reversing
-    // alone is a weak shuffle - it still delivers each template's lines in the same
-    // runs, just mirrored.
+    // Every seventh line, seven times over: reversing alone is a weak shuffle, still
+    // delivering each template's lines in the same runs.
     let mut interleaved: Vec<&str> = Vec::with_capacity(lines.len());
     for offset in 0..7 {
         interleaved.extend(lines.iter().skip(offset).step_by(7).copied());
@@ -144,9 +135,8 @@ fn the_tree_is_stable_across_input_orderings() {
     assert_eq!(summary(&a), summary(&c));
 }
 
-/// Same, on the whole trie rather than the operator's view of it. `--full` exists for
-/// this: the default view hides 863 of 869 templates behind `… N templates`, and a tree
-/// that agrees about what it is not showing is not evidence of much.
+/// Same, on the whole trie rather than the operator's view of it: a tree that agrees about
+/// what it is not showing is not evidence of much.
 #[test]
 fn the_full_tree_is_stable_across_input_orderings() {
     let generated = gen(20_000, 12, 42);
@@ -162,12 +152,8 @@ fn the_full_tree_is_stable_across_input_orderings() {
     assert!(leaves(&a).len() > 500, "only {} leaves", leaves(&a).len());
 }
 
-/// The same key on four lines of one template, in all twenty-four orders: ten digits
-/// naming 2112 and thirteen naming 2283, both outside the epoch window and so `Int64`;
-/// ten naming 2023, inside it and so `Datetime`; and one that is plainly a string. The
-/// column is `String` whichever order they arrive in - that is the join being commutative
-/// and associative over three of its types at once, and it is also the ten-digit rung's
-/// known misclassification correcting itself with no heuristic and no second pass.
+/// One key on four lines of one template, in all twenty-four orders: the column is `String`
+/// whichever way they arrive, so the join is commutative and associative.
 #[test]
 fn the_column_join_does_not_depend_on_arrival_order() {
     let lines = [
@@ -217,10 +203,7 @@ fn a_column_that_has_only_held_nulls_has_no_type() {
 }
 
 /// The path is walk order; the fingerprint is identity order; neither moved the other.
-///
-/// Under identity order `event=` sorts between `amount` and `zone`, six levels down on
-/// real data. Walk order hoists it to the first edge, which is what lets a query pattern
-/// written over `event` be walked instead of searched for.
+/// Walk order hoists `event=` to the first edge, so a pattern over it is walked.
 #[test]
 fn the_path_is_walk_order_and_the_fingerprint_is_still_identity_order() {
     let line = r#"{"amount":1.5,"event":"processed","zone":"eu"}"#;
@@ -249,18 +232,14 @@ fn the_saving_is_the_nodes_the_shared_prefix_removed() {
         "2 lines → 2 templates; 6 tokens → 4 nodes, 2 saved by shared prefixes",
         "{tree}"
     );
-    // The shorter template's leaf is an interior node of the longer one, and it keeps
-    // its own id and its own key set - there is no truncation and no separate column
-    // list, so `c` is absent from one and present in the other.
+    // The shorter template's leaf is an interior node of the longer one, and keeps its own
+    // id and its own key set: `c` is absent from one and present in the other.
     assert!(tree.contains("└── a → b ● #101"), "{tree}");
     assert!(tree.contains("    └── c ● #102"), "{tree}");
 }
 
-/// The reference numbers, on the file they were measured over. 869 templates and not 12:
-/// `--templates 12` picks twelve archetypes, optional fields then split each one into a
-/// fingerprint per present-key subset, and nothing collapses them back until schema
-/// merging exists. Expect the count to drop by an order of magnitude when it does, and do
-/// not read it as a defect before then.
+/// The reference numbers, on the file they were measured over. The template count is far
+/// above `--templates`: optional fields split each archetype by present-key subset.
 #[test]
 fn seed_42_matches_the_reference_numbers() {
     let tree = demo(&gen(100_000, 12, 42));
@@ -271,10 +250,8 @@ fn seed_42_matches_the_reference_numbers() {
         "{tree}"
     );
 
-    // The two archetypes with no promoted `event` are the whole of the printed tree;
-    // the six that have one are summarised. The pair below - `shard.checkpoint` present
-    // or absent, otherwise identical - is exactly the case schema merging exists to fold
-    // back into one template.
+    // The two archetypes with no promoted `event` are the whole of the printed tree. The pair
+    // below, alike but for `shard.checkpoint`, is the case schema merging folds back.
     for expected in [
         "├── err.cause.code",
         "│   ├── err.cause.detail → err.code → err.trace_id → level → msg → service → ts_unix ● #101",

@@ -1,10 +1,7 @@
 //! What an operator reaches for: the settings file, the two commands that ask a running
-//! server about itself, the log's two formats, and the deadline on a stop.
-//!
-//! All of it from outside, as the other files here: the binary's flags, its stdout and
-//! stderr, its exit code, and HTTP over a bare `TcpStream`. The arithmetic of where a
-//! setting comes from is in `src/config.rs`; this file holds that the commands are
-//! wired to it.
+//! server about itself, the log's two formats, and the deadline on a stop - all from
+//! outside the binary. Where a setting comes from is `src/config.rs`'s; this file holds
+//! that the commands are wired to it.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -236,9 +233,7 @@ fn timeless(out: &[u8]) -> String {
 // ── The settings file ──────────────────────────────────────────────────────────────
 
 /// **Every command takes `--config`, before its name or after it, and one that names a
-/// file this build cannot use does nothing.** The file is read before the command runs:
-/// a key with no setting behind it stops `gen-logs`, which has no settings at all, as it
-/// stops `serve` - with the key, its line and the keys its section does have.
+/// file this build cannot use does nothing**: the file is read before the command runs.
 #[test]
 fn every_command_takes_config_and_a_file_it_cannot_use_stops_it() {
     let scratch = Scratch::new("every-command");
@@ -313,8 +308,7 @@ fn every_command_takes_config_and_a_file_it_cannot_use_stops_it() {
 }
 
 /// **A server runs with what the file says, a variable wins over the file, and a flag
-/// over both** - seen where a server says what it runs with, `/stats`, and in where it
-/// put its data.
+/// over both** - seen in `/stats` and in where it put its data.
 #[test]
 fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
     let scratch = Scratch::new("serve-file");
@@ -336,7 +330,6 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
         )
     };
 
-    // The file alone.
     let server = Server::start(&[], &["--config", &config], &[]);
     assert_eq!(waits(&server), (Some(250), Some(3000)));
     assert_eq!(server.stats()["ingest"]["request_timeout_ms"], 40_000);
@@ -364,7 +357,6 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
     let (code, said) = server.stop(Duration::from_secs(20));
     assert_eq!(code, Some(0), "{said}");
 
-    // A flag over both.
     let server = Server::start(
         &["--config", &config],
         &["--ingest-wait-ms", "400", "--shutdown-deadline", "0s"],
@@ -419,10 +411,8 @@ fn query_takes_its_limits_and_time_columns_from_the_file() {
 
 // ── templates and stats ────────────────────────────────────────────────────────────
 
-/// **`kibbr templates` and `kibbr stats` print what the server holding a directory
-/// answers `/templates` and `/stats` with** - found by the directory, by `--addr`, or by
-/// the address in the settings - as a table and a line a number, or with `--json` as the
-/// server sent it; and with no server there they say so and print nothing.
+/// **`kibbr templates` and `kibbr stats` print what the server holding a directory answers
+/// `/templates` and `/stats` with**, and with no server there they say so and print nothing.
 #[test]
 fn templates_and_stats_ask_the_running_server() {
     let scratch = Scratch::new("ask");
@@ -457,7 +447,6 @@ fn templates_and_stats_ask_the_running_server() {
     assert!(table.lines().any(|row| row.contains("arrival")), "{table}");
     assert_eq!(rows[3], "2 templates");
 
-    // With --json, the server's own answer.
     let out = run(&["templates", "--data-dir", &data, "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json(&text(&out.stdout)), json(&server.get("/templates").1));
@@ -525,9 +514,8 @@ fn templates_and_stats_ask_the_running_server() {
 
 // ── The log ────────────────────────────────────────────────────────────────────────
 
-/// **With `--log-format json` every line a server writes to stderr is one JSON object** -
-/// when, how loud, from where, the sentence - from the line that says where it listens to
-/// `exit 0`; **and as text the lines are the ones they always were.**
+/// **With `--log-format json` every line a server writes to stderr is one JSON object**,
+/// from the line that says where it listens to `exit 0`; as text the lines are unchanged.
 #[test]
 fn a_server_logs_an_object_a_line_as_json_and_its_old_lines_as_text() {
     let server = Server::start(
@@ -611,8 +599,7 @@ fn a_server_logs_an_object_a_line_as_json_and_its_old_lines_as_text() {
 }
 
 /// **What a command prints on stdout is the same bytes whatever the log is set to**, and
-/// what ends a command is one object on stderr when the log is JSON - the sentence it
-/// always was when it is text.
+/// what ends a command is one object on stderr when the log is JSON.
 #[test]
 fn a_commands_output_does_not_change_with_the_log() {
     let scratch = Scratch::new("stdout");
@@ -655,7 +642,6 @@ fn a_commands_output_does_not_change_with_the_log() {
         }
     }
 
-    // What ends a command, in each format.
     let gone = scratch.path("gone.ndjson");
     let out = run(&["query", &gone, "--count"]);
     assert_eq!(out.status.code(), Some(1));
@@ -686,10 +672,8 @@ fn stalled_body(port: u16) -> TcpStream {
     socket
 }
 
-/// **A stop does not wait past its deadline for a request that will not finish.** A
-/// sender that stopped halfway through a body used to hold the server until whatever
-/// sent the SIGTERM sent a SIGKILL; with a deadline the request is answered 503 where it
-/// stands, the wind-down runs, and the exit is 0 - every step of it in the log.
+/// **A stop does not wait past its deadline for a request that will not finish**: the
+/// request is answered 503 where it stands, the wind-down runs, and the exit is 0.
 #[test]
 fn a_stop_cuts_off_what_is_still_in_flight_at_the_deadline() {
     let scratch = Scratch::new("deadline");
@@ -761,8 +745,8 @@ fn a_stop_cuts_off_what_is_still_in_flight_at_the_deadline() {
     assert_eq!(json(&body)["count"], 1, "{body}");
 }
 
-/// **With no deadline a stop waits for every request, as it did** - and with nothing in
-/// flight a deadline is never reached: the stop is as quick as it was.
+/// **With no deadline a stop waits for every request** - and with nothing in flight a
+/// deadline is never reached.
 #[test]
 fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
     let server = Server::start(
@@ -823,8 +807,7 @@ fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
 // ── The request timeout ────────────────────────────────────────────────────────────
 
 /// **A request whose body does not arrive is answered 408 when its time runs out**, by
-/// the binary as it is run: the flag, and a sender that stops halfway through a body. It
-/// used to keep its handler for as long as it kept its socket.
+/// the binary as it is run: the flag, and a sender that stops halfway through a body.
 #[test]
 fn a_body_that_does_not_arrive_is_answered_408_at_the_request_timeout() {
     let server = Server::start(
@@ -851,10 +834,7 @@ fn a_body_that_does_not_arrive_is_answered_408_at_the_request_timeout() {
 }
 
 /// **A query still running when its request's time runs out is answered 504, and its
-/// scan stops**: it is not left running. `MATCH LOG {}` with the row backstop off is
-/// every row of the store built and kept, which on these rows is many times the quarter
-/// of a second the request is given; the server says the scan stopped and counts it, and
-/// counts no query as served.
+/// scan stops**: the server says the scan stopped, counts it, and counts no query as served.
 #[test]
 fn a_query_past_the_request_timeout_is_answered_504_and_its_scan_stops() {
     const ROWS: usize = 40_000;

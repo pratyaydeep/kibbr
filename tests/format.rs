@@ -1,9 +1,6 @@
 //! `--format ndjson`: one JSON object per line, no envelope, nothing else on stdout.
-//!
-//! The shape is the contract - something downstream parses this line by line, so a line
-//! that is not a record, or a record that is not a line, is the bug this file is watching
-//! for. The other two formats are checked where their own concerns live: `table` in
-//! `tests/query.rs`, `json` wherever a differential compares two runs.
+//! Something downstream parses this line by line, so a line that is not a record, or a
+//! record that is not a line, is the bug this file is watching for.
 
 use std::process::{Command, Stdio};
 
@@ -116,12 +113,8 @@ fn a_multi_key_group_splits_back_into_its_keys() {
     );
 }
 
-/// The two empty answers, kept apart without putting an odd-shaped object in the stream.
-///
-/// "No such template" and "that template exists and nothing matched" both print no rows.
-/// They stay distinguishable because the first one says so on stderr and the second says
-/// nothing - so a reader parsing stdout sees an empty stream either way, and an operator
-/// watching the terminal still sees two different answers.
+/// "No such template" and "exists and nothing matched" both print no rows: the first says so
+/// on stderr, so stdout is an empty stream either way and an operator sees two answers.
 #[test]
 fn unknown_and_empty_stay_different_answers() {
     let (unknown_out, unknown_err) = query(&[
@@ -145,13 +138,8 @@ fn unknown_and_empty_stay_different_answers() {
     );
 }
 
-/// A `Datetime` is RFC 3339 in both JSON formats and in the table, all three through the
-/// one renderer in `fmt`. Sub-second precision survives, so the rendering never implies
-/// the ladder threw any away.
-///
-/// `parse --json`'s `typed_values` is the deliberate exception and still carries the
-/// epoch nanoseconds: `tests/fixture.rs` pins both ends of the range there as exact
-/// instants.
+/// A `Datetime` is RFC 3339 in every format, with sub-second precision kept; the
+/// `typed_values` of `parse --json` are the deliberate exception (`tests/fixture.rs`).
 #[test]
 fn renders_datetimes_as_rfc3339() {
     let (rows, _) = query(&[r#"MATCH LOG {"service": "auth"}"#, "--format", "ndjson"]);
@@ -203,9 +191,7 @@ fn jsonl_is_an_alias() {
 }
 
 /// What comes out goes back in, types included: `ts` leaves as RFC 3339 and the type
-/// ladder reads it back as a `Datetime`, which is why rows do not carry the epoch
-/// nanoseconds `ColValue::to_json` holds. The rendering is pinned in
-/// `renders_datetimes_as_rfc3339`; this one checks the stream re-ingests and re-queries.
+/// ladder reads it back as a `Datetime`.
 #[test]
 fn the_output_is_ingestable() {
     use std::io::Write;

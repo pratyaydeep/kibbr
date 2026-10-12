@@ -1,8 +1,6 @@
-//! Every input a fuzz target ever crashed on, replayed through the same code the fuzzer
-//! runs (`kibbr::fuzzing`), on the stable toolchain. A fixture is a file under
-//! `fuzz/regressions/<target>/`, named for what it broke; the committed corpus under
-//! `fuzz/corpus/<target>/` is replayed with it, so a change that breaks an input the
-//! fuzzer already reached fails here and not thirty minutes into the next run.
+//! Every input a fuzz target ever crashed on, and the committed corpus, replayed through
+//! the code the fuzzer runs (`kibbr::fuzzing`) on the stable toolchain, so a change that
+//! breaks an input the fuzzer already reached fails here.
 
 use std::fs;
 use std::path::Path;
