@@ -364,10 +364,9 @@ fn no_catalog_and_a_truncated_trie_json_warns_and_starts_clean() {
     // is not a store that cannot write.
     let (status, body) = second.get("/health");
     assert_eq!(status, 200);
-    assert_eq!(
-        json(&body),
-        serde_json::json!({ "ok": true, "status": "ok" })
-    );
+    let health = json(&body);
+    assert_eq!((&health["ok"], &health["status"]), (&true.into(), &"ok".into()));
+    assert!(health.get("detail").is_none(), "{health}");
     assert_eq!(json(&second.get("/templates").1)["count"], 0);
 
     // The leaf directories the lost snapshot described are still on disk, and the server

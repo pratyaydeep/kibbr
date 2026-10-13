@@ -1,8 +1,12 @@
 [package]
 name = "kibbr-fuzz"
+description = "kibbr - cargo-fuzz harnesses over the readers of untrusted bytes"
 version = "0.0.0"
 publish = false
 edition = "2021"
+license = "AGPL-3.0-only"
+authors = ["Pratyaydeep Ghanta <pratyaydeepghanta@gmail.com>"]
+repository = "https://github.com/pratyaydeep/kibbr"
 
 [package.metadata]
 cargo-fuzz = true

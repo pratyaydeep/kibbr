@@ -5,9 +5,15 @@ use super::*;
 /// The log viewer, one HTML file; `no-store`, because a cached viewer against a newer
 /// server is a debugging tool lying about what the database answered.
 async fn get_viewer() -> Response {
+    // The footer's two placeholders, filled once: the page is a file and the version is not in it.
+    static PAGE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        VIEWER
+            .replace("{{version}}", VERSION)
+            .replace("{{source}}", SOURCE)
+    });
     (
         [(axum::http::header::CACHE_CONTROL, "no-store")],
-        Html(VIEWER),
+        Html(PAGE.as_str()),
     )
         .into_response()
 }

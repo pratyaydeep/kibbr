@@ -9,15 +9,18 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-only"
+authors = ["Pratyaydeep Ghanta <pratyaydeepghanta@gmail.com>"]
 repository = "https://github.com/pratyaydeep/kibbr"
 
 # One version of each dependency for the whole workspace, and one place that says why it
 # is here; a crate takes what it calls with `workspace = true`.
 [workspace.dependencies]
-kibbr-core = { path = "crates/kibbr-core" }
-kibbr-storage = { path = "crates/kibbr-storage" }
-kibbr-engine = { path = "crates/kibbr-engine" }
-kibbr-server = { path = "crates/kibbr-server" }
+# The four crates by path here, and by this version once published: `cargo publish` wants both.
+kibbr-core = { path = "crates/kibbr-core", version = "0.1.0" }
+kibbr-storage = { path = "crates/kibbr-storage", version = "0.1.0" }
+kibbr-engine = { path = "crates/kibbr-engine", version = "0.1.0" }
+kibbr-server = { path = "crates/kibbr-server", version = "0.1.0" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -50,6 +53,8 @@ name = "kibbr"
 description = "kibbr - log store"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
 repository.workspace = true
 
 [dependencies]

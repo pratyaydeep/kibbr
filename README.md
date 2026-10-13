@@ -147,4 +147,6 @@ A workspace of five crates, each naming only the ones under it.
 
 ## Licence
 
-[Elastic License 2.0](LICENSE).
+Open source under AGPL-3.0-only: run it for your own logs freely; if you modify it and
+offer it as a service, you must publish your changes. Contributions are accepted under MIT
+([LICENSE-CONTRIBUTOR](LICENSE-CONTRIBUTOR)). Other terms: [COMMERCIAL.md](COMMERCIAL.md).

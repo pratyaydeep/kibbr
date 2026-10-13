@@ -77,6 +77,13 @@ const MAX_REPORTED_ERRORS: usize = 1000;
 /// drift from the endpoints it calls.
 const VIEWER: &str = include_str!("viewer.html");
 
+/// Where the source of this build is: AGPL §13 has a server offer it to whoever uses it
+/// over a network, so `/health` and the viewer's footer both carry it. A modified build
+/// that is served to others names its own.
+pub const SOURCE: &str = "https://github.com/pratyaydeep/kibbr";
+/// This build's version, beside `SOURCE` in both places.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // ── State ──────────────────────────────────────────────────────────────────────────
 
 /// Everything the handlers share, none of it behind a lock of the server's, so an ingest

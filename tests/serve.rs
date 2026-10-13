@@ -512,7 +512,12 @@ fn every_endpoint_answers() {
     assert_eq!(status, 200);
     assert_eq!(
         json(&body),
-        serde_json::json!({ "ok": true, "status": "ok" })
+        serde_json::json!({
+            "ok": true,
+            "status": "ok",
+            "version": env!("CARGO_PKG_VERSION"),
+            "source": "https://github.com/pratyaydeep/kibbr",
+        })
     );
 
     // Empty, before anything is ingested: a fresh database is a real state and every
@@ -773,6 +778,42 @@ fn the_viewer_fetches_nothing_else() {
     // The two it *is* allowed to fetch, and the only two: its own server's endpoints.
     assert!(page.contains("fetch(\"/query\""));
     assert!(page.contains("fetch(\"/templates\""));
+}
+
+/// AGPL §13: whoever uses a server over a network is told where its source is. The
+/// viewer's footer says it, with the version, and no placeholder is left unfilled.
+#[test]
+fn the_viewer_footer_names_the_source_and_the_version() {
+    let server = Served::start();
+    let (status, _, page) = request_raw(server.port, "GET", "/", b"");
+    assert_eq!(status, 200);
+
+    let footer = page
+        .split_once("<footer>")
+        .and_then(|(_, rest)| rest.split_once("</footer>"))
+        .map(|(footer, _)| footer)
+        .expect("the viewer has a footer");
+    assert!(
+        footer.contains("source: https://github.com/pratyaydeep/kibbr"),
+        "{footer}"
+    );
+    assert!(
+        footer.contains(concat!("kibbr ", env!("CARGO_PKG_VERSION"))),
+        "{footer}"
+    );
+    assert!(!page.contains("{{"), "a placeholder was served unfilled");
+}
+
+/// And `/health` says the same two things to a machine, well or degraded.
+#[test]
+fn health_names_the_source_and_the_version() {
+    let server = Served::start();
+    let (status, body) = server.get("/health");
+    assert_eq!(status, 200);
+    let health = json(&body);
+    assert_eq!(health["source"], "https://github.com/pratyaydeep/kibbr");
+    assert_eq!(health["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(health["ok"], true);
 }
 
 // ── Compressed bodies ──────────────────────────────────────────────────────────────

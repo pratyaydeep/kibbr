@@ -9,13 +9,17 @@ struct QueryRequest {
     q: String,
 }
 
-/// `{"ok":true,"status":"ok"}`, or `degraded` while something here cannot write; `ok`
+/// `{"ok":true,"status":"ok",...}`, or `degraded` while something here cannot write; `ok`
 /// stays `true` because this is the liveness check, and a restart does not empty a disk.
+/// `version` and `source` are on every answer: where this server's source is (AGPL §13).
 pub(super) async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
-    match server.degraded() {
-        Some(detail) => Json(json!({ "ok": true, "status": "degraded", "detail": detail })),
-        None => Json(json!({ "ok": true, "status": "ok" })),
-    }
+    let mut answer = match server.degraded() {
+        Some(detail) => json!({ "ok": true, "status": "degraded", "detail": detail }),
+        None => json!({ "ok": true, "status": "ok" }),
+    };
+    answer["version"] = json!(VERSION);
+    answer["source"] = json!(SOURCE);
+    Json(answer)
 }
 
 impl Server {

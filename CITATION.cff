@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use kibbr, please cite it as below."
+title: kibbr
+type: software
+authors:
+  - family-names: Ghanta
+    given-names: Pratyaydeep
+    email: pratyaydeepghanta@gmail.com
+date-released: 2026-10-03
+repository-code: "https://github.com/pratyaydeep/kibbr"
+license: AGPL-3.0-only

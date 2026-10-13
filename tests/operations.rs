@@ -494,7 +494,10 @@ fn templates_and_stats_ask_the_running_server() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(
         json(&text(&out.stdout)),
-        json(r#"{"ok":true,"status":"ok"}"#)
+        json(&format!(
+            r#"{{"ok":true,"status":"ok","version":"{}","source":"https://github.com/pratyaydeep/kibbr"}}"#,
+            env!("CARGO_PKG_VERSION")
+        ))
     );
 
     // No server: an error that says where it looked, and nothing on stdout.

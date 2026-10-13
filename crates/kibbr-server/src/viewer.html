@@ -59,6 +59,7 @@
   header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   header .brand { color: var(--accent); font-weight: 600; letter-spacing: .04em; }
   header .note { color: var(--faint); font-size: 11px; }
+  footer { margin-top: 24px; color: var(--faint); font-size: 11px; user-select: text; }
 
   button {
     font: inherit; font-size: 12px; color: var(--ink); background: #232830;
@@ -192,6 +193,10 @@
 
   <div id="results"></div>
   <div id="meta" class="meta"></div>
+
+  <!-- AGPL §13: where this server's source is. Text and not a link: the page names no
+       address outside its own server in an attribute (tests/serve.rs). -->
+  <footer>kibbr {{version}} · AGPL-3.0-only · source: {{source}}</footer>
 </main>
 
 <script>

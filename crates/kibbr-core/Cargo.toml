@@ -3,6 +3,8 @@ name = "kibbr-core"
 description = "kibbr - a log line into keys, types and a fingerprint"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
 repository.workspace = true
 
 [dependencies]
