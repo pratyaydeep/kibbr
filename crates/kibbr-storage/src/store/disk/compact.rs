@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Compaction: a day the live door has finished with, rebuilt into full row groups in
 //! finished files and swapped in with one `replace` record.
 //!

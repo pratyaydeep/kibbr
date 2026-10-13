@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr demo` - build the trie over a file and print it as an ASCII tree, the
 //! observable surface of the trie. Everything on stdout is a function of the input lines
 //! as a set, so a different input order produces the same bytes; the one number that

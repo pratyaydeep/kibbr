@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The `record_log` target: the one record reader under `catalog.log` and `manifest.log`
 //!, held to what the format promises about bytes nobody vouched for. The
 //! input is read as both files, against a second frame reader written here (`walk`). The

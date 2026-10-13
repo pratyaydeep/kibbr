@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What a bench leaves behind: the result file (schema `kibbr-bench/1`), the raw log and
 //! the table. Reading is lenient where writing is exact, so a result saved by an earlier
 //! build of the bench still prints its column. A ratio is always a speed-up, and every

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The trie, tested through the binary. The load-bearing test is
 //! `the_tree_is_stable_across_input_orderings`: re-running the same file passes without the
 //! type join, and feeding the same lines in a different order is what makes it observable.

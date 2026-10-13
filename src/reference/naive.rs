@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The oracle: every line, a closure, a counter; obviously correct, never ships.
 //! It shares the contract with the engine (`value_matches`, how a `Row` is built) and
 //! none of the mechanism, or a mutation to one rule would move both answers together.

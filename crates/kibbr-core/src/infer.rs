@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Type inference. First match wins; the order is the contract.
 //!
 //! Rule 2 (epoch digits) sits above rule 6 (i64): a timestamp read as an integer turns

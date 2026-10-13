@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! One kept HTTP/1.1 connection, and the bytes of every request sent down it.
 //! The bench has a client of its own because the crate's opens a connection per request,
 //! which would time the handshake, and hides a refusal's headers. `send` reads one answer

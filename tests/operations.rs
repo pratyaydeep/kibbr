@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What an operator reaches for: the settings file, the two commands that ask a running
 //! server about itself, the log's two formats, and the deadline on a stop - all from
 //! outside the binary. Where a setting comes from is `src/config.rs`'s; this file holds

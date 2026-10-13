@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Every input a fuzz target ever crashed on, and the committed corpus, replayed through
 //! the code the fuzzer runs (`kibbr::fuzzing`) on the stable toolchain, so a change that
 //! breaks an input the fuzzer already reached fails here.

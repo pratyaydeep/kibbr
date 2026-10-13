@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What a server can fail with: `Error`, which stops one from starting or from finishing
 //! cleanly, and `IngestError`, which stops the live door from taking a body.
 

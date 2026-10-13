@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! One day of one leaf, read for a query: its row groups, then its rows not yet in one.
 //! The window and the terms are put to a row group's columns (`store::columns`) before any
 //! row is built, and a row is built only as far as the visitor reads it (`Wants`). A day's

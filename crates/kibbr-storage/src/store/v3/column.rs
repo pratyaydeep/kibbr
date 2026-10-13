@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! One chunk decoded to what its encodings hold, with no cell printed: a filter needs a
 //! row's number, word or bytes, not its cell, which `read::cell` prints only when asked.
 //! A second reader beside `read::chunk`, held to it: `chunk` is `Ok(cells)` exactly when

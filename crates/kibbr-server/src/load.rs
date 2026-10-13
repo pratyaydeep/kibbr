@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The bulk door: a closed day of lines, or six months of them, loaded whole, by
 //! `kibbr load` alone or by a server for it (`POST /load`).
 //!

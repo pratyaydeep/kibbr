@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Leaf storage: the scan interface, the two implementations behind it, and the registry.
 //! `LeafStore` holds one leaf's rows and `Store` writes them out; neither has a clock, which
 //! lives in `serve`. No lock is over all of it: each leaf locks itself, and a flush

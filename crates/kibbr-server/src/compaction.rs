@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Compaction: `/compact`, the loop that looks for due days, and their stop.
 
 use super::*;

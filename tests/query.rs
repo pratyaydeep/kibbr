@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! "No such template" and "that template exists but zero rows matched" are two answers,
 //! not one. Both have `count: 0`, so a result that carries only a count cannot tell
 //! them apart. Pinned here because the differential judges the engine against the oracle:

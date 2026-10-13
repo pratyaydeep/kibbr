@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The threads a disk scan chooses a day's rows on beside the thread that asked.
 //!
 //! A scan reads and hands its rows over on its own thread; only choosing and decoding is

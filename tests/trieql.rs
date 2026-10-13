@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The TrieQL parser, from outside the binary: the grammar's own examples parse, a
 //! malformed query reports a position inside the query, and nothing makes it panic.
 //! That a query and the flags it translates answer alike is

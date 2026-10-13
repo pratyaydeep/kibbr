@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Flattening, fingerprinting, and the parsed row.
 
 use std::borrow::Cow;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What the *next* process sees: every test ingests under one server, stops it, and starts
 //! another on the same directory. None of it is observable from inside a single process - a
 //! store that never reopened its files can hold the right answer in memory.

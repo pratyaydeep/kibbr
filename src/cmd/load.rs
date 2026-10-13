@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr load` - the command: who runs it and what it prints. The load itself is the
 //! server crate's (`kibbr_server::load`). Who holds `LOCK` decides where it runs, because
 //! one process writes the catalog and the manifest: a server holding the directory is

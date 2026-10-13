@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The TrieQL parser (`trieql::parse`), held to the grammar: it never panics, and
 //! every input parses or is refused with an error whose byte position lies inside the input
 //! and points at what the error says it found. Ill-formed UTF-8 is decoded lossily, not

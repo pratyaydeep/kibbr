@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The generator: hostile data on demand, reproducible from `--seed`.
 //! It produces what hand-written fixtures do not surface: nesting, optional fields,
 //! ten-digit integers that are and are not timestamps, unicode, empty strings, nulls,

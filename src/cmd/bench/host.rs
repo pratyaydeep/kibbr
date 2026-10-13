@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The machine the bench runs on: what it is, and whether it is fit to measure on.
 //! Two gates and no more - another kibbr process alive, the swap-out counter moving; the
 //! rest is recorded and decides nothing. A child's CPU time is checked against `getrusage`

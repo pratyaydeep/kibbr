@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr bench --lines N --profile farm`: this build's speed on one farm day, measured the
 //! same way every time, so that the number a change is held to is one command's.
 //! A unit is one server's work on its own copy of the loaded bytes; no server is shared,

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! A row group's header frame and its chunks, decoded and checked.
 //! Compaction, recovery and the walk decode a chunk through `chunk`, every value of it.
 //! A query is held to less, by choice: it decodes with `column::Column` only the chunks it

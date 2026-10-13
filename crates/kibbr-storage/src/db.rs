@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The write path: one parsed line into a trie and a set of leaf stores.
 //!
 //! The CLI and the server both parse and route a line by the functions here, so the two

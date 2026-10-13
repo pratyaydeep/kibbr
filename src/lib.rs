@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Kibbr as a library: the modules the binary in `main.rs` is built from, public so
 //! that the fuzz targets under `fuzz/` can call the harnesses in `fuzzing`. Nothing else
 //! depends on this crate, and nothing here is a stable interface.

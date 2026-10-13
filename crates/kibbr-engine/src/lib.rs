@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Answering a query: the plan over the trie's key index, the execution over the stores,
 //! and TrieQL, the text a query is written in.
 //!

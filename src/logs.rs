@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! kibbr's own log: every lifecycle line, warning and error is a `tracing` event, and the
 //! one subscriber here writes each to stderr as a line of text or of JSON. As text a line
 //! stays byte for byte what scripts, tests and `kibbr bench` read off a server's stderr.

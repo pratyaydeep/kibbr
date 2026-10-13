@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The least HTTP/1.1 client that `kibbr load`, `kibbr compact` and `bench-storage --es`
 //! need: one request per connection, a body in, a status and a body out. Hand-written
 //! over `TcpStream` because its callers ask for so little. A chunked answer is undone,

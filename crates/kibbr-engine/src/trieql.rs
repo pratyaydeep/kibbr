@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! TrieQL: a query string in, the `Query` the engine already executes out.
 //!
 //! The TrieQL grammar and nothing else; adding an operator is a decision in its own right.

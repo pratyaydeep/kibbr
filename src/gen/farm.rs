@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `gen-logs --profile farm`: one simulated day of a small estate's logs.
 //! Built the other way round from the hostile profile: ten services each written as its
 //! logger writes, request ids crossing services, skewed pools, one day in time order with

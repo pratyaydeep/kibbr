@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Storage format v3: one shared file per day, row groups of one template each, a
 //! typed piece per column that prints every value back as it was ingested.
 //! This file holds the numbers, the forms and the print rules the writer's check and the

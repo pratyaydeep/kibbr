@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The texts and values the filter's tests are run over.
 //!
 //! One list, shared, because the tests that use it hold different pieces of code to the

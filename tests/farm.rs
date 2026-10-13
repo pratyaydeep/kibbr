@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `gen-logs`: the hostile profile's bytes are frozen, and the farm has the properties
 //! the storage measurements are going to lean on. Everything runs the real binary.
 

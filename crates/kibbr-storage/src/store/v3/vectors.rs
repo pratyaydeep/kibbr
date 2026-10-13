@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The format held to its test vectors and to its own recovery rule:
 //! a reader must read them back value for value, the builder must make the same rows into
 //! the same pieces, and recovery must append the exact footer the cut file's dump ends with.

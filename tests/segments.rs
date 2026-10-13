@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What the storage format is observable as, from outside the process: is a row in
 //! the answer before it is on disk, does a schema change cost anything, does a query say
 //! what it pruned, and does a data directory from an earlier layout stop the server.

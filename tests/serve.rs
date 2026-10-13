@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr serve` from outside: every endpoint answers, a body with three bad lines in it
 //! reports exactly those three, and a signal mid-request exits 0.
 //! A test that only asks things over HTTP runs the server in this process (`Served`); one

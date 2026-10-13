@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr bench`, from outside the process. Its numbers are a machine's, so nothing here
 //! holds a timing to more than "positive": what is held is what must be true on any machine.
 //! Every run is `--unchecked`: the test binary is a debug build, and other tests' servers

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The `AFTER` cursor (`engine::Cursor`), held to what a cursor is: a token a client
 //! hands back is untrusted, so decoding never panics, a token that is not a cursor of its
 //! query is refused, and an accepted one, real or forged, resolves to a suffix of the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What is wrong with one line, and how any error in the workspace is printed.
 //!
 //! Down here, under every other crate, because the flattener makes these errors and the

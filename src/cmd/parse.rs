@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr parse` - the observable surface. Per line: the fingerprint, then
 //! every value with the type the ladder gave it.
 

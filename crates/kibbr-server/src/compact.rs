@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What a server keeps about the compactions it runs, and the run itself.
 //!
 //! The rebuild is the store's (`store::disk::compact`); here is what is around it: which

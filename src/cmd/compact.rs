@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr compact` - the command: who runs it and what it prints. The rebuild is the
 //! store's (`store::disk::compact`) and the run the server crate's
 //! (`kibbr_server::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:

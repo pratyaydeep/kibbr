@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What a server runs on: `Settings`, every value in it plain data with a default.
 //!
 //! Nothing here reads a flag, an environment variable or a file - where a value came from

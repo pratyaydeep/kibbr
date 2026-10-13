@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! A deterministic PRNG, written out rather than pulled in, so that "same seed →
 //! byte-identical output" is a property of this file and not of a dependency's
 //! version. xoshiro256** seeded through SplitMix64.

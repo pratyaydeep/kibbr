@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The disk store: one shared file per UTC day, named in `manifest.log`.
 //!
 //! One file per day because every cost of the per-template layout came from the file

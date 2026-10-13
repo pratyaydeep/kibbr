@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! One child `kibbr serve`, on a copy of the loaded directory, for one unit of measuring.
 //! A server of its own for every unit: whatever one took or cached would be in the next
 //! number. Killed, not stopped: a clean stop would write its buffers out, and it ran on a

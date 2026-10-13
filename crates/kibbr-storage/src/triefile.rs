@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `trie.json`: the trie as an adjacency list, written atomically on graceful shutdown.
 //!
 //! A file that fails to parse, or describes a graph that is not a tree, logs a WARN and

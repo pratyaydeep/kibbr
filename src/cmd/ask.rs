@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr templates`, `kibbr stats` and `kibbr health`: what a running server answers
 //! `GET /templates`, `GET /stats` and `GET /health` with, asked for and printed. They
 //! stay the server's to answer - the numbers are in its memory, and a second process

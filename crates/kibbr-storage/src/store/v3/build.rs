@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The segment builder: rows of one template in, one encoded row group out.
 //! It has no clock, no lock and no knowledge of its caller, so the live door, compaction
 //! and the bulk loader share one encoder and one set of encoder bugs.

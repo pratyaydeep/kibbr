@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The query engine: a plan, a scan, and the result shape every surface above reports.
 //!
 //! The plan chooses templates from the trie and touches no data. The scan opens only the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Rendering shared by the commands. One definition each, because a value that prints
 //! two ways in two places is a bug an operator has to notice first.
 

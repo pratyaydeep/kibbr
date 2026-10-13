@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The encodings held to what they promise: each piece gets the one encoding its
 //! values call for, every value comes back as the JSON that was ingested, and a reader
 //! refuses bytes an encoding cannot have written.

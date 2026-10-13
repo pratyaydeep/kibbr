@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The trie: one token per edge, leaf at depth N, no truncation and no separate
 //! column list - the keys that did not branch are the tail of the path.
 //!

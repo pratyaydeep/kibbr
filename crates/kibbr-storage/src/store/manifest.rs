@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `manifest.log`: the truth about which data files are live.
 //!
 //! Framed as `catalog.log` is. A file the manifest does not name is not part of the

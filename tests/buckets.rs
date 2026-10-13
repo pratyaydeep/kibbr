@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `GROUP BY time(...)` as an operator sees it: what the engine cannot see about itself.
 //! An empty hour reaches the terminal as zeros, a refusal is a refusal and not a short
 //! chart, and the two surfaces and the three formats agree about the same buckets.

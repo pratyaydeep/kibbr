@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use thiserror::Error;
 
 // What is wrong with one line is the flattener's to say, and it is two crates down; here

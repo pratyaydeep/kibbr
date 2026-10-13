@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What a plan reads of the trie without crossing it: one finished description of each
 //! template, and for each key the templates that have it as a column.
 //!

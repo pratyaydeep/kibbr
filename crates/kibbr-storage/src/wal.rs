@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The write-ahead log: where a line is durable before `/ingest` says it was taken.
 //!
 //! It holds the segment, frame, batch and record layouts, replay, the one writer and

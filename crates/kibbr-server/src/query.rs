@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! A query as it crosses the wire: a TrieQL string in, a `QueryResult` as JSON out.
 //!
 //! What `POST /query` takes and answers with, and what the binary's `query` command

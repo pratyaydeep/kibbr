@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr compact`, from outside the process: a compaction changes nothing a query
 //! can see, so what is checked is what it leaves on disk and what it says it did.
 //! Every test builds a day through the live door and reads `manifest.log` and

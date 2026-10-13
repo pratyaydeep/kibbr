@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Tests target the outer surface. Everything here runs the real binary and
 //! reads its stdout; nothing reaches inside the crate.
 

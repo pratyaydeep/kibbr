@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The write-ahead log's reader: one segment's bytes through
 //! `wal::read_segment`, held to a second reader written here from the format and none of
 //! its code (`expected`). Every input is read as it is and with its checksums put right,

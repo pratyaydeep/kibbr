@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The plan step - which templates a query must read - timed on a trie of 10,000 templates.
 //! The farm cannot have that many templates, so the trie is the older generator's.
 //! Timed in a child process of its own: the heap holds the trie and nothing else, on one

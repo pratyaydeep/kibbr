@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Where templates and rows are kept: the trie and its catalog, the stores under it, the
 //! write-ahead log, `db` - the write path for one parsed line - and `lock`.
 //!

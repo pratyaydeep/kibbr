@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr bench-storage <file>`: what a file costs to store, by one command, so every
 //! storage number is measured the same way. The file goes through the bulk door into a
 //! scratch directory and is printed beside the raw bytes, `gzip -9`, `zstd -19` and, with

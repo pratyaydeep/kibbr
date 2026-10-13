@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr load`, the bulk door, from outside the process: every test runs the real
 //! binary, since what matters is what the loader and the server leave for each other.
 //! `manifest.log` and `data/<day>/` are read directly: which files are live and flagged

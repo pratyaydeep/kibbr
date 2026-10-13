@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! A term, and the time window, put to a decoded column instead of to a row.
 //!
 //! Building a row for every stored value is wasted on rows thrown away; a typed compare

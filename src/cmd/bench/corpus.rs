@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The bytes every number is measured over: the loaded directory and the live stream.
 //! Loaded once, then only copied: two loads of one file are not the same bytes, so results
 //! compare only on the one load, and every server starts on a verified copy. The generator

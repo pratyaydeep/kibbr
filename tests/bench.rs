@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr bench-storage`, from outside the process: its numbers are a disk's, so what is
 //! held here is what must be true of them on any disk.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The things the query language left open, pinned against the observable answer: each is
 //! a choice, so no differential can find it - engine and oracle would agree on the opposite.
 //! Covered: LIMIT and paging, row order, a template with no `ts` under a time filter, and

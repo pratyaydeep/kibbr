@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! A whole v3 file: writing it, sealing it, opening a sealed one through its footer,
 //! walking an unsealed one frame by frame, and recovering it.
 //! A tear is where a crash stopped a write, and recovery cuts the file back to it; a

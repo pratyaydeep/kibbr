@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `--format ndjson`: one JSON object per line, no envelope, nothing else on stdout.
 //! Something downstream parses this line by line, so a line that is not a record, or a
 //! record that is not a line, is the bug this file is watching for.

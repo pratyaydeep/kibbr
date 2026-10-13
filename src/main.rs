@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
 use kibbr::cmd::{ask, bench, bench_storage, compact, demo, load, parse, query};

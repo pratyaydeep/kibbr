@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Configuration: flags, `KIBBR__` variables and the file, resolved into what a command
 //! runs on. The values are declared where they are read; this module is where each comes
 //! from. For every setting: flag > environment > file > default, the file being the one

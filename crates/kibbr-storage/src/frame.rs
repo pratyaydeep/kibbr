@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The one record framing, and the append-only file built on it.
 //!
 //! One reader for `catalog.log`, `manifest.log`, v3 data frames and the write-ahead log:

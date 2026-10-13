@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What is timed: ingest alone, the idle server, and one lap under ingest.
 //! Nothing of the bench's own sits inside a timed window but a write, a read and a clock:
 //! requests are built beforehand and answers typed after their clock has stopped. The ingest

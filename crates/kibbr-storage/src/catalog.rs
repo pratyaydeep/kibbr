@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `catalog.log`: the truth about templates - append-only, CRC-framed, one JSON object per
 //! record.
 //!

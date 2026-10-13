@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The v3 segment reader: one `.col` file's bytes through every way the store reads
 //! one - the unsealed walk, the sealed open, and each row group through `file::Reader` and
 //! `column::Column`. It never panics, never reads outside the file, and refuses what it

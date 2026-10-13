@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `LOCK`: one process owns a data directory, because the catalog and the manifest are
 //! append-only logs each written by exactly one handle.
 //!

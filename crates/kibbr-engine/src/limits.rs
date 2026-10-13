@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! What a query may not exceed. Declared beside the engine that holds a query to it; the
 //! flags, variables and file that set it are read by the binary (`kibbr::config`).
 

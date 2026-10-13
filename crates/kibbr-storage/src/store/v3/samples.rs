@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! The row groups the typed column's tests are run over: one shared list, since a layout
 //! one of the tests never saw is a layout nothing says they agree on.
 //! Three sources: every file under `testdata/v3/`, row groups the builder makes, and

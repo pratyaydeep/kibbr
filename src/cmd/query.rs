@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pratyaydeep Ghanta
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! `kibbr query`. Flags or TrieQL in, `QueryResult` out. Both ways in build the one
 //! `Query`, which is what makes `--reference` and
 //! `scripts/check/parser_equivalence.sh` honest: a differential compares answers, not
