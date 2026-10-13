@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version and components are rust-toolchain.toml's; this installs them.
+      - name: Rust, from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: cargo build --release
+        run: cargo build --release
+
+      # Every step below runs even when one before it failed, so one run shows all of them.
+      - name: cargo test --workspace
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --no-fail-fast
+
+      - name: cargo clippy -D warnings
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: SPDX headers
+        if: ${{ !cancelled() }}
+        run: scripts/check/spdx.sh
+
+      - name: scripts/check/agree.sh
+        if: ${{ !cancelled() }}
+        run: scripts/check/agree.sh
+
+      - name: scripts/fault/crash_test.sh, 3 rounds
+        if: ${{ !cancelled() }}
+        run: ROUNDS=3 scripts/fault/crash_test.sh

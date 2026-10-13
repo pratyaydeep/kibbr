@@ -1,0 +1,4 @@
+# The Rust every build here uses - a laptop's and CI's alike; rustup reads this file.
+[toolchain]
+channel = "1.96.1"
+components = ["clippy", "rustfmt"]

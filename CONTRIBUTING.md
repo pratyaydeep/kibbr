@@ -58,9 +58,12 @@ repository root:
 cargo build --release
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+scripts/check/spdx.sh
 scripts/check/agree.sh
 ROUNDS=3 scripts/fault/crash_test.sh
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same on Linux.
 
 The scripts run the release binary and need `bash`, `curl` and `python3`.
 [scripts/README.md](scripts/README.md) lists the rest of them and what each prints when it
