@@ -1,0 +1,127 @@
+# kibbr.toml.example - every key `kibbr --config <file>` reads, at its default.
+#
+# Every key is optional, and no file is read unless --config names one. For each setting:
+# the flag, or else the variable, or else this file, or else the default. A key's variable
+# is KIBBR__, its section and its name in capitals: [storage] base_path is
+# KIBBR__STORAGE__BASE_PATH. A key this build has no setting for is refused, with its
+# line - the ones the design names and this build does not have are at the end.
+
+[storage]
+# The data directory: day files, the catalog, the manifest and the write-ahead log.
+# Created if absent. --data-dir
+base_path = "kibbr-data"
+# The trie snapshot, written on a clean stop. Default: trie.json inside base_path.
+# --trie-file
+trie_file = "kibbr-data/trie.json"
+# Day files open for writing at once; past it the least recently written one is sealed.
+# Keep it under `ulimit -n`. --max-open-segments
+max_open_segments = 512
+# A day's data file is sealed at this many bytes and the next one opened (512 MiB).
+# --segment-max-bytes
+segment_max_bytes = 536870912
+# Memory all row buffers together may hold before the largest are closed early (512 MiB);
+# at twice this /ingest keeps a body waiting. 0 is refused. --max-buffer-bytes
+max_buffer_bytes = 536870912
+# How often a server looks for a finished day to compact, in milliseconds. 0 never looks;
+# `kibbr compact` still compacts when asked. --compact-interval-ms
+compact_interval_ms = 60000
+# A segment of the write-ahead log rolls to the next at this many bytes (64 MiB). 0 is
+# refused. --wal-segment-bytes
+wal_segment_bytes = 67108864
+# The most bytes of lines that may be in the log and not yet in the store (256 MiB); a
+# body past it waits for room, then is answered 503. 0 is refused. --wal-queue-bytes
+wal_queue_bytes = 268435456
+
+[ingestor]
+# How often the row group thresholds are checked, in milliseconds. Not when a row becomes
+# queryable - that is at once - and not when it is durable. 0 is refused.
+# --flush-interval-ms
+flush_interval_ms = 500
+# How long a row group may stay open with rows in it, in milliseconds. Those rows are in
+# the write-ahead log, so this is replay time after a crash, not rows. --row-group-timeout-ms
+row_group_timeout_ms = 300000
+# Lines at which one flush of the write-ahead log stops taking more bodies. A body is
+# never split. 0 is refused. --batch-size
+batch_size = 500
+
+[api]
+# Where `serve` listens, host:port. Loopback by default: 0.0.0.0 publishes a write
+# endpoint with no authentication. --host and --port each override their half.
+native_addr = "127.0.0.1:7700"
+# The largest /ingest body accepted, as it arrives, before any decompression (10 MiB).
+# --max-body-bytes
+max_body_bytes = 10485760
+# The largest a compressed /ingest body may become once decompressed (64 MiB, which is
+# also the most it may be set to). --max-decompressed-bytes
+max_decompressed_bytes = 67108864
+# /ingest bodies parsed at once. Default: one per core - the 8 here is one machine's.
+# 0 is refused. --ingest-concurrency
+ingest_concurrency = 8
+# How long an /ingest body may wait, in milliseconds, at the door and again for room in
+# the log, before it is answered 503. At most 30000. --ingest-wait-ms
+ingest_wait_ms = 100
+# How long a stopping server gives the requests in flight: a whole number and ms, s, m
+# or h. "0s" waits for every request. --shutdown-deadline
+shutdown_deadline = "25s"
+# How long one request may take, from its headers to its answer: 408 for a body not yet
+# arrived, 504 for a query, whose scan stops. "0s" is none. --request-timeout
+request_timeout = "30s"
+
+[query]
+# The page a query that names no LIMIT is cut at. 0 is no backstop. --max-rows
+max_rows = 10000
+# Buckets a GROUP BY time(...) may emit before the query is refused. 0 is no limit.
+# --max-buckets
+max_buckets = 10000
+# Groups a bucketed GROUP BY may emit before the query is refused. 0 is no limit.
+# --max-groups
+max_groups = 100000
+# Threads one query may scan a day on. Default: half the cores, at most 4 - the 4 here is
+# one machine's. More than the machine has cores is refused. --scan-threads
+scan_threads = 4
+# A run of row groups holding fewer rows than this is scanned on one thread.
+# --scan-fan-rows
+scan_fan_rows = 32768
+
+[schema]
+# The key names a new template's time column is chosen from, in order; first match wins.
+# A template holding none takes its rows' arrival time. --time-columns
+time_columns = ["@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix",
+                "datetime", "event_time", "created_at"]
+# A number of 10 or 13 digits is a timestamp only inside this window: two RFC 3339
+# instants, start before end. No flag; the variable spells it `start,end`.
+epoch_window = ["2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]
+
+[log]
+# How much of kibbr's own log is written, to stderr: trace, debug, info, warn or error.
+# --log-level
+level = "info"
+# How a log line is written: text, or json - one object a line. --log-format
+format = "text"
+
+# Not built. The design names these; this build has no setting behind them, and
+# refuses a file that sets one. Each stays commented out.
+#
+# [storage]
+# wal_dir = "/var/lib/kibbr/wal"   # not built: the log is always <base_path>/wal
+# row_group_wait = "60s"           # not built under this name: [ingestor] row_group_timeout_ms
+# buffer_limit_bytes = 0           # not built under this name: [storage] max_buffer_bytes
+#
+# [ingestor]
+# flush_interval = "500ms"         # not built as a duration: flush_interval_ms
+#
+# [api]
+# es_compat_addr = "0.0.0.0:9200"  # not built: the Elasticsearch-compatible port is deferred
+#
+# [schema]
+# merge_threshold_pct = 80         # not built: schema merging is parked
+# promoted_keys = ["event"]        # not built as a setting: "event" is the promoted key
+# promoted_max_values = 1000       # not built as a setting
+#
+# [cold_tier]                      # not built: no key of this section
+# enabled = false
+# provider = "s3"
+# bucket = "my-kibbr-logs"
+# prefix = "logs/"
+# move_after = "30d"
+# archive_after = "90d"

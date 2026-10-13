@@ -40,12 +40,8 @@ const EXPLAIN_LEAVES: usize = 12;
 pub enum Format {
     Table,
     Json,
-    /// One JSON object per line and no envelope: `kibbr query … | kibbr query -` is the
-    /// point, so what comes out has to be what goes in. `jsonl` is the same thing under
-    /// the name the file extension uses.
-    ///
-    /// An encoding, and not a way to ask for more rows than fit in memory: the answer is
-    /// ranked into a `Vec<Row>` before this writes a byte. See `fn ndjson`.
+    /// One JSON object per line and no envelope, so `kibbr query … | kibbr query -` works.
+    /// `jsonl` is the same.
     #[value(alias = "jsonl")]
     Ndjson,
 }

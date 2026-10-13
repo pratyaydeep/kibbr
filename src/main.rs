@@ -25,19 +25,15 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[derive(Parser)]
 #[command(name = "kibbr", version, about = "kibbr - log store", long_about = None)]
 struct Cli {
-    /// A TOML file of settings, read by every command: `[storage]`, `[ingestor]`,
-    /// `[api]`, `[query]`, `[schema]` and `[log]`, each key named as its variable is -
-    /// `[storage] base_path` is `KIBBR__STORAGE__BASE_PATH`. A flag wins over its
-    /// variable and the variable over the file; a key this build has no setting for is
-    /// refused. With no --config no file is read.
+    /// A TOML file of settings (see kibbr.toml.example); a key is named as its variable is.
+    /// Flag > variable > file > default; an unknown key is refused. No --config, no file.
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
     /// How much of kibbr's own log is written, to stderr: trace, debug, info, warn or
     /// error. Overrides `KIBBR__LOG__LEVEL` and `[log] level`. [default: info]
     #[arg(long, global = true, value_enum, value_name = "LEVEL")]
     log_level: Option<config::LogLevel>,
-    /// How a log line is written: `text`, a line for a person, or `json`, one object a
-    /// line. A command's data is on stdout either way.
+    /// How a log line is written, to stderr: `text`, or `json`, one object a line.
     /// Overrides `KIBBR__LOG__FORMAT` and `[log] format`. [default: text]
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     log_format: Option<config::LogFormat>,
@@ -49,17 +45,15 @@ struct Cli {
 enum Command {
     /// Generate reproducible NDJSON logs on stdout.
     GenLogs {
-        /// `hostile` is every case the parser must survive, spread flat over a few shapes
-        /// and thirty days; fixtures depend on its bytes. `farm` is one day of a
+        /// `hostile`: every case the parser must survive, over thirty days. `farm`: one day of a
         /// ten-service estate, in time order, shaped like real traffic.
         #[arg(long, value_enum, default_value = "hostile")]
         profile: Profile,
         /// How many NDJSON lines to write.
         #[arg(long, default_value_t = 1000)]
         lines: u64,
-        /// `hostile` only: how many distinct log shapes to draw from. Optional fields
-        /// split each shape into several fingerprints, so `kibbr parse` reports more
-        /// templates than this. [default: 12]
+        /// `hostile` only: how many log shapes to draw from; optional fields split each into
+        /// several templates. [default: 12]
         #[arg(long)]
         templates: Option<usize>,
         /// Same seed, byte-identical output. Nothing here reads the wall clock.
@@ -68,9 +62,8 @@ enum Command {
         /// `farm` only: the simulated day, YYYY-MM-DD, UTC. [default: 2024-01-15]
         #[arg(long)]
         day: Option<String>,
-        /// `farm` only: how many services run, 1 to 10 - the first N of gateway, auth,
-        /// payments, worker, dbproxy, access log, scheduler, notifier, search, cache.
-        /// Below 6 there is no access log in front of the gateway. [default: 10]
+        /// `farm` only: how many services run, 1 to 10; below 6 there is no access log.
+        /// [default: 10]
         #[arg(long)]
         services: Option<usize>,
         /// `farm` only: percent of the values of five named keys that arrive dirty -
@@ -93,20 +86,15 @@ enum Command {
     Demo {
         /// Path to an NDJSON file, or `-` for stdin.
         input: String,
-        /// Print every subtree instead of summarising the large ones. The default view
-        /// hides most of the templates behind `… N templates`, which is what an operator
-        /// wants and the opposite of what a test comparing two orderings wants.
+        /// Print every subtree instead of summarising the large ones as `… N templates`.
         #[arg(long)]
         full: bool,
     },
-    /// Serve the native HTTP API. Rows are written to `--data-dir` and survive a restart;
-    /// `--storage memory` opts out, and everything ingested is then lost when the process
-    /// exits - which the startup banner says in as many words either way.
+    /// Serve the HTTP API and the log viewer. Rows are written to `--data-dir` and survive a
+    /// restart; `--storage memory` keeps nothing past the process.
     Serve {
-        /// Loopback by default. A container needs `--host 0.0.0.0`, and that is a
-        /// decision to publish an unauthenticated write endpoint - so it is typed, not
-        /// defaulted into. Overrides the host of `KIBBR__API__NATIVE_ADDR` and of
-        /// `[api] native_addr`. [default: 127.0.0.1]
+        /// The address to listen on. Loopback by default: `0.0.0.0` publishes a write endpoint with
+        /// no authentication. Overrides the host of `KIBBR__API__NATIVE_ADDR`. [default: 127.0.0.1]
         #[arg(long)]
         host: Option<String>,
         /// Overrides the port of `KIBBR__API__NATIVE_ADDR` and of `[api] native_addr`.
@@ -121,8 +109,7 @@ enum Command {
         /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
         #[arg(long, value_name = "BUCKETS")]
         max_buckets: Option<usize>,
-        /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
-        /// count times the distinct values of the other keys.
+        /// Groups a bucketed `GROUP BY` may emit before the query is refused.
         /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
@@ -137,37 +124,23 @@ enum Command {
         /// exceed the 64 MiB line limit. Overrides `KIBBR__API__MAX_DECOMPRESSED_BYTES`.
         #[arg(long, value_name = "BYTES")]
         max_decompressed_bytes: Option<usize>,
-        /// How many `/ingest` bodies may be parsed at once. Beyond it, a body waits
-        /// for --ingest-wait-ms and is then answered `503` with a `Retry-After` rather
-        /// than left to time out. Overrides `KIBBR__API__INGEST_CONCURRENCY`.
+        /// How many `/ingest` bodies may be parsed at once; past it a body waits --ingest-wait-ms,
+        /// then answered `503`. Overrides `KIBBR__API__INGEST_CONCURRENCY`. [default: one a core]
         #[arg(long, value_name = "N")]
         ingest_concurrency: Option<usize>,
-        /// How long an `/ingest` body may be kept waiting, in milliseconds, before it is
-        /// answered `503` with a `Retry-After`: at the door, and then for room in the
-        /// write-ahead log - each wait is at most this long. `0` waits for nothing; more
-        /// than 30000 is refused.
-        /// Overrides `KIBBR__API__INGEST_WAIT_MS`. [default: 100]
+        /// How long an `/ingest` body may wait, in milliseconds, before it is answered `503`; at
+        /// most 30000. Overrides `KIBBR__API__INGEST_WAIT_MS`. [default: 100]
         #[arg(long, value_name = "MS")]
         ingest_wait_ms: Option<usize>,
-        /// How long after SIGTERM or SIGINT the requests in flight are given to finish:
-        /// a number and ms, s, m or h. What is still in flight then is cut off, and the
-        /// final flush, the checkpoint and the trie snapshot follow - so keep it a few
-        /// seconds under whatever kills the process next (Kubernetes: 30s). `0s` waits
-        /// for every request, however long it takes.
-        /// Overrides `KIBBR__API__SHUTDOWN_DEADLINE`. [default: 25s]
+        /// How long after a stop signal requests in flight are given to finish: a number and ms, s,
+        /// m or h; `0s` waits for all. Overrides `KIBBR__API__SHUTDOWN_DEADLINE`. [default: 25s]
         #[arg(long, value_name = "DURATION", value_parser = config::parse_duration)]
         shutdown_deadline: Option<std::time::Duration>,
-        /// How long one request may take from its first line to its answer: a number and
-        /// ms, s, m or h. A request whose body has not arrived by then is answered `408`;
-        /// a query still running is answered `504` and its scan stops. An `/ingest` body
-        /// that has been read whole is not timed out - its waits are --ingest-wait-ms's.
-        /// `0s` is no timeout.
-        /// Overrides `KIBBR__API__REQUEST_TIMEOUT`. [default: 30s]
+        /// How long one request may take: `408` for a body not yet arrived, `504` for a query,
+        /// whose scan stops; `0s`: none. Overrides `KIBBR__API__REQUEST_TIMEOUT`. [default: 30s]
         #[arg(long, value_name = "DURATION", value_parser = config::parse_duration)]
         request_timeout: Option<std::time::Duration>,
-        /// Where rows go. `disk` writes day-partitioned column files and snapshots the
-        /// trie on a clean shutdown; `memory` writes nothing, and is what the
-        /// memory-versus-disk differential runs against.
+        /// Where rows go: `disk`, day files under --data-dir, or `memory`, which writes nothing.
         #[arg(long, value_name = "KIND", default_value = "disk")]
         storage: StorageKind,
         /// The data directory. Created if absent. Overrides `KIBBR__STORAGE__BASE_PATH`.
@@ -177,85 +150,57 @@ enum Command {
         /// Overrides `KIBBR__STORAGE__TRIE_FILE`.
         #[arg(long, value_name = "PATH")]
         trie_file: Option<PathBuf>,
-        /// How often the row group thresholds are checked, in milliseconds. This is not
-        /// when a row reaches the disk - see --row-group-timeout-ms - and not when it
-        /// becomes queryable, which is at once.
-        /// Overrides `KIBBR__INGESTOR__FLUSH_INTERVAL_MS`.
+        /// How often the row group thresholds are checked, in milliseconds; a row is queryable at
+        /// once either way. Overrides `KIBBR__INGESTOR__FLUSH_INTERVAL_MS`. [default: 500]
         #[arg(long, value_name = "MS")]
         flush_interval_ms: Option<usize>,
-        /// How long a row group may stay open with rows in it, in milliseconds, when
-        /// neither 8,192 rows nor 8MB got there first. The rows that wait are in the
-        /// write-ahead log, so this is replay time after a crash and not rows. Floored at
-        /// the flush interval.
-        /// Overrides `KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS`. [default: 300000]
+        /// How long a row group may stay open with rows in it, in milliseconds; they are in the log
+        /// meanwhile. Overrides `KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS`. [default: 300000]
         #[arg(long, value_name = "MS")]
         row_group_timeout_ms: Option<usize>,
         /// A segment of the write-ahead log rolls to the next number at this many bytes.
         /// Overrides `KIBBR__STORAGE__WAL_SEGMENT_BYTES`. [default: 64 MiB]
         #[arg(long, value_name = "BYTES")]
         wal_segment_bytes: Option<usize>,
-        /// Where one flush of the write-ahead log stops taking more bodies: once it holds
-        /// this many lines. A body is never split, so a flush can hold more; and a flush
-        /// waits for nothing - it takes whatever queued while the one before it ran.
-        /// Overrides `KIBBR__INGESTOR__BATCH_SIZE`. [default: 500]
+        /// Lines at which one flush of the write-ahead log stops taking more bodies; a body is
+        /// never split. Overrides `KIBBR__INGESTOR__BATCH_SIZE`. [default: 500]
         #[arg(long, value_name = "LINES")]
         batch_size: Option<usize>,
-        /// The most bytes of lines that may be in the write-ahead log and not yet in the
-        /// store: what a stalled disk under the log, or a store slow to take rows, may
-        /// cost in memory. A body past it waits for room, up to --ingest-wait-ms, and is
-        /// then answered 503. Counted as records, forty bytes and the line for each.
-        /// Overrides `KIBBR__STORAGE__WAL_QUEUE_BYTES`. [default: 256 MiB]
+        /// The most bytes of lines that may be in the write-ahead log and not yet in the store;
+        /// past it a body waits. Overrides `KIBBR__STORAGE__WAL_QUEUE_BYTES`. [default: 256 MiB]
         #[arg(long, value_name = "BYTES")]
         wal_queue_bytes: Option<usize>,
-        /// How many segment files may be open for writing at once, across every leaf.
-        /// Past it the least recently written one is sealed, which is always safe - the
-        /// next row for that partition opens the next segment number. Set it below
-        /// `ulimit -n`: a cap above the descriptor limit is not a cap.
-        /// Overrides `KIBBR__STORAGE__MAX_OPEN_SEGMENTS`.
+        /// How many day files may be open for writing at once; keep it under `ulimit -n`.
+        /// Overrides `KIBBR__STORAGE__MAX_OPEN_SEGMENTS`. [default: 512]
         #[arg(long, value_name = "N")]
         max_open_segments: Option<usize>,
         /// A day's data file is sealed at this many bytes and the next one opened.
         /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         segment_max_bytes: Option<usize>,
-        /// Memory every buffer together may hold before the largest are closed early - an
-        /// emergency brake - and at twice which `/ingest` keeps a body waiting at the door
-        /// for the flush to catch up, and answers 503 if it has not within
-        /// --ingest-wait-ms. Estimated per row, hash tables and allocations included,
-        /// which is about eight times a row's keys and values.
-        /// Overrides `KIBBR__STORAGE__MAX_BUFFER_BYTES`. [default: 512 MiB]
+        /// Memory all row buffers together may hold before the largest are closed early; at twice
+        /// it `/ingest` waits. Overrides `KIBBR__STORAGE__MAX_BUFFER_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         max_buffer_bytes: Option<usize>,
-        /// How often to look for a day that has ended and compact it, in milliseconds: a
-        /// day is due the day after its last live row. `0` never looks, and `kibbr compact`
-        /// still compacts on demand.
+        /// How often to look for a finished day and compact it, in milliseconds; `0` never looks.
         /// Overrides `KIBBR__STORAGE__COMPACT_INTERVAL_MS`. [default: 60000]
         #[arg(long, value_name = "MS")]
         compact_interval_ms: Option<usize>,
-        /// Threads one query may choose a day's rows on, its own among them. 0 or 1: its
-        /// own alone. Defaults to half the cores, at most 4; more than the machine has
-        /// cores is refused. The other threads are started by the first query with enough
-        /// rows to share, and are left alone while any `/ingest` body is between the door
-        /// and its answer, the wait for the log's flush included.
-        /// Overrides `KIBBR__QUERY__SCAN_THREADS`.
+        /// Threads one query may scan a day on; more than the machine has cores is refused.
+        /// Overrides `KIBBR__QUERY__SCAN_THREADS`. [default: half the cores, at most 4]
         #[arg(long, visible_alias = "threads", value_name = "N")]
         scan_threads: Option<usize>,
-        /// A run of a day's row groups holding fewer rows than this is never shared
-        /// between those threads: waking them costs more than they would save.
+        /// A run of row groups holding fewer rows than this is scanned on one thread.
         /// Overrides `KIBBR__QUERY__SCAN_FAN_ROWS`. [default: 32768]
         #[arg(long, value_name = "ROWS")]
         scan_fan_rows: Option<usize>,
-        /// The key names a new template's time column is chosen from, in order; the
-        /// first one the template holds as a Datetime wins, and a template holding none
-        /// takes its rows' arrival time. Comma-separated.
-        /// Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
+        /// The key names a new template's time column is chosen from, in order, comma-separated;
+        /// one holding none takes arrival time. Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },
-    /// Load closed days of logs into a data directory whole: NDJSON, gzip or zstd, from
-    /// files, directories or standard input. The load is published in one step - every row
-    /// or none - and the same inputs are never loaded twice. A server holding the directory
-    /// is asked to run it; with none, this command takes the directory and runs it alone.
+    /// Load closed days of logs into a data directory: NDJSON, gzip or zstd, from files,
+    /// directories or stdin. Every row or none, and the same inputs are never loaded twice.
     Load {
         /// Files, directories - every file under them, names starting with `.` skipped - or
         /// `-` for standard input. Read in order of file name, whatever order given.
@@ -264,26 +209,20 @@ enum Command {
         /// The data directory. Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
         #[arg(long, value_name = "PATH")]
         data_dir: Option<PathBuf>,
-        /// Publish these rows as the whole of this UTC day, retiring every file it held, in
-        /// the same step: how a day's source is changed, say from what arrived live to the
-        /// archive's copy. Every row must be on that day. A load of inputs loaded before is
-        /// allowed with this, since it replaces them.
+        /// Publish these rows as the whole of this UTC day, retiring every file it held, in one
+        /// step. Every row must be on that day.
         #[arg(long, value_name = "YYYY-MM-DD")]
         replace_day: Option<String>,
-        /// Parse and encode at most this many megabytes of input a second, after
-        /// decompression, over the whole load - so a load leaves the machine to the live
-        /// door. The quick reads before it, for the load id and the arrival check, are not
-        /// held to it; their time counts toward the rate, up to a second.
+        /// Parse and encode at most this many megabytes of input a second, after decompression,
+        /// so a load leaves the machine to the live door.
         #[arg(long, value_name = "MB")]
         max_mb_per_sec: Option<f64>,
         /// Threads to parse and encode on, at most one per core. [default: one per core up
         /// to 8 alone, half that inside a server]
         #[arg(long, value_name = "N")]
         threads: Option<usize>,
-        /// Memory the load may hold rows in before it writes them - open row groups and
-        /// closed ones not yet written, together. Past it the largest are written early, as
-        /// smaller row groups, so a load inside a server cannot crowd the live door out of
-        /// memory. [default: 64 MiB]
+        /// Memory the load may hold rows in before it writes them; past it the largest row
+        /// groups are written early. [default: 64 MiB]
         #[arg(long, value_name = "BYTES")]
         load_buffer_bytes: Option<usize>,
         /// The arrival time given to rows with no time of their own. [default: now]
@@ -293,40 +232,30 @@ enum Command {
         /// own and would be stored at their arrival time - now, or --received-at.
         #[arg(long)]
         proceed: bool,
-        /// The percentage of rows that may fall back to arrival time before the load
-        /// stops, loading nothing: of every row, counted before the commit - and of the
-        /// first 10,000, checked before anything is written, so a file with no time from
-        /// its first line stops at once. [default: 1]
+        /// The percentage of rows that may fall back to arrival time before the load stops,
+        /// loading nothing. [default: 1]
         #[arg(long, value_name = "PERCENT")]
         max_arrival_share: Option<f64>,
-        /// As `serve --time-columns`: the key names a new template's time column is chosen
-        /// from. Used only when no server holds the directory - a server uses its own.
+        /// As `serve --time-columns`; used only when no server holds the directory.
         /// Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
-        /// A data file is sealed at this many bytes and the next one opened, when no
-        /// server holds the directory. Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`.
-        /// [default: 512 MiB]
+        /// A data file is sealed at this many bytes, when no server holds the directory.
+        /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         segment_max_bytes: Option<usize>,
         /// Print the report as one JSON object instead of a line.
         #[arg(long)]
         json: bool,
     },
-    /// Compact a day the live door has finished with: its many small row groups rebuilt
-    /// into full ones, in finished files, published in one step. Nothing a query can see
-    /// moves - not a row, not its position - and a day with nothing to compact is left
-    /// untouched. A server holding the directory is asked to run it; with none, this command
-    /// takes the directory and runs it alone - and then reads values back under this
-    /// process's own settings, so give it the `KIBBR__SCHEMA__EPOCH_WINDOW` the server that
-    /// wrote the day runs with, as for `kibbr load`.
+    /// Compact a finished day: its small row groups rebuilt into full ones, published in one
+    /// step. Nothing a query can see moves. A server holding the directory is asked to run it.
     Compact {
         /// Compact this UTC day now, whatever its age. Without it, every day that is due:
         /// each day before today whose last live row was written before today.
         #[arg(long, value_name = "YYYY-MM-DD")]
         day: Option<String>,
-        /// The data directory, which must be one already: a path that is not a kibbr data
-        /// directory is refused, and nothing is created there.
+        /// The data directory, which must be one already; nothing is created.
         /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
         #[arg(long, value_name = "PATH")]
         data_dir: Option<PathBuf>,
@@ -334,8 +263,7 @@ enum Command {
         /// alone, half that inside a server]
         #[arg(long, value_name = "N")]
         threads: Option<usize>,
-        /// A rebuilt file is sealed at this many bytes and the next one opened, when no
-        /// server holds the directory - a server uses its own.
+        /// A rebuilt file is sealed at this many bytes, when no server holds the directory.
         /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
         #[arg(long, value_name = "BYTES")]
         segment_max_bytes: Option<usize>,
@@ -343,11 +271,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Measure what a file costs to store: load it into a scratch data directory and print
-    /// its size raw, under gzip -9 and zstd -19, and as kibbr holds it - data files,
-    /// catalog and manifest - in bytes and in disk blocks. Then the same lines as a live
-    /// day - through the live door, flushed 1,440 times over the file, or once a line if
-    /// it has fewer - as it is before compaction and after.
+    /// Measure what a file costs to store: raw, gzip -9, zstd -19 and as kibbr holds it, in
+    /// bytes and disk blocks; then the same lines as a live day, before compaction and after.
     BenchStorage {
         /// NDJSON, gzip or zstd.
         #[arg(value_name = "FILE")]
@@ -367,14 +292,8 @@ enum Command {
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },
-    /// Measure how fast this build is on one farm day, and print the numbers a change to
-    /// it is held to: ingest lines a second from four senders, the four standard queries
-    /// on an idle server and under that ingest, scan rows per CPU-second, and the plan
-    /// step at 10,000 templates. Each server measured is this binary, started on its own
-    /// copy of one loaded directory and killed when its part is done; every number is the
-    /// median over the runs. The result is saved with every sample behind it, and the raw
-    /// log beside it. `--baseline` prints each number with its speed-up on a saved
-    /// result; `--table` prints saved results side by side and measures nothing.
+    /// Measure how fast this build is on one farm day: ingest lines a second, the four
+    /// standard queries idle and under ingest, scan rows per CPU-second, and the plan step.
     Bench {
         /// Lines in the farm day that is loaded (seed 42), and in the live stream sent to
         /// the servers (seed 43). The measurement is `--lines 1000000`.
@@ -388,36 +307,27 @@ enum Command {
         /// farm's. `hostile` is refused.
         #[arg(long, value_enum, required_unless_present_any = ["table", "plan_only"])]
         profile: Option<Profile>,
-        /// Where the result is saved, with the raw log beside it under the same name
-        /// ending `.log`. A file that exists is refused before anything runs: a saved
-        /// result is not written over. So is a place no file can be made in; the
-        /// result's directory is made then, if it is not there.
-        /// [default: <dir>/results/<UTC time>-<commit>.json]
+        /// Where the result is saved, the raw log beside it as `.log`; a file that exists is
+        /// refused. [default: <dir>/results/<UTC time>-<commit>.json]
         #[arg(long, value_name = "FILE")]
         out: Option<PathBuf>,
-        /// A saved result to compare with. It is read and held to be the same work - the
-        /// same flags, loaded bytes, queries, answers, server command line and machine -
-        /// before anything is measured; each number is then printed with its speed-up on
-        /// it, above 1 when this build is faster.
+        /// A saved result to compare with, held to be the same work before anything is measured;
+        /// each number is printed with its speed-up on it.
         #[arg(long, value_name = "FILE")]
         baseline: Option<PathBuf>,
         /// The heading of this result's column, saved in the file.
         /// [default: baseline, or `this run` with --baseline]
         #[arg(long, value_name = "TEXT")]
         label: Option<String>,
-        /// Holds the loaded directory - built once, and never opened by a server - each
-        /// server's copy of it, and the default results. One volume, so that a copy can
-        /// be a clone.
+        /// Holds the loaded directory, each server's copy of it, and the default results.
         #[arg(long, value_name = "PATH", default_value = bench::DEFAULT_DIR)]
         dir: PathBuf,
         /// How many times the whole sequence is run; each printed number is the middle
         /// one. Odd. Two results compare only at the same value.
         #[arg(long, value_name = "R", default_value_t = bench::DEFAULT_RUNS, value_parser = odd)]
         runs: usize,
-        /// Timed asks of each query on the idle server, servers each query is asked on
-        /// once under ingest, and timed plans of each shape; the scan rate is read off a
-        /// quarter as many asks. Under 100, the p99 is of that many samples and the table
-        /// says so. Two results compare only at the same value.
+        /// Timed asks of each query, and timed plans of each shape. Two results compare only at
+        /// the same value.
         #[arg(
             long,
             value_name = "K",
@@ -425,9 +335,7 @@ enum Command {
             value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
         )]
         samples: usize,
-        /// Lines in one `/ingest` body. A body is one flush of the write-ahead log, so
-        /// this is part of what the ingest number means. Two results compare only at the
-        /// same value.
+        /// Lines in one `/ingest` body. Two results compare only at the same value.
         #[arg(
             long,
             value_name = "L",
@@ -435,22 +343,16 @@ enum Command {
             value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
         )]
         body_lines: usize,
-        /// Scan threads of every server measured: each is started with `--scan-threads
-        /// T`. Without it no server is told, and each takes this build's default (half
-        /// the cores, at most 4); no `KIBBR__` variable reaches one either way. More
-        /// than the machine has cores is refused. Two results compare only at the same
-        /// value, and one taken without the flag only with another taken without it.
+        /// Scan threads of every server measured: each is started with `--scan-threads T`.
+        /// Two results compare only at the same value.
         #[arg(
             long,
             value_name = "T",
             value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
         )]
         threads: Option<usize>,
-        /// Skip what makes a run a measurement - the pause before each run, the waits for
-        /// a machine with no other kibbr process and no swapping, the look after each
-        /// server that throws a disturbed one's numbers away - and allow a debug build.
-        /// The result is marked `UNCHECKED - not a measurement`. For tests, which run
-        /// beside other tests' servers.
+        /// Skip the checks that make a run a measurement, and allow a debug build; the result is
+        /// marked `UNCHECKED - not a measurement`. For tests.
         #[arg(long)]
         unchecked: bool,
         /// Measure nothing: print the table from saved results, the first as the baseline
@@ -480,9 +382,8 @@ enum Command {
     /// List every template a running server holds: its id, its rows, where its time
     /// comes from, and its path. What `GET /templates` answers, asked for you.
     Templates {
-        /// The server to ask, `host:port`. [default: the server holding --data-dir, by
-        /// its LOCK file; with none, `KIBBR__API__NATIVE_ADDR`, `[api] native_addr`,
-        /// 127.0.0.1:7700]
+        /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+        /// `[api] native_addr`, 127.0.0.1:7700]
         #[arg(long, value_name = "HOST:PORT")]
         addr: Option<String>,
         /// The data directory whose server is asked.
@@ -496,9 +397,8 @@ enum Command {
     /// Print what a running server says of itself: uptime, storage, the trie, ingest,
     /// the write-ahead log. What `GET /stats` answers, asked for you - a line a number.
     Stats {
-        /// The server to ask, `host:port`. [default: the server holding --data-dir, by
-        /// its LOCK file; with none, `KIBBR__API__NATIVE_ADDR`, `[api] native_addr`,
-        /// 127.0.0.1:7700]
+        /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+        /// `[api] native_addr`, 127.0.0.1:7700]
         #[arg(long, value_name = "HOST:PORT")]
         addr: Option<String>,
         /// The data directory whose server is asked.
@@ -510,14 +410,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Ask a running server whether it is well: `GET /health`, asked for you. Prints
-    /// `ok`, or `degraded` and why, and exits 0; exits 1 when no server answers or the
-    /// answer is not `"ok":true`. What the image's HEALTHCHECK runs - a degraded server
-    /// cannot write and still answers queries, so it is not one to restart.
+    /// Ask a running server whether it is well: `GET /health`. Prints `ok`, or `degraded` and
+    /// why, and exits 0; exits 1 when no server answers. What the image's HEALTHCHECK runs.
     Health {
-        /// The server to ask, `host:port`. [default: the server holding --data-dir, by
-        /// its LOCK file; with none, `KIBBR__API__NATIVE_ADDR`, `[api] native_addr`,
-        /// 127.0.0.1:7700]
+        /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+        /// `[api] native_addr`, 127.0.0.1:7700]
         #[arg(long, value_name = "HOST:PORT")]
         addr: Option<String>,
         /// The data directory whose server is asked.
@@ -540,8 +437,7 @@ enum Command {
         /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
         #[arg(long, value_name = "BUCKETS")]
         max_buckets: Option<usize>,
-        /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
-        /// count times the distinct values of the other keys.
+        /// Groups a bucketed `GROUP BY` may emit before the query is refused.
         /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,
@@ -599,10 +495,8 @@ enum Command {
         #[arg(long)]
         reference: bool,
 
-        /// Return at most this many rows, newest first. TrieQL spells it `LIMIT n`, and
-        /// the two are exclusive for the reason `--since` and `SINCE` are. Omitted, every
-        /// matching row comes back; `--limit 0` is a request for no rows, and the two are
-        /// not the same thing.
+        /// Return at most this many rows, newest first; TrieQL spells it `LIMIT n`. Omitted,
+        /// every matching row comes back; `--limit 0` asks for none.
         #[arg(long)]
         limit: Option<usize>,
 
@@ -611,18 +505,15 @@ enum Command {
         #[arg(long, value_name = "CURSOR")]
         after: Option<String>,
 
-        /// Rows a query that names no `LIMIT` is cut at.
-        /// `0` disables it. Overrides `KIBBR__QUERY__MAX_ROWS`. Not exclusive with a
-        /// TrieQL string, unlike `--limit`: the grammar cannot state it, and it is a
-        /// property of the server rather than of the query.
+        /// Rows a query that names no `LIMIT` is cut at; `0` disables it.
+        /// Overrides `KIBBR__QUERY__MAX_ROWS`.
         #[arg(long, value_name = "ROWS")]
         max_rows: Option<usize>,
         /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
         /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
         #[arg(long, value_name = "BUCKETS")]
         max_buckets: Option<usize>,
-        /// Groups a bucketed `GROUP BY` may emit before the query is refused - the bucket
-        /// count times the distinct values of the other keys.
+        /// Groups a bucketed `GROUP BY` may emit before the query is refused.
         /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
         #[arg(long, value_name = "GROUPS")]
         max_groups: Option<usize>,

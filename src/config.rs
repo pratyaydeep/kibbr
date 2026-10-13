@@ -1108,6 +1108,16 @@ mod tests {
 
     /// One test, because the variables are the process's: nothing else in this crate's
     /// tests reads these two, and this sets and clears them in turn.
+    /// `kibbr.toml.example` is held to this reader: a key added here and not there, or
+    /// renamed, fails this and not an operator's first start.
+    #[test]
+    fn the_example_file_is_read_and_sets_every_key() {
+        let text = include_str!("../kibbr.toml.example");
+        let file = File::parse(text).expect("kibbr.toml.example is read");
+        let all = format!("{file:?}");
+        assert!(!all.contains("None"), "a key the example leaves out: {all}");
+    }
+
     #[test]
     fn scan_threads_are_the_flag_then_the_variable_then_the_default_and_never_above_the_cores() {
         let _cleared = Cleared::of(&[SCAN_THREADS_ENV, SCAN_FAN_ROWS_ENV]);

@@ -22,6 +22,20 @@ Check these against your own logs first.
 - **Not merging schemas.** Merging templates is parked, so an optional field present
   on one line and absent on the next is two templates.
 
+## Where it sits
+
+Between a hot search cluster and a cold archive:
+
+```
+newest ~3 days        Elasticsearch       fast, expensive
+3 days to ~6 months   kibbr               still searchable, a fraction of the space
+older                 cold archive        cheap, not searchable
+```
+
+Most of what kibbr holds is finished days, and data arrives by two doors: live, a line at a
+time (`/ingest`), and in bulk, a closed day at a time (`kibbr load`). It has its own viewer
+at `/`; there is no Elasticsearch-compatible port and no Kibana or Grafana plugin.
+
 ## Install
 
 ```
@@ -134,6 +148,7 @@ A workspace of five crates, each naming only the ones under it.
 - [docs/things-to-try.md](docs/things-to-try.md) - the type ladder, by hand
 - [docs/serve.md](docs/serve.md) - the HTTP API: `/ingest`, `/query`, limits, shutdown
 - [docs/settings.md](docs/settings.md) - a flag, a variable, a file
+- [kibbr.toml.example](kibbr.toml.example) - every key of the file, at its default
 - [docs/ask.md](docs/ask.md) - `templates`, `stats` and `health`
 - [docs/load.md](docs/load.md) - the bulk door: closed days
 - [docs/compact.md](docs/compact.md) - compaction, and `bench-storage`
@@ -144,6 +159,7 @@ A workspace of five crates, each naming only the ones under it.
 - [bench/README.md](bench/README.md) - `bench/run.sh`, here and on a cloud box
 - [scripts/README.md](scripts/README.md) - the check, fault and measure scripts
 - [testdata/FIXTURE.md](testdata/FIXTURE.md) - the hand-labelled type fixture
+- [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [TRADEMARK.md](TRADEMARK.md)
 
 ## Licence
 
