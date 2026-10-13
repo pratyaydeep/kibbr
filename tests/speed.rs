@@ -562,8 +562,9 @@ fn a_bench_run_prints_the_eight_rows_and_saves_every_sample_behind_them() {
     if every_run_has_a_rate {
         assert_eq!(rows[7].matches("(1.00x)").count(), 1, "{:?}", rows[7]);
         ratios.push("scan rows/s/core".to_string());
-        ratios.push("scan by the wall clock".to_string());
     }
+    // The wall clock's rate needs no CPU time, so its line is there with or without one.
+    ratios.push("scan by the wall clock".to_string());
     for ratio in &ratios {
         assert!(
             rows.iter().any(

@@ -254,7 +254,8 @@ fn no_input_panics() {
         vec!["k"; 20_000].join(",")
     ));
     hostile.push(format!("COUNT LOG {{}} SINCE {}h", "9".repeat(50_000)));
-    hostile.push("é".repeat(100_000));
+    // 100,000 bytes, as the others are: Linux takes no one argument above 131,072.
+    hostile.push("é".repeat(50_000));
 
     for q in &hostile {
         let out = explain(q);
