@@ -33,7 +33,10 @@
 # python3 is used once, to harvest key/value pairs out of `parse --json`, for the reason
 # given in scripts/check/agree.sh: splitting a JSON object in shell is how a harness starts lying.
 #
-#   COMBOS=200 SEED=3 NLINES=4000 scripts/check/parser_equivalence.sh
+# The query set is the one KIBBR_SEED draws, 7 unless given; SEED is read when KIBBR_SEED
+# is unset.
+#
+#   COMBOS=200 KIBBR_SEED=3 NLINES=4000 scripts/check/parser_equivalence.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -41,7 +44,7 @@ cd "$(dirname "$0")/../.."
 # BIN names another build, as in the other scripts; the default is built first.
 BIN=${BIN:-./target/release/kibbr}
 COMBOS=${COMBOS:-100}
-SEED=${SEED:-7}
+SEED=${KIBBR_SEED:-${SEED:-7}}
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
 
@@ -96,6 +99,7 @@ done < "$WORK/harvest.tsv"
 if [ ${#ROWS[@]} -eq 0 ]; then echo "no candidate values harvested" >&2; exit 1; fi
 if [ ${#KEYS[@]} -eq 0 ]; then echo "no candidate keys harvested" >&2; exit 1; fi
 echo "input: $NLINES lines, ${#KEYS[@]} distinct keys, ${#ROWS[@]} sampled lines"
+echo "queries: seed $SEED (KIBBR_SEED), $COMBOS combinations"
 
 term_from() { IFS=$'\t' read -r -a f <<< "${ROWS[$1]}"; echo "${f[$((RANDOM % ${#f[@]}))]}"; }
 

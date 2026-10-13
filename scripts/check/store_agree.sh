@@ -18,7 +18,10 @@
 # answer before the comparison, and splitting a JSON object in shell is how a test harness
 # starts lying about what it tested.
 #
-#   COMBOS=200 SEED=7 NLINES=4000 scripts/check/store_agree.sh
+# The query set is the one KIBBR_SEED draws, 7 unless given; SEED is read when KIBBR_SEED
+# is unset.
+#
+#   COMBOS=200 KIBBR_SEED=7 NLINES=4000 scripts/check/store_agree.sh
 #   BODIES=4 NEED_FAN_OUTS=1 KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0 \
 #     KIBBR__INGESTOR__FLUSH_INTERVAL_MS=100 KIBBR__INGESTOR__ROW_GROUP_TIMEOUT_MS=100 \
 #     scripts/check/store_agree.sh
@@ -29,7 +32,7 @@ cd "$(dirname "$0")/../.."
 # BIN names another build, as in the other scripts; the default is built first.
 BIN=${BIN:-./target/release/kibbr}
 COMBOS=${COMBOS:-120}
-SEED=${SEED:-7}
+SEED=${KIBBR_SEED:-${SEED:-7}}
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
 # The corpus goes in as this many bodies, in file order, with BODY_GAP seconds after each.
@@ -207,6 +210,7 @@ PY
 "$BIN" parse "$INPUT" --json 2>/dev/null \
   | python3 "$WORK/build_queries.py" "$SEED" "$COMBOS" > "$WORK/queries.txt" || exit 1
 [ -s "$WORK/queries.txt" ] || { echo "no queries built" >&2; exit 1; }
+echo "queries: seed $SEED (KIBBR_SEED), $(wc -l < "$WORK/queries.txt" | tr -d ' ') built"
 
 # One round: every query to both servers, answers compared with `meta` stripped.
 round() {  # round <label> <mem_port> <disk_port>

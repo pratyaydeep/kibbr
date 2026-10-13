@@ -87,7 +87,10 @@
 # "today" is what makes the live directory and the control not due.
 #
 #   scripts/check/compact_agree.sh
-#   NLINES=200000 COMBOS=100 SEED=7 GEN_SEED=1 scripts/check/compact_agree.sh
+# The query set is the one KIBBR_SEED draws, 7 unless given; SEED is read when KIBBR_SEED
+# is unset. The seed is on the `queries` line.
+#
+#   NLINES=200000 COMBOS=100 KIBBR_SEED=7 GEN_SEED=1 scripts/check/compact_agree.sh
 #   SEGMENT_MAX_BYTES=2097152 PAGES=4 HAMMER=8 scripts/check/compact_agree.sh
 #   BIN=$PWD/other/kibbr scripts/check/compact_agree.sh
 
@@ -98,7 +101,7 @@ BIN=${BIN:-./target/release/kibbr}
 NLINES=${NLINES:-200000}
 GEN_SEED=${GEN_SEED:-1}
 COMBOS=${COMBOS:-100}
-SEED=${SEED:-7}
+SEED=${KIBBR_SEED:-${SEED:-7}}
 # The size cap the live day is cut at, and the one (b) compacts under.
 SEGMENT_MAX_BYTES=${SEGMENT_MAX_BYTES:-1048576}
 # How many pages MATCH LOG {} is read in; the cursor kept is the one half way.
@@ -140,8 +143,8 @@ cleanup() {
 trap cleanup EXIT
 
 # The query set, drawn while the day is ingested: it reads only the file. Printed once and
-# asked of every round; it is the set its SEED draws, on every run.
-env "${CLOCK[@]}" INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS SEED=$SEED GEN_SEED=$GEN_SEED \
+# asked of every round; it is the set its seed draws, on every run.
+env "${CLOCK[@]}" INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS KIBBR_SEED=$SEED GEN_SEED=$GEN_SEED \
   NLINES=$NLINES BIN=$BIN scripts/check/agree.sh > "$WORK/combos.tsv" 2>"$WORK/harvest.log" &
 HARVEST_PID=$!
 
@@ -1153,7 +1156,7 @@ ROWS=$(field "$WORK/tally.before" rows)
 TEMPLATES=$(field "$WORK/tally.before" templates)
 echo "             $F_BEFORE files, $RG_BEFORE row groups, $B_BEFORE bytes, cut at" \
      "--segment-max-bytes $SEGMENT_MAX_BYTES"
-echo "queries      $(tail -1 "$WORK/harvest.log")"
+echo "queries      seed $SEED (KIBBR_SEED); $(tail -1 "$WORK/harvest.log")"
 cat "$WORK/before.out"
 [ "$ROWS" = "$INGESTED" ] ||
   { echo "FAIL COUNT LOG {} on the live day is $ROWS, want the $INGESTED rows ingested"; FAIL=1; }

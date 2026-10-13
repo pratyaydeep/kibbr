@@ -59,9 +59,10 @@
 # measured on. The TrieQL is built in python and the answers compared there: splitting
 # JSON in shell is how a harness starts lying about what it tested.
 #
-# The query set is the one KIBBR_SEED draws, 7 unless it is given: a run that fails is
-# run again as it was, and the seed is on the `queries` line. 7 is agree.sh's own default;
-# not every seed's set passes check 5 - of 42's, 19 queries in 100 return rows.
+# The query set is the one KIBBR_SEED draws, 7 unless it is given; SEED is read when
+# KIBBR_SEED is unset. A run that fails is run again as it was, and the seed is on the
+# `queries` line. 7 is agree.sh's own default; not every seed's set passes check 5 - of
+# 42's, 19 queries in 100 return rows.
 #
 #   NLINES=200000 COMBOS=100 KIBBR_SEED=7 GEN_SEED=1 scripts/check/two_doors.sh
 #   PROFILE=farm scripts/check/two_doors.sh
@@ -77,7 +78,7 @@ NLINES=${NLINES:-200000}
 GEN_SEED=${GEN_SEED:-1}
 PROFILE=${PROFILE:-hostile}
 COMBOS=${COMBOS:-100}
-SEED=${KIBBR_SEED:-7}
+SEED=${KIBBR_SEED:-${SEED:-7}}
 BATCH=2000
 # 1: fail unless a server here shared out at least one run of row groups
 # (`queries.scan_fan_outs` in /stats). For a run made to hold a scan shared between
@@ -129,7 +130,7 @@ trap cleanup EXIT
 
 # The query set, drawn while the doors fill: it reads only the file. Printed once and asked
 # of both servers in both rounds; it is the set its seed draws, on every run.
-env "${CLOCK[@]}" INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS SEED=$SEED GEN_SEED=$GEN_SEED \
+env "${CLOCK[@]}" INPUT=$INPUT PRINT_QUERIES=1 COMBOS=$COMBOS KIBBR_SEED=$SEED GEN_SEED=$GEN_SEED \
   NLINES=$NLINES BIN=$BIN scripts/check/agree.sh > "$WORK/combos.tsv" 2>"$WORK/harvest.log" &
 HARVEST_PID=$!
 

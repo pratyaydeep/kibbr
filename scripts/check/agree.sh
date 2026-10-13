@@ -22,15 +22,16 @@
 #                    exit 0 without answering or gating. No draw reads an answer, so the
 #                    RANDOM sequence is the one a normal run takes.
 #
-# One SEED is one query set: every draw is taken from RANDOM in this shell. Which term a
+# The seed is KIBBR_SEED, 7 unless given; SEED is read when KIBBR_SEED is unset, and
+# KIBBR_SEED wins when both are set. One seed is one query set: every draw is taken from RANDOM in this shell. Which term a
 # line gives used to be drawn inside `$(term_from ...)`, and bash reseeds RANDOM from the
-# clock in a subshell, so two runs with one SEED differed there; the draw is now made
+# clock in a subshell, so two runs with one seed differed there; the draw is now made
 # before the call and handed in. A caller still prints the list once and asks every side
 # that one list.
 #
 # BIN names another build, as in the other scripts; the default is built first.
 #
-#   COMBOS=100 SEED=7 NLINES=2000 scripts/check/agree.sh
+#   COMBOS=100 KIBBR_SEED=7 NLINES=2000 scripts/check/agree.sh
 #   INPUT=testdata/two-doors/200000-seed1.ndjson PRINT_QUERIES=1 scripts/check/agree.sh
 
 set -uo pipefail
@@ -38,7 +39,7 @@ cd "$(dirname "$0")/../.."
 
 BIN=${BIN:-./target/release/kibbr}
 COMBOS=${COMBOS:-100}
-SEED=${SEED:-7}
+SEED=${KIBBR_SEED:-${SEED:-7}}
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
 PRINT_QUERIES=${PRINT_QUERIES:-}
@@ -114,8 +115,14 @@ done
 if [ ${#ROWS[@]} -eq 0 ]; then echo "no candidate values harvested" >&2; exit 1; fi
 if [ ${#NONTS[@]} -eq 0 ]; then echo "no sampled line keeps its time under a name other than ts" >&2; exit 1; fi
 summary="input: $NLINES lines, ${#KEYS[@]} distinct keys, ${#ROWS[@]} sampled lines, ${#NONTS[@]} with a time key other than ts"
-# Kept off stdout when printing: there, every stdout line is a combination.
-if [ "$PRINT_QUERIES" = 1 ]; then echo "$summary" >&2; else echo "$summary"; fi
+queries="queries: seed $SEED (KIBBR_SEED), $COMBOS combinations"
+# Kept off stdout when printing: there, every stdout line is a combination. The summary is
+# last: a caller prints the last line of this.
+if [ "$PRINT_QUERIES" = 1 ]; then
+  echo "$queries" >&2; echo "$summary" >&2
+else
+  echo "$queries"; echo "$summary"
+fi
 
 # One `key=value` term off a sampled line, chosen by index so the caller can take several
 # from the same line and be sure a template holds them together. Which of the line's terms

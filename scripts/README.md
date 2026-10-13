@@ -5,10 +5,11 @@ and its header says what it holds and why. One line each: what "pass" looks like
 
 Run from the repository root, for example `scripts/check/agree.sh`.
 
-**The seed.** The four scripts that draw a query set - `agree.sh`, `store_agree.sh`,
-`compact_agree.sh` and `parser_equivalence.sh` - read it from `SEED`, and `two_doors.sh`
-reads it from `KIBBR_SEED`; the default is 7 in all five, so with nothing set they ask the
-same queries. `GEN_SEED` is the seed of the generated lines.
+**The seed.** The five scripts that draw a query set - `agree.sh`, `store_agree.sh`,
+`compact_agree.sh`, `parser_equivalence.sh` and `two_doors.sh` - read it from `KIBBR_SEED`;
+the default is 7, and each prints the seed it used on its `queries` line. `SEED` is still
+read when `KIBBR_SEED` is unset; `KIBBR_SEED` wins when both are set. `GEN_SEED` is the
+seed of the generated lines.
 
 ## check/ - two things that must agree
 
