@@ -5,6 +5,11 @@
 //! that the fuzz targets under `fuzz/` can call the harnesses in `fuzzing`. Nothing else
 //! depends on this crate, and nothing here is a stable interface.
 
+pub use kibbr_core as core;
+pub use kibbr_storage as storage;
+pub use kibbr_engine as engine;
+pub use kibbr_server as server;
+
 pub mod client;
 pub mod cmd;
 pub mod config;

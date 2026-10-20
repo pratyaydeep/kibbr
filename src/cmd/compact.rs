@@ -3,7 +3,7 @@
 
 //! `kibbr compact` - the command: who runs it and what it prints. The rebuild is the
 //! store's (`store::disk::compact`) and the run the server crate's
-//! (`kibbr_server::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
+//! (`crate::server::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
 //! one process writes the manifest, so a server holding the directory is asked
 //! (`POST /compact`), and with none the command takes the lock and compacts alone.
 
@@ -16,9 +16,9 @@ use thiserror::Error;
 
 use crate::config::LoadStorage as _;
 
-use kibbr_server::compact::{line, plan, run, Report, NO_DISK};
-use kibbr_storage::store::disk::{self, CompactOptions};
-use kibbr_storage::store::StoreError;
+use crate::server::compact::{line, plan, run, Report, NO_DISK};
+use crate::storage::store::disk::{self, CompactOptions};
+use crate::storage::store::StoreError;
 
 #[derive(Debug, Error)]
 pub enum CompactError {
@@ -50,8 +50,8 @@ impl From<crate::error::CliError> for CompactError {
     }
 }
 
-impl From<kibbr_storage::lock::LockError> for CompactError {
-    fn from(e: kibbr_storage::lock::LockError) -> Self {
+impl From<crate::storage::lock::LockError> for CompactError {
+    fn from(e: crate::storage::lock::LockError) -> Self {
         CompactError::Input(e.to_string())
     }
 }
@@ -81,7 +81,7 @@ pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactEr
             })?),
         };
     disk::refuse_other_versions(base)?;
-    if !kibbr_storage::store::manifest::path_in(base).is_file() {
+    if !crate::storage::store::manifest::path_in(base).is_file() {
         return Err(CompactError::Input(format!(
             "{}: not a kibbr data directory (no manifest.log); nothing was compacted",
             base.display()
@@ -105,11 +105,11 @@ pub fn command(
         .ok_or_else(|| CompactError::Input("no data directory".to_string()))?;
     let waited = Instant::now();
     loop {
-        match kibbr_storage::lock::DataLock::acquire(&base) {
+        match crate::storage::lock::DataLock::acquire(&base) {
             Ok(lock) => return alone(lock, &args, day, &storage, &schema, out),
-            Err(kibbr_storage::lock::LockError::Held { path, holder }) => {
-                match kibbr_storage::lock::holder(&base) {
-                    Some(kibbr_storage::lock::Holder {
+            Err(crate::storage::lock::LockError::Held { path, holder }) => {
+                match crate::storage::lock::holder(&base) {
+                    Some(crate::storage::lock::Holder {
                         address: Some(address),
                         token,
                         ..
@@ -118,14 +118,14 @@ pub fn command(
                         return client(&address, &token, &base, &args, out);
                     }
                     // A load or another compaction running alone: no server to ask.
-                    Some(kibbr_storage::lock::Holder { load: true, .. }) => {
-                        return Err(kibbr_storage::lock::LockError::Held { path, holder }.into())
+                    Some(crate::storage::lock::Holder { load: true, .. }) => {
+                        return Err(crate::storage::lock::LockError::Held { path, holder }.into())
                     }
                     // A server still starting: it writes its address once it can answer.
                     _ if waited.elapsed() < crate::cmd::load::SERVER_STARTING_WAIT => {
                         std::thread::sleep(crate::cmd::load::POLL);
                     }
-                    _ => return Err(kibbr_storage::lock::LockError::Held { path, holder }.into()),
+                    _ => return Err(crate::storage::lock::LockError::Held { path, holder }.into()),
                 }
             }
             Err(e) => return Err(e.into()),
@@ -152,7 +152,7 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
 
 /// The compaction in this process, holding the directory's lock.
 fn alone(
-    mut lock: kibbr_storage::lock::DataLock,
+    mut lock: crate::storage::lock::DataLock,
     args: &Args,
     day: Option<i64>,
     storage: &crate::config::Storage,
@@ -160,10 +160,10 @@ fn alone(
     out: &mut dyn io::Write,
 ) -> Result<(), CompactError> {
     let base = storage.base_path.clone().unwrap_or_default();
-    let _ = lock.announce(&kibbr_storage::lock::Holder::compact());
+    let _ = lock.announce(&crate::storage::lock::Holder::compact());
     disk::refuse_other_versions(&base)?;
     let (_trie, stores) =
-        kibbr_server::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
+        crate::server::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
     let store = stores.disk_store().ok_or(CompactError::NoDisk)?;
     let opts = CompactOptions {
         threads: args
@@ -374,18 +374,18 @@ mod tests {
 
         // A directory with no day in it: the run is over at once, and what it wrote to
         // `LOCK` while it ran is still there to read.
-        let lock = kibbr_storage::lock::DataLock::acquire(&dir).expect("the lock");
+        let lock = crate::storage::lock::DataLock::acquire(&dir).expect("the lock");
         let mut out = Vec::new();
         alone(lock, &args(), None, &storage, &schema, &mut out).expect("compact alone");
         assert!(out.is_empty(), "no day was due, and it printed {out:?}");
-        let said = kibbr_storage::lock::holder(&dir).expect("LOCK does not say who held it");
+        let said = crate::storage::lock::holder(&dir).expect("LOCK does not say who held it");
         assert!(
             said.compact && said.load && said.address.is_none(),
             "{said:?}"
         );
 
         // Those words under a lock that is held are a compaction still running.
-        let _held = kibbr_storage::lock::DataLock::acquire(&dir).expect("the lock");
+        let _held = crate::storage::lock::DataLock::acquire(&dir).expect("the lock");
         let asked = Instant::now();
         match command(args(), None, storage, schema, &mut out) {
             Err(CompactError::Input(why)) => {

@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::trie::{ColumnDef, LeafMeta, Node, NodeType, Trie, ROOT_LABEL};
-use kibbr_core::types::{ColumnType, TimeSource};
+use crate::core::types::{ColumnType, TimeSource};
 
 /// How deep a file may describe before it is refused: a hand-edited file must not be able
 /// to end the process, and a bad file is a warning.

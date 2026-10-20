@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! `kibbr load` - the command: who runs it and what it prints. The load itself is the
-//! server crate's (`kibbr_server::load`). Who holds `LOCK` decides where it runs, because
+//! server crate's (`crate::server::load`). Who holds `LOCK` decides where it runs, because
 //! one process writes the catalog and the manifest: a server holding the directory is
 //! asked (`POST /load`) and polled; with none, the command takes the lock and runs alone.
 
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-pub use kibbr_server::load::*;
+pub use crate::server::load::*;
 
 use crate::config::LoadStorage as _;
 
@@ -82,7 +82,7 @@ pub fn command(
     let replace_day = match args.replace_day.as_deref() {
         None => None,
         Some(text) => Some(
-            kibbr_storage::store::disk::day_of_name(text).ok_or_else(|| {
+            crate::storage::store::disk::day_of_name(text).ok_or_else(|| {
                 LoadError::Input(format!("--replace-day {text}: not a YYYY-MM-DD day"))
             })?,
         ),
@@ -108,7 +108,7 @@ pub fn command(
     }
     let waited = Instant::now();
     loop {
-        match kibbr_storage::lock::DataLock::acquire(&base) {
+        match crate::storage::lock::DataLock::acquire(&base) {
             Ok(lock) => {
                 let opts = Options {
                     inputs: Vec::new(),
@@ -122,9 +122,9 @@ pub fn command(
                 };
                 return alone(lock, &args, opts, &storage, &schema, out);
             }
-            Err(kibbr_storage::lock::LockError::Held { path, holder }) => {
-                match kibbr_storage::lock::holder(&base) {
-                    Some(kibbr_storage::lock::Holder {
+            Err(crate::storage::lock::LockError::Held { path, holder }) => {
+                match crate::storage::lock::holder(&base) {
+                    Some(crate::storage::lock::Holder {
                         address: Some(address),
                         token,
                         ..
@@ -132,14 +132,14 @@ pub fn command(
                         let token = token.unwrap_or_default();
                         return client(&address, &token, &base, &args, share, out);
                     }
-                    Some(kibbr_storage::lock::Holder { load: true, .. }) => {
-                        return Err(kibbr_storage::lock::LockError::Held { path, holder }.into())
+                    Some(crate::storage::lock::Holder { load: true, .. }) => {
+                        return Err(crate::storage::lock::LockError::Held { path, holder }.into())
                     }
                     // A server still starting: it writes its address once it can answer.
                     _ if waited.elapsed() < SERVER_STARTING_WAIT => {
                         std::thread::sleep(POLL);
                     }
-                    _ => return Err(kibbr_storage::lock::LockError::Held { path, holder }.into()),
+                    _ => return Err(crate::storage::lock::LockError::Held { path, holder }.into()),
                 }
             }
             Err(e) => return Err(e.into()),
@@ -159,7 +159,7 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
 
 /// The load in this process, holding the directory's lock.
 fn alone(
-    mut lock: kibbr_storage::lock::DataLock,
+    mut lock: crate::storage::lock::DataLock,
     args: &Args,
     mut opts: Options,
     storage: &crate::config::Storage,
@@ -167,13 +167,13 @@ fn alone(
     out: &mut dyn io::Write,
 ) -> Result<(), LoadError> {
     let base = storage.base_path.clone().unwrap_or_default();
-    let _ = lock.announce(&kibbr_storage::lock::Holder::load());
-    kibbr_storage::store::disk::refuse_other_versions(&base)?;
+    let _ = lock.announce(&crate::storage::lock::Holder::load());
+    crate::storage::store::disk::refuse_other_versions(&base)?;
     let (trie, stores) =
-        kibbr_server::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
+        crate::server::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
     // Standard input is spooled inside `staging/`, which the next start deletes: a load
     // that dies leaves nothing behind that anything names.
-    let staging = base.join(kibbr_storage::store::disk::STAGING_DIR);
+    let staging = base.join(crate::storage::store::disk::STAGING_DIR);
     let spool = staging.join(format!("stdin-{}.spool", std::process::id()));
     if args.inputs.iter().any(|a| a.as_os_str() == "-") {
         fs::create_dir_all(&staging).map_err(|source| LoadError::Read {
@@ -209,7 +209,7 @@ fn client(
     }
     // Spooled inside the data directory's `staging/`, which the server can read because it
     // owns it, and which its next start clears if this client is killed.
-    let staging = base.join(kibbr_storage::store::disk::STAGING_DIR);
+    let staging = base.join(crate::storage::store::disk::STAGING_DIR);
     let spool = staging.join(format!(
         "stdin-{}-{}.spool",
         std::process::id(),

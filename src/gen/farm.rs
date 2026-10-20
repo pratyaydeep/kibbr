@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 
 use crate::error::GenError;
 use crate::gen::civil_from_days;
-use kibbr_core::rng::Rng;
+use crate::core::rng::Rng;
 
 pub struct Options {
     pub lines: u64,

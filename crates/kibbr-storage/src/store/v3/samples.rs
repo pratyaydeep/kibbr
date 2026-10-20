@@ -14,7 +14,7 @@ use super::read::{self, Cell, ChunkDir, PieceDir};
 use super::{Form, JsonKind, Source, EPOCH_SECS, NO_COMPRESSION, PLAIN, RFC3339};
 use crate::frame::Next;
 use crate::store::{effective_ts, Row, RECEIVED_AT_COLUMN};
-use kibbr_core::types::ColValue;
+use crate::core::types::ColValue;
 
 /// One chunk as a file stores it, with the directory entry that says how to read it.
 pub struct Stored {
@@ -107,7 +107,7 @@ pub fn of_rows(name: &str, rows: &[Row]) -> Sample {
 /// A line through the real parser into the row a store is handed.
 pub fn row(line: &str) -> Row {
     crate::db::row_of(
-        &kibbr_core::flatten::parse_line(line.as_bytes(), 1).expect("a line that parses"),
+        &crate::core::flatten::parse_line(line.as_bytes(), 1).expect("a line that parses"),
     )
 }
 

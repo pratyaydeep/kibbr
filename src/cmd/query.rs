@@ -19,16 +19,16 @@ use crate::config::{Limits, Schema};
 use crate::error::{CliError, QueryError};
 // A TrieQL string into a `Query` and an answer into JSON are the server crate's, since
 // `POST /query` is their other caller: here under the names this module always had.
-use kibbr_server::query::{self as wire, canonical, row_json};
-pub use kibbr_server::query::{result_json, result_json_until};
-use kibbr_core::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
-use kibbr_engine::engine::{
+use crate::server::query::{self as wire, canonical, row_json};
+pub use crate::server::query::{result_json, result_json_until};
+use crate::core::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
+use crate::engine::engine::{
     self, Cursor, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
     QueryResult, TimeRange,
 };
-use kibbr_engine::trieql::{self, ago};
-use kibbr_storage::db;
-use kibbr_storage::store::system_time;
+use crate::engine::trieql::{self, ago};
+use crate::storage::db;
+use crate::storage::store::system_time;
 
 /// Blank columns between two cells of a rendered table.
 const GUTTER: usize = 2;
@@ -664,7 +664,7 @@ fn bucket_json(key: &GroupKey, group: &Group, cell: String) -> Value {
     }
 }
 
-fn render_rows<W: Write>(out: &mut W, rows: &[&kibbr_storage::store::Row]) -> Result<(), CliError> {
+fn render_rows<W: Write>(out: &mut W, rows: &[&crate::storage::store::Row]) -> Result<(), CliError> {
     if rows.is_empty() {
         return Ok(());
     }
@@ -672,7 +672,7 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&kibbr_storage::store::Row]) -> Re
     let shown: Vec<BTreeMap<String, String>> = rows
         .iter()
         .map(|row| {
-            kibbr_storage::store::present(row)
+            crate::storage::store::present(row)
                 .into_iter()
                 .map(|(name, key)| (name, cell_text(row, key)))
                 .collect()
@@ -698,7 +698,7 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&kibbr_storage::store::Row]) -> Re
 
 /// A value as the table shows it: as the line wrote it where the row records that, and
 /// through `col_text` otherwise.
-fn cell_text(row: &kibbr_storage::store::Row, key: &str) -> String {
+fn cell_text(row: &crate::storage::store::Row, key: &str) -> String {
     match row.written(key) {
         Some(Value::String(text)) => text.clone(),
         Some(other) => other.to_string(),

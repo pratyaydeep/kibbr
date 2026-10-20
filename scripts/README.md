@@ -60,3 +60,9 @@ seed of the generated lines.
 | `dump_store.sh` | with `--verify`, `verified: all N rows identical to the engine, row for row`, after writing the templates and rows out |
 | `explain_time.sh` | no gate: prints the walk and the wall time at 1,000 and 1,000,000 lines; the walk should not grow |
 | `log_report.sh` | no gate: prints a file's size, compressibility, templates and columns, side by side for several files |
+
+## release.sh - publish a version
+
+`scripts/release.sh 0.1.0` checks the version against Cargo.toml, a clean tree and an unused
+tag, dry-runs the five crates, publishes them in dependency order 30 seconds apart, and tags
+`v0.1.0` with its CHANGELOG.md section. It does not push the tag.

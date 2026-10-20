@@ -9,13 +9,13 @@
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
-use kibbr_core::fmt::rfc3339;
-use kibbr_engine::engine::{
+use crate::core::fmt::rfc3339;
+use crate::engine::engine::{
     self, Cursor, Group, GroupKey, Query, QueryMode, QueryResult, BUCKET_COLUMN,
 };
-use kibbr_engine::limits::Limits;
-use kibbr_engine::trieql;
-use kibbr_storage::store::{system_time, Stop, STOP_EVERY_ROWS};
+use crate::engine::limits::Limits;
+use crate::engine::trieql;
+use crate::storage::store::{system_time, Stop, STOP_EVERY_ROWS};
 
 use crate::error::{Error, Result};
 
@@ -119,9 +119,9 @@ fn shaped(query: &Query, result: &QueryResult, rows: Vec<Value>) -> Value {
 
 /// One row as one JSON object, each value the JSON value that was ingested;
 /// shared with `ndjson`, so a row serialises the same on every surface.
-pub fn row_json(row: &kibbr_storage::store::Row) -> Value {
+pub fn row_json(row: &crate::storage::store::Row) -> Value {
     let mut obj = Map::new();
-    for (name, key) in kibbr_storage::store::present(row) {
+    for (name, key) in crate::storage::store::present(row) {
         obj.insert(name, row.json(key).unwrap_or(Value::Null));
     }
     Value::Object(obj)
@@ -129,7 +129,7 @@ pub fn row_json(row: &kibbr_storage::store::Row) -> Value {
 
 /// The rows, in the order the answer already has them: `engine::Rank` promises newest
 /// first, and re-sorting would break the ordering the limit depends on.
-pub fn canonical(result: &QueryResult) -> Vec<&kibbr_storage::store::Row> {
+pub fn canonical(result: &QueryResult) -> Vec<&crate::storage::store::Row> {
     result.rows.iter().collect()
 }
 

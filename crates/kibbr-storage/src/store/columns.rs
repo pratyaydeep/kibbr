@@ -14,7 +14,7 @@ use super::v3::{
     epoch_of, ip_bytes, print_ip, print_uuid, uuid_bytes, Bad, Form, MAX_ROWS, RFC3339,
 };
 use super::{in_window, instant_of, Term, Want};
-use kibbr_core::types::ColValue;
+use crate::core::types::ColValue;
 
 /// A selection's bits, in words of sixty-four.
 const WORDS: usize = 128;
@@ -629,7 +629,7 @@ mod tests {
     use crate::store::v3::column::Column;
     use crate::store::v3::samples::{self, Sample, Stored};
     use crate::store::{effective_ts, pool, ts_of, RECEIVED_AT_COLUMN};
-    use kibbr_core::rng::Rng;
+    use crate::core::rng::Rng;
 
     fn decoded(sample: &Sample, chunk: &Stored) -> Column {
         Column::decode(&chunk.bytes, chunk.at, &chunk.dir, sample.rows)

@@ -20,7 +20,7 @@ use super::{
     MAX_ROWS, NO_COMPRESSION, PER_ROW, PLAIN, RFC3339, VARINT, ZSTD,
 };
 use crate::store::Row;
-use kibbr_core::types::{ColValue, ColumnType};
+use crate::core::types::{ColValue, ColumnType};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BuildError {

@@ -2,7 +2,7 @@
 
 One entry per tag, newest first.
 
-## Unreleased
+## 0.1.0 — 2026-10-21, first public release
 
 - **Licence**: AGPL-3.0-only in place of the Elastic License 2.0; contributions are taken
   under MIT with a DCO sign-off. `/health` and the viewer's footer name the source.
@@ -19,6 +19,14 @@ One entry per tag, newest first.
 - **Refactor**: the server is a library and the binary the command line over it; `src/cmd`
   and `src/gen`; scripts filed under `check/`, `fault/` and `measure/`; comments and docs
   shortened. No behaviour changed.
+
+Known issues:
+
+- Ids in the epoch range are typed `Datetime`, then widened when a later value is not one
+  (seen on GH Archive).
+- The bulk door writes small row groups, which stay small until the day is compacted.
+- `kibbr templates` fails on an answer over ~25 MB.
+- Per-template overhead grows large at 1,500+ templates.
 
 ## v0.1.0-alpha.2 - 2026-10-03
 

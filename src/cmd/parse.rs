@@ -8,12 +8,12 @@ use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
 use crate::error::{CliError, DetectorError, DetectorErrorKind};
-use kibbr_core::flatten::parse_line;
-use kibbr_core::fmt::rfc3339;
-use kibbr_core::lines::{
+use crate::core::flatten::parse_line;
+use crate::core::fmt::rfc3339;
+use crate::core::lines::{
     read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
 };
-use kibbr_core::types::{ColValue, ColumnType};
+use crate::core::types::{ColValue, ColumnType};
 
 /// Width of the widest fixed label, so `fingerprint` and the keys line up.
 const MIN_KEY_WIDTH: usize = 11;
@@ -142,7 +142,7 @@ pub fn run<R: BufRead, W: Write>(
 /// The parsed row as NDJSON, every map emitted in `keys` order: `HashMap` order is not
 /// stable between runs, and a diff must mean a real change.
 fn render_json<W: Write>(
-    parsed: &kibbr_core::flatten::ParsedLog,
+    parsed: &crate::core::flatten::ParsedLog,
     out: &mut W,
 ) -> Result<(), CliError> {
     let mut values = serde_json::Map::new();
@@ -177,7 +177,7 @@ fn render_json<W: Write>(
 /// `line_no` is the physical line, the same number a rejection is reported against, so
 /// one stream never holds two numbering schemes.
 fn render<W: Write>(
-    parsed: &kibbr_core::flatten::ParsedLog,
+    parsed: &crate::core::flatten::ParsedLog,
     line_no: usize,
     out: &mut W,
 ) -> Result<(), CliError> {

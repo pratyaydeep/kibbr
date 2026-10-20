@@ -11,7 +11,7 @@ use std::io::Write;
 use serde_json::{Map, Value};
 
 use crate::error::GenError;
-use kibbr_core::rng::Rng;
+use crate::core::rng::Rng;
 
 pub mod farm;
 

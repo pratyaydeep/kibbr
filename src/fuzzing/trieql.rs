@@ -12,8 +12,8 @@ use chrono::{DateTime, Utc};
 use crate::config::Limits;
 use crate::error::{self, CliError};
 use crate::cmd::query;
-use kibbr_engine::engine::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
-use kibbr_engine::trieql::{self, Kind, ParseError, Parsed};
+use crate::engine::engine::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
+use crate::engine::trieql::{self, Kind, ParseError, Parsed};
 
 /// The instant `SINCE` is counted back from. Fixed, and the one `crates/kibbr-engine/src/trieql.rs` tests
 /// against, so a seed taken from a test parses to the window the test saw.
@@ -90,7 +90,7 @@ fn check(src: &str) {
                     other,
                     CliError::Cursor(CursorError::WrongQuery)
                         | CliError::Exec(ExecError::Buckets(_))
-                        | CliError::Serve(kibbr_server::Error::BucketKeyClash)
+                        | CliError::Serve(crate::server::Error::BucketKeyClash)
                 ),
                 "{}: parsed, and then refused for something a parsed query cannot be: {other}",
                 shown(src)

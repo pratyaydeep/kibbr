@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::config::{self, File};
 use crate::error::CliError;
-use kibbr_core::fmt::commas;
+use crate::core::fmt::commas;
 
 /// How long a server is given to answer. Both answers are built from memory.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -84,10 +84,10 @@ pub fn server(
         });
     }
     let base = <config::Storage as config::LoadStorage>::base_named(file, data_dir);
-    if let Some(address) = kibbr_storage::lock::holder(&base).and_then(|holder| holder.address) {
+    if let Some(address) = crate::storage::lock::holder(&base).and_then(|holder| holder.address) {
         return Ok(Server {
             address,
-            found: format!("from {}", base.join(kibbr_storage::lock::LOCK_FILE).display()),
+            found: format!("from {}", base.join(crate::storage::lock::LOCK_FILE).display()),
         });
     }
     let (host, port) = config::listen(file, None, None)?;
@@ -342,7 +342,7 @@ mod tests {
         let held = std::env::temp_dir().join(format!("kibbr-ask-held-{}", std::process::id()));
         std::fs::create_dir_all(&held).expect("mkdir");
         std::fs::write(
-            held.join(kibbr_storage::lock::LOCK_FILE),
+            held.join(crate::storage::lock::LOCK_FILE),
             r#"{"pid":1,"address":"127.0.0.1:40123"}"#,
         )
         .expect("a LOCK");

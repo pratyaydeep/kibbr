@@ -2445,7 +2445,7 @@ mod tests {
     use super::*;
     use crate::store::v3::Source;
     use crate::store::{in_window, render_row, Counted, Rows, DEFAULT_TS_COLUMN};
-    use kibbr_core::types::ColValue;
+    use crate::core::types::ColValue;
     use std::time::Duration;
 
     pub(super) struct Scratch(pub(super) PathBuf);
@@ -3823,7 +3823,7 @@ mod tests {
     /// What a start prints for a store that will not open: the error and every cause below
     /// it, on one line, so a cause said twice shows as it would to an operator.
     fn printed(e: &StoreError) -> String {
-        kibbr_core::error::chain(e)
+        crate::core::error::chain(e)
     }
 
     /// A named file in a directory that will not be searched is not "not on disk": the start

@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use kibbr_core::fmt::commas;
-use kibbr_storage::store::disk::{self, CompactOptions, Compacted, DiskStore, Due};
-use kibbr_storage::store::StoreError;
+use crate::core::fmt::commas;
+use crate::storage::store::disk::{self, CompactOptions, Compacted, DiskStore, Due};
+use crate::storage::store::StoreError;
 
 // ── What a run did ─────────────────────────────────────────────────────────────────
 
@@ -248,7 +248,7 @@ impl Jobs {
                         inputs,
                         times: before.saturating_add(1),
                         at: Instant::now(),
-                        error: kibbr_core::error::chain(e),
+                        error: crate::core::error::chain(e),
                     },
                 );
             }

@@ -15,8 +15,8 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::catalog::{Catalog, CatalogError, Record, Token};
-use kibbr_core::flatten::ParsedLog;
-use kibbr_core::types::{join, ColumnType, TimeSource};
+use crate::core::flatten::ParsedLog;
+use crate::core::types::{join, ColumnType, TimeSource};
 
 mod keys;
 
@@ -1002,7 +1002,7 @@ fn write<T>(lock: &RwLock<T>) -> Result<RwLockWriteGuard<'_, T>, TrieError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kibbr_core::flatten::parse_line;
+    use crate::core::flatten::parse_line;
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("kibbr-trie-{}-{name}", std::process::id()));

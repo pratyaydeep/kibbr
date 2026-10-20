@@ -38,13 +38,13 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::mem::size_of;
 use std::path::Path;
 
-use kibbr_core::types::ColValue;
-use kibbr_storage::frame::{self, Next};
-use kibbr_storage::store::v3::build::RowGroup;
-use kibbr_storage::store::v3::column::{Column, Memo};
-use kibbr_storage::store::v3::file::{self, Entry, Index, Reader};
-use kibbr_storage::store::v3::read::{self, Cell, ChunkDir, Header, PieceDir};
-use kibbr_storage::store::v3::{
+use crate::core::types::ColValue;
+use crate::storage::frame::{self, Next};
+use crate::storage::store::v3::build::RowGroup;
+use crate::storage::store::v3::column::{Column, Memo};
+use crate::storage::store::v3::file::{self, Entry, Index, Reader};
+use crate::storage::store::v3::read::{self, Cell, ChunkDir, Header, PieceDir};
+use crate::storage::store::v3::{
     type_byte, Bad, Bytes, Form, FormatError, JsonKind, Source, DAY_NS, HEADER_LEN, KIND_FOOTER,
     KIND_ROW_GROUP, KIND_SCHEMA, MAGIC, MAX_BODY, MAX_ROWS, NO_COMPRESSION, OPTIONAL,
     PRE_RENAME_MAGIC, TRAILER_LEN, VERSION, ZSTD,
@@ -1454,12 +1454,12 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use kibbr_core::flatten::parse_line;
-    use kibbr_storage::db::row_of;
-    use kibbr_storage::store::v3::build::{build as build_group, schema_of, Level};
-    use kibbr_storage::store::v3::file::Writer;
-    use kibbr_storage::store::v3::{put_varint, zigzag};
-    use kibbr_storage::store::{effective_ts, Row};
+    use crate::core::flatten::parse_line;
+    use crate::storage::db::row_of;
+    use crate::storage::store::v3::build::{build as build_group, schema_of, Level};
+    use crate::storage::store::v3::file::Writer;
+    use crate::storage::store::v3::{put_varint, zigzag};
+    use crate::storage::store::{effective_ts, Row};
 
     fn vector(name: &str) -> Vec<u8> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))

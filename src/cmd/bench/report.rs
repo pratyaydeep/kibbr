@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use kibbr_core::fmt::commas;
+use crate::core::fmt::commas;
 
 use super::corpus::{BuiltBy, Corpus, FileDigest, InputDigest, LoadFacts};
 use super::phases::{median, percentile};

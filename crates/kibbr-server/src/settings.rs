@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub use kibbr_engine::limits::Limits;
-pub use kibbr_storage::trie::Schema;
+pub use crate::engine::limits::Limits;
+pub use crate::storage::trie::Schema;
 
 use crate::DEFAULT_PORT;
 
@@ -20,7 +20,7 @@ pub const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// The largest an `/ingest` body may become once decompressed, capped at
 /// `lines::MAX_LINE_BYTES` so `LineTooLong` stays unreachable over HTTP.
-pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = kibbr_core::lines::MAX_LINE_BYTES;
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = crate::core::lines::MAX_LINE_BYTES;
 
 /// How many `/ingest` bodies may be in the parse-and-walk at once: one per core, as the
 /// work is CPU-bound, and 1 where the core count is unknowable.
@@ -107,23 +107,23 @@ impl Default for Storage {
             trie_file: None,
             flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
             row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
-            max_open_segments: kibbr_storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
-            segment_max_bytes: kibbr_storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
-            max_buffer_bytes: kibbr_storage::store::DEFAULT_MAX_BUFFER_BYTES,
+            max_open_segments: crate::storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
+            segment_max_bytes: crate::storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            max_buffer_bytes: crate::storage::store::DEFAULT_MAX_BUFFER_BYTES,
             compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
-            wal_segment_bytes: kibbr_storage::wal::DEFAULT_SEGMENT_BYTES,
-            wal_batch_lines: kibbr_storage::wal::DEFAULT_BATCH_LINES,
-            wal_queue_bytes: kibbr_storage::wal::DEFAULT_QUEUE_BYTES,
+            wal_segment_bytes: crate::storage::wal::DEFAULT_SEGMENT_BYTES,
+            wal_batch_lines: crate::storage::wal::DEFAULT_BATCH_LINES,
+            wal_queue_bytes: crate::storage::wal::DEFAULT_QUEUE_BYTES,
             scan_threads: 0,
-            scan_fan_rows: kibbr_storage::store::DEFAULT_FAN_ROWS,
+            scan_fan_rows: crate::storage::store::DEFAULT_FAN_ROWS,
         }
     }
 }
 
 impl Storage {
     /// What the write-ahead log is written with.
-    pub fn wal_options(&self) -> kibbr_storage::wal::Options {
-        kibbr_storage::wal::Options {
+    pub fn wal_options(&self) -> crate::storage::wal::Options {
+        crate::storage::wal::Options {
             segment_bytes: self.wal_segment_bytes,
             batch_lines: self.wal_batch_lines,
             queue_bytes: self.wal_queue_bytes,
@@ -135,16 +135,16 @@ impl Storage {
     }
 
     /// The row group thresholds these settings imply; only the timeout is worth a knob.
-    pub fn row_group_limits(&self) -> kibbr_storage::store::RowGroupLimits {
-        kibbr_storage::store::RowGroupLimits {
+    pub fn row_group_limits(&self) -> crate::storage::store::RowGroupLimits {
+        crate::storage::store::RowGroupLimits {
             age: self.row_group_timeout,
-            ..kibbr_storage::store::RowGroupLimits::default()
+            ..crate::storage::store::RowGroupLimits::default()
         }
     }
 
     /// What the disk store is held to.
-    pub fn disk_options(&self) -> kibbr_storage::store::DiskOptions {
-        kibbr_storage::store::DiskOptions {
+    pub fn disk_options(&self) -> crate::storage::store::DiskOptions {
+        crate::storage::store::DiskOptions {
             row_groups: self.row_group_limits(),
             max_open_files: self.max_open_segments,
             segment_max_bytes: self.segment_max_bytes,
@@ -158,7 +158,7 @@ impl Storage {
     /// rather than authority, see `trie::DEFAULT_DATA_DIR`.
     pub fn data_dir(&self) -> String {
         self.base_path.as_ref().map_or_else(
-            || kibbr_storage::trie::DEFAULT_DATA_DIR.to_string(),
+            || crate::storage::trie::DEFAULT_DATA_DIR.to_string(),
             |path| path.display().to_string(),
         )
     }
@@ -212,7 +212,7 @@ pub enum Banner {
 
 /// The target of the event that is the banner's paragraph, which a subscriber writes
 /// bare whatever its level, so no level can silence it.
-pub const BANNER: &str = "kibbr_server::banner";
+pub const BANNER: &str = "crate::server::banner";
 
 /// Everything a server runs on; the default touches nothing: loopback, storage in
 /// memory, the default limits.

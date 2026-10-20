@@ -14,7 +14,7 @@ use chrono::{Datelike, Timelike};
 use serde_json::Value;
 use thiserror::Error;
 
-use kibbr_core::types::ColumnType;
+use crate::core::types::ColumnType;
 
 pub mod build;
 pub mod column;

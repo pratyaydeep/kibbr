@@ -24,7 +24,7 @@ use crate::store::{
     effective_ts, in_window, instant_of, nanos_of, render_row, render_text, Row, Scan, ScanOptions,
     StoreError, Term, Visitor, Want, Wants, DEFAULT_TS_COLUMN, RECEIVED_AT_COLUMN,
 };
-use kibbr_core::types::ColValue;
+use crate::core::types::ColValue;
 
 /// What one leaf's scan was asked, worked out once for the leaf; plain data, so it can be
 /// shared by reference with whatever chooses a row group's rows.
@@ -839,7 +839,7 @@ mod tests {
     use crate::store::v3::read::TWO_PIECES;
     use crate::store::v3::{day_of, samples, Form, DAY_NS};
     use crate::store::{project, DiskOptions, FlushKind, LeafStore, Store};
-    use kibbr_core::types::ColValue;
+    use crate::core::types::ColValue;
 
     const SECOND: i64 = 1_000_000_000;
 

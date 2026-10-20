@@ -19,8 +19,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
-use kibbr_core::infer::infer;
-use kibbr_core::types::ColValue;
+use crate::core::infer::infer;
+use crate::core::types::ColValue;
 
 pub mod columns;
 pub mod disk;
@@ -268,7 +268,7 @@ impl Term {
 pub const DEFAULT_TS_COLUMN: &str = "ts";
 
 /// The system column holding a row's arrival time.
-pub use kibbr_core::types::RECEIVED_AT_COLUMN;
+pub use crate::core::types::RECEIVED_AT_COLUMN;
 
 /// What a query returns the system column as, unless the row has an ingested key of that
 /// name - then the ingested one is shown and the system value is left out.
@@ -1102,9 +1102,9 @@ impl StoreManager {
     /// dead disk fails on every line; the stored string is the latest, for `/health`.
     fn note_failure(&self, e: &StoreError) {
         if self.write_failures.fetch_add(1, Ordering::Relaxed) == 0 {
-            kibbr_core::error::report(e);
+            crate::core::error::report(e);
         }
-        self.health.set_error(kibbr_core::error::chain(e));
+        self.health.set_error(crate::core::error::chain(e));
         self.health.degrade();
     }
 
@@ -1150,12 +1150,12 @@ impl StoreManager {
         failures.extend(done.seal_failed);
         let unopened = self.retry_unopened();
         for e in &failures {
-            kibbr_core::error::report(e);
+            crate::core::error::report(e);
         }
         if let Some(e) = failures.first() {
             self.write_failures
                 .fetch_add(failures.len() as u64, Ordering::Relaxed);
-            self.health.set_error(kibbr_core::error::chain(e));
+            self.health.set_error(crate::core::error::chain(e));
         }
         self.forced_closes
             .fetch_add(done.forced as u64, Ordering::Relaxed);
@@ -1353,7 +1353,7 @@ pub fn render_text(value: &ColValue, written: Option<&serde_json::Value>) -> Opt
     Some(ColValue::String(match written {
         Some(serde_json::Value::String(text)) => text.clone(),
         Some(other) => other.to_string(),
-        None => kibbr_core::fmt::rfc3339(*ns),
+        None => crate::core::fmt::rfc3339(*ns),
     }))
 }
 
@@ -1739,7 +1739,7 @@ mod tests {
             ),
             holding(
                 ColValue::Datetime(INSTANT),
-                spelling(&kibbr_core::fmt::rfc3339(INSTANT)),
+                spelling(&crate::core::fmt::rfc3339(INSTANT)),
             ),
             holding(ColValue::Datetime(INSTANT), Some(seconds)),
             holding(ColValue::Datetime(INSTANT), Some(millis)),

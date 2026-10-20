@@ -19,10 +19,10 @@ use chrono::{DateTime, Utc};
 use crate::config::Limits;
 use crate::cmd::query;
 use crate::{error, gen};
-use kibbr_core::flatten;
-use kibbr_core::fmt::commas;
-use kibbr_engine::engine::{self, Query};
-use kibbr_storage::trie::Trie;
+use crate::core::flatten;
+use crate::core::fmt::commas;
+use crate::engine::engine::{self, Query};
+use crate::storage::trie::Trie;
 
 use super::phases::percentile;
 use super::report::{PlanRun, PlanShape, QueryText, Shapes};

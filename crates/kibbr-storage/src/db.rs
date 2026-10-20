@@ -12,12 +12,12 @@ use chrono::{DateTime, Utc};
 
 use thiserror::Error;
 
-use kibbr_core::error::{DetectorError, DetectorErrorKind};
-use kibbr_core::flatten::{parse_line, ParsedLog};
-use kibbr_core::lines::{
+use crate::core::error::{DetectorError, DetectorErrorKind};
+use crate::core::flatten::{parse_line, ParsedLog};
+use crate::core::lines::{
     read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
 };
-use kibbr_core::types::ColValue;
+use crate::core::types::ColValue;
 
 use crate::store::{Row, StoreManager, RECEIVED_AT_COLUMN};
 use crate::trie::{Schema, Trie, TrieError};
@@ -72,7 +72,7 @@ impl From<TrieError> for SinkError {
     fn from(e: TrieError) -> Self {
         match e {
             TrieError::Catalog(_) => SinkError::Line(DetectorErrorKind::NotDurable {
-                detail: kibbr_core::error::chain(&e),
+                detail: crate::core::error::chain(&e),
             }),
             e => SinkError::Fatal(e.into()),
         }
@@ -303,7 +303,7 @@ pub fn parse_and_prepare<R: BufRead>(
 
 /// What the CLI does with a rejected line: name it on stderr and carry on.
 pub fn report_rejected(e: DetectorError) {
-    kibbr_core::error::report(&e);
+    crate::core::error::report(&e);
 }
 
 /// The read loop: strip the line ending and any BOM, skip blanks, report bad lines against

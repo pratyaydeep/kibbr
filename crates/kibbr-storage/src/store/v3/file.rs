@@ -1155,7 +1155,7 @@ mod tests {
     use crate::store::v3::build::{build, schema_of, Level};
     use crate::store::v3::Source;
     use crate::store::Row;
-    use kibbr_core::types::ColValue;
+    use crate::core::types::ColValue;
 
     const T0: i64 = 1_705_314_600_000_000_000;
 

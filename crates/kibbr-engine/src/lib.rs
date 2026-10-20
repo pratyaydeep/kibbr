@@ -7,6 +7,9 @@
 //! Above `kibbr-storage`, whose trie and stores it is handed, and under the binary: it
 //! opens no socket and reads no flag.
 
+use kibbr_core as core;
+use kibbr_storage as storage;
+
 pub mod engine;
 pub mod limits;
 pub mod trieql;

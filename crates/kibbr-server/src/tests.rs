@@ -112,7 +112,7 @@ fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
         None,
     );
     let server = Arc::new(server.expect("a server on disk"));
-    let data = dir.join(kibbr_storage::store::disk::DATA_DIR);
+    let data = dir.join(crate::storage::store::disk::DATA_DIR);
     let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
     mode(0o555).expect("chmod -w");
     if std::fs::create_dir(data.join("probe")).is_ok() {
@@ -166,19 +166,19 @@ fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
 /// does today, and what the log's applier has to survive if a store ever does.
 struct Refusing(Arc<AtomicBool>);
 
-impl kibbr_storage::store::Store for Refusing {
+impl crate::storage::store::Store for Refusing {
     fn open(
         &self,
         template_id: u64,
         time_column: &str,
-    ) -> Result<Arc<dyn kibbr_storage::store::LeafStore>, StoreError> {
+    ) -> Result<Arc<dyn crate::storage::store::LeafStore>, StoreError> {
         if self.0.load(Ordering::Relaxed) {
             return Err(StoreError::Io {
                 template_id,
                 source: std::io::Error::other("the leaf will not open"),
             });
         }
-        kibbr_storage::store::MemoryStore::new().open(template_id, time_column)
+        crate::storage::store::MemoryStore::new().open(template_id, time_column)
     }
 
     fn kind(&self) -> &'static str {
@@ -200,7 +200,7 @@ fn a_row_the_store_refuses_is_held_and_its_template_waits_with_it() {
     let placed = |template_id| db::Placed {
         template_id,
         time_column: "ts".to_string(),
-        row: kibbr_storage::store::Row::new(),
+        row: crate::storage::store::Row::new(),
     };
     assert_eq!(held.from(), None);
 
@@ -462,7 +462,7 @@ fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
     let count = runtime
         .block_on(async {
             tokio::spawn(async move {
-                engine::execute(&held.trie, &held.stores, &query).map(|result| result.count)
+                engine::engine::execute(&held.trie, &held.stores, &query).map(|result| result.count)
             })
             .await
         })
@@ -505,11 +505,11 @@ fn a_server_says_the_scan_threads_it_resolved_in_stats_and_in_its_banner() {
         .expect("a runtime");
     // Each server's settings, and the threads and the rows it must then say.
     let cases = [
-        (in_memory, 1, kibbr_storage::store::DEFAULT_FAN_ROWS),
+        (in_memory, 1, crate::storage::store::DEFAULT_FAN_ROWS),
         (on_disk("none", 0, 7), 1, 7),
         (on_disk("one", 1, 7), 1, 7),
         (
-            on_disk("two", 2, kibbr_storage::store::DEFAULT_FAN_ROWS),
+            on_disk("two", 2, crate::storage::store::DEFAULT_FAN_ROWS),
             2,
             32_768,
         ),
@@ -807,7 +807,7 @@ impl Listening {
         let server = &self.server;
         let query = query::from_trieql("COUNT LOG {}", Utc::now(), server.limits)
             .expect("a query");
-        let result = engine::execute(&server.trie, &server.stores, &query);
+        let result = engine::engine::execute(&server.trie, &server.stores, &query);
         result.expect("the query answers").count
     }
 
@@ -1408,7 +1408,7 @@ fn small_buffers(tag: &str, permits: usize) -> Listening {
 }
 
 /// Flush as the tick does, and say so to whoever is waiting at the door for it.
-fn tick(at: &Listening) -> kibbr_storage::store::FlushSummary {
+fn tick(at: &Listening) -> crate::storage::store::FlushSummary {
     let summary = at.server.stores.flush_all(FlushKind::Tick);
     at.server.flushed.notify_waiters();
     summary
@@ -1446,7 +1446,7 @@ fn a_body_waits_at_the_door_while_the_buffers_are_past_twice_their_limit() {
     // not take one.
     assert_eq!(tick(&at).failed, 0);
     let data = at.server.storage.base_path.as_ref().expect("on disk");
-    let data = data.join(kibbr_storage::store::disk::DATA_DIR);
+    let data = data.join(crate::storage::store::disk::DATA_DIR);
     let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
     mode(0o555).expect("chmod -w");
     let third = at.post(lines_at(1_705_401_000, 2)).join().expect("a sender");
@@ -1710,7 +1710,7 @@ fn a_store_that_fails_during_a_wait_for_the_buffers_is_the_reason_given() {
     // day with no file yet, and a directory that will not take one.
     assert_eq!(at.server.stores.flush_all(FlushKind::Tick).failed, 0);
     let data = at.server.storage.base_path.as_ref().expect("on disk");
-    let data = data.join(kibbr_storage::store::disk::DATA_DIR);
+    let data = data.join(crate::storage::store::disk::DATA_DIR);
     let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
     mode(0o555).expect("chmod -w");
     let second = at

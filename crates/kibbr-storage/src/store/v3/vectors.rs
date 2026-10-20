@@ -15,7 +15,7 @@ use super::{read, FormatError, Source};
 use crate::db::row_of;
 use crate::frame::Next;
 use crate::store::{effective_ts, Row};
-use kibbr_core::flatten::parse_line;
+use crate::core::flatten::parse_line;
 
 /// At the workspace's root, two directories up: the binary crate's fuzz harness reads
 /// the same files.

@@ -17,8 +17,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::frame::{self, Log, LogError};
-use kibbr_core::flatten::{key_token, promoted_token};
-use kibbr_core::types::ColumnType;
+use crate::core::flatten::{key_token, promoted_token};
+use crate::core::types::ColumnType;
 
 /// The file, inside the data directory so one path moves everything.
 pub const CATALOG_FILE_NAME: &str = "catalog.log";

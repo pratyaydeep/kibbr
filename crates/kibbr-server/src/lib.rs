@@ -7,6 +7,10 @@
 //! Nothing here reads a flag or writes to stderr, and the flush clock lives here, not in
 //! the store: deciding when to write is a fact about the process lifecycle.
 
+use kibbr_core as core;
+use kibbr_storage as storage;
+use kibbr_engine as engine;
+
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::future::IntoFuture;
@@ -37,15 +41,14 @@ use tokio_util::sync::CancellationToken;
 use std::path::Path;
 
 use crate::error::{DetectorError, DetectorErrorKind, IngestError};
-use kibbr_core::fmt::{commas, rfc3339_at};
-use kibbr_engine::engine;
-use kibbr_storage::catalog::{Catalog, CatalogError};
-use kibbr_storage::db;
-use kibbr_storage::store::disk::CompactOptions;
-use kibbr_storage::store::fan::Fan;
-use kibbr_storage::store::{FlushKind, Stop, StoreError, StoreManager};
-use kibbr_storage::trie::{Trie, TrieError};
-use kibbr_storage::wal::{self, Wal};
+use core::fmt::{commas, rfc3339_at};
+use storage::catalog::{Catalog, CatalogError};
+use storage::db;
+use storage::store::disk::CompactOptions;
+use storage::store::fan::Fan;
+use storage::store::{FlushKind, Stop, StoreError, StoreManager};
+use storage::trie::{Trie, TrieError};
+use storage::wal::{self, Wal};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
@@ -145,7 +148,7 @@ pub struct Server {
     ingest_bodies: Arc<Semaphore>,
     /// Whether the last flush tick could write. Shared with the registry and read without
     /// its lock, because `/health` must not queue behind a flush.
-    write_health: Arc<kibbr_storage::store::WriteHealth>,
+    write_health: Arc<storage::store::WriteHealth>,
     /// The bulk loads this server has been asked to run: at most one at a time, on a
     /// thread of its own, never on the runtime or the blocking pool the door's bodies use.
     loads: std::sync::Mutex<Loads>,
@@ -531,7 +534,7 @@ fn replay(
         let mut highest_template = 0u64;
         let scanned = wal.replay(&mut warn, &mut |record| {
             highest_template = highest_template.max(record.template_id);
-            let day = kibbr_storage::store::v3::day_of(record.time);
+            let day = storage::store::v3::day_of(record.time);
             if replaced
                 .get(&day)
                 .is_none_or(|through| record.seq > *through)
@@ -584,7 +587,7 @@ fn replay(
     let mut flush_failed = false;
     let scanned = wal.replay(&mut warn, &mut |record| {
         highest_template = highest_template.max(record.template_id);
-        let day = kibbr_storage::store::v3::day_of(record.time);
+        let day = storage::store::v3::day_of(record.time);
         // A day a load replaced: the lines the log held of it then were in the files the
         // replace retired, and no row group covers them any more.
         if replaced
@@ -638,7 +641,7 @@ fn replay(
                 return Ok(());
             }
         };
-        let time = kibbr_storage::store::effective_ts(&row, time_column).unwrap_or(0);
+        let time = storage::store::effective_ts(&row, time_column).unwrap_or(0);
         if time != record.time {
             moved.get_or_insert((record.seq, record.time, time));
             held.set_aside(record.template_id, record.seq);
@@ -728,7 +731,7 @@ fn replay(
 
 /// An instant as replay's warnings print it.
 fn rfc3339_nanos(ns: i64) -> String {
-    kibbr_core::fmt::rfc3339(ns)
+    core::fmt::rfc3339(ns)
 }
 
 /// Rows the store would not take from the log: not an error, since the line is durable
@@ -833,10 +836,10 @@ impl Held {
 fn storage_fatal(e: StoreError) -> Error {
     match e {
         StoreError::LegacyLayout { path } => Error::LegacyLayout { path },
-        StoreError::Format(kibbr_storage::store::v3::FormatError::Version { path, found }) => {
+        StoreError::Format(storage::store::v3::FormatError::Version { path, found }) => {
             Error::SegmentVersion { path, found }
         }
-        StoreError::Format(kibbr_storage::store::v3::FormatError::PreRename { path }) => {
+        StoreError::Format(storage::store::v3::FormatError::PreRename { path }) => {
             Error::PreRename { path }
         }
         e => Error::Storage {
@@ -853,7 +856,7 @@ fn open_catalog(
     data_dir: &str,
     schema: &Schema,
 ) -> Result<Trie, Error> {
-    let path = kibbr_storage::catalog::path_in(base);
+    let path = storage::catalog::path_in(base);
     let existed = path.exists();
     let mut warn = |message: String| log_warn(&format!("catalog.log - {message}"));
     fn storage_error(e: &(dyn std::error::Error + 'static)) -> Error {
@@ -869,7 +872,7 @@ fn open_catalog(
         match trie_file {
             Some(snapshot) if snapshot.exists() => {
                 let (from_snapshot, failure) =
-                    kibbr_storage::triefile::load_reporting(snapshot, data_dir);
+                    storage::triefile::load_reporting(snapshot, data_dir);
                 match failure {
                     Some(e) => {
                         log_warn(&format!("trie.json - {}", error::chain(&e)));

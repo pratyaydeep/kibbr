@@ -45,7 +45,7 @@ pub(super) async fn post_compact(
     }
     let day = match request.day.as_deref() {
         None => None,
-        Some(text) => match kibbr_storage::store::disk::day_of_name(text) {
+        Some(text) => match crate::storage::store::disk::day_of_name(text) {
             Some(day) => Some(day),
             None => {
                 return fail(
@@ -168,7 +168,7 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
     log(&format!(
         "compaction job {id} - {}",
         match day {
-            Some(day) => kibbr_storage::store::disk::day_name(day),
+            Some(day) => crate::storage::store::disk::day_name(day),
             None => format!("{} day(s) due", days.len()),
         }
     ));
@@ -225,7 +225,7 @@ fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64
             // otherwise walk into the same panic every interval.
             if let Some(planned) = days.get(noted) {
                 let failed = Err(StoreError::CompactFailed {
-                    day: kibbr_storage::store::disk::day_name(planned.0),
+                    day: crate::storage::store::disk::day_name(planned.0),
                     source: Box::new(StoreError::Io {
                         template_id: 0,
                         source: std::io::Error::other(why),

@@ -8,7 +8,7 @@ use thiserror::Error;
 
 // What is wrong with one line is the flattener's to say, and it is two crates down; here
 // under the names the door already uses.
-pub use kibbr_core::error::{chain, DetectorError, DetectorErrorKind};
+pub use crate::core::error::{chain, DetectorError, DetectorErrorKind};
 
 /// What stops the live door from taking a body at all; no variant holds a `StoreError`,
 /// since a line is durable in the log before the store is asked.
@@ -21,7 +21,7 @@ pub enum IngestError {
     /// The trie's lock poisoned mid-body, which fails every later line too, so the body is
     /// abandoned rather than answered line by line.
     #[error(transparent)]
-    Trie(#[from] kibbr_storage::trie::TrieError),
+    Trie(#[from] crate::storage::trie::TrieError),
 
     /// The write-ahead log could not take the body, which goes in whole or not at all: a
     /// `503`, and sending it again stores nothing twice.
@@ -64,11 +64,11 @@ macro_rules! never_from {
 }
 
 // A `#[from] StoreError` on a variant, or `?` on a store call inside the ingest path.
-never_from!(IngestError, kibbr_storage::store::StoreError);
+never_from!(IngestError, crate::storage::store::StoreError);
 // And the two errors that can hold one, which `?` would carry it in by: the server's own,
 // as its `Storage`, and the read loop's.
 never_from!(IngestError, Error);
-never_from!(IngestError, kibbr_storage::db::SinkError);
+never_from!(IngestError, crate::storage::db::SinkError);
 
 /// What stops a server from starting or from finishing cleanly, and, last, the engine's
 /// errors a request is refused with.
@@ -118,7 +118,7 @@ pub enum Error {
         "{path}: segment format version {found}; this build reads version {} only and \
          does not guess at the rest. Nothing was served. Start the build that wrote it, or \
          move that file out of the data directory.",
-        kibbr_storage::store::v3::VERSION
+        crate::storage::store::v3::VERSION
     )]
     SegmentVersion { path: std::path::PathBuf, found: u8 },
 
@@ -133,27 +133,27 @@ pub enum Error {
     /// The write-ahead log could not be opened, read back or started: fatal, since a server
     /// that cannot make a line durable has nothing true to answer `200` with.
     #[error(transparent)]
-    Wal(#[from] kibbr_storage::wal::WalError),
+    Wal(#[from] crate::storage::wal::WalError),
 
     /// Another process owns the data directory, and a second writer of the catalog or the
     /// manifest would write over the first one's records.
     #[error(transparent)]
-    Lock(#[from] kibbr_storage::lock::LockError),
+    Lock(#[from] crate::storage::lock::LockError),
 
     // Transparent, not wrapped: `ParseError` says where it was and `report` walks the
     // source chain, so a wrapper would print the same sentence twice.
     #[error(transparent)]
-    Trieql(#[from] kibbr_engine::trieql::ParseError),
+    Trieql(#[from] crate::engine::trieql::ParseError),
 
     // Transparent for the reason `Trieql` is. No `--after:` prefix: the flag surface and
     // `AFTER` both land here.
     #[error(transparent)]
-    Cursor(#[from] kibbr_engine::engine::CursorError),
+    Cursor(#[from] crate::engine::engine::CursorError),
 
     // Transparent for the reason `Trieql` is - `BucketError`'s own sentence names the
     // requested and permitted counts, and a wrapper would print a vaguer one above it.
     #[error(transparent)]
-    Exec(#[from] kibbr_engine::engine::ExecError),
+    Exec(#[from] crate::engine::engine::ExecError),
 
     /// A group key named `bucket` beside a `time(...)`, which reports under that name on
     /// every surface: refused rather than letting one quietly win.

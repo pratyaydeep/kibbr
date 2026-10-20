@@ -12,7 +12,7 @@ use super::{
     bit, count_set, encodes, index_width, read_bitmap, unzigzag, Bad, Bytes, Form, JsonKind, BITS,
     CONSTANT, DELTA, DICTIONARY, MAX_BODY, MAX_ROWS, VARINT, ZSTD,
 };
-use kibbr_core::types::ColValue;
+use crate::core::types::ColValue;
 
 /// A place in a chunk's body: a word, a constant, a bitmap. Places, not slices, so a
 /// column owns everything it holds and can be kept beside the bytes it was decoded from.

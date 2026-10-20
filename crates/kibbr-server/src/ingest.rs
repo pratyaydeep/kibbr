@@ -196,7 +196,7 @@ pub(super) fn ingest(
                     raw: parsed.raw_line,
                     // The time the row is filed under, as the store reads it: what the
                     // log writes down beside the line, for replay to hold it to.
-                    time: kibbr_storage::store::effective_ts(&placed.row, &placed.time_column)
+                    time: crate::storage::store::effective_ts(&placed.row, &placed.time_column)
                         .unwrap_or(0),
                     placed,
                 });

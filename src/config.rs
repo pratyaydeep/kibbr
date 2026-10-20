@@ -13,22 +13,22 @@ use std::time::Duration;
 use serde::Deserialize;
 use thiserror::Error;
 
-use kibbr_core::infer::EpochWindow;
+use crate::core::infer::EpochWindow;
 
 // The two groups of settings the crates below this one read, declared where they are
 // read; this module is where they are loaded and what the commands name them by.
-pub use kibbr_engine::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
-pub use kibbr_storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
+pub use crate::engine::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
+pub use crate::storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
 
 // What a server runs on is declared in the server crate, where it is read; this module
 // is where each is loaded and what the commands name them by.
-pub use kibbr_server::settings::{
+pub use crate::server::settings::{
     default_ingest_concurrency, duration_words, ApiLimits, Banner, Settings, Storage,
     DEFAULT_COMPACT_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS, DEFAULT_HOST,
     DEFAULT_INGEST_WAIT_MS, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_DECOMPRESSED_BYTES,
     DEFAULT_REQUEST_TIMEOUT, DEFAULT_ROW_GROUP_TIMEOUT_MS, DEFAULT_SHUTDOWN_DEADLINE,
 };
-pub use kibbr_server::DEFAULT_PORT;
+pub use crate::server::DEFAULT_PORT;
 
 /// The longest that wait may be set to: a body can wait twice, at the door and for the
 /// log, and the two together must leave an ordinary shipper's patience room for the rest.
@@ -583,7 +583,7 @@ impl LoadStorage for Storage {
             max_open_segments,
             MAX_OPEN_SEGMENTS_ENV,
             file.storage.max_open_segments,
-            kibbr_storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
+            crate::storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
         )?;
         if max_open_segments == 0 {
             return Err(ConfigError::NoOpenSegments);
@@ -601,14 +601,14 @@ impl LoadStorage for Storage {
             segment_max_bytes,
             SEGMENT_MAX_BYTES_ENV,
             file.storage.segment_max_bytes,
-            kibbr_storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            crate::storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
             "segment max bytes",
         )?;
         let max_buffer_bytes = bytes(
             max_buffer_bytes,
             MAX_BUFFER_BYTES_ENV,
             file.storage.max_buffer_bytes,
-            kibbr_storage::store::DEFAULT_MAX_BUFFER_BYTES,
+            crate::storage::store::DEFAULT_MAX_BUFFER_BYTES,
             "max buffer bytes",
         )?;
         // The default here, and the variable not read: only `serve` looks for due days, and
@@ -617,14 +617,14 @@ impl LoadStorage for Storage {
 
         // The defaults here too, for the reason the compaction interval's is: only `serve`
         // writes a log, and it resolves its flags over the variables in `with_wal`.
-        let wal_segment_bytes = kibbr_storage::wal::DEFAULT_SEGMENT_BYTES;
-        let wal_batch_lines = kibbr_storage::wal::DEFAULT_BATCH_LINES;
-        let wal_queue_bytes = kibbr_storage::wal::DEFAULT_QUEUE_BYTES;
+        let wal_segment_bytes = crate::storage::wal::DEFAULT_SEGMENT_BYTES;
+        let wal_batch_lines = crate::storage::wal::DEFAULT_BATCH_LINES;
+        let wal_queue_bytes = crate::storage::wal::DEFAULT_QUEUE_BYTES;
 
         // No scan threads here, for the same reason again: only `serve` answers a query from
         // a disk store, and it asks for its threads in `with_scan`.
         let scan_threads = 0;
-        let scan_fan_rows = kibbr_storage::store::DEFAULT_FAN_ROWS;
+        let scan_fan_rows = crate::storage::store::DEFAULT_FAN_ROWS;
 
         if !durable {
             return Ok(Self {
@@ -710,7 +710,7 @@ impl LoadStorage for Storage {
             segment_bytes,
             WAL_SEGMENT_BYTES_ENV,
             file.storage.wal_segment_bytes,
-            kibbr_storage::wal::DEFAULT_SEGMENT_BYTES as usize,
+            crate::storage::wal::DEFAULT_SEGMENT_BYTES as usize,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -723,7 +723,7 @@ impl LoadStorage for Storage {
             batch_lines,
             BATCH_SIZE_ENV,
             file.ingestor.batch_size,
-            kibbr_storage::wal::DEFAULT_BATCH_LINES,
+            crate::storage::wal::DEFAULT_BATCH_LINES,
         )? {
             0 => return Err(ConfigError::NoBatch),
             n => n,
@@ -732,7 +732,7 @@ impl LoadStorage for Storage {
             queue_bytes,
             WAL_QUEUE_BYTES_ENV,
             file.storage.wal_queue_bytes,
-            kibbr_storage::wal::DEFAULT_QUEUE_BYTES,
+            crate::storage::wal::DEFAULT_QUEUE_BYTES,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -768,7 +768,7 @@ impl LoadStorage for Storage {
             fan_rows,
             SCAN_FAN_ROWS_ENV,
             file.query.scan_fan_rows,
-            kibbr_storage::store::DEFAULT_FAN_ROWS as usize,
+            crate::storage::store::DEFAULT_FAN_ROWS as usize,
         )? as u64;
         Ok(self)
     }
@@ -850,10 +850,10 @@ impl LoadApiLimits for ApiLimits {
             file.api.max_decompressed_bytes,
             DEFAULT_MAX_DECOMPRESSED_BYTES,
         )?;
-        if max_decompressed_bytes > kibbr_core::lines::MAX_LINE_BYTES {
+        if max_decompressed_bytes > crate::core::lines::MAX_LINE_BYTES {
             return Err(ConfigError::DecompressedAboveLineCap {
                 asked: max_decompressed_bytes,
-                limit: kibbr_core::lines::MAX_LINE_BYTES,
+                limit: crate::core::lines::MAX_LINE_BYTES,
             });
         }
 
@@ -1132,7 +1132,7 @@ mod tests {
         let untouched = Storage::default();
         assert_eq!(
             (untouched.scan_threads, untouched.scan_fan_rows),
-            (0, kibbr_storage::store::DEFAULT_FAN_ROWS)
+            (0, crate::storage::store::DEFAULT_FAN_ROWS)
         );
         assert_eq!(untouched.disk_options().scan_threads, 0);
 
@@ -1145,7 +1145,7 @@ mod tests {
         assert_eq!(default, (cores / 2).clamp(1, 4));
         assert_eq!(
             scan(None, None).expect("the defaults"),
-            (default, kibbr_storage::store::DEFAULT_FAN_ROWS)
+            (default, crate::storage::store::DEFAULT_FAN_ROWS)
         );
 
         // The variable over the default, and the flag over the variable.
@@ -1279,7 +1279,7 @@ mod tests {
                 .with_wal(&File::default(), None, None, flag)
                 .map(|storage| (storage.wal_queue_bytes, storage.wal_options().queue_bytes))
         };
-        let default = kibbr_storage::wal::DEFAULT_QUEUE_BYTES;
+        let default = crate::storage::wal::DEFAULT_QUEUE_BYTES;
         assert_eq!(default, 256 * 1024 * 1024);
         assert_eq!(Storage::default().wal_queue_bytes, default);
         assert_eq!(bound(None).expect("the default"), (default, default));

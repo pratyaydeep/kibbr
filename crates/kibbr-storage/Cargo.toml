@@ -1,11 +1,14 @@
 [package]
 name = "kibbr-storage"
-description = "kibbr - the trie, the day files and the write-ahead log"
+description = "kibbr - the trie, the day files and the write-ahead log, internal to kibbr; no API stability promised"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories = ["database-implementations"]
 
 [dependencies]
 kibbr-core.workspace = true

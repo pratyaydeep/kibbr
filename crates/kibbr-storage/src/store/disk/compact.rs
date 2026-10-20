@@ -28,7 +28,7 @@ use crate::store::v3::{day_of, FormatError, Source};
 use crate::store::{
     effective_ts, lock, value_bytes, FlushKind, Row, RowGroupLimits, StoreError, RECEIVED_AT_COLUMN,
 };
-use kibbr_core::types::ColValue;
+use crate::core::types::ColValue;
 
 /// Input files kept open for reading at once: a descriptor per input would take a day of
 /// many files past the limit the live door's files and the sockets share.

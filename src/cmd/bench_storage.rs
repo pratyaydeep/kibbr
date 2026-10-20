@@ -17,11 +17,11 @@ use std::time::{Duration, Instant};
 use crate::config::{LoadStorage as _, Schema, Storage};
 use crate::error::{CliError, DetectorErrorKind};
 use crate::cmd::load::{self, Asked, LoadError};
-use kibbr_core::fmt::commas;
-use kibbr_storage::db::{self, ReadError, SinkError};
-use kibbr_storage::store::disk::{self, CompactOptions};
-use kibbr_storage::store::v3::{HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN};
-use kibbr_storage::store::{FlushKind, FlushSummary};
+use crate::core::fmt::commas;
+use crate::storage::db::{self, ReadError, SinkError};
+use crate::storage::store::disk::{self, CompactOptions};
+use crate::storage::store::v3::{HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN};
+use crate::storage::store::{FlushKind, FlushSummary};
 
 pub struct Args {
     pub input: PathBuf,
@@ -93,8 +93,8 @@ fn parts_of(path: &Path) -> Result<Parts, LoadError> {
     };
     let mut at = HEADER_LEN;
     loop {
-        match kibbr_storage::frame::read(&bytes, at, u32::MAX) {
-            kibbr_storage::frame::Next::Frame { payload, end } => {
+        match crate::storage::frame::read(&bytes, at, u32::MAX) {
+            crate::storage::frame::Next::Frame { payload, end } => {
                 let frame = (end - at) as u64;
                 match payload[0] {
                     KIND_SCHEMA => parts.schemas += frame,
@@ -152,8 +152,8 @@ fn held(data: &Path, block: u64) -> Result<Held, LoadError> {
         parts.file_headers += p.file_headers;
         parts.other += p.other;
     }
-    let catalog_path = kibbr_storage::catalog::path_in(data);
-    let manifest_path = kibbr_storage::store::manifest::path_in(data);
+    let catalog_path = crate::storage::catalog::path_in(data);
+    let manifest_path = crate::storage::store::manifest::path_in(data);
     let catalog = size_of(&catalog_path, block).map_err(io_at(&catalog_path))?;
     let manifest = size_of(&manifest_path, block).map_err(io_at(&manifest_path))?;
     let mut total = files;
@@ -209,7 +209,7 @@ struct Counts {
 fn counts_of(data: &Path) -> Result<Counts, LoadError> {
     let mut counts = Counts::default();
     for path in disk::data_files(data) {
-        let index = kibbr_storage::store::v3::file::open_sealed(&path)?.ok_or_else(|| {
+        let index = crate::storage::store::v3::file::open_sealed(&path)?.ok_or_else(|| {
             LoadError::Input(format!("{}: not a sealed data file", path.display()))
         })?;
         counts.files += 1;
@@ -315,9 +315,9 @@ fn measure(
         None,
     )
     .map_err(CliError::from)?;
-    let lock = kibbr_storage::lock::DataLock::acquire(&data)?;
+    let lock = crate::storage::lock::DataLock::acquire(&data)?;
     let (trie, stores) =
-        kibbr_server::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
+        crate::server::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
     let opts = load::Options {
         inputs: load::resolve(std::slice::from_ref(&args.input), None)?,
         replace_day: None,
@@ -576,8 +576,8 @@ fn live_day(
     // every buffer that holds a row.
     storage.row_group_timeout = Duration::ZERO;
 
-    let lock = kibbr_storage::lock::DataLock::acquire(data)?;
-    let (trie, stores) = kibbr_server::open_durable(&storage, schema).map_err(CliError::from)?;
+    let lock = crate::storage::lock::DataLock::acquire(data)?;
+    let (trie, stores) = crate::server::open_durable(&storage, schema).map_err(CliError::from)?;
     // One arrival time for the whole file, as the bulk door gives it one: a clock read per
     // line could split the file over midnight.
     let now = chrono::Utc::now();
@@ -624,8 +624,8 @@ fn live_day(
         )));
     }
 
-    let lock = kibbr_storage::lock::DataLock::acquire(data)?;
-    let (trie, stores) = kibbr_server::open_durable(&storage, schema).map_err(CliError::from)?;
+    let lock = crate::storage::lock::DataLock::acquire(data)?;
+    let (trie, stores) = crate::server::open_durable(&storage, schema).map_err(CliError::from)?;
     let store = stores.disk_store().ok_or(LoadError::NoDisk)?;
     let opts = CompactOptions {
         threads: load::alone_threads(),
@@ -726,7 +726,7 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
                 path: input.to_path_buf(),
                 source,
             })?;
-            let line = kibbr_core::lines::strip_eol(&line);
+            let line = crate::core::lines::strip_eol(&line);
             if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }

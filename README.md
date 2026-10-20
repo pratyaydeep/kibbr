@@ -105,6 +105,33 @@ $ kibbr bench-storage farm.ndjson
   kibbr total is 0.670 of gzip -9 and 1.235 of zstd -19
 ```
 
+**On real data: 0.311x of raw**, on 41 hours of GH Archive (GitHub's public event stream,
+2026-10-14 08:00 to 2026-10-16 00:00 UTC), 926,688 lines loaded through the bulk door.
+
+```
+$ kibbr bench-storage day8h.ndjson
+  ...
+                                   bytes   disk blocks    x raw
+  raw                      1,508,356,119       368,252    1.000
+  gzip -9                    323,942,064        79,088    0.215
+  zstd -19                   211,208,542        51,565    0.140
+  kibbr total                469,603,650       114,652    0.311
+  ...
+  kibbr total is 1.450 of gzip -9 and 2.223 of zstd -19
+```
+
+Here kibbr is above gzip, for three reasons:
+
+- Free text (issue, comment, review and release bodies, and diff hunks) is 26% of kibbr's
+  total.
+- 1,516 templates each pay for their own catalog entry, schema records and small row
+  groups. This overhead is 19% of the total.
+- Nested objects repeat one another across columns, for example `repo.url` and
+  `repo.name`. kibbr encodes each column on its own, so it cannot use that.
+
+The same day taken live and compacted is 0.246x. Details:
+[bench/results/gharchive-2026-10-14.md](bench/results/gharchive-2026-10-14.md).
+
 **Query time: four p50s**, on an idle server holding 1,000,000 farm lines. Measured by
 `kibbr bench --lines 1000000` natively on macOS - an Apple M2, 8 cores, each query on the
 default 4 scan threads - at commit `624c714`, and saved as `testdata/bench/after-3.json`.

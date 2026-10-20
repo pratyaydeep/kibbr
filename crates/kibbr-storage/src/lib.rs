@@ -6,6 +6,8 @@
 //!
 //! Above `kibbr-core` and under the engine: nothing here plans or answers a query.
 
+use kibbr_core as core;
+
 pub mod catalog;
 pub mod db;
 pub mod frame;

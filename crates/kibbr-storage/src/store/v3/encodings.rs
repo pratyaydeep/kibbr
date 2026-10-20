@@ -17,7 +17,7 @@ use super::{
 use crate::db::row_of;
 use crate::frame::Next;
 use crate::store::{effective_ts, Row};
-use kibbr_core::flatten::parse_line;
+use crate::core::flatten::parse_line;
 
 /// `read::chunk`, with the typed decoder held to it on the way, so that each chunk the
 /// tests build is read both ways: the two readers walk one layout and must not drift.

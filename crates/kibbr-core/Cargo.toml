@@ -1,11 +1,14 @@
 [package]
 name = "kibbr-core"
-description = "kibbr - a log line into keys, types and a fingerprint"
+description = "kibbr - a log line into keys, types and a fingerprint, internal to kibbr; no API stability promised"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories = ["database-implementations"]
 
 [dependencies]
 chrono.workspace = true

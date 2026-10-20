@@ -100,10 +100,10 @@ struct Lines {
 }
 
 impl Lines {
-    /// Whether an event is the server's banner (`kibbr_server::BANNER`), written bare as
+    /// Whether an event is the server's banner (`crate::server::BANNER`), written bare as
     /// text; as JSON it is an event like any other.
     fn banner(&self, metadata: &Metadata<'_>) -> bool {
-        self.log.format == LogFormat::Text && metadata.target() == kibbr_server::BANNER
+        self.log.format == LogFormat::Text && metadata.target() == crate::server::BANNER
     }
 }
 

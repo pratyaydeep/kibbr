@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use super::LeafMeta;
-use kibbr_core::flatten::promoted_of;
-use kibbr_core::types::ColumnType;
+use crate::core::flatten::promoted_of;
+use crate::core::types::ColumnType;
 
 /// One template as a plan reads it, made again whole when a column widens or is added and
 /// never changed in place, so a plan holding an `Arc` reads it as it was.
@@ -218,7 +218,7 @@ fn ascending(name: &str, list: &[Posting]) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::trie::ColumnDef;
-    use kibbr_core::types::TimeSource;
+    use crate::core::types::TimeSource;
 
     fn template(columns: &[(&str, Option<ColumnType>)]) -> Arc<Template> {
         let at = chrono::DateTime::from_timestamp(1_705_314_600, 0).expect("a valid timestamp");

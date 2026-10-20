@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::engine::{Cursor, GroupKey, Match, MatchValue, QueryMode, TimeRange};
-use kibbr_storage::store::system_time;
+use crate::storage::store::system_time;
 
 /// What a query said, before the output flags - which are not in the grammar - are folded
 /// in.
@@ -694,7 +694,7 @@ pub fn ago(now: SystemTime, d: Duration) -> Option<SystemTime> {
 mod tests {
     use super::*;
     use crate::engine::Query;
-    use kibbr_core::rng::Rng;
+    use crate::core::rng::Rng;
 
     fn now() -> DateTime<Utc> {
         DateTime::from_timestamp(1_700_000_000, 0).expect("a representable instant")

@@ -55,14 +55,14 @@ async fn serve(
     // Read-only, so it runs before the lock and the port: a data directory holding a
     // segment from another format version is not served at all.
     if let Some(base) = storage.base_path.as_deref() {
-        kibbr_storage::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
+        crate::storage::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
     }
     // Taken before anything is written and before the port: two servers on one directory
     // would each append to the catalog and the manifest over the other's records.
     let mut lock = match storage.base_path.as_deref() {
         Some(base) => {
-            let mut lock = kibbr_storage::lock::DataLock::acquire(base)?;
-            let _ = lock.announce(&kibbr_storage::lock::Holder::server(None, None));
+            let mut lock = crate::storage::lock::DataLock::acquire(base)?;
+            let _ = lock.announce(&crate::storage::lock::Holder::server(None, None));
             Some(lock)
         }
         None => None,
@@ -82,8 +82,8 @@ async fn serve(
     // Written to `LOCK` beside the address: a `/load` shows it or is refused. See lock.rs.
     let load_token = match &lock {
         Some(_) => Some(
-            kibbr_storage::store::v3::file::new_file_id()
-                .map(|id| kibbr_storage::store::manifest::hex(&id))
+            crate::storage::store::v3::file::new_file_id()
+                .map(|id| crate::storage::store::manifest::hex(&id))
                 .map_err(|e| Error::Storage {
                     detail: format!("drawing the load token: {e}"),
                 })?,
@@ -111,7 +111,7 @@ async fn serve(
         } else {
             bound
         };
-        let holder = kibbr_storage::lock::Holder::server(Some(reach.to_string()), load_token);
+        let holder = crate::storage::lock::Holder::server(Some(reach.to_string()), load_token);
         if let Err(e) = lock.announce(&holder) {
             log_warn(&format!(
                 "{e}; `kibbr load` and `kibbr compact` will not find this server"
@@ -410,7 +410,7 @@ fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
     }
 
     match server.storage.trie_file.as_deref() {
-        Some(path) => match kibbr_storage::triefile::save(&server.trie, path) {
+        Some(path) => match crate::storage::triefile::save(&server.trie, path) {
             Ok(bytes) => log(&format!(
                 "trie.json - {} {} byte(s), {} template(s)",
                 path.display(),

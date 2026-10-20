@@ -14,8 +14,8 @@ use super::{
     JsonKind, Source, BITS, CONSTANT, DAY_NS, DELTA, DICTIONARY, KIND_ROW_GROUP, MAX_BODY,
     MAX_ROWS, NO_COMPRESSION, OPTIONAL, PER_ROW, RFC3339, VARINT, ZSTD,
 };
-use kibbr_core::infer::infer;
-use kibbr_core::types::ColValue;
+use crate::core::infer::infer;
+use crate::core::types::ColValue;
 
 /// One chunk's directory entry.
 #[derive(Debug, Clone, PartialEq)]
@@ -781,7 +781,7 @@ pub fn surely_text(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kibbr_core::types::ColumnType;
+    use crate::core::types::ColumnType;
 
     /// The shortcut agrees with the ladder over text built to sit on every rung's edge.
     #[test]

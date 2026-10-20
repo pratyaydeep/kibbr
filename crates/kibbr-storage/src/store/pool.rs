@@ -115,7 +115,7 @@ pub fn written() -> Vec<String> {
 /// and `db::row_of`.
 pub fn row_of(json: &str) -> Row {
     let line = format!("{{\"v\":{json}}}");
-    let parsed = kibbr_core::flatten::parse_line(line.as_bytes(), 1).expect("a line of one key");
+    let parsed = crate::core::flatten::parse_line(line.as_bytes(), 1).expect("a line of one key");
     crate::db::row_of(&parsed)
 }
 

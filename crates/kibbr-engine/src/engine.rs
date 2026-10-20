@@ -16,15 +16,15 @@ use std::time::{Duration, Instant, SystemTime};
 use thiserror::Error;
 
 use crate::limits::Limits;
-use kibbr_core::flatten::{promoted_of, promoted_token};
-use kibbr_core::fmt::{col_text, commas, duration_text};
-use kibbr_core::infer::infer;
-use kibbr_core::types::ColValue;
-use kibbr_storage::store::{
+use crate::core::flatten::{promoted_of, promoted_token};
+use crate::core::fmt::{col_text, commas, duration_text};
+use crate::core::infer::infer;
+use crate::core::types::ColValue;
+use crate::storage::store::{
     effective_ts, nanos_of, Counted, Row, ScanOptions, Stop, StoreError, StoreManager, Term,
     Visitor, Wants, RECEIVED_AT_COLUMN,
 };
-use kibbr_storage::trie::{KeyIndex, Node, Posting, Template, Trie};
+use crate::storage::trie::{KeyIndex, Node, Posting, Template, Trie};
 
 /// The column a `time(...)` bucket is reported under, on every surface.
 pub const BUCKET_COLUMN: &str = "bucket";
@@ -1421,10 +1421,10 @@ mod tests {
         assert!(promoted_of(&path, &columns).is_empty());
     }
     use crate::limits::Limits;
-    use kibbr_core::rng::Rng;
-    use kibbr_core::types::ColumnType;
-    use kibbr_storage::db;
-    use kibbr_storage::store::nanos_of;
+    use crate::core::rng::Rng;
+    use crate::core::types::ColumnType;
+    use crate::storage::db;
+    use crate::storage::store::nanos_of;
     use std::collections::BTreeMap;
     use std::time::UNIX_EPOCH;
 
@@ -1480,7 +1480,7 @@ mod tests {
             corpus().as_bytes(),
             true,
             chrono::Utc::now(),
-            &kibbr_storage::trie::Schema::default(),
+            &crate::storage::trie::Schema::default(),
         )
         .expect("the corpus loads")
     }
@@ -1535,7 +1535,7 @@ mod tests {
     /// template the plan never saw; the query sees the generation move and plans again.
     #[test]
     fn a_publish_between_the_plan_and_the_snapshot_plans_again() {
-        use kibbr_storage::store::{
+        use crate::storage::store::{
             LeafStore, MemoryStore, Scan, ScanOptions, Snapshot, Store, StoreError, Term, Visitor,
         };
         use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -1583,7 +1583,7 @@ mod tests {
             ) -> Box<dyn Snapshot> {
                 if !self.published.swap(true, Ordering::SeqCst) {
                     let line = br#"{"ts":"2024-01-15T12:00:00Z","loaded":"yes","batch":7}"#;
-                    let parsed = kibbr_core::flatten::parse_line(line, 1).expect("a line");
+                    let parsed = crate::core::flatten::parse_line(line, 1).expect("a line");
                     self.trie
                         .ingest(&parsed, chrono::Utc::now())
                         .expect("a new template");
@@ -2079,7 +2079,7 @@ mod tests {
             lines.as_bytes(),
             true,
             chrono::Utc::now(),
-            &kibbr_storage::trie::Schema::default(),
+            &crate::storage::trie::Schema::default(),
         )
         .expect("the two lines load");
         let mut q = query(QueryMode::Fetch, None, None);
@@ -2110,7 +2110,7 @@ mod tests {
     /// can be put to: this is what says the scan's side asks the oracle's question.
     #[test]
     fn a_term_read_once_matches_what_value_matches_does() {
-        use kibbr_storage::store::pool;
+        use crate::storage::store::pool;
 
         let mut values = vec![ColValue::Null];
         for row in pool::rows() {
@@ -2158,10 +2158,10 @@ mod tests {
     /// `value_matches` selects from rendered rows, over generated columns of every type.
     #[test]
     fn a_term_put_to_a_column_selects_the_rows_value_matches_does() {
-        use kibbr_storage::store::columns::{hits, hits_by_row, Sel};
-        use kibbr_storage::store::v3::column::{Column, ValuesRef};
-        use kibbr_storage::store::v3::{read, samples};
-        use kibbr_storage::store::{pool, render_row};
+        use crate::storage::store::columns::{hits, hits_by_row, Sel};
+        use crate::storage::store::v3::column::{Column, ValuesRef};
+        use crate::storage::store::v3::{read, samples};
+        use crate::storage::store::{pool, render_row};
 
         let mut wants = vec![MatchValue::Any];
         wants.extend(pool::terms().into_iter().map(MatchValue::Exact));
@@ -2391,14 +2391,14 @@ mod tests {
     /// The lines through `db::ingest_line` into a trie and a store of their own, with a tick
     /// after `flush_after` lines so that a disk store holds row groups and rows in memory.
     fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) -> db::Db {
-        let schema = kibbr_storage::trie::Schema::default();
+        let schema = crate::storage::trie::Schema::default();
         let trie = Trie::new().with_time_columns(schema.time_columns.clone());
         let now = chrono::DateTime::from_timestamp(EPOCH + DAY / 2, 0).expect("an instant");
         for (at, line) in lines.iter().enumerate() {
-            let parsed = kibbr_core::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+            let parsed = crate::core::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
             db::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
             if flush_after == Some(at + 1) {
-                let done = stores.flush_all(kibbr_storage::store::FlushKind::Tick);
+                let done = stores.flush_all(crate::storage::store::FlushKind::Tick);
                 assert_eq!(done.failed, 0);
             }
         }
@@ -2413,7 +2413,7 @@ mod tests {
     /// mode is asked of the memory store and of a part-flushed disk store, and must agree.
     #[test]
     fn a_count_a_grouping_and_a_fetch_answer_from_columns_what_they_answer_from_rows() {
-        use kibbr_storage::store::{DiskOptions, RowGroupLimits};
+        use crate::storage::store::{DiskOptions, RowGroupLimits};
 
         let dir = Scratch::new("two-stores");
         let lines = two_store_lines();
@@ -2744,7 +2744,7 @@ mod tests {
                 }
                 for (seq, (ts, row)) in day.rows.iter().enumerate() {
                     let placed = offers == Offers::AskedAsIfPlaced
-                        || kibbr_storage::store::v3::day_of(ts.unwrap_or(0)) == day.day;
+                        || crate::storage::store::v3::day_of(ts.unwrap_or(0)) == day.day;
                     if asks && !fetch.wants_row(*ts, seq as u64, placed) {
                         continue;
                     }
@@ -2792,7 +2792,7 @@ mod tests {
         stored: &[i64],
         mut shown: impl FnMut(i64) -> Option<i64>,
     ) -> ModelDay {
-        let start = day * kibbr_storage::store::v3::DAY_NS;
+        let start = day * crate::storage::store::v3::DAY_NS;
         ModelDay {
             day,
             newest: stored.iter().map(|secs| start + ns(*secs)).max(),
@@ -2848,7 +2848,7 @@ mod tests {
                         match rng.below(10) {
                             0..=3 if odd => None,
                             4 if odd => {
-                                Some(*rng.pick(&days) * kibbr_storage::store::v3::DAY_NS + ns(1))
+                                Some(*rng.pick(&days) * crate::storage::store::v3::DAY_NS + ns(1))
                             }
                             _ => Some(at),
                         }
@@ -2930,7 +2930,7 @@ mod tests {
     fn shown(rows: &[Row]) -> Vec<BTreeMap<String, Option<serde_json::Value>>> {
         rows.iter()
             .map(|row| {
-                kibbr_storage::store::present(row)
+                crate::storage::store::present(row)
                     .into_iter()
                     .map(|(name, key)| (name, row.json(key)))
                     .collect()
@@ -3011,7 +3011,7 @@ mod tests {
     /// by position alone, so a position counted wrong across a row group's end shows up.
     #[test]
     fn a_fetch_pages_through_columns_as_it_pages_through_rows() {
-        use kibbr_storage::store::{DiskOptions, RowGroupLimits};
+        use crate::storage::store::{DiskOptions, RowGroupLimits};
 
         let dir = Scratch::new("pages");
         let lines = two_templates(300, 4);
@@ -3107,7 +3107,7 @@ mod tests {
     /// row out of its day turns the asking off for the rest of the query.
     #[test]
     fn rows_that_tie_across_two_days_page_as_they_did_before_a_store_could_ask() {
-        use kibbr_storage::store::{DiskOptions, FlushKind};
+        use crate::storage::store::{DiskOptions, FlushKind};
 
         let dir = Scratch::new("tied");
         let mut lines = vec![
@@ -3294,7 +3294,7 @@ mod tests {
             .iter()
             .filter(|row| {
                 matches!(row.get("ts"), Some(ColValue::Datetime(at))
-                    if adrift_days.contains(&kibbr_storage::store::v3::day_of(*at)))
+                    if adrift_days.contains(&crate::storage::store::v3::day_of(*at)))
             })
             .count();
         assert_eq!((held.len(), adrift), (14, 6));
@@ -3395,16 +3395,16 @@ mod tests {
     /// leaf opened on the row groups it holds, and `in_memory` ingested and left unwritten.
     fn reopened(
         dir: &Scratch,
-        options: kibbr_storage::store::DiskOptions,
+        options: crate::storage::store::DiskOptions,
         known: &[String],
         in_memory: &[String],
     ) -> db::Db {
         let stores = StoreManager::disk(dir.0.clone(), options).expect("a disk store");
-        let schema = kibbr_storage::trie::Schema::default();
+        let schema = crate::storage::trie::Schema::default();
         let trie = Trie::new().with_time_columns(schema.time_columns.clone());
         let now = chrono::DateTime::from_timestamp(EPOCH + DAY / 2, 0).expect("an instant");
         for (at, line) in known.iter().enumerate() {
-            let parsed = kibbr_core::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+            let parsed = crate::core::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
             db::ingest_line(&trie, None, &parsed, now).expect("learnt");
         }
         for leaf in plan(&trie, &asking(&[], QueryMode::Count, (None, None))).leaves {
@@ -3413,7 +3413,7 @@ mod tests {
                 .expect("opened");
         }
         for (at, line) in in_memory.iter().enumerate() {
-            let parsed = kibbr_core::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+            let parsed = crate::core::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
             db::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
         }
         db::Db {
@@ -3446,7 +3446,7 @@ mod tests {
     /// answer and one set of counters, whichever thread chose a row group's rows.
     #[test]
     fn the_same_questions_answer_the_same_every_time_with_their_scans_shared_out() {
-        use kibbr_storage::store::{DiskOptions, FlushKind, RowGroupLimits};
+        use crate::storage::store::{DiskOptions, FlushKind, RowGroupLimits};
 
         const TIMES: u64 = 200;
         /// Every row: the two timed templates' seventeen lines a day each, the third's
@@ -3743,8 +3743,8 @@ mod tests {
     }
 
     /// One line into a trie: the id of the template it went to, and whether it made it.
-    fn taken(trie: &Trie, text: &str) -> Result<(u64, bool), kibbr_storage::trie::TrieError> {
-        let parsed = kibbr_core::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
+    fn taken(trie: &Trie, text: &str) -> Result<(u64, bool), crate::storage::trie::TrieError> {
+        let parsed = crate::core::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
         let (leaf, is_new) = trie.ingest(&parsed, chrono::Utc::now())?;
         let id = leaf
             .leaf_meta
@@ -3774,9 +3774,9 @@ mod tests {
 
     fn template_record(
         id: u64,
-        tokens: Vec<kibbr_storage::catalog::Token>,
-    ) -> kibbr_storage::catalog::Record {
-        kibbr_storage::catalog::Record::Template {
+        tokens: Vec<crate::storage::catalog::Token>,
+    ) -> crate::storage::catalog::Record {
+        crate::storage::catalog::Record::Template {
             id,
             created_at: chrono::DateTime::from_timestamp(EPOCH, 0).expect("a valid timestamp"),
             tokens,
@@ -3787,8 +3787,8 @@ mod tests {
         id: u64,
         name: &str,
         col_type: Option<ColumnType>,
-    ) -> kibbr_storage::catalog::Record {
-        kibbr_storage::catalog::Record::Column {
+    ) -> crate::storage::catalog::Record {
+        crate::storage::catalog::Record::Column {
             template_id: id,
             name: name.to_string(),
             col_type,
@@ -3797,14 +3797,14 @@ mod tests {
         }
     }
 
-    fn promoted_token_of(key: &str, value: &str) -> kibbr_storage::catalog::Token {
-        kibbr_storage::catalog::Token::Promoted {
+    fn promoted_token_of(key: &str, value: &str) -> crate::storage::catalog::Token {
+        crate::storage::catalog::Token::Promoted {
             promoted: key.to_string(),
             value: value.to_string(),
         }
     }
 
-    fn replayed(records: &[kibbr_storage::catalog::Record]) -> Trie {
+    fn replayed(records: &[crate::storage::catalog::Record]) -> Trie {
         Trie::from_catalog("data", records, &mut |_| {}).expect("the records replay")
     }
 
@@ -3893,12 +3893,12 @@ mod tests {
         let edits = trie.keys().edits();
 
         // Every id spent: the next new template has its path made and is then refused.
-        trie.reserve_template_ids_through(kibbr_storage::trie::LAST_TEMPLATE_ID);
+        trie.reserve_template_ids_through(crate::storage::trie::LAST_TEMPLATE_ID);
         let refused = taken(&trie, r#"{"event":"logout","user":7}"#);
         assert!(
             matches!(
                 refused,
-                Err(kibbr_storage::trie::TrieError::TemplateIdsSpent)
+                Err(crate::storage::trie::TrieError::TemplateIdsSpent)
             ),
             "{refused:?}"
         );
@@ -4123,8 +4123,8 @@ mod tests {
 
     /// Catalog records for one to four templates, including what `ingest` never writes and a
     /// replay accepts: a label that is also a column, two promoted tokens of one key, and more.
-    fn generated_records(rng: &mut Rng) -> Vec<kibbr_storage::catalog::Record> {
-        use kibbr_storage::catalog::Token;
+    fn generated_records(rng: &mut Rng) -> Vec<crate::storage::catalog::Record> {
+        use crate::storage::catalog::Token;
         const KEYS: [&str; 10] = [
             "event",
             "a.event",
@@ -4261,7 +4261,7 @@ mod tests {
             let trie = Trie::new();
             for _ in 0..1 + rng.below(8) {
                 let text = generated_line(&mut rng, &mut seen);
-                let Ok(parsed) = kibbr_core::flatten::parse_line(text.as_bytes(), 1) else {
+                let Ok(parsed) = crate::core::flatten::parse_line(text.as_bytes(), 1) else {
                     continue;
                 };
                 if trie.ingest(&parsed, now).is_err() {
@@ -4272,8 +4272,8 @@ mod tests {
             put(&replayed(&trie.catalog_records()), &mut rng, &seen);
             if seed % 4 == 0 {
                 let path = dir.join("trie.json");
-                kibbr_storage::triefile::save(&trie, &path).expect("the trie saves");
-                let (loaded, error) = kibbr_storage::triefile::load_reporting(&path, "data");
+                crate::storage::triefile::save(&trie, &path).expect("the trie saves");
+                let (loaded, error) = crate::storage::triefile::load_reporting(&path, "data");
                 assert!(error.is_none(), "{error:?}");
                 put(&loaded, &mut rng, &seen);
             }
@@ -4380,7 +4380,7 @@ mod tests {
                     };
                     let text = format!(r#"{{"event":"e{event}","f{field}":1,"n":{number}{lvl}}}"#);
                     let parsed =
-                        kibbr_core::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
+                        crate::core::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
                     let (leaf, is_new) = trie
                         .ingest(&parsed, chrono::Utc::now())
                         .expect("the line is taken");
@@ -4495,8 +4495,8 @@ mod tests {
     /// planned, and a refused widening leaves the plan the columns as they were.
     #[test]
     fn a_plan_holds_nothing_the_catalog_refused() {
-        use kibbr_storage::catalog::{self, Catalog};
-        use kibbr_storage::trie::TrieError;
+        use crate::storage::catalog::{self, Catalog};
+        use crate::storage::trie::TrieError;
         let dir = std::env::temp_dir().join(format!(
             "kibbr-engine-plans-{}-failed-append",
             std::process::id()
@@ -4504,7 +4504,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("mkdir");
         let parsed =
-            |line: &str| kibbr_core::flatten::parse_line(line.as_bytes(), 1).expect("a valid line");
+            |line: &str| crate::core::flatten::parse_line(line.as_bytes(), 1).expect("a valid line");
         let trie = Trie::new_in(&dir.display().to_string());
         let good = Catalog::open(&catalog::path_in(&dir), &mut |_| {}).expect("open");
         trie.attach_catalog(good.0);
@@ -4537,7 +4537,7 @@ mod tests {
     #[test]
     fn a_plan_reads_through_a_poisoned_key_index() {
         let parsed =
-            |line: &str| kibbr_core::flatten::parse_line(line.as_bytes(), 1).expect("a valid line");
+            |line: &str| crate::core::flatten::parse_line(line.as_bytes(), 1).expect("a valid line");
         let trie = Trie::new();
         let now = chrono::Utc::now();
         trie.ingest(&parsed(r#"{"user":7}"#), now)

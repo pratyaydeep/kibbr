@@ -6,7 +6,7 @@
 use kibbr::cmd::{ask, bench, bench_storage, compact, demo, load, parse, query};
 use kibbr::gen::{self, Profile};
 use kibbr::{config, error, logs};
-use kibbr_core::infer;
+use kibbr::core::infer;
 
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
@@ -636,7 +636,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let settings = config::settings(file, flags, log)?;
             // Nothing here cancels the token: a server started from the command line is
             // stopped by SIGTERM or SIGINT, which it hears for itself.
-            let report = kibbr_server::run(settings, CancellationToken::new())?;
+            let report = kibbr::server::run(settings, CancellationToken::new())?;
             code = exit_code(&report);
             Ok(())
         }
@@ -813,9 +813,9 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
 
 /// What `kibbr serve` exits with: 0 for every run that ended in a report, the deadline's
 /// cut included, because every acknowledged line is in the write-ahead log.
-fn exit_code(report: &kibbr_server::Report) -> ExitCode {
+fn exit_code(report: &kibbr::server::Report) -> ExitCode {
     // Every field named, so that one added to the report is looked at here.
-    let kibbr_server::Report { addr: _, cut: _ } = report;
+    let kibbr::server::Report { addr: _, cut: _ } = report;
     ExitCode::SUCCESS
 }
 
@@ -835,7 +835,7 @@ fn is_broken_pipe(e: &CliError) -> bool {
     let io_error = match e {
         CliError::Write(inner) => Some(inner),
         CliError::Read { source, .. } => Some(source),
-        CliError::Input(kibbr_storage::db::ReadError::Read { source, .. }) => Some(source),
+        CliError::Input(kibbr::storage::db::ReadError::Read { source, .. }) => Some(source),
         CliError::Gen(error::GenError::Write(inner)) => Some(inner),
         _ => None,
     };
