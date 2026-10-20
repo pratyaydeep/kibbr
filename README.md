@@ -38,10 +38,20 @@ at `/`; there is no Elasticsearch-compatible port and no Kibana or Grafana plugi
 
 ## Install
 
+### Using cargo
+
+```
+cargo install kibbr
+```
+
+### From source
+
 ```
 cargo build --release
 export PATH="$PWD/target/release:$PATH"     # or: cargo install --path .
 ```
+
+Either way:
 
 ```
 $ kibbr --version
