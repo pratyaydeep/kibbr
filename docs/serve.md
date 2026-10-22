@@ -11,7 +11,7 @@ curl -s -X POST --data-binary @logs.ndjson http://127.0.0.1:7700/ingest     # ND
 curl -s -X POST -d '{"q": "COUNT LOG {\"level\": \"error\"}"}' http://127.0.0.1:7700/query
 curl -s http://127.0.0.1:7700/templates       # every template, its columns and row count
 curl -s http://127.0.0.1:7700/stats           # throughput, template count, storage size
-curl -s http://127.0.0.1:7700/health          # {"ok":true,"status":"ok","version":"0.1.0","source":"https://github.com/pratyaydeep/kibbr"}
+curl -s http://127.0.0.1:7700/health          # {"ok":true,"status":"ok","version":"0.1.1","source":"https://github.com/pratyaydeep/kibbr"}
 gzip -c logs.ndjson | curl -s -X POST --data-binary @- \
   -H 'Content-Encoding: gzip' http://127.0.0.1:7700/ingest                  # gzip in
 ```

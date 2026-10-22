@@ -7,21 +7,23 @@ exclude = ["fuzz", "lab-rs"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Pratyaydeep Ghanta <pratyaydeepghanta@gmail.com>"]
 repository = "https://github.com/pratyaydeep/kibbr"
+homepage = "https://github.com/pratyaydeep/kibbr"
+rust-version = "1.96.1"
 keywords = ["logs", "logging", "database", "columnar", "observability"]
 
 # One version of each dependency for the whole workspace, and one place that says why it
 # is here; a crate takes what it calls with `workspace = true`.
 [workspace.dependencies]
 # The four crates by path here, and by this version once published: `cargo publish` wants both.
-kibbr-core = { path = "crates/kibbr-core", version = "0.1.0" }
-kibbr-storage = { path = "crates/kibbr-storage", version = "0.1.0" }
-kibbr-engine = { path = "crates/kibbr-engine", version = "0.1.0" }
-kibbr-server = { path = "crates/kibbr-server", version = "0.1.0" }
+kibbr-core = { path = "crates/kibbr-core", version = "0.1.1" }
+kibbr-storage = { path = "crates/kibbr-storage", version = "0.1.1" }
+kibbr-engine = { path = "crates/kibbr-engine", version = "0.1.1" }
+kibbr-server = { path = "crates/kibbr-server", version = "0.1.1" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -51,15 +53,19 @@ zstd = { version = "0.13", default-features = false }
 
 [package]
 name = "kibbr"
-description = "kibbr - log store"
+description = "A database for structured JSON logs: each line's shape stored once in a trie, its values as typed columns, queryable in milliseconds."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://github.com/pratyaydeep/kibbr#readme"
+rust-version.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories = ["database-implementations", "command-line-utilities"]
+exclude = ["testdata/", "bench/", "deploy/", "docs/", "scripts/", "fuzz/", ".github/", "lab/", "lab-rs/"]
 
 [dependencies]
 kibbr-core.workspace = true

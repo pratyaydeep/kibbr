@@ -160,7 +160,7 @@ The code is a workspace of five crates: [`kibbr-core`](crates/kibbr-core/README.
 
 ## Status
 
-kibbr is **0.1.0**. It runs, it measures, and it isn't finished. Schema merging and a cold S3 tier are designed but not built.
+kibbr is currently under development. It runs, it measures, and it isn't finished. Schema merging and a cold S3 tier are designed but not built.
 
 If you keep logs in Elasticsearch or Loki mostly so you have them later, the most useful thing you can do is run `kibbr bench-storage your-logs.ndjson` and [open an issue](https://github.com/pratyaydeep/kibbr/issues) with what it prints, good or bad.
 

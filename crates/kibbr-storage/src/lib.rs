@@ -1,6 +1,10 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The trie, catalog, day files and write-ahead log of
+//! [kibbr](https://github.com/pratyaydeep/kibbr), a database for structured JSON logs.
+//! Internal to kibbr; no API stability promised.
+//!
 //! Where templates and rows are kept: the trie and its catalog, the stores under it, the
 //! write-ahead log, `db` - the write path for one parsed line - and `lock`.
 //!

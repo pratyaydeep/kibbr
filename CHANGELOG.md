@@ -2,6 +2,11 @@
 
 One entry per tag, newest first.
 
+## 0.1.1 — 2026-10-23
+
+- Crate metadata and docs only; no code changes. Descriptions, links and the first
+  paragraph of each crate's docs, for crates.io and docs.rs.
+
 ## 0.1.0 — 2026-10-21, first public release
 
 - **Licence**: AGPL-3.0-only in place of the Elastic License 2.0; contributions are taken

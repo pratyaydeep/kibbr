@@ -1,6 +1,10 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The HTTP server of [kibbr](https://github.com/pratyaydeep/kibbr), a database for
+//! structured JSON logs, with the loads and compactions it runs. Internal to kibbr; no API
+//! stability promised.
+//!
 //! The server, as a library: `run` is given a `Settings` and a token to stop it by, and
 //! serves the native HTTP surface until the token is cancelled or a signal arrives.
 //!
