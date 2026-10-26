@@ -65,7 +65,7 @@ rust-version.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories = ["database-implementations", "command-line-utilities"]
-exclude = ["/testdata/", "/bench/", "/deploy/", "/docs/", "/scripts/", "/fuzz/", "/.github/", "/lab/", "/lab-rs/"]
+exclude = ["/testdata/", "/bench/", "/deploy/", "/docs/", "/scripts/", "/fuzz/", "/.github/", "/lab/", "/lab-rs/", "/web/"]
 
 [dependencies]
 kibbr-core.workspace = true

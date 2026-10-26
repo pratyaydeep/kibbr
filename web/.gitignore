@@ -1,0 +1,5 @@
+node_modules/
+dist/
+lib/
+.bsb.lock
+src/**/*.res.mjs

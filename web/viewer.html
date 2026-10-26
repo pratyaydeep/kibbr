@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <!--
+    kibbr web console. Built from web/ in https://github.com/pratyaydeep/kibbr (AGPL-3.0-only).
+    Bundled here: React, React DOM and scheduler (MIT, Meta Platforms, Inc. and affiliates);
+    @rescript/runtime and @rescript/react (MIT); the fonts Archivo (Copyright 2020 The Archivo
+    Project Authors) and IBM Plex Mono (Copyright 2017 IBM Corp.), under the SIL Open Font
+    License 1.1. The full notices are in NOTICE.
+  -->
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Filled by the server (`get_viewer`); the Status page shows them as the source offer. -->
+    <meta name="kibbr-version" content="{{version}}" />
+    <meta name="kibbr-source" content="{{source}}" />
+    <title>kibbr</title>
+    <link rel="icon" href="./src/assets/logo/favicon.svg" />
+    <script>
+      // The theme before the first paint, so a dark screen does not flash light first.
+      (function () {
+        var stored = null;
+        try { stored = localStorage.getItem("kibbr.theme"); } catch (e) {}
+        var dark = stored === "dark" || (stored !== "light" &&
+          window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/Main.res.mjs"></script>
+  </body>
+</html>

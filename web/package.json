@@ -1,0 +1,30 @@
+{
+  "name": "kibbr-web",
+  "private": true,
+  "description": "The kibbr web console, built into crates/kibbr-server/src/viewer.html",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "res": "rescript build",
+    "res:watch": "rescript watch",
+    "dev": "vite",
+    "build": "rescript build && vite build && cp dist/viewer.html ../crates/kibbr-server/src/viewer.html",
+    "screens": "node scripts/screens.mjs"
+  },
+  "dependencies": {
+    "@rescript/react": "0.15.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@fontsource/archivo": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "playwright-core": "1.64.1",
+    "rescript": "12.3.1",
+    "vite": "8.3.5",
+    "vite-plugin-singlefile": "2.3.4"
+  }
+}

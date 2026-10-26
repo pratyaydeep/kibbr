@@ -1,0 +1,124 @@
+/* kibbr design tokens, generated from tokens.json. Light is the default; dark applies with [data-theme="dark"]. */
+:root {
+  --color-bg: #F6F8FA;
+  --color-surface: #FFFFFF;
+  --color-surface-sunken: #F6F8FA;
+  --color-border: #D0D7DE;
+  --color-divider: #EAEEF2;
+  --color-text: #1F2328;
+  --color-text-muted: #57606A;
+  --color-text-faint: #8C959F;
+  --color-ink: #1F2A44;
+  --color-on-ink: #F6F8FA;
+  --color-accent: #0969DA;
+  --color-danger: #CF222E;
+  --color-warning: #9A6700;
+  --color-success: #1A7F37;
+  --color-stream-dot: #848A98;
+  --color-hover: #E7E9EB;
+  --color-match: #CEE1F8;
+  --color-selected: #DDF4FF;
+  --color-success-soft: #E4F0E7;
+  --color-phase-1: #1F2A44;
+  --color-banner-danger-bg: #F1DEE2;
+  --color-banner-danger-border: #E6A2A8;
+  --color-banner-warning-bg: #EBE7DC;
+  --color-banner-warning-border: #D1BE96;
+  --brand-blue: #2F6FD1;
+  --brand-red: #D83A34;
+  --brand-gold: #A87508;
+  --brand-tree-light: #1F2A44;
+  --brand-tree-dark: #EFF2F8;
+  --brand-tree-common: #6B7FAC;
+  --brand-dot-light: #848A98;
+  --brand-dot-dark: #93979D;
+  --font-sans: 'Archivo', 'Helvetica Neue', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-segment: 5px;
+  --radius-tree-row: 6px;
+  --radius-icon-button: 7px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-panel: 12px;
+  --radius-pill: 999px;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 18px;
+  --space-10: 20px;
+  --space-11: 28px;
+  --space-12: 40px;
+  --size-sidebar-expanded: 232px;
+  --size-sidebar-collapsed: 64px;
+  --size-nav-row: 36px;
+  --size-status-row: 40px;
+  --size-icon: 18px;
+  --size-icon-sm: 14px;
+  --size-mark: 26px;
+  --size-icon-button: 28px;
+  --size-button: 34px;
+  --size-button-lg: 38px;
+  --size-chip: 32px;
+  --size-query-bar: 52px;
+  --size-search-box: 58px;
+  --size-banner: 34px;
+  --size-list-row: 35px;
+  --size-field-row: 28px;
+  --size-tree-row: 28px;
+  --size-log-row-raw: 43px;
+  --size-table-row: 36px;
+  --size-status-dot: 8px;
+}
+
+[data-theme="dark"] {
+  --color-bg: #22272E;
+  --color-surface: #2D333B;
+  --color-surface-sunken: #262C34;
+  --color-border: #444C56;
+  --color-divider: #373E47;
+  --color-text: #CDD9E5;
+  --color-text-muted: #909DAB;
+  --color-text-faint: #636E7B;
+  --color-ink: #EFF2F8;
+  --color-on-ink: #22272E;
+  --color-accent: #6CB6FF;
+  --color-danger: #FF938A;
+  --color-warning: #DAAA3F;
+  --color-success: #57AB5A;
+  --color-stream-dot: #93979D;
+  --color-hover: #2E333B;
+  --color-match: #3F5872;
+  --color-selected: rgba(65,132,228,0.16);
+  --color-success-soft: #32413F;
+  --color-phase-1: #5C7FA8;
+  --color-banner-danger-bg: #3D3439;
+  --color-banner-danger-border: #7A5253;
+  --color-banner-warning-bg: #383730;
+  --color-banner-warning-border: #6C5B35;
+}
+
+.type-wordmark { font-family: var(--font-sans); font-size: 19px; font-weight: 800; letter-spacing: -0.02em; }
+.type-page-title { font-family: var(--font-sans); font-size: 20px; font-weight: 700; }
+.type-nav-item { font-family: var(--font-sans); font-size: 14px; font-weight: 500; }
+.type-shortcut { font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+.type-panel-title { font-family: var(--font-sans); font-size: 14px; font-weight: 600; }
+.type-caption { font-family: var(--font-sans); font-size: 12px; font-weight: 400; }
+.type-label { font-family: var(--font-sans); font-size: 13px; font-weight: 400; }
+.type-button { font-family: var(--font-sans); font-size: 13px; font-weight: 600; }
+.type-section-label { font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.type-badge { font-family: var(--font-sans); font-size: 11px; font-weight: 800; }
+.type-mono-sm { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
+.type-mono { font-family: var(--font-mono); font-size: 12.5px; font-weight: 400; }
+.type-mono-md { font-family: var(--font-mono); font-size: 13px; font-weight: 500; }
+.type-query { font-family: var(--font-mono); font-size: 14px; font-weight: 400; }
+.type-query-home { font-family: var(--font-mono); font-size: 15px; font-weight: 400; }
+.type-stat { font-family: var(--font-mono); font-size: 20px; font-weight: 500; }
+.type-stat-sans { font-family: var(--font-sans); font-size: 20px; font-weight: 800; }
+.type-heading-mono { font-family: var(--font-mono); font-size: 22px; font-weight: 500; }

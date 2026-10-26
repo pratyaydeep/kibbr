@@ -1,0 +1,137 @@
+/* The design's tokens (a copy of .design/tokens.css; light on :root, dark on
+   [data-theme="dark"]), the fonts, and the page's base. */
+@import "../tokens.css";
+@import "./fonts.css";
+
+/* Values tokens.json holds that tokens.css does not emit, written the same way. */
+:root {
+  --shadow-focus: 0 0 0 2px var(--color-accent);
+  --shadow-active-nav: inset 0 0 0 1px var(--color-border);
+  --motion-default: 120ms ease-out;
+}
+
+/* Values the specs give that are not tokens yet (see the build summary): layout widths
+   and heights named once here, so no component carries a bare number for them. */
+:root {
+  --layout-home-column: 860px;
+  --layout-home-padding: 120px 40px 28px;
+  --layout-home-gap: 22px;
+  --layout-home-lists-gap: 28px;
+  --layout-results-side: 340px;
+  --layout-results-gap: 26px;
+  --layout-templates-tree: 400px;
+  --layout-templates-padding: 22px 26px;
+  --layout-facts-gap: 40px;
+  --layout-chart-height: 52px;
+  --layout-chart-panel: 138px;
+  --layout-meter-width: 64px;
+  --layout-meter-height: 4px;
+  --layout-sparkline-width: 64px;
+  --layout-sparkline-height: 18px;
+  --layout-badge: 20px;
+  --layout-badge-radius: 6px;
+  --layout-pill-height: 22px;
+  --layout-pill-dot: 7px;
+  --layout-header-row: 36px;
+  --layout-search-ring: 3px;
+  --layout-column-row: 22px;
+  --layout-column-head: 24px;
+  --layout-matched-id: 34px;
+  --layout-matched-rows: 64px;
+  --layout-latest-time: 96px;
+  --layout-latest-level: 48px;
+  --layout-latest-event: 150px;
+  --layout-legend-swatch-w: 14px;
+  --layout-legend-swatch-h: 10px;
+  --layout-mono-cell: 11.5px;
+  --layout-field-row: 27px;
+  /* Paddings between the steps of the space scale. */
+  --layout-pad-3: 3px;
+  --layout-pad-7: 7px;
+  --layout-pad-9: 9px;
+  --layout-pad-11: 11px;
+  /* The phase badges' number: white in both themes, as drawn. */
+  --color-on-badge: #FFFFFF;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  box-shadow: var(--shadow-focus);
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* An icon as drawn: its own size and stroke come with the SVG; colour is currentColor. */
+.icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.icon svg {
+  display: block;
+}
+
+/* The mark for the theme in view. */
+[data-theme="dark"] .only-light,
+:root:not([data-theme="dark"]) .only-dark {
+  display: none;
+}
