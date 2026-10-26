@@ -956,6 +956,11 @@
   white-space: nowrap;
 }
 
+.raw-pair .is-long {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .j-key {
   color: var(--color-text-muted);
 }
@@ -1392,7 +1397,8 @@
   height: var(--layout-chart-panel);
 }
 
-.chart-panel.is-minimized {
+.chart-panel.is-minimized,
+.results-grid.is-maximized > .chart-panel {
   height: auto;
 }
 

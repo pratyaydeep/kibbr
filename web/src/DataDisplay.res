@@ -270,6 +270,8 @@ let valueAsked = (asked: asked, path, value: JSON.t) => {
 
 let quoted = s => JSON.stringify(JSON.String(s))
 
+let longValue = 60
+
 // One ingested line as JSON, keys in the order the API gave them, each `"key":value`
 // kept on one line and the row wrapping between them.
 module RawRow = {
@@ -290,7 +292,12 @@ module RawRow = {
         <span className="j-punct"> {text("]")} </span>
       </>
     | JSON.String(s) =>
-      <span className={valueAsked(asked, path, v) ? "j-match" : "j-string"}> {text(quoted(s))} </span>
+      // A value too long for any line may break inside itself; shorter ones break only
+      // between pairs.
+      let long = String.length(s) > longValue ? " is-long" : ""
+      <span className={(valueAsked(asked, path, v) ? "j-match" : "j-string") ++ long}>
+        {text(quoted(s))}
+      </span>
     | other =>
       <span className={valueAsked(asked, path, v) ? "j-match" : "j-number"}>
         {text(JSON.stringify(other))}
@@ -382,7 +389,12 @@ module ColumnsTable = {
         flat->Array.reduce(String.length(key), (w, row) => Math.Int.max(w, String.length(shown(key, row))))
       Math.Int.min(longest, maxWidth)
     })
-    let template = widths->Array.map(w => Int.toString(w) ++ "ch")->Array.join(" ")
+    // In characters of the cells' mono face, whose advance is 0.6 em: one width for the
+    // header (set smaller) and the rows alike, so the columns line up.
+    let template =
+      widths
+      ->Array.map(w => `calc(${Int.toString(w)} * 0.6 * var(--type-mono-size))`)
+      ->Array.join(" ")
     <div className="cols type-mono" role="table" ariaLabel="Log rows as columns">
       <div className="cols-row is-head" role="row" style={{gridTemplateColumns: template}}>
         {seen
