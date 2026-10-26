@@ -1,2 +1,16 @@
 kibbr. Copyright (C) 2026 Pratyaydeep Ghanta. Licensed under AGPL-3.0-only; see
 LICENSE. Contributions are accepted under MIT; see CONTRIBUTING.md.
+
+The web console (crates/kibbr-server/src/viewer.html, built from web/) bundles:
+
+- React, React DOM and scheduler. Copyright (c) Meta Platforms, Inc. and affiliates.
+  MIT License.
+- @rescript/react, Copyright (c) 2017 Sander, 2020 The ReScript Project, and
+  @rescript/runtime, from the ReScript project. MIT License.
+- Archivo. Copyright 2020 The Archivo Project Authors
+  (https://github.com/Omnibus-Type/Archivo). SIL Open Font License, Version 1.1.
+- IBM Plex Mono. Copyright 2017 IBM Corp. SIL Open Font License, Version 1.1.
+
+The fonts are the latin subset of the @fontsource packages, embedded unmodified. The full
+texts of these licences are in each package under web/node_modules after `npm ci`, and at
+https://opensource.org/license/mit and https://openfontlicense.org.
