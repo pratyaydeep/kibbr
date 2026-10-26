@@ -59,9 +59,10 @@ let duration = (ms: float) =>
     Float.toFixed(ms, ~digits=1) ++ " ms"
   } else if ms < 1000.0 {
     shortNumber(ms) ++ " ms"
-  } else if ms < 60_000.0 {
+  } else if ms <= 60_000.0 {
+    // A minute reads as 60 s, as the design writes the compact interval.
     shortNumber(ms /. 1000.0) ++ " s"
-  } else if ms < 3_600_000.0 {
+  } else if ms <= 3_600_000.0 {
     shortNumber(ms /. 60_000.0) ++ " min"
   } else {
     shortNumber(ms /. 3_600_000.0) ++ " h"
