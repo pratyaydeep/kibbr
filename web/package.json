@@ -10,7 +10,7 @@
   "scripts": {
     "res": "rescript build",
     "res:watch": "rescript watch",
-    "dev": "vite",
+    "dev": "rescript build && vite",
     "build": "rescript build && vite build && cp dist/viewer.html ../crates/kibbr-server/src/viewer.html",
     "screens": "node scripts/screens.mjs"
   },

@@ -70,7 +70,7 @@ To work on it against a running kibbr:
 
 ```
 cd web
-npm run res:watch                              # ReScript, recompiled on save
+npm run res:watch                              # ReScript, recompiled on save (dev builds once first)
 KIBBR_API=http://127.0.0.1:7700 npm run dev    # Vite, proxying the four endpoints
 npm run screens -- --base http://127.0.0.1:7700/ --out shots   # every page at 1440×900
 ```
