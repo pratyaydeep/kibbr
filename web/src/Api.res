@@ -41,6 +41,16 @@ module Read = {
     | _ => []
     }
 
+  // A time stamp as a real date, or `None`: text that is not a date never reaches a page
+  // as one, where it would show as "NaN" or sort out of place.
+  let date = (dict, name) =>
+    dict
+    ->string(name)
+    ->Option.flatMap(text => {
+      let date = Date.fromString(text)
+      Float.isNaN(date->Date.getTime) ? None : Some(date)
+    })
+
   let strings = (dict, name) =>
     dict
     ->array(name)
@@ -153,7 +163,7 @@ type queries = {
 
 type stats = {
   uptimeSeconds: option<float>,
-  startedAt: option<string>,
+  startedAt: option<Date.t>,
   storage: option<storage>,
   templates: option<float>,
   trieNodes: option<float>,
@@ -263,7 +273,7 @@ let decodeStats = json => {
   let trie = d->Read.child("trie")
   {
     uptimeSeconds: d->Read.float("uptime_seconds"),
-    startedAt: d->Read.string("started_at"),
+    startedAt: d->Read.date("started_at"),
     storage: d->Read.child("storage")->Option.map(decodeStorage),
     templates: trie->Option.flatMap(t => t->Read.float("templates")),
     trieNodes: trie->Option.flatMap(t => t->Read.float("nodes")),
@@ -282,8 +292,8 @@ type template = {
   path: array<string>,
   columns: array<column>,
   rows: float,
-  firstSeen: option<string>,
-  lastSeen: option<string>,
+  firstSeen: option<Date.t>,
+  lastSeen: option<Date.t>,
   // "column:ts" when the template's time comes from a column; anything else otherwise.
   timeSource: option<string>,
 }
@@ -304,8 +314,8 @@ let decodeTemplate = json =>
         c->Read.string("name")->Option.map(name => {name, columnType: c->Read.string("type")})
       ),
       rows: d->Read.float("rows")->Option.getOr(0.0),
-      firstSeen: d->Read.string("first_seen"),
-      lastSeen: d->Read.string("last_seen"),
+      firstSeen: d->Read.date("first_seen"),
+      lastSeen: d->Read.date("last_seen"),
       timeSource: d->Read.string("time_source"),
     })
   }
@@ -319,7 +329,8 @@ let decodeTemplates = json =>
 // ── POST /query ─────────────────────────────────────────────────────────────────────
 
 type group = {
-  bucket: option<string>,
+  // `None` for a row that could not be placed in time, or a bucket that is not a date.
+  bucket: option<Date.t>,
   // The group's column keys and their values, e.g. `level`.
   keys: dict<string>,
   count: float,
@@ -345,7 +356,7 @@ type answer = {
 }
 
 let decodeGroup = (d: dict<JSON.t>) => {
-  bucket: d->Read.string("bucket"),
+  bucket: d->Read.date("bucket"),
   keys: switch d->Read.child("keys") {
   | Some(keys) =>
     keys

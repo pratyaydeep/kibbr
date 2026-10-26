@@ -135,7 +135,7 @@ module Detail = {
       <div className="facts">
         <DataDisplay.Fact label="Rows" value={Format.compact(t.rows)} />
         {switch t.firstSeen {
-        | Some(s) => <DataDisplay.Fact label="First seen" value={Format.dayMonth(Date.fromString(s))} />
+        | Some(date) => <DataDisplay.Fact label="First seen" value={Format.dayMonth(date)} />
         | None => React.null
         }}
         {switch t.lastSeen {

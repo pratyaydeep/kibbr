@@ -126,7 +126,7 @@ let make = (~server as _: Server.t) => {
             stats->Option.flatMap(s => s.uptimeSeconds)->Option.map(u => "up " ++ Format.uptime(u)),
             stats
             ->Option.flatMap(s => s.startedAt)
-            ->Option.map(t => "since " ++ Format.isoMinuteUtc(Date.fromString(t)) ++ " UTC"),
+            ->Option.map(date => "since " ++ Format.isoMinuteUtc(date) ++ " UTC"),
           ]),
         )}
       </span>

@@ -178,11 +178,13 @@ let bars = (groups: array<Api.group>) => {
   groups->Array.forEach(g =>
     switch g.bucket {
     | None => ()
-    | Some(bucket) =>
+    | Some(date) =>
+      let at = date->Date.getTime
+      let bucket = Float.toString(at)
       let current = switch byBucket->Dict.get(bucket) {
       | Some(bar) => bar
       | None =>
-        order->Array.push(bucket)
+        order->Array.push(at)
         {info: 0.0, warn: 0.0, error: 0.0}
       }
       let level = g.keys->Dict.get("level")->Option.getOr("")
@@ -195,8 +197,8 @@ let bars = (groups: array<Api.group>) => {
     }
   )
   order
-  ->Array.toSorted((a, b) => Date.fromString(a)->Date.getTime -. Date.fromString(b)->Date.getTime)
-  ->Array.filterMap(bucket => byBucket->Dict.get(bucket))
+  ->Array.toSorted((a, b) => a -. b)
+  ->Array.filterMap(at => byBucket->Dict.get(Float.toString(at)))
 }
 
 module Chart = {

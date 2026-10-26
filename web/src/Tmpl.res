@@ -59,5 +59,4 @@ let filter = (t: Api.template) => {
   "{" ++ pairs->Array.join(", ") ++ "}"
 }
 
-let lastSeenMs = (t: Api.template) =>
-  t.lastSeen->Option.map(s => Date.fromString(s)->Date.getTime)->Option.getOr(0.0)
+let lastSeenMs = (t: Api.template) => t.lastSeen->Option.mapOr(0.0, Date.getTime)
