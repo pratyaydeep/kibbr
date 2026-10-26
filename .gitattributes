@@ -1,0 +1,3 @@
+# The web console as built from web/ (docs/viewer.md): build output, so it is left out of
+# GitHub's language statistics and its diffs are collapsed in pull requests.
+crates/kibbr-server/src/viewer.html linguist-generated=true
