@@ -8,6 +8,43 @@
   --shadow-focus: 0 0 0 2px var(--color-accent);
   --shadow-active-nav: inset 0 0 0 1px var(--color-border);
   --motion-default: 120ms ease-out;
+  /* Type sizes and weights from tokens.json (tokens.css emits them only as .type-* classes). */
+  --type-wordmark-size: 19px;
+  --type-wordmark-weight: 800;
+  --type-page-title-size: 20px;
+  --type-page-title-weight: 700;
+  --type-nav-item-size: 14px;
+  --type-nav-item-weight: 500;
+  --type-shortcut-size: 11px;
+  --type-shortcut-weight: 500;
+  --type-panel-title-size: 14px;
+  --type-panel-title-weight: 600;
+  --type-caption-size: 12px;
+  --type-caption-weight: 400;
+  --type-label-size: 13px;
+  --type-label-weight: 400;
+  --type-button-size: 13px;
+  --type-button-weight: 600;
+  --type-section-label-size: 11px;
+  --type-section-label-weight: 600;
+  --type-badge-size: 11px;
+  --type-badge-weight: 800;
+  --type-mono-sm-size: 12px;
+  --type-mono-sm-weight: 400;
+  --type-mono-size: 12.5px;
+  --type-mono-weight: 400;
+  --type-mono-md-size: 13px;
+  --type-mono-md-weight: 500;
+  --type-query-size: 14px;
+  --type-query-weight: 400;
+  --type-query-home-size: 15px;
+  --type-query-home-weight: 400;
+  --type-stat-size: 20px;
+  --type-stat-weight: 500;
+  --type-stat-sans-size: 20px;
+  --type-stat-sans-weight: 800;
+  --type-heading-mono-size: 22px;
+  --type-heading-mono-weight: 500;
 }
 
 /* Values the specs give that are not tokens yet (see the build summary): layout widths
