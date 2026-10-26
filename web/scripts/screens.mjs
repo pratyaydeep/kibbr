@@ -26,6 +26,22 @@ const degraded = {
   detail: "No space left on device (os error 28)",
 };
 
+// Recent and Saved as the design draws them; nothing in the console writes kibbr.saved yet.
+const minutesAgo = (m) => Date.now() - m * 60_000;
+const lists = {
+  "kibbr.recent": JSON.stringify([
+    { q: 'MATCH LOG {"level": "ERROR"} SINCE 6h', at: minutesAgo(2) },
+    { q: 'COUNT LOG {"event": "login_failed"} SINCE 1h', at: minutesAgo(18) },
+    { q: 'MATCH LOG {"event": "processed"} SINCE 24h', at: minutesAgo(60) },
+    { q: "COUNT LOG {} SINCE 6h GROUP BY time(5m)", at: minutesAgo(26 * 60) },
+  ]),
+  "kibbr.saved": JSON.stringify([
+    { q: 'MATCH LOG {"event": "payment_declined"} SINCE 1h', name: "Payments on-call" },
+    { q: 'COUNT LOG {"status": "5*"} SINCE 15m', name: "API errors" },
+    { q: 'MATCH LOG {"event": "refund_issued"} SINCE 24h', name: "Refunds" },
+  ]),
+};
+
 const states = [];
 for (const theme of ["light", "dark"]) {
   for (const collapsed of [false, true]) {
@@ -42,6 +58,7 @@ for (const theme of ["light", "dark"]) {
     act: async (page) => page.keyboard.type('MATCH LOG {"level": "error"} SINCE 1h'),
   });
   states.push({ name: `logs-home-${theme}-degraded`, hash: "#/", theme, health: degraded });
+  states.push({ name: `logs-home-${theme}-lists`, hash: "#/", theme, storage: lists });
   states.push({ name: `status-${theme}-degraded`, hash: "#/status", theme, health: degraded });
   states.push({
     name: `logs-results-${theme}-columns`,
@@ -80,11 +97,12 @@ try {
       deviceScaleFactor: 1.5,
     });
     await context.addInitScript(
-      ([theme, collapsed]) => {
+      ([theme, collapsed, storage]) => {
         localStorage.setItem("kibbr.theme", theme);
         localStorage.setItem("kibbr.rail.collapsed", collapsed ? "1" : "0");
+        for (const [key, value] of Object.entries(storage)) localStorage.setItem(key, value);
       },
-      [state.theme, Boolean(state.collapsed)],
+      [state.theme, Boolean(state.collapsed), state.storage ?? {}],
     );
     const page = await context.newPage();
     if (state.health) {
