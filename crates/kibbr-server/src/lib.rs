@@ -83,13 +83,13 @@ const RETRY_AFTER_SECONDS: u32 = 1;
 /// bounded and the response was not; `errors_omitted` counts the rest.
 const MAX_REPORTED_ERRORS: usize = 1000;
 
-/// The log viewer, compiled in: the binary is the deployment unit, and the page cannot
-/// drift from the endpoints it calls.
+/// The web console, compiled in: the binary is the deployment unit, and the page cannot
+/// drift from the endpoints it calls. Built from `web/` (docs/viewer.md).
 const VIEWER: &str = include_str!("viewer.html");
 
 /// Where the source of this build is: AGPL §13 has a server offer it to whoever uses it
-/// over a network, so `/health` and the viewer's footer both carry it. A modified build
-/// that is served to others names its own.
+/// over a network, so `/health` and the console's Status page both carry it. A modified
+/// build that is served to others names its own.
 pub const SOURCE: &str = "https://github.com/pratyaydeep/kibbr";
 /// This build's version, beside `SOURCE` in both places.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

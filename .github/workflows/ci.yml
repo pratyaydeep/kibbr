@@ -49,3 +49,33 @@ jobs:
       - name: scripts/fault/crash_test.sh, 3 rounds
         if: ${{ !cancelled() }}
         run: ROUNDS=3 scripts/fault/crash_test.sh
+
+  # The web console is committed built (crates/kibbr-server/src/viewer.html), because the
+  # Rust build has no Node. This builds web/ again and fails when the two differ.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node, from web/.nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      - name: npm run build
+        working-directory: web
+        run: npm run build
+
+      - name: viewer.html is what web/ builds
+        run: |
+          git diff --stat --exit-code -- crates/kibbr-server/src/viewer.html || {
+            echo "::error file=crates/kibbr-server/src/viewer.html::out of date with web/: run npm run build in web/ and commit the result"
+            exit 1
+          }

@@ -4,29 +4,77 @@
 kibbr serve --data-dir kibbr-data     # then open http://127.0.0.1:7700/
 ```
 
-`GET /` is a log viewer: the first real client of TrieQL and of the cursor.
+`GET /` is the web console: four pages over the server's own API.
 
-- **One file**: `crates/kibbr-server/src/viewer.html`, inline CSS and vanilla JS, compiled
-  into the binary with `include_str!`. Nothing to deploy beside the binary, no build step,
-  and no request to anywhere but this server - `tests/serve.rs` asserts the last of those.
-- Served `no-store`: a viewer cached against a newer server is a debugging tool lying about
-  what the database answered.
-- **Deliberately small**: no saved queries, no dashboards, no auto-refresh, no auth, no
-  persistence of any kind.
-- **Rows are the JSON lines they were ingested as**, not a table. `MATCH LOG {}` spans 870
-  templates whose columns barely overlap; the table that used to union them was 56 columns
-  of mostly "this template has no such column".
-- **The keys the query named are highlighted**, and their values too when the query asked
-  for a value and the row carries it: a highlight always means "this is why the row is here".
-- **Only the lines on screen are in the DOM.** A page is up to `max_rows`; spacers stand in
-  for the rest, so a 10,000-row answer paints in about 30ms instead of blocking the tab for
-  ten seconds. The cost: the browser's Ctrl+F searches the rendered lines only - ask the
-  database instead.
-- **The chart is the same query, counted**: `GROUP BY time(...)` at a width chosen to land
-  near 60 bars. Clicking a bar narrows the range to that bucket and re-runs. Empty buckets
-  are bars of zero, because the engine zero-fills them.
-- **The viewer never injects a `LIMIT`.** A query naming none meets `max_rows` and the
-  banner says so: this is the client most likely to trip the backstop, and hiding it here
-  would hide it everywhere.
-- **The range control is authoritative.** It opens on the newest ten minutes of whatever is
-  stored, found by asking the engine. Clearing both boxes runs the query with no time clause.
+- **Logs** (`#/`): one search box, suggestions drawn from the template tree, and the queries
+  run from this browser. Running a query opens its results (`#/?q=<query>`): matches over
+  time, the log rows, how the query ran (Explain), and the templates it touched.
+- **Templates** (`#/templates`, `#/templates/<id>`): every template as a tree, and one
+  template's columns and latest lines.
+- **Status** (`#/status`): health, ingest, the write-ahead log, storage, compaction, queries
+  and the settings in effect, every value from `GET /stats` and `GET /health`.
+
+Routes are hash routes, so no page can collide with an API path: `GET /templates` is JSON.
+Keys `1`–`3` move between the pages; ⌘↵ (Ctrl↵ off a Mac) runs the query.
+
+## What it asks of the server
+
+`GET /health`, `GET /stats`, `GET /templates` and `POST /query`, and nothing else: no
+request leaves for anywhere but this server, fonts included - `tests/serve.rs` asserts it.
+
+- **Health.** `/health` and `/stats` are read when the page opens, every ten seconds and when
+  the window regains focus. A degraded server, or one storing in memory, shows a banner
+  across every page until the state clears. The Status page reads both itself, on opening
+  and on Refresh, and keeps the ingest rate between its refreshes as a sparkline.
+- **A query is two requests**, built from the query as typed. The rows:
+  `MATCH LOG {filter} SINCE … LIMIT 200`, any `GROUP BY` dropped, the next page asked with
+  `AFTER` and the previous answer's `next_cursor` as the list scrolls to its end. The chart:
+  `COUNT LOG {filter} SINCE … GROUP BY time(<range ÷ 90>), level`, stacked info, warn and
+  error. A query the console cannot take apart goes to the server as typed, and a `400`
+  shows the parser's message under the query bar.
+- **Rows are the JSON lines they were ingested as** (Raw), or one column per field
+  (Columns). The keys the query named are highlighted, and their values too when the query
+  asked for a value.
+- Served `no-store`: a console cached against a newer server is a debugging tool lying
+  about what the database answered.
+
+## What it keeps in the browser
+
+Four `localStorage` keys, nothing on the server. Every read and write is guarded: with
+storage off (a private window, a blocked site) the console works and forgets.
+
+| Key | Value |
+|---|---|
+| `kibbr.rail.collapsed` | `"1"` or `"0"`: the sidebar collapsed, shared by every open tab |
+| `kibbr.theme` | `"light"` or `"dark"`; absent, the console follows the system |
+| `kibbr.recent` | the last 20 queries run from this browser, newest first, as `[{q, at}]` |
+| `kibbr.saved` | saved queries as `[{q, name}]`; listed on Logs when there are any |
+
+## Building it
+
+The console is ReScript and React in `web/`, built by Vite into one self-contained HTML
+file - scripts, styles, fonts and icons inlined - at `crates/kibbr-server/src/viewer.html`.
+That file is committed: the server compiles it in with `include_str!`, so `cargo build`,
+the Docker image and the crates.io package need no Node. Change `web/`, then rebuild it:
+
+```
+cd web
+npm ci               # Node 20.19 or newer; see web/.nvmrc
+npm run build        # rescript build, vite build, and the copy into crates/kibbr-server
+```
+
+CI builds it again and fails when the committed `viewer.html` differs from what `web/`
+builds, so commit the two together.
+
+To work on it against a running kibbr:
+
+```
+cd web
+npm run res:watch                              # ReScript, recompiled on save
+KIBBR_API=http://127.0.0.1:7700 npm run dev    # Vite, proxying the four endpoints
+npm run screens -- --base http://127.0.0.1:7700/ --out shots   # every page at 1440×900
+```
+
+`{{version}}` and `{{source}}` in `web/viewer.html` are filled by the server when it serves
+the page (`get_viewer`); the Status page shows them as "kibbr <version> · source", the
+AGPL §13 offer of this server's source.

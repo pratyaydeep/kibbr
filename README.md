@@ -60,7 +60,7 @@ $ curl -s -X POST -d '{"q": "COUNT LOG {\"event\": \"login_ok\"}"}' http://127.0
 {"exists":true,"count":113, ... "duration_ms":3.58}
 ```
 
-Open **http://127.0.0.1:7700/** for the built-in log viewer: query, a histogram you can click into, and the matched keys highlighted in every row.
+Open **http://127.0.0.1:7700/** for the built-in web console: search, matches over time, the matched keys highlighted in every row, the template tree, and the server's status.
 
 A `200` from `/ingest` means every line is in the write-ahead log and flushed. To shrink a finished day:
 
@@ -147,7 +147,7 @@ There are two ways in:
 | [docs/serve.md](docs/serve.md) | HTTP API: `/ingest`, `/query`, limits, shutdown |
 | [docs/load.md](docs/load.md) | bulk loading closed days |
 | [docs/compact.md](docs/compact.md) | compaction and `bench-storage` |
-| [docs/viewer.md](docs/viewer.md) | the built-in log viewer |
+| [docs/viewer.md](docs/viewer.md) | the built-in web console, and building it from `web/` |
 | [docs/container.md](docs/container.md) | the Docker image |
 | [docs/settings.md](docs/settings.md) | flags, env vars, [`kibbr.toml.example`](kibbr.toml.example) |
 | [docs/ask.md](docs/ask.md) | `templates`, `stats`, `health` |

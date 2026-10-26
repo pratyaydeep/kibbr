@@ -765,6 +765,8 @@ fn the_viewer_fetches_nothing_else() {
     assert_eq!(status, 200);
 
     let page = body.to_lowercase();
+    // The one <link> is the favicon, inlined as a data URI: it fetches nothing.
+    let page = page.replacen("<link rel=\"icon\" href=\"data:", "", 1);
     for forbidden in [
         "src=\"http",
         "src='http",
@@ -778,32 +780,43 @@ fn the_viewer_fetches_nothing_else() {
             "the viewer reaches outside itself: found `{forbidden}`"
         );
     }
-    // The two it *is* allowed to fetch, and the only two: its own server's endpoints.
-    assert!(page.contains("fetch(\"/query\""));
-    assert!(page.contains("fetch(\"/templates\""));
+    // The four it *is* allowed to fetch, its own server's endpoints. The page is minified,
+    // and the minifier writes a string in whichever quotes it likes.
+    for endpoint in ["/health", "/stats", "/templates", "/query"] {
+        assert!(
+            ["\"", "'", "`"]
+                .iter()
+                .any(|q| page.contains(&format!("fetch({q}{endpoint}{q}"))),
+            "the viewer does not fetch {endpoint}"
+        );
+    }
 }
 
 /// AGPL §13: whoever uses a server over a network is told where its source is. The
-/// viewer's footer says it, with the version, and no placeholder is left unfilled.
+/// viewer carries the version and the source address in two meta tags, which its Status
+/// page shows as "kibbr <version> · source", and no placeholder is left unfilled.
 #[test]
-fn the_viewer_footer_names_the_source_and_the_version() {
+fn the_viewer_names_the_source_and_the_version() {
     let server = Served::start();
     let (status, _, page) = request_raw(server.port, "GET", "/", b"");
     assert_eq!(status, 200);
 
-    let footer = page
-        .split_once("<footer>")
-        .and_then(|(_, rest)| rest.split_once("</footer>"))
-        .map(|(footer, _)| footer)
-        .expect("the viewer has a footer");
     assert!(
-        footer.contains("source: https://github.com/pratyaydeep/kibbr"),
-        "{footer}"
+        page.contains(
+            r#"<meta name="kibbr-source" content="https://github.com/pratyaydeep/kibbr" />"#
+        ),
+        "the viewer does not name its source"
     );
     assert!(
-        footer.contains(concat!("kibbr ", env!("CARGO_PKG_VERSION"))),
-        "{footer}"
+        page.contains(concat!(
+            r#"<meta name="kibbr-version" content=""#,
+            env!("CARGO_PKG_VERSION"),
+            r#"" />"#
+        )),
+        "the viewer does not name its version"
     );
+    // The Status page reads them back by these names.
+    assert!(page.contains("kibbr-version") && page.contains("kibbr-source"));
     assert!(!page.contains("{{"), "a placeholder was served unfilled");
 }
 

@@ -5,10 +5,11 @@
 
 use super::*;
 
-/// The log viewer, one HTML file; `no-store`, because a cached viewer against a newer
+/// The web console, one HTML file; `no-store`, because a cached console against a newer
 /// server is a debugging tool lying about what the database answered.
 async fn get_viewer() -> Response {
-    // The footer's two placeholders, filled once: the page is a file and the version is not in it.
+    // The page's two placeholders, filled once: the page is a file and the version is not in
+    // it. Its Status page shows them as the source offer.
     static PAGE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         VIEWER
             .replace("{{version}}", VERSION)
