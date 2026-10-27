@@ -196,11 +196,11 @@ mod tests {
         let mut files = Vec::new();
         sources(&root, &root.join("src"), &mut files);
         for entry in std::fs::read_dir(root.join("crates")).expect("the crates") {
-            sources(
-                &root,
-                &entry.expect("an entry").path().join("src"),
-                &mut files,
-            );
+            let crate_dir = entry.expect("an entry").path();
+            // A crate is a directory; a file beside them (Finder's `.DS_Store`) is not one.
+            if crate_dir.is_dir() {
+                sources(&root, &crate_dir.join("src"), &mut files);
+            }
         }
         assert!(files.len() > 40, "{} source files", files.len());
         assert!(
