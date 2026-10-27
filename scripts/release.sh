@@ -55,5 +55,7 @@ for i in "${!CRATES[@]}"; do
     cargo publish --locked -p "$crate"
 done
 
-git tag -a "$TAG" -m "$NOTES"
+# `verbatim`: by default git drops lines that start with `#` as comments, and the notes
+# open with their `## VERSION` heading.
+git tag -a --cleanup=verbatim "$TAG" -m "$NOTES"
 echo "== tagged $TAG; push it with: git push origin $TAG"
