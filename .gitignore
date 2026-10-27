@@ -34,3 +34,9 @@ sample.ndjson
 
 # The design handoff: local only, not committed. The web console copies what it uses into web/.
 /.design
+
+# macOS folder metadata.
+.DS_Store
+
+# The data directory the docs use in their examples (`kibbr serve --data-dir kibbr-data`).
+/kibbr-data/

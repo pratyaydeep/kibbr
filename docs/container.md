@@ -3,7 +3,7 @@
 ```
 docker build -t kibbr .                    # the image: one static binary on distroless
 docker run -d --name kibbr --stop-timeout 30 -p 127.0.0.1:7700:7700 -v kibbr-data:/var/lib/kibbr kibbr serve
-curl -s 127.0.0.1:7700/health              # {"ok":true,"status":"ok","version":"0.1.1","source":"https://github.com/pratyaydeep/kibbr"}
+curl -s 127.0.0.1:7700/health              # {"ok":true,"status":"ok","version":"0.2.0","source":"https://github.com/pratyaydeep/kibbr"}
 curl -s -X POST 127.0.0.1:7700/query -H 'Content-Type: application/json' --data '{"q":"COUNT LOG {}"}'
 docker stop kibbr                          # a clean stop: exit code 0
 docker logs kibbr 2>&1 | tail -6           # the final flush, the checkpoint, ... "exit 0"

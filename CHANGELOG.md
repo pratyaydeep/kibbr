@@ -2,6 +2,26 @@
 
 One entry per tag, newest first.
 
+## 0.2.0 — 2026-10-28
+
+- **Web console**: `GET /` is a console of four pages in place of the one-page viewer. Logs:
+  a search box, suggestions from the template tree, and the queries run from this browser.
+  Results: matches over time, the rows as ingested or as columns, Explain, and the templates
+  matched, paged as the list scrolls. Templates: the tree, and one template's columns and
+  latest lines. Status: every value `/stats` and `/health` report. Light and dark themes, a
+  banner when the server is degraded or storing in memory, and four `localStorage` keys.
+- **Built from `web/`**: ReScript and React, bundled by Vite into one self-contained
+  `viewer.html` - scripts, styles, fonts and icons inlined - that is committed and compiled
+  in, so `cargo build`, the Docker image and the crates need no Node. CI fails when the
+  committed page differs from what `web/` builds. See docs/viewer.md.
+- No API or server behaviour changed. The page is ~458 KB against ~48 KB before, and the
+  binary ~410 KB larger. NOTICE lists what the console bundles.
+
+Known issues:
+
+- The console has no control to save a query yet; Saved lists what `kibbr.saved` holds.
+- The chart stacks every level other than warn and error as info.
+
 ## 0.1.1 — 2026-10-23
 
 - Crate metadata and docs only; no code changes. Descriptions, links and the first
