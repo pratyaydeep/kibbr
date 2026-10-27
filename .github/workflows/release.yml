@@ -1,0 +1,89 @@
+name: Release
+
+# Publishing a GitHub release publishes its version to crates.io. The release's tag is
+# vX.Y.Z, and the run checks out the commit it names. Drafts do not run this.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# A second release while one is publishing waits for it rather than cancelling it halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The same check as the web job in ci.yml: the crates carry the committed viewer.html,
+  # so a release must not ship one that web/ no longer builds.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node, from web/.nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      - name: npm run build
+        working-directory: web
+        run: npm run build
+
+      - name: viewer.html is what web/ builds
+        run: |
+          git diff --stat --exit-code -- crates/kibbr-server/src/viewer.html || {
+            echo "::error file=crates/kibbr-server/src/viewer.html::out of date with web/: run npm run build in web/ and commit the result"
+            exit 1
+          }
+
+  publish:
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version and components are rust-toolchain.toml's; this installs them.
+      - name: Rust, from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      # The tag comes in through env, not ${{ }} in the script, so it is never run as shell.
+      - name: Version from the tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::release tag '$TAG' is not vX.Y.Z"
+            exit 1
+          }
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      # Without it the dry run passes and the first real publish fails; say so before.
+      - name: CARGO_REGISTRY_TOKEN is set
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          [ -n "$CARGO_REGISTRY_TOKEN" ] || {
+            echo "::error::no CARGO_REGISTRY_TOKEN secret: add a crates.io token under Settings > Secrets and variables > Actions"
+            exit 1
+          }
+
+      # The tag is the workspace version, CHANGELOG.md has its section, the five-crate dry
+      # run passes; then the five publishes in dependency order, 30 s apart. All of it is
+      # scripts/publish.sh, which a release from a laptop runs too.
+      - name: scripts/publish.sh
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: scripts/publish.sh "$VERSION"
