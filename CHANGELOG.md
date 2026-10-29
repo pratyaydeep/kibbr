@@ -2,6 +2,12 @@
 
 One entry per tag, newest first.
 
+## 0.2.1 — 2026-10-29
+
+- No code changes. The first release published by CI: publishing a GitHub release runs
+  `.github/workflows/release.yml`, which checks the version, the CHANGELOG and the built
+  web console, and publishes the five crates. See CONTRIBUTING.md.
+
 ## 0.2.0 — 2026-10-28
 
 - **Web console**: `GET /` is a console of four pages in place of the one-page viewer. Logs:
