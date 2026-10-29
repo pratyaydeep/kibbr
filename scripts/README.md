@@ -61,11 +61,16 @@ seed of the generated lines.
 | `explain_time.sh` | no gate: prints the walk and the wall time at 1,000 and 1,000,000 lines; the walk should not grow |
 | `log_report.sh` | no gate: prints a file's size, compressibility, templates and columns, side by side for several files |
 
-## publish.sh and release.sh - publish a version
+## bump.sh, publish.sh and release.sh - make a version and publish it
 
 A release is usually a GitHub release; CONTRIBUTING.md has the steps. Publishing one runs
 `.github/workflows/release.yml`, which checks that `web/` still builds the committed
 `viewer.html` and then runs `scripts/publish.sh` with the version from the tag.
+
+`scripts/bump.sh 0.1.0` sets the version: in Cargo.toml for the five crates, in Cargo.lock,
+in the `/health` example of docs/serve.md and docs/container.md, and as a new CHANGELOG.md
+section holding `- TODO: what changed`, which `scripts/publish.sh` refuses. It commits
+nothing.
 
 `scripts/publish.sh 0.1.0` checks the version against Cargo.toml and that CHANGELOG.md has a
 `## 0.1.0 ` section, dry-runs the five crates, and publishes them in dependency order 30

@@ -39,6 +39,8 @@ NOTES=$(awk -v v="$VERSION" '
     /^## / { if (on) exit; on = (index($0, "## " v " ") == 1) }
     on' CHANGELOG.md)
 [ -n "$NOTES" ] || fail "no '## $VERSION' section in CHANGELOG.md"
+grep -qF -- "- TODO: what changed" <<<"$NOTES" \
+    && fail "the '## $VERSION' section in CHANGELOG.md still holds scripts/bump.sh's placeholder"
 
 if [ "$MODE" = notes ]; then
     printf '%s\n' "$NOTES"

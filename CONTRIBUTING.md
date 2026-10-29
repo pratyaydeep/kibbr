@@ -81,8 +81,9 @@ variables > Actions, add it as the repository secret `CARGO_REGISTRY_TOKEN`.
 
 For each version, for example 0.3.0:
 
-1. Set `version = "0.3.0"` under `[workspace.package]` in Cargo.toml, add a
-   `## 0.3.0 — DATE` section to CHANGELOG.md, and commit.
+1. `scripts/bump.sh 0.3.0` sets the version in Cargo.toml, Cargo.lock and the docs, and
+   adds a `## 0.3.0 — DATE` section to CHANGELOG.md. Write that section in place of its
+   placeholder, which the release refuses, and commit.
 2. Check it: `scripts/publish.sh --dry-run 0.3.0`. The dry run builds the five crates,
    about 2 GB in `target/`.
 3. Push the commit. Tag it `v0.3.0` and push the tag, or let the release form make the tag.
