@@ -61,7 +61,7 @@ seed of the generated lines.
 | `explain_time.sh` | no gate: prints the walk and the wall time at 1,000 and 1,000,000 lines; the walk should not grow |
 | `log_report.sh` | no gate: prints a file's size, compressibility, templates and columns, side by side for several files |
 
-## bump.sh, publish.sh and release.sh - make a version and publish it
+## bump.sh and publish.sh - make a version and publish it
 
 A release is usually a GitHub release; CONTRIBUTING.md has the steps. Publishing one runs
 `.github/workflows/release.yml`, which checks that `web/` still builds the committed
@@ -75,9 +75,5 @@ nothing.
 `scripts/publish.sh 0.1.0` checks the version against Cargo.toml and that CHANGELOG.md has a
 `## 0.1.0 ` section, dry-runs the five crates, and publishes them in dependency order 30
 seconds apart. `--dry-run` stops after the dry run; `--notes` stops after the two checks and
-prints the CHANGELOG section, the text for the release.
-
-`scripts/release.sh 0.1.0` is a release from a laptop, without CI: it checks a clean tree
-and an unused tag, runs `scripts/publish.sh`, and tags `v0.1.0` with its CHANGELOG.md
-section. It does not push the tag. Do not also publish a GitHub release for that version:
-the workflow would find the crates already on crates.io and fail.
+prints the CHANGELOG section, the text for the release. Without either it publishes for
+real, from wherever it runs: leave that to the workflow.

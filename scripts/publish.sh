@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Check a version and publish the five crates to crates.io: the part of a release that is
-# the same here (scripts/release.sh) and in CI (.github/workflows/release.yml).
+# Check a version and publish the five crates to crates.io: what a GitHub release runs
+# (.github/workflows/release.yml). Run here, it checks a version before the release.
 #
 # In this order, each after the ones it depends on: kibbr-core, kibbr-storage,
 # kibbr-engine, kibbr-server, kibbr. Before anything is published:

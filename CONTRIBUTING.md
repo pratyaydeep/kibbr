@@ -93,5 +93,4 @@ For each version, for example 0.3.0:
 The workflow fails before publishing anything if the tag is not the workspace version,
 CHANGELOG.md has no section for it, `web/` does not build the committed `viewer.html`, the
 token is missing, or the dry run fails. Then it publishes in dependency order, 30 seconds
-apart. [scripts/README.md](scripts/README.md) describes `scripts/release.sh`, which does the
-same from a laptop, without CI.
+apart. [scripts/README.md](scripts/README.md) describes the scripts.
