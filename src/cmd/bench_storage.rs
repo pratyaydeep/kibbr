@@ -28,6 +28,8 @@ pub struct Args {
     pub es: Option<String>,
     pub scratch: Option<PathBuf>,
     pub keep: bool,
+    /// Leave zstd -19 out of the table: on a large corpus it is most of the run.
+    pub no_zstd: bool,
     /// The settings file, for what a scratch directory's storage is opened with.
     pub settings: crate::config::File,
 }
@@ -375,22 +377,31 @@ fn measure(
                 enc.finish()?.sync_all()
             })
         });
-        let zst = scope.spawn(|| {
-            compressed(&args.input, &zst_path, |r, f| {
-                let mut enc = zstd::stream::write::Encoder::new(f, 19)?;
-                io::copy(r, &mut enc)?;
-                enc.finish()?.sync_all()
+        // At about 3 MB/s on one core, zstd -19 is hours on a corpus of tens of gigabytes.
+        let zst = (!args.no_zstd).then(|| {
+            scope.spawn(|| {
+                compressed(&args.input, &zst_path, |r, f| {
+                    let mut enc = zstd::stream::write::Encoder::new(f, 19)?;
+                    io::copy(r, &mut enc)?;
+                    enc.finish()?.sync_all()
+                })
             })
         });
-        (gz.join(), zst.join())
+        (gz.join(), zst.map(|z| z.join()))
     });
     let joined = |r: std::thread::Result<Result<(), LoadError>>| {
         r.unwrap_or_else(|_| Err(LoadError::Input("a compressor panicked".to_string())))
     };
     joined(gz)?;
-    joined(zst)?;
+    if let Some(zst) = zst {
+        joined(zst)?;
+    }
     let gz = size_of(&gz_path, block).map_err(io_at(&gz_path))?;
-    let zst = size_of(&zst_path, block).map_err(io_at(&zst_path))?;
+    let zst = if args.no_zstd {
+        None
+    } else {
+        Some(size_of(&zst_path, block).map_err(io_at(&zst_path))?)
+    };
 
     let es = match &args.es {
         Some(url) => Some(elasticsearch(url, &args.input)?),
@@ -429,8 +440,10 @@ fn measure(
         heading.clone(),
         row("raw", Some(raw), raw.bytes),
         row("gzip -9", Some(gz), gz.bytes),
-        row("zstd -19", Some(zst), zst.bytes),
     ];
+    if let Some(zst) = zst {
+        lines.push(row("zstd -19", Some(zst), zst.bytes));
+    }
     lines.extend(bulk.rows("kibbr total", &row));
     if let Some((bytes, rejected)) = es {
         lines.push(row("Elasticsearch store", None, bytes));
@@ -444,12 +457,17 @@ fn measure(
     lines.push(String::new());
     // How far kibbr's total is from the two compressors - which keep no index and answer
     // no query - in bytes: what the encodings are measured by.
-    if gz.bytes > 0 && zst.bytes > 0 {
-        lines.push(format!(
+    match zst {
+        Some(zst) if gz.bytes > 0 && zst.bytes > 0 => lines.push(format!(
             "  kibbr total is {:.3} of gzip -9 and {:.3} of zstd -19",
             bulk.total.bytes as f64 / gz.bytes as f64,
             bulk.total.bytes as f64 / zst.bytes as f64
-        ));
+        )),
+        None if gz.bytes > 0 => lines.push(format!(
+            "  kibbr total is {:.3} of gzip -9; zstd -19 was not run (--no-zstd)",
+            bulk.total.bytes as f64 / gz.bytes as f64
+        )),
+        _ => {}
     }
     lines.push(format!(
         "  disk blocks are {} bytes: what each file takes on this disk, rounded up to whole \

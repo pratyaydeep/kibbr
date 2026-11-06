@@ -40,7 +40,8 @@ A compaction prints `compacted 2024-01-15: 10,000 rows, 105 row groups in 1 file
 - The first table is the file's size raw, under `gzip -9` and `zstd -19`, and as kibbr
   holds it - data files, catalog and manifest, in bytes and in disk blocks, the data files
   broken down into column data, row group headers, schema records and footers - with
-  kibbr's total as a share of each compressor's.
+  kibbr's total as a share of each compressor's. `--no-zstd` leaves `zstd -19` out: it runs
+  on one core at a few MB/s, and on tens of gigabytes it is hours of the run.
 - The second table is the same lines as a live day: through the live door into a directory
   of its own, flushed 1,440 times over the file, or once a line if it has fewer - a day
   that arrives evenly, flushed once a minute - measured as that leaves it and again once

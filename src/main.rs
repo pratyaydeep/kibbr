@@ -288,6 +288,10 @@ enum Command {
         /// Leave the scratch directory in place, to look at.
         #[arg(long)]
         keep: bool,
+        /// Leave zstd -19 out: it runs on one core at a few MB/s, so on tens of gigabytes it
+        /// takes hours.
+        #[arg(long)]
+        no_zstd: bool,
         /// As `load --time-columns`. Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
@@ -689,6 +693,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             es,
             scratch,
             keep,
+            no_zstd,
             time_columns,
         } => bench_storage::run(
             &bench_storage::Args {
@@ -696,6 +701,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 es,
                 scratch,
                 keep,
+                no_zstd,
                 settings: file.clone(),
             },
             config::schema(file, time_columns),

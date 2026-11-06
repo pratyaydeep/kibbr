@@ -30,8 +30,9 @@ const PARTS: &[&str] = &[
 struct Scratch(PathBuf);
 
 impl Scratch {
-    fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("kibbr-bench-test-{}", std::process::id()));
+    /// One a test: the tests of this file run at once, in one process.
+    fn new(test: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("kibbr-bench-test-{}-{test}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create the scratch root");
         Self(root)
@@ -99,7 +100,7 @@ fn block(lines: &[&str], first: &str) -> Vec<(String, u64)> {
 
 #[test]
 fn a_live_day_is_measured_before_and_after_compaction_and_is_smaller_after() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("live-day");
     let input = scratch.0.join("farm.ndjson");
     let farm = kibbr()
         .args(["gen-logs", "--profile", "farm", "--seed", "42"])
@@ -239,5 +240,41 @@ fn a_live_day_is_measured_before_and_after_compaction_and_is_smaller_after() {
         )
     );
 
+    assert!(!scratch.0.join("scratch").exists());
+}
+
+#[test]
+fn no_zstd_leaves_zstd_out_and_measures_the_rest() {
+    let scratch = Scratch::new("no-zstd");
+    let input = scratch.0.join("farm.ndjson");
+    let farm = kibbr()
+        .args(["gen-logs", "--profile", "farm", "--seed", "42", "--lines", "200"])
+        .output()
+        .expect("failed to run gen-logs");
+    assert!(farm.status.success(), "gen-logs failed");
+    fs::write(&input, farm.stdout).expect("write the input");
+
+    let ran = kibbr()
+        .arg("bench-storage")
+        .arg(&input)
+        .arg("--no-zstd")
+        .arg("--scratch")
+        .arg(scratch.0.join("scratch"))
+        .output()
+        .expect("failed to run bench-storage");
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "bench-storage failed:\n{stderr}");
+    let stdout = String::from_utf8(ran.stdout).expect("stdout was not utf-8");
+
+    assert!(
+        !stdout.lines().any(|l| l.starts_with("  zstd -19 ")),
+        "a zstd row under --no-zstd:\n{stdout}"
+    );
+    assert!(stdout.lines().any(|l| l.starts_with("  gzip -9 ")), "{stdout}");
+    assert!(
+        stdout.contains("of gzip -9; zstd -19 was not run (--no-zstd)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("kibbr total, after"), "{stdout}");
     assert!(!scratch.0.join("scratch").exists());
 }
