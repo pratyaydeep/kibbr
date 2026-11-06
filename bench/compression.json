@@ -1,0 +1,10 @@
+{
+  "sources": [
+    {
+      "tag": "postgresql",
+      "url": "https://zenodo.org/records/10516402/files/postgresql.tar.gz?download=1",
+      "files": "*.log",
+      "note": "PostgreSQL 15 jsonlog under YCSB workloads A-E (Zenodo 10516402)"
+    }
+  ]
+}

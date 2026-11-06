@@ -76,3 +76,25 @@ one day - a result is never written over):
 The native series is `kibbr bench` itself: `kibbr bench --help`, and
 `kibbr bench --table testdata/bench/after-2.json testdata/bench/after-3.json` to print saved
 results side by side without measuring anything.
+
+## Compression on real corpora
+
+`bench/compression.py` runs `kibbr bench-storage` on log corpora it downloads, and keeps
+one result a source in `bench/results/compression.json`, keyed by the source's `tag`, with
+each also written as `bench/results/compression/<tag>.md`. The sources are in
+`bench/compression.json`: a `tag`, a `url` (or a local `path`), and optionally `files` (a
+glob over an archive), `time_columns`, `sha256` and `note`.
+
+```
+bench/compression.py                      # every source not measured yet
+bench/compression.py --tag postgresql     # that one only
+bench/compression.py --input mine.json --output mine-results.json
+```
+
+A tag already in the output is not run again; the script says so. Delete its entry to
+measure it again. Downloads, unpacked files and each run's raw output are kept under
+`testdata/compression/<tag>/`, so a second run does not fetch again. Needs `python3`, and
+`zstd` only for a zstd file inside an archive that unpacks to several files.
+
+The bytes are the same run to run; the load and compaction times are not a measurement
+unless the machine was quiet.
