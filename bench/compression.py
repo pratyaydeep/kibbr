@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # What kibbr's storage makes of real log corpora, one source at a time, with each result
-# kept in one JSON file. Each source is downloaded, unpacked and run through
+# kept in one JSON file. Each source is downloaded, read out of its archive and run through
 # `kibbr bench-storage`, which prints the raw bytes, `gzip -9`, `zstd -19`, kibbr's bulk load,
 # and the same lines as a live day before and after compaction. This script reads that table
 # back into numbers.
@@ -12,15 +12,18 @@
 #      "url": "https://zenodo.org/records/10516402/files/postgresql.tar.gz?download=1",
 #      "files": "*.log",               optional: a glob over the archive's paths    [*]
 #      "time_columns": ["timestamp"],  optional: as `bench-storage --time-columns`
-#      "sha256": "...",                optional: the download must have this hash
+#      "checksum": "md5:...",          optional: md5:<hex> or sha256:<hex>, as Zenodo gives it;
+#                                      the download must have this hash
+#      "sha256": "...",                optional: the same, for a sha256
 #      "note": "..."}                  optional: copied into the result
 #   ]}
 #
 # `path` can stand in for `url`, for a file already on this machine. A download is a
-# `.tar.gz`, `.tgz`, `.tar` or `.zip` to unpack, or one NDJSON file, plain or gzip or zstd.
-# An archive that unpacks to more than one file (that `files` matches) is joined into one
-# NDJSON file, in path order, a gzip or zstd member decoded and a missing last newline added;
-# all of them are measured as one.
+# `.tar.gz`, `.tgz`, `.tar` or `.zip`, or one NDJSON file, plain or gzip or zstd. The files of
+# an archive that `files` matches are measured as one NDJSON file, a gzip member decoded and
+# a missing last newline added. A tar is read straight into that file, in the archive's own
+# order, and never unpacked: the disk holds one copy of the logs. A zip is unpacked, and its
+# files joined in path order.
 #
 # **The output** holds one result a tag, under `results`. A tag already in it is not run
 # again: the script says so and goes on to the next. Delete the entry to measure it again.
@@ -28,7 +31,7 @@
 # Each result is also written as <tag>.md, in a directory named for the output without its
 # `.json`: bench/results/compression/postgresql.md beside bench/results/compression.json.
 #
-# Downloads, unpacked files and each run's raw output go under testdata/compression/<tag>/,
+# Downloads, the logs read out of them and each run's raw output go under testdata/compression/<tag>/,
 # which is git-ignored scratch. A download that is there already is used, not fetched again.
 #
 #   bench/compression.py                                   # every source in bench/compression.json
@@ -41,6 +44,8 @@
 #   --bin PATH      the kibbr to run; nothing is built          [target/release/kibbr, built]
 #   --no-build      use target/release/kibbr as it is
 #   --md-dir DIR    where each tag's .md goes                   [the output without .json]
+#   --no-zstd       leave zstd -19 out, as `bench-storage --no-zstd`: at about 3 MB/s on one
+#                   core it is most of the run on a big corpus (7 hours of 69.6 GB of MongoDB)
 
 import argparse
 import datetime
@@ -115,12 +120,27 @@ def save_results(path, doc):
     os.replace(part, path)
 
 
-def sha256_of(path):
-    h = hashlib.sha256()
+def hashes_of(path):
+    """The file's sha256 and md5, in one read: Zenodo gives the md5."""
+    sha, md5 = hashlib.sha256(), hashlib.md5()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
+            sha.update(block)
+            md5.update(block)
+    return {"sha256": sha.hexdigest(), "md5": md5.hexdigest()}
+
+
+def wanted_hashes(source):
+    """What the source says the download must hash to, by algorithm."""
+    want = {}
+    if source.get("sha256"):
+        want["sha256"] = source["sha256"].lower()
+    if source.get("checksum"):
+        algo, _, digest = source["checksum"].partition(":")
+        if algo.lower() not in ("md5", "sha256") or not digest:
+            fail(f"source {source['tag']}: checksum must be md5:<hex> or sha256:<hex>, not {source['checksum']!r}")
+        want[algo.lower()] = digest.lower()
+    return want
 
 
 def download(url, into):
@@ -136,14 +156,14 @@ def download(url, into):
     req = urllib.request.Request(url, headers={"User-Agent": "kibbr-bench-compression"})
     with urllib.request.urlopen(req) as r, open(part, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
-        got, shown = 0, time.monotonic()
+        got, told = 0, time.monotonic()
         for block in iter(lambda: r.read(1 << 20), b""):
             f.write(block)
             got += len(block)
-            if time.monotonic() - shown > 5:
+            if time.monotonic() - told > 5:
                 of = f" of {total:,}" if total else ""
                 say(f"  {got:,}{of} bytes")
-                shown = time.monotonic()
+                told = time.monotonic()
     os.replace(part, path)
     say(f"downloaded {os.path.getsize(path):,} bytes")
     return path
@@ -177,18 +197,67 @@ def unpack(archive, into):
     open(marker, "w").close()
 
 
+def matches(rel, pattern):
+    """Whether an archive's file is one the source asks for: by its path or its name."""
+    name = os.path.basename(rel)
+    if name.startswith("."):
+        return False
+    return fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(name, pattern)
+
+
 def picked(root, pattern):
     """The unpacked files the source asks for, by path under `root`, in order."""
     out = []
     for d, dirs, files in os.walk(root):
         dirs.sort()
         for name in sorted(files):
-            if name.startswith(".") or name.startswith("._"):
-                continue
             rel = os.path.relpath(os.path.join(d, name), root)
-            if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(name, pattern):
+            if matches(rel, pattern):
                 out.append(os.path.join(d, name))
     return out
+
+
+def streamed(archive, pattern, to):
+    """A tar's matching files as one NDJSON file, read straight out of the archive in its own
+    order, a gzip member decoded. Nothing is unpacked, so the disk holds one copy of the logs,
+    not two: a 70 GB corpus would not fit twice. The names go beside it, as `.files`."""
+    names_at = to + ".files"
+    if os.path.exists(to) and os.path.exists(names_at):
+        with open(names_at) as f:
+            return json.load(f)
+    say(f"reading {os.path.basename(archive)} into {shown(to)}")
+    os.makedirs(os.path.dirname(to), exist_ok=True)
+    part = to + ".part"
+    names, written, told = [], 0, time.monotonic()
+    with tarfile.open(archive, "r|*") as t, open(part, "wb") as out:
+        for member in t:
+            if not member.isfile() or not matches(member.name, pattern):
+                continue
+            src = t.extractfile(member)
+            head = src.peek(4)[:4]
+            if head.startswith(ZSTD_MAGIC):
+                fail(f"{archive}: {member.name} is zstd inside a tar; that is not read here")
+            if head.startswith(GZIP_MAGIC):
+                src = gzip.GzipFile(fileobj=src)
+            last = b"\n"
+            for block in iter(lambda: src.read(1 << 20), b""):
+                out.write(block)
+                written += len(block)
+                last = block[-1:]
+            if last != b"\n":
+                out.write(b"\n")
+            names.append(member.name)
+            if time.monotonic() - told > 30:
+                say(f"  {len(names)} files, {written:,} bytes")
+                told = time.monotonic()
+    if not names:
+        os.remove(part)
+        return names
+    os.replace(part, to)
+    with open(names_at, "w") as f:
+        json.dump(names, f)
+    say(f"read {len(names)} files, {written:,} bytes")
+    return names
 
 
 def open_decoded(path):
@@ -232,17 +301,28 @@ def input_file(source, work):
             fail(f"source {source['tag']}: {got} is not a file")
     else:
         got = download(source["url"], os.path.join(work, "download"))
-    fetched = {"file": os.path.basename(got), "bytes": os.path.getsize(got), "sha256": sha256_of(got)}
-    want = source.get("sha256")
-    if want and want.lower() != fetched["sha256"]:
-        fail(f"source {source['tag']}: sha256 is {fetched['sha256']}, not {want}")
+    fetched = {"file": os.path.basename(got), "bytes": os.path.getsize(got), **hashes_of(got)}
+    for algo, digest in wanted_hashes(source).items():
+        if digest != fetched[algo]:
+            fail(f"source {source['tag']}: {algo} of {shown(got)} is {fetched[algo]}, not {digest}")
+        say(f"{source['tag']}: {algo} matches")
     if not is_archive(got):
         return got, fetched, [fetched["file"]]
+    pattern = source.get("files", "*")
+    nothing = f"source {source['tag']}: no file in the archive matches {pattern!r}"
+    if not got.lower().endswith(".zip"):
+        # Named for the archive and the pattern, so a source whose `files` changed is read again.
+        key = hashlib.sha256(f"{fetched['sha256']}\n{pattern}".encode()).hexdigest()[:12]
+        to = os.path.join(work, f"logs-{key}.ndjson")
+        names = streamed(got, pattern, to)
+        if not names:
+            fail(nothing)
+        return to, fetched, names
     unpacked = os.path.join(work, "unpacked")
     unpack(got, unpacked)
-    files = picked(unpacked, source.get("files", "*"))
+    files = picked(unpacked, pattern)
     if not files:
-        fail(f"source {source['tag']}: no file in the archive matches {source.get('files', '*')!r}")
+        fail(nothing)
     names = [os.path.relpath(f, unpacked) for f in files]
     if len(files) == 1:
         return files[0], fetched, names
@@ -308,11 +388,14 @@ def parse_report(text):
         else:
             tables[slug(m["name"])] = row
         stack.append((indent, row))
-    m = re.search(r"kibbr total is ([\d.]+) of gzip -9 and ([\d.]+) of zstd -19", text)
-    need = ("raw", "gzip_9", "zstd_19", "kibbr_total")
+    gz_ratio = re.search(r"kibbr total is ([\d.]+) of gzip -9", text)
+    zst_ratio = re.search(r"and ([\d.]+) of zstd -19", text)
+    # zstd -19 is absent from a run under --no-zstd.
+    need = ("raw", "gzip_9", "kibbr_total")
     if not all(k in tables for k in need) or "bulk" not in loads:
         raise ValueError("bench-storage's table did not read back: has its format changed?")
     raw = tables["raw"]["bytes"]
+    zst = tables.get("zstd_19")
     block = re.search(r"disk blocks are ([\d,]+) bytes", text)
     block = n(block[1]) if block else None
     # What each takes on this disk: its whole blocks, in bytes.
@@ -322,24 +405,25 @@ def parse_report(text):
         "ingested_disk_bytes": disk(tables["raw"]),
         "kibbr_disk_bytes": disk(tables["kibbr_total"]),
         "gzip_9_disk_bytes": disk(tables["gzip_9"]),
-        "zstd_19_disk_bytes": disk(tables["zstd_19"]),
+        "zstd_19_disk_bytes": disk(zst),
         "disk_block_bytes": block,
         "raw_bytes": raw,
         "gzip_9_bytes": tables["gzip_9"]["bytes"],
-        "zstd_19_bytes": tables["zstd_19"]["bytes"],
+        "zstd_19_bytes": zst["bytes"] if zst else None,
         "kibbr_bytes": tables["kibbr_total"]["bytes"],
         "gzip_9_x_raw": tables["gzip_9"].get("x_raw"),
-        "zstd_19_x_raw": tables["zstd_19"].get("x_raw"),
+        "zstd_19_x_raw": zst.get("x_raw") if zst else None,
         "kibbr_x_raw": tables["kibbr_total"].get("x_raw"),
-        "kibbr_x_gzip_9": float(m[1]) if m else None,
-        "kibbr_x_zstd_19": float(m[2]) if m else None,
+        "kibbr_x_gzip_9": float(gz_ratio[1]) if gz_ratio else None,
+        "kibbr_x_zstd_19": float(zst_ratio[1]) if zst_ratio else None,
     }
     after = tables.get("kibbr_total_after")
     if after:
         summary["kibbr_compacted_bytes"] = after["bytes"]
         summary["kibbr_compacted_x_raw"] = after.get("x_raw")
         summary["kibbr_compacted_x_gzip_9"] = round(after["bytes"] / summary["gzip_9_bytes"], 3)
-        summary["kibbr_compacted_x_zstd_19"] = round(after["bytes"] / summary["zstd_19_bytes"], 3)
+        summary["kibbr_compacted_x_zstd_19"] = (
+            round(after["bytes"] / summary["zstd_19_bytes"], 3) if summary["zstd_19_bytes"] else None)
         summary["kibbr_compacted_disk_bytes"] = disk(after)
     if summary["ingested_disk_bytes"] and summary["kibbr_disk_bytes"]:
         summary["kibbr_disk_saved_share"] = round(1 - summary["kibbr_disk_bytes"] / summary["ingested_disk_bytes"], 4)
@@ -365,7 +449,7 @@ def machine():
     return m
 
 
-def measure(source, bin_path):
+def measure(source, bin_path, no_zstd=False):
     tag = source["tag"]
     work = os.path.join(WORK, tag)
     began = time.monotonic()
@@ -376,6 +460,8 @@ def measure(source, bin_path):
     cmd = [bin_path, "bench-storage", path, "--scratch", scratch]
     if source.get("time_columns"):
         cmd += ["--time-columns", ",".join(source["time_columns"])]
+    if no_zstd:
+        cmd.append("--no-zstd")
     say(f"{tag}: {' '.join(shown(c) for c in cmd)}")
     os.makedirs(work, exist_ok=True)
     log =os.path.join(work, f"bench-storage-{stamp}.log")
@@ -395,7 +481,7 @@ def measure(source, bin_path):
     result = parse_report(r.stdout)
     result.update({
         "tag": tag,
-        "source": {k: source[k] for k in ("url", "path", "files", "time_columns", "note") if k in source},
+        "source": {k: source[k] for k in ("url", "path", "files", "time_columns", "checksum", "note") if k in source},
         "download": fetched,
         "measured_files": members,
         "measured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -423,7 +509,8 @@ def write_markdown(result, into):
     rows = [
         ("ingested, as a plain file", sm["raw_bytes"], get("ingested_disk_bytes"), 1.0, None, None),
         ("gzip -9", sm["gzip_9_bytes"], get("gzip_9_disk_bytes"), sm["gzip_9_x_raw"], None, None),
-        ("zstd -19", sm["zstd_19_bytes"], get("zstd_19_disk_bytes"), sm["zstd_19_x_raw"], None, None),
+        *([("zstd -19", sm["zstd_19_bytes"], get("zstd_19_disk_bytes"), sm["zstd_19_x_raw"], None, None)]
+          if sm.get("zstd_19_bytes") is not None else []),
         ("kibbr, bulk load", sm["kibbr_bytes"], get("kibbr_disk_bytes"), sm["kibbr_x_raw"],
          sm["kibbr_x_gzip_9"], sm["kibbr_x_zstd_19"]),
     ]
@@ -493,6 +580,7 @@ def main():
     p.add_argument("--tag", action="append", help="measure only this source (repeatable)")
     p.add_argument("--bin", help="the kibbr to run; nothing is built")
     p.add_argument("--no-build", action="store_true", help="use target/release/kibbr as it is")
+    p.add_argument("--no-zstd", action="store_true", help="as bench-storage --no-zstd: hours saved on a big corpus")
     p.add_argument("--md-dir", help="where each tag's .md goes [the output's path without .json]")
     args = p.parse_args()
     md_dir = args.md_dir or os.path.splitext(os.path.abspath(args.output))[0]
@@ -526,7 +614,7 @@ def main():
 
     failed = 0
     for s in todo:
-        result = measure(s, bin_path)
+        result = measure(s, bin_path, args.no_zstd)
         if result is None:
             failed += 1
             continue
@@ -534,8 +622,9 @@ def main():
         save_results(args.output, doc)
         md = write_markdown(result, md_dir)
         sm = result["summary"]
+        zst = "not run" if sm["zstd_19_x_raw"] is None else f"{sm['zstd_19_x_raw']}x"
         say(f"{s['tag']}: kibbr {sm['kibbr_x_raw']}x raw, gzip -9 {sm['gzip_9_x_raw']}x, "
-            f"zstd -19 {sm['zstd_19_x_raw']}x - written to {shown(os.path.abspath(args.output))} "
+            f"zstd -19 {zst} - written to {shown(os.path.abspath(args.output))} "
             f"and {shown(md)}")
     return 1 if failed else 0
 

@@ -5,6 +5,16 @@
       "url": "https://zenodo.org/records/10516402/files/postgresql.tar.gz?download=1",
       "files": "*.log",
       "note": "PostgreSQL 15 jsonlog under YCSB workloads A-E (Zenodo 10516402)"
+    },
+    {
+      "tag": "mongodb",
+      "url": "https://zenodo.org/records/11075361/files/mongodb.tar.gz?download=1",
+      "checksum": "md5:ddde688d9a829bc62c133c1413a02dfe",
+      "note": "MongoDB JSON logs under YCSB workloads A-E (Zenodo 11075361), from YScope's CLP datasets: 260 rotated files, 69.6 GB",
+      "files": "mongod.log.*",
+      "time_columns": [
+        "t.$date"
+      ]
     }
   ]
 }

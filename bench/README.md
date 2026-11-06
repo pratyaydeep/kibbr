@@ -92,7 +92,7 @@ bench/compression.py --input mine.json --output mine-results.json
 ```
 
 A tag already in the output is not run again; the script says so. Delete its entry to
-measure it again. Downloads, unpacked files and each run's raw output are kept under
+measure it again. Downloads, the logs read out of them and each run's raw output are kept under
 `testdata/compression/<tag>/`, so a second run does not fetch again. Needs `python3`, and
 `zstd` only for a zstd file inside an archive that unpacks to several files.
 
