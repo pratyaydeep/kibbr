@@ -18,7 +18,9 @@
 #
 # `path` can stand in for `url`, for a file already on this machine. A download is a
 # `.tar.gz`, `.tgz`, `.tar` or `.zip` to unpack, or one NDJSON file, plain or gzip or zstd.
-# An archive that unpacks to more than one file is joined into one NDJSON file, in path order.
+# An archive that unpacks to more than one file (that `files` matches) is joined into one
+# NDJSON file, in path order, a gzip or zstd member decoded and a missing last newline added;
+# all of them are measured as one.
 #
 # **The output** holds one result a tag, under `results`. A tag already in it is not run
 # again: the script says so and goes on to the next. Delete the entry to measure it again.
@@ -244,7 +246,9 @@ def input_file(source, work):
     names = [os.path.relpath(f, unpacked) for f in files]
     if len(files) == 1:
         return files[0], fetched, names
-    return joined(files, os.path.join(work, "joined.ndjson")), fetched, names
+    # Named for the files in it, so a source whose `files` changed is joined again.
+    key = hashlib.sha256("\n".join(names).encode()).hexdigest()[:12]
+    return joined(files, os.path.join(work, f"joined-{key}.ndjson")), fetched, names
 
 
 # ── Reading bench-storage's table back ──
@@ -435,6 +439,12 @@ def write_markdown(result, into):
             "",
         ]
     bulk = result["loads"]["bulk"]
+    members = result["measured_files"]
+    listed = ", ".join(f"`{f}`" for f in members[:10])
+    if len(members) > 10:
+        listed += f" and {len(members) - 10:,} more ({len(members):,} files, joined in this order)"
+    elif len(members) > 1:
+        listed += f" ({len(members)} files, joined in this order)"
     lines = [
         f"# kibbr storage on {result['tag']}, {result['measured_at'][:10]}",
         "",
@@ -443,7 +453,7 @@ def write_markdown(result, into):
         + (f", files matching `{src['files']}`" if src.get("files") else ""),
         f"- **Download:** `{result['download']['file']}`, {num(result['download']['bytes'])} bytes, "
         f"sha256 `{result['download']['sha256']}`",
-        f"- **Measured:** {', '.join(f'`{f}`' for f in result['measured_files'])}: "
+        f"- **Measured:** {listed}: "
         f"{num(bulk['lines'])} lines, {num(bulk['rows'])} rows",
         "",
         *headline,
