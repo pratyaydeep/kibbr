@@ -1,4 +1,4 @@
-// Browser storage, under the four keys DESIGN.md lists. Every read and write is wrapped:
+// Browser storage, under the keys DESIGN.md lists. Every read and write is wrapped:
 // storage can be off (a private window, a blocked site), full, or hold something another
 // version wrote, and none of that may stop the page.
 
@@ -108,3 +108,51 @@ let saved = () =>
     | _ => None
     }
   )
+
+// Save keeps one entry per query: saving one already there renames it and moves it to the
+// front.
+let addSaved = (q, name) => {
+  let kept = saved()->Array.filter(s => s.q != q)
+  let next = [{q, name}]->Array.concat(kept)
+  let json = next->Array.map(s => {
+    let dict = Dict.make()
+    dict->Dict.set("q", JSON.String(s.q))
+    dict->Dict.set("name", JSON.String(s.name))
+    JSON.Object(dict)
+  })
+  set(savedKey, JSON.stringify(JSON.Array(json)))
+}
+
+// Logs results' panel layout: the maximised panel's title, and the minimised ones'.
+let layoutKey = "kibbr.layout"
+
+type layout = {maximized: option<string>, minimized: array<string>}
+
+let layout = () =>
+  switch get(layoutKey)->Option.flatMap(text =>
+    try Some(JSON.parseOrThrow(text)) catch {
+    | _ => None
+    }
+  ) {
+  | Some(JSON.Object(dict)) => {
+      maximized: field(dict, "maximized"),
+      minimized: switch dict->Dict.get("minimized") {
+      | Some(JSON.Array(items)) =>
+        items->Array.filterMap(item =>
+          switch item {
+          | JSON.String(s) => Some(s)
+          | _ => None
+          }
+        )
+      | _ => []
+      },
+    }
+  | _ => {maximized: None, minimized: []}
+  }
+
+let setLayout = (l: layout) => {
+  let dict = Dict.make()
+  dict->Dict.set("maximized", l.maximized->Option.mapOr(JSON.Null, s => JSON.String(s)))
+  dict->Dict.set("minimized", JSON.Array(l.minimized->Array.map(s => JSON.String(s))))
+  set(layoutKey, JSON.stringify(JSON.Object(dict)))
+}

@@ -27,20 +27,25 @@ request leaves for anywhere but this server, fonts included - `tests/serve.rs` a
   across every page until the state clears. The Status page reads both itself, on opening
   and on Refresh, and keeps the ingest rate between its refreshes as a sparkline.
 - **A query is two requests**, built from the query as typed. The rows:
-  `MATCH LOG {filter} SINCE … LIMIT 200`, any `GROUP BY` dropped, the next page asked with
-  `AFTER` and the previous answer's `next_cursor` as the list scrolls to its end. The chart:
+  `MATCH LOG {filter} SINCE … [ORDER BY time ASC] LIMIT 200`, any `GROUP BY` dropped, the
+  next page asked with `AFTER` and the previous answer's `next_cursor` as the list scrolls
+  to its end; the Time button flips between newest and oldest first. The chart:
   `COUNT LOG {filter} SINCE … GROUP BY time(<range ÷ 90>), level`, stacked info, warn and
   error. A query the console cannot take apart goes to the server as typed, and a `400`
-  shows the parser's message under the query bar.
-- **Rows are the JSON lines they were ingested as** (Raw), or one column per field
-  (Columns). The keys the query named are highlighted, and their values too when the query
-  asked for a value.
+  shows the parser's message under the query bar, with the mistake underlined at its `pos`.
+- **Rows are the objects they were ingested as** (Raw), rebuilt from the flattened keys,
+  each with its time (from `times`) and level in their own columns: on one line, wrapped, or
+  opened as indented JSON. Or one column per field (Columns). The keys the query named are
+  highlighted, and their values too when the query asked for a value.
+- **Quicker to query**: + beside a value adds it to the filter (with Undo), a Time range
+  menu and a drag across the chart rewrite the time clause, the star saves the query, and
+  the rows answer to the keyboard (`?` lists the keys).
 - Served `no-store`: a console cached against a newer server is a debugging tool lying
   about what the database answered.
 
 ## What it keeps in the browser
 
-Four `localStorage` keys, nothing on the server. Every read and write is guarded: with
+Five `localStorage` keys, nothing on the server. Every read and write is guarded: with
 storage off (a private window, a blocked site) the console works and forgets.
 
 | Key | Value |
@@ -48,7 +53,8 @@ storage off (a private window, a blocked site) the console works and forgets.
 | `kibbr.rail.collapsed` | `"1"` or `"0"`: the sidebar collapsed, shared by every open tab |
 | `kibbr.theme` | `"light"` or `"dark"`; absent, the console follows the system |
 | `kibbr.recent` | the last 20 queries run from this browser, newest first, as `[{q, at}]` |
-| `kibbr.saved` | saved queries as `[{q, name}]`; listed on Logs when there are any |
+| `kibbr.saved` | saved queries as `[{q, name}]`, written by the star; listed on Logs when there are any |
+| `kibbr.layout` | `{maximized, minimized}`: which Logs results panels are maximised and minimised |
 
 ## Building it
 

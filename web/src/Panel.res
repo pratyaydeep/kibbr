@@ -17,6 +17,7 @@ let make = (
   ~size: option<size>=?,
   ~flex=false,
   ~className="",
+  ~overlay: React.element=React.null,
   ~children: React.element,
 ) => {
   let minimized = size->Option.mapOr(false, s => s.minimized && !s.maximized)
@@ -63,5 +64,6 @@ let make = (
       }}
     </div>
     {minimized ? React.null : <div className="panel-body"> children </div>}
+    overlay
   </section>
 }

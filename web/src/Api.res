@@ -344,6 +344,8 @@ type meta = {
   durationMs: option<float>,
   truncated: option<bool>,
   nextCursor: option<string>,
+  // `ORDER BY time ASC` answers oldest first; a server before it says nothing.
+  oldestFirst: bool,
 }
 
 type answer = {
@@ -351,6 +353,9 @@ type answer = {
   count: option<float>,
   // Each row is the object as it was ingested, keys in the order the API returned them.
   rows: array<dict<JSON.t>>,
+  // Each row's time, at the same index: what the server ranked it by. Empty from a server
+  // that does not send them.
+  times: array<option<Date.t>>,
   groups: array<group>,
   meta: meta,
 }
@@ -383,6 +388,16 @@ let decodeAnswer = json => {
     exists: d->Read.bool("exists"),
     count: d->Read.float("count"),
     rows: d->Read.array("rows")->Array.filterMap(Read.obj),
+    times: d
+    ->Read.array("times")
+    ->Array.map(t =>
+      switch t {
+      | JSON.String(text) =>
+        let date = Date.fromString(text)
+        Float.isNaN(date->Date.getTime) ? None : Some(date)
+      | _ => None
+      }
+    ),
     groups: d->Read.array("groups")->Array.filterMap(Read.obj)->Array.map(decodeGroup),
     meta: {
       templatesMatched: m->Read.float("templates_matched"),
@@ -399,6 +414,7 @@ let decodeAnswer = json => {
       durationMs: m->Read.float("duration_ms"),
       truncated: m->Read.bool("truncated"),
       nextCursor: m->Read.string("next_cursor"),
+      oldestFirst: m->Read.string("order") == Some("oldest_first"),
     },
   }
 }
@@ -460,8 +476,11 @@ let templates = async () =>
   | exception _ => unreachable
   }
 
-// A `400` is the parser's message, which the page shows as it is.
-let query = async (q: string) =>
+// Why a query failed: the message, whether the server called the query itself wrong (a
+// `400`), and where in it, once the server says (`pos`, a byte offset).
+type failure = {message: string, invalid: bool, pos: option<int>}
+
+let queryChecked = async (q: string) =>
   switch await fetch(
     "/query",
     {
@@ -472,8 +491,28 @@ let query = async (q: string) =>
   ) {
   | response =>
     switch await body(response) {
-    | Ok(json) => ok(response) ? Ok(decodeAnswer(json)) : failure(json, response)
-    | Error(e) => Error(e)
+    | Ok(json) =>
+      if ok(response) {
+        Ok(decodeAnswer(json))
+      } else {
+        let message = switch failure(json, response) {
+        | Error(m) => m
+        | Ok(_) => ""
+        }
+        Error({
+          message,
+          invalid: status(response) == 400,
+          pos: Read.obj(json)->Option.flatMap(d => d->Read.float("pos"))->Option.map(Float.toInt),
+        })
+      }
+    | Error(e) => Error({message: e, invalid: false, pos: None})
     }
-  | exception _ => unreachable
+  | exception _ => Error({message: "the server did not answer", invalid: false, pos: None})
+  }
+
+// A `400` is the parser's message, which the page shows as it is.
+let query = async (q: string) =>
+  switch await queryChecked(q) {
+  | Ok(a) => Ok(a)
+  | Error(f) => Error(f.message)
   }

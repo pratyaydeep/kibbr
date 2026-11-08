@@ -16,6 +16,12 @@
 @module("./assets/icons/theme-moon.svg?raw") external themeMoonSvg: string = "default"
 @module("./assets/icons/theme-sun.svg?raw") external themeSunSvg: string = "default"
 @module("./assets/icons/warning.svg?raw") external warningSvg: string = "default"
+@module("./assets/icons/wrap-lines.svg?raw") external wrapLinesSvg: string = "default"
+@module("./assets/icons/open-json.svg?raw") external openJsonSvg: string = "default"
+@module("./assets/icons/star.svg?raw") external starSvg: string = "default"
+@module("./assets/icons/clock.svg?raw") external clockSvg: string = "default"
+@module("./assets/icons/chevron-down.svg?raw") external chevronDownSvg: string = "default"
+@module("./assets/icons/error-x.svg?raw") external errorXSvg: string = "default"
 @module("./assets/logo/mark-dark.svg?raw") external markDarkSvg: string = "default"
 @module("./assets/logo/mark-light.svg?raw") external markLightSvg: string = "default"
 

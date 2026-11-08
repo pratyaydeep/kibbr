@@ -78,17 +78,40 @@
   --layout-latest-time: 96px;
   --layout-latest-level: 48px;
   --layout-latest-event: 150px;
-  --layout-legend-swatch-w: 14px;
-  --layout-legend-swatch-h: 10px;
   --layout-mono-cell: 11.5px;
   --layout-field-row: 27px;
   /* Paddings between the steps of the space scale. */
+  --layout-log-columns: 112px 30px minmax(0, 1fr) 56px;
+  --layout-log-swatch-w: 12px;
+  --layout-log-swatch-h: 9px;
+  --layout-log-day-size: 11.5px;
+  --layout-log-scrollbar: 6px;
+  --layout-row-button: 24px;
+  --layout-switch-w: 26px;
+  --layout-switch-h: 15px;
+  --layout-switch-knob: 11px;
+  --layout-mistake-line: 1.5px;
+  --layout-star: 15px;
+  --layout-menu: 260px;
+  --layout-menu-item: 32px;
+  --layout-menu-field: 30px;
+  --layout-keys-menu: 280px;
+  --layout-keys-bottom: 44px;
+  --layout-key-radius: 4px;
+  --layout-toast-bottom: 46px;
+  --layout-toast-radius: 9px;
   --layout-pad-3: 3px;
   --layout-pad-7: 7px;
   --layout-pad-9: 9px;
   --layout-pad-11: 11px;
+  /* The zoom selection on Matches over time: the accent, translucent (dark .16, light .12). */
+  --color-zoom-band: color-mix(in srgb, var(--color-accent) 12%, transparent);
   /* The phase badges' number: white in both themes, as drawn. */
   --color-on-badge: #FFFFFF;
+}
+
+[data-theme="dark"] {
+  --color-zoom-band: color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 *,
@@ -109,7 +132,6 @@ body {
   color: var(--color-text);
   font-family: var(--font-sans);
   font-size: 13px;
-  -webkit-font-smoothing: antialiased;
 }
 
 button,

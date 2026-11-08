@@ -98,29 +98,80 @@ module SearchBox = {
     </div>
 }
 
+// The query's coloured runs cut further where a marked range starts or ends, each piece
+// keeping its colour and taking the classes of the ranges over it.
+let paintRuns = (value: string, marks: array<(int, int, string)>) => {
+  let out = []
+  let at = ref(0)
+  Trieql.colourise(value)->Array.forEach(segment => {
+    let start = at.contents
+    let end_ = start + String.length(segment.text)
+    let cuts =
+      marks
+      ->Array.flatMap(((a, b, _)) => [a, b])
+      ->Array.filter(c => c > start && c < end_)
+      ->Array.toSorted((x, y) => Int.toFloat(x - y))
+    let bounds = [start]->Array.concat(cuts)->Array.concat([end_])
+    bounds->Array.forEachWithIndex((from, i) =>
+      switch bounds->Array.get(i + 1) {
+      | Some(to_) if to_ > from =>
+        let classes =
+          [
+            switch segment.colour {
+            | Keyword => "tok-keyword"
+            | Value => "tok-value"
+            | Plain => ""
+            },
+          ]
+          ->Array.concat(marks->Array.filterMap(((a, b, c)) => from >= a && to_ <= b ? Some(c) : None))
+          ->Array.filter(c => c != "")
+          ->Array.join(" ")
+        out->Array.push((value->String.slice(~start=from, ~end=to_), classes))
+      | _ => ()
+      }
+    )
+    at := end_
+  })
+  out
+}
+
 // The query bar on Logs results: the query editable in place, its keywords, values and
-// durations coloured underneath the (transparent) text being edited.
+// durations coloured underneath the (transparent) text being edited. `added` marks a part
+// just added to the query, `mistake` where the server says the query goes wrong.
 module QueryBar = {
   @react.component
-  let make = (~value, ~onChange, ~onRun, ~onExplain) => {
+  let make = (
+    ~value,
+    ~onChange,
+    ~onRun,
+    ~onExplain,
+    ~tools: React.element=React.null,
+    ~added: option<(int, int)>=?,
+    ~mistake: option<int>=?,
+    ~invalid=false,
+    ~inputRef: option<React.ref<Nullable.t<Dom.element>>>=?,
+    ~onEscape: option<unit => unit>=?,
+  ) => {
     let paint = React.useRef(Nullable.null)
     let follow = (input: Dom.element) =>
       paint.current->Nullable.forEach(el => el->setScrollLeft(scrollLeft(input)))
     let target = event => ReactEvent.Synthetic.target(event)->Obj.magic
-    <div className="querybar">
+    // The mistake runs from its position to the next space, or the end.
+    let underline = mistake->Option.map(pos => {
+      let rest = value->String.slice(~start=pos)
+      let space = rest->String.indexOf(" ")
+      (pos, space < 0 ? String.length(value) : pos + Math.Int.max(space, 1), "tok-mistake")
+    })
+    let marks =
+      [added->Option.map(((a, b)) => (a, b, "tok-added")), underline]->Array.filterMap(x => x)
+    <div className={"querybar" ++ (invalid ? " is-invalid" : "")}>
       <span className="querybar-prompt" ariaHidden=true> {React.string("›")} </span>
       <div className="querybar-field">
         <div className="querybar-paint type-query" ariaHidden=true ref={ReactDOM.Ref.domRef(paint)}>
-          {Trieql.colourise(value)
-          ->Array.mapWithIndex((segment, i) =>
-            <span
-              key={Int.toString(i)}
-              className=?{switch segment.colour {
-              | Keyword => Some("tok-keyword")
-              | Value => Some("tok-value")
-              | Plain => None
-              }}>
-              {React.string(segment.text)}
+          {paintRuns(value, marks)
+          ->Array.mapWithIndex(((run, className), i) =>
+            <span key={Int.toString(i)} className=?{className == "" ? None : Some(className)}>
+              {React.string(run)}
             </span>
           )
           ->React.array}
@@ -128,10 +179,12 @@ module QueryBar = {
         <label>
           <span className="visually-hidden"> {React.string("TrieQL query")} </span>
           <input
+            ref=?{inputRef->Option.map(ReactDOM.Ref.domRef)}
             className="querybar-input type-query"
             value
             spellCheck=false
             autoComplete="off"
+            ariaInvalid=?{invalid ? Some(#"true") : None}
             onChange={event => {
               onChange(inputValue(event))
               follow(target(event))
@@ -143,10 +196,16 @@ module QueryBar = {
               if isRunKey(event) {
                 ReactEvent.Keyboard.preventDefault(event)
                 onRun()
+              } else if ReactEvent.Keyboard.key(event) == "Escape" {
+                onEscape->Option.forEach(f => {
+                  ReactEvent.Keyboard.preventDefault(event)
+                  f()
+                })
               }}
           />
         </label>
       </div>
+      tools
       <Button onClick={_ => onExplain()}> {React.string("Explain")} </Button>
       <Run onRun />
     </div>

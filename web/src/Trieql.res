@@ -1,7 +1,8 @@
 // Just enough TrieQL to take a typed query apart: the server's lexer, mirrored
 // (crates/kibbr-engine/src/trieql.rs), and its clauses in their order -
 //
-//   MATCH|COUNT LOG {pattern} [SINCE d | BETWEEN t AND t] [GROUP BY …] [LIMIT n] [AFTER "c"]
+//   MATCH|COUNT LOG {pattern} [SINCE d | BETWEEN t AND t] [GROUP BY …]
+//     [ORDER BY time [ASC|DESC]] [LIMIT n] [AFTER "c"]
 //
 // The console builds the Rows and Chart requests from the parts. The server stays the
 // judge of what is valid: a query this cannot take apart is sent as it was typed, and the
@@ -125,14 +126,19 @@ type time =
 
 type parsed = {
   verb: string,
-  // The pattern as typed, braces included.
+  // The pattern as typed, braces included, and where it sits in the source.
   pattern: string,
+  patternStart: int,
+  patternEnd: int,
   // Each key in the pattern, with its value; `None` for `*`.
   pairs: array<(string, option<string>)>,
   time: option<time>,
-  // The time clause as typed, e.g. `SINCE 15m`.
+  // The time clause as typed, e.g. `SINCE 15m`, and where it sits in the source.
   timeText: option<string>,
+  timeSpan: option<(int, int)>,
   groupText: option<string>,
+  // `ORDER BY time ASC`: oldest first.
+  oldest: bool,
   limit: option<int>,
 }
 
@@ -238,12 +244,18 @@ let parse = (src: string): option<parsed> =>
         | (Some(_), Some(t)) => Some(sliceFrom(t))
         | _ => None
         }
+        let timeSpan = switch (time, timeStart) {
+        | (Some(_), Some(t)) =>
+          let last: token = Array.getUnsafe(toks, at.contents - 1)
+          Some((t.start, last.end_))
+        | _ => None
+        }
         // GROUP BY runs to LIMIT, AFTER or the end.
         let groupStart = peek()
         let groupText = if eatKeyword("GROUP") {
           let rec skip = () =>
             switch peek() {
-            | Some(t) if !isKeyword(t, "LIMIT") && !isKeyword(t, "AFTER") =>
+            | Some(t) if !isKeyword(t, "LIMIT") && !isKeyword(t, "AFTER") && !isKeyword(t, "ORDER") =>
               bump()
               skip()
             | _ => ()
@@ -252,6 +264,16 @@ let parse = (src: string): option<parsed> =>
           groupStart->Option.map(sliceFrom)
         } else {
           None
+        }
+        // `ORDER BY time [ASC|DESC]`; anything else after `ORDER` is left over, so the query
+        // goes as typed and the server says what is wrong.
+        let oldest = ref(false)
+        if eatKeyword("ORDER") && eatKeyword("BY") && eatKeyword("TIME") {
+          if eatKeyword("ASC") {
+            oldest := true
+          } else {
+            eatKeyword("DESC")->ignore
+          }
         }
         let limit = if eatKeyword("LIMIT") {
           switch peek() {
@@ -273,7 +295,19 @@ let parse = (src: string): option<parsed> =>
           !isKeyword(t, "SINCE") && !isKeyword(t, "BETWEEN") || time != None
         )
         clean && timeOk
-          ? Some({verb, pattern: patternText, pairs, time, timeText, groupText, limit})
+          ? Some({
+              verb,
+              pattern: patternText,
+              patternStart: open_.start,
+              patternEnd: open_.start + String.length(patternText),
+              pairs,
+              time,
+              timeText,
+              timeSpan,
+              groupText,
+              oldest: oldest.contents,
+              limit,
+            })
           : None
       }
     | _ => None
@@ -293,12 +327,13 @@ let bucketSeconds = (range: float) => Math.max(1.0, Math.ceil(range /. 90.0))
 
 let pageSize = 200
 
-// Rows: `MATCH LOG {filter} {time} LIMIT 200`, any GROUP BY dropped; a next page adds the
-// previous answer's cursor.
-let rowsQuery = (p: parsed, ~after: option<string>) => {
+// Rows: `MATCH LOG {filter} {time} [ORDER BY time ASC] LIMIT 200`, any GROUP BY dropped; a
+// next page adds the previous answer's cursor.
+let rowsQuery = (p: parsed, ~after: option<string>, ~oldest: bool) => {
   let time = p.timeText->Option.mapOr("", t => " " ++ t)
+  let order = oldest ? " ORDER BY time ASC" : ""
   let after = after->Option.mapOr("", c => " AFTER " ++ JSON.stringify(JSON.String(c)))
-  `MATCH LOG ${p.pattern}${time} LIMIT ${Int.toString(pageSize)}${after}`
+  `MATCH LOG ${p.pattern}${time}${order} LIMIT ${Int.toString(pageSize)}${after}`
 }
 
 // Chart: `COUNT LOG {filter} {time} GROUP BY time({bucket}), level`.
@@ -309,6 +344,65 @@ let chartQuery = (p: parsed) =>
     Some(`COUNT LOG ${p.pattern} ${time} GROUP BY time(${Float.toFixed(bucket, ~digits=0)}s), level`)
   | _ => None
   }
+
+// ── Changing a query (components/query-tools.md) ────────────────────────────────────
+
+let quote = s => JSON.stringify(JSON.String(s))
+
+// `"key": "value"` added to the pattern: the new query and where the new part sits in it.
+// `None` when the query already names that key with that value.
+let addPair = (src: string, p: parsed, ~key: string, ~value: string) =>
+  if p.pairs->Array.some(((k, v)) => k == key && v == Some(value)) {
+    None
+  } else {
+    let pair = `${quote(key)}: ${quote(value)}`
+    let close = p.patternEnd - 1
+    let lead = p.pairs->Array.length == 0 ? "" : ", "
+    let next =
+      src->String.slice(~start=0, ~end=close) ++ lead ++ pair ++ src->String.slice(~start=close)
+    let start = close + String.length(lead)
+    Some((next, start, start + String.length(pair)))
+  }
+
+// The query with its time clause replaced by `clause`, or given one after the pattern.
+let setTime = (src: string, p: parsed, clause: string) =>
+  switch p.timeSpan {
+  | Some((start, end_)) => src->String.slice(~start=0, ~end=start) ++ clause ++ src->String.slice(~start=end_)
+  | None =>
+    src->String.slice(~start=0, ~end=p.patternEnd) ++ " " ++ clause ++ src->String.slice(~start=p.patternEnd)
+  }
+
+// 2023-03-22T08:51:30Z: UTC, whole seconds.
+let utcSeconds = (ms: float) => {
+  let iso = Date.fromTime(Math.floor(ms /. 1000.0) *. 1000.0)->Date.toISOString
+  iso->String.slice(~start=0, ~end=19) ++ "Z"
+}
+
+let betweenClause = (from: float, to_: float) => `BETWEEN ${utcSeconds(from)} AND ${utcSeconds(to_)}`
+
+// The `SINCE` duration as written, e.g. `15m`, when the clause is one.
+let sinceText = (p: parsed) =>
+  switch (p.time, p.timeText) {
+  | (Some(Since(_)), Some(text)) => text->String.trim->String.split(" ")->Array.filter(w => w != "")->Array.at(-1)
+  | _ => None
+  }
+
+// An offset in a query the console sent for the rows, carried back to the query as typed:
+// the pattern and the time clause are copied over, everything else is the console's own.
+let rowsOffsetToTyped = (p: parsed, sentIndex: int) => {
+  let patternAt = String.length("MATCH LOG ")
+  let patternLen = String.length(p.pattern)
+  if sentIndex >= patternAt && sentIndex < patternAt + patternLen {
+    Some(p.patternStart + sentIndex - patternAt)
+  } else {
+    switch p.timeSpan {
+    | Some((start, end_)) =>
+      let timeAt = patternAt + patternLen + 1
+      sentIndex >= timeAt && sentIndex < timeAt + end_ - start ? Some(start + sentIndex - timeAt) : None
+    | None => None
+    }
+  }
+}
 
 // The keys and the literal values of the pattern: what the rows highlight.
 let highlights = (p: parsed) => (
@@ -325,7 +419,21 @@ type colour =
 
 type segment = {text: string, colour: colour}
 
-let keywords = ["MATCH", "COUNT", "LOG", "SINCE", "BETWEEN", "AND", "GROUP", "BY", "LIMIT", "AFTER"]
+let keywords = [
+  "MATCH",
+  "COUNT",
+  "LOG",
+  "SINCE",
+  "BETWEEN",
+  "AND",
+  "GROUP",
+  "BY",
+  "ORDER",
+  "ASC",
+  "DESC",
+  "LIMIT",
+  "AFTER",
+]
 
 // The source cut into coloured runs, whitespace kept, so the runs laid end to end are the
 // query exactly. Text that does not lex is one plain run.

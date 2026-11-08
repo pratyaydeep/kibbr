@@ -160,7 +160,7 @@ module CountPill = {
 
 // ── Matches over time ───────────────────────────────────────────────────────────────
 
-type levelBar = {info: float, warn: float, error: float}
+type levelBar = {at: float, info: float, warn: float, error: float}
 
 // Lines that are not warn or error stack in the bottom layer, so every bar's height is
 // its bucket's whole count.
@@ -185,7 +185,7 @@ let bars = (groups: array<Api.group>) => {
       | Some(bar) => bar
       | None =>
         order->Array.push(at)
-        {info: 0.0, warn: 0.0, error: 0.0}
+        {at, info: 0.0, warn: 0.0, error: 0.0}
       }
       let level = g.keys->Dict.get("level")->Option.getOr("")
       let next = switch layerOf(level) {
@@ -201,11 +201,42 @@ let bars = (groups: array<Api.group>) => {
   ->Array.filterMap(at => byBucket->Dict.get(Float.toString(at)))
 }
 
+// The bucket a pointer is over, from its x in the chart.
+let bucketAt = (el: {..}, clientX: int, n: int) => {
+  let rect = el["getBoundingClientRect"]()
+  let x = (Int.toFloat(clientX) -. rect["left"]) /. rect["width"]
+  Math.Int.max(0, Math.Int.min(n - 1, Float.toInt(Math.floor(x *. Int.toFloat(n)))))
+}
+
+type drag = {startX: int, first: int, last: int, moved: bool}
+
+// "14:16:05 → 14:18:25 IST"
+let rangeText = ((from, to_)) =>
+  `${Format.clockSeconds(Date.fromTime(from))} → ${Format.clockSeconds(Date.fromTime(to_))}` ++ (
+    LogRows.zone == "" ? "" : " " ++ LogRows.zone
+  )
+
 module Chart = {
+  // Dragging across the bars selects whole buckets: `onSelect` follows the selection's
+  // time range while dragging, and `onZoom` gets it on release. A click does nothing.
   @react.component
-  let make = (~total: option<float>, ~groups: array<Api.group>) => {
+  let make = (
+    ~total: option<float>,
+    ~groups: array<Api.group>,
+    ~bucketMs: option<float>=?,
+    ~onSelect: option<(float, float)> => unit=_ => (),
+    ~onZoom: option<(float, float) => unit>=?,
+  ) => {
     let bars = bars(groups)
     let n = Array.length(bars)
+    let (drag, setDragState) = React.useState((): option<drag> => None)
+    // The drag as the handlers read it: a ref, so a move that arrives before the render the
+    // press caused still sees the press.
+    let dragRef = React.useRef(None)
+    let setDrag = next => {
+      dragRef.current = next
+      setDragState(_ => next)
+    }
     let tallest = bars->Array.reduce(0.0, (top, b) => Math.max(top, b.info +. b.warn +. b.error))
     let slot = n > 0 ? 1000.0 /. Int.toFloat(n) : 0.0
     let width = slot *. 0.89
@@ -219,6 +250,21 @@ module Chart = {
         height={Float.toFixed(h, ~digits=2)}
       />
     let scale = v => tallest > 0.0 ? v /. tallest *. 52.0 : 0.0
+    let zoomable = n > 0 && bucketMs != None && onZoom != None
+    let span = d => (Math.Int.min(d.first, d.last), Math.Int.max(d.first, d.last))
+    let rangeOf = d => {
+      let (lo, hi) = span(d)
+      switch (bars->Array.get(lo), bars->Array.get(hi), bucketMs) {
+      | (Some(a), Some(b), Some(ms)) => Some((a.at, b.at +. ms))
+      | _ => None
+      }
+    }
+    let selection = drag->Option.flatMap(d => d.moved ? Some(span(d)) : None)
+    let pointer = (event, f) =>
+      if zoomable {
+        let el = ReactEvent.Pointer.currentTarget(event)
+        f(el, ReactEvent.Pointer.clientX(event))
+      }
     <>
       <div className="chart-total">
         <span className="chart-count">
@@ -230,22 +276,80 @@ module Chart = {
           <span> <span className="swatch-error"> {text("■")} </span> {text(" error")} </span>
         </span>
       </div>
-      <svg className="chart" viewBox="0 0 1000 52" preserveAspectRatio="none" ariaHidden=true>
-        {bars
-        ->Array.mapWithIndex((b, i) => {
-          let x = Int.toFloat(i) *. slot +. (slot -. width) /. 2.0
-          let info = scale(b.info)
-          let warn = scale(b.warn)
-          let error = scale(b.error)
-          let k = Int.toString(i)
-          <g key=k>
-            {rect(x, 52.0 -. info, info, "bar-info", "i")}
-            {rect(x, 52.0 -. info -. warn, warn, "bar-warn", "w")}
-            {rect(x, 52.0 -. info -. warn -. error, error, "bar-error", "e")}
-          </g>
-        })
-        ->React.array}
-      </svg>
+      <div
+        className={"chart-area" ++ (zoomable ? " is-zoomable" : "")}
+        onPointerDown={event =>
+          pointer(event, (el, x) => {
+            // Keeps the drag while the pointer leaves the chart; a pointer the page cannot
+            // capture still drags while it stays over it.
+            try el["setPointerCapture"](ReactEvent.Pointer.pointerId(event))->ignore catch {
+            | _ => ()
+            }
+            let i = bucketAt(el, x, n)
+            setDrag(Some({startX: x, first: i, last: i, moved: false}))
+          })}
+        onPointerMove={event =>
+          pointer(event, (el, x) =>
+            switch dragRef.current {
+            | Some(d) =>
+              let next = {...d, last: bucketAt(el, x, n), moved: d.moved || Math.Int.abs(x - d.startX) > 3}
+              setDrag(Some(next))
+              onSelect(next.moved ? rangeOf(next) : None)
+            | None => ()
+            }
+          )}
+        onPointerUp={_ => {
+          switch (dragRef.current, onZoom) {
+          | (Some(d), Some(zoom)) if d.moved => rangeOf(d)->Option.forEach(((a, b)) => zoom(a, b))
+          | _ => ()
+          }
+          setDrag(None)
+          onSelect(None)
+        }}
+        onPointerCancel={_ => {
+          setDrag(None)
+          onSelect(None)
+        }}>
+        <svg className="chart" viewBox="0 0 1000 52" preserveAspectRatio="none" ariaHidden=true>
+          {bars
+          ->Array.mapWithIndex((b, i) => {
+            let x = Int.toFloat(i) *. slot +. (slot -. width) /. 2.0
+            let info = scale(b.info)
+            let warn = scale(b.warn)
+            let error = scale(b.error)
+            let k = Int.toString(i)
+            let dim = switch selection {
+            | Some((lo, hi)) => i < lo || i > hi
+            | None => false
+            }
+            <g key=k className=?{dim ? Some("is-dim") : None}>
+              {rect(x, 52.0 -. info, info, "bar-info", "i")}
+              {rect(x, 52.0 -. info -. warn, warn, "bar-warn", "w")}
+              {rect(x, 52.0 -. info -. warn -. error, error, "bar-error", "e")}
+            </g>
+          })
+          ->React.array}
+          {switch selection {
+          | Some((lo, hi)) =>
+            let x0 = Int.toFloat(lo) *. slot
+            let x1 = Int.toFloat(hi + 1) *. slot
+            let edge = (x, key) =>
+              <line key className="chart-band-edge" x1=x x2=x y1="0" y2="52" vectorEffect="non-scaling-stroke" />
+            <g>
+              <rect
+                className="chart-band"
+                x={Float.toFixed(x0, ~digits=2)}
+                y="0"
+                width={Float.toFixed(x1 -. x0, ~digits=2)}
+                height="52"
+              />
+              {edge(Float.toFixed(x0, ~digits=2), "a")}
+              {edge(Float.toFixed(x1, ~digits=2), "b")}
+            </g>
+          | None => React.null
+          }}
+        </svg>
+      </div>
     </>
   }
 }
@@ -256,82 +360,6 @@ module Chart = {
 type asked = array<(string, option<string>)>
 
 let keyAsked = (asked: asked, path) => asked->Array.some(((k, _)) => k == path)
-
-let valueAsked = (asked: asked, path, value: JSON.t) => {
-  let literal = switch value {
-  | JSON.String(s) => Some(s)
-  | JSON.Number(n) => Some(Float.toString(n))
-  | JSON.Boolean(b) => Some(b ? "true" : "false")
-  | _ => None
-  }
-  switch literal {
-  | Some(v) => asked->Array.some(((k, want)) => k == path && want == Some(v))
-  | None => false
-  }
-}
-
-let quoted = s => JSON.stringify(JSON.String(s))
-
-let longValue = 60
-
-// One ingested line as JSON, keys in the order the API gave them, each `"key":value`
-// kept on one line and the row wrapping between them.
-module RawRow = {
-  let rec value = (v: JSON.t, path: string, asked: asked) =>
-    switch v {
-    | JSON.Object(dict) => object(dict, path ++ ".", asked)
-    | JSON.Array(items) =>
-      <>
-        <span className="j-punct"> {text("[")} </span>
-        {items
-        ->Array.mapWithIndex((item, i) =>
-          <React.Fragment key={Int.toString(i)}>
-            {i > 0 ? <span className="j-punct"> {text(",")} </span> : React.null}
-            {value(item, path, asked)}
-          </React.Fragment>
-        )
-        ->React.array}
-        <span className="j-punct"> {text("]")} </span>
-      </>
-    | JSON.String(s) =>
-      // A value too long for any line may break inside itself; shorter ones break only
-      // between pairs.
-      let long = String.length(s) > longValue ? " is-long" : ""
-      <span className={(valueAsked(asked, path, v) ? "j-match" : "j-string") ++ long}>
-        {text(quoted(s))}
-      </span>
-    | other =>
-      <span className={valueAsked(asked, path, v) ? "j-match" : "j-number"}>
-        {text(JSON.stringify(other))}
-      </span>
-    }
-  and object = (dict: dict<JSON.t>, prefix: string, asked: asked) => {
-    let entries = dict->Dict.toArray
-    <>
-      <span className="j-punct"> {text("{")} </span>
-      {entries
-      ->Array.mapWithIndex(((key, v), i) => {
-        let path = prefix ++ key
-        let last = i == Array.length(entries) - 1
-        <React.Fragment key>
-          <span className="raw-pair">
-            <span className={keyAsked(asked, path) ? "j-match" : "j-key"}> {text(quoted(key))} </span>
-            <span className="j-punct"> {text(":")} </span>
-            {value(v, path, asked)}
-            {last ? React.null : <span className="j-punct"> {text(",")} </span>}
-          </span>
-          {last ? React.null : <wbr />}
-        </React.Fragment>
-      })
-      ->React.array}
-      <span className="j-punct"> {text("}")} </span>
-    </>
-  }
-
-  @react.component
-  let make = (~row: dict<JSON.t>, ~asked: asked) =>
-    <div className="raw-row type-mono"> {object(row, "", asked)} </div>
-}
 
 // A row's fields flattened with dots, as the Columns view shows them.
 let rec flatten = (dict: dict<JSON.t>, prefix: string, out: array<(string, JSON.t)>) =>
@@ -365,7 +393,7 @@ let timeCell = (v: JSON.t) => Format.parseTime(v)->Option.mapOr(cellText(v), For
 // order it first appears. Widths fit the longest value, in characters.
 module ColumnsTable = {
   @react.component
-  let make = (~rows: array<dict<JSON.t>>, ~asked: asked) => {
+  let make = (~rows: array<dict<JSON.t>>, ~asked: asked, ~onSortTime: option<unit => unit>=?) => {
     let flat = rows->Array.map(row => {
       let out = []
       flatten(row, "", out)
@@ -402,9 +430,21 @@ module ColumnsTable = {
         {seen
         ->Array.mapWithIndex((key, i) =>
           <span key className={"cols-cell" ++ (i == 0 ? " is-sticky" : "")} role="columnheader">
-            <span className={"cols-key" ++ (keyAsked(asked, key) ? " is-match" : "")}>
-              {text(key)}
-            </span>
+            {switch (key, onSortTime) {
+            // The `ts` header flips the order, as the Time button does.
+            | ("ts", Some(onSort)) =>
+              <button
+                type_="button"
+                className={"cols-key cols-sort" ++ (keyAsked(asked, key) ? " is-match" : "")}
+                title="Sort by time"
+                onClick={_ => onSort()}>
+                {text(key)}
+              </button>
+            | _ =>
+              <span className={"cols-key" ++ (keyAsked(asked, key) ? " is-match" : "")}>
+                {text(key)}
+              </span>
+            }}
           </span>
         )
         ->React.array}
