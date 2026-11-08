@@ -90,6 +90,9 @@ pub struct QueryResult {
     pub exists: bool,
     pub count: u64,
     pub rows: Vec<Row>,
+    /// Each row's time, beside it: the effective timestamp (nanoseconds since the epoch) the
+    /// row is ranked by, `None` for a row with none. Always as long as `rows`.
+    pub times: Vec<Option<i64>>,
     /// Ordered by bucket ascending - the unplaceable `None` first - then by values; the order
     /// is part of the answer because `scripts/check/agree.sh` diffs the JSON as text.
     pub groups: Vec<Group>,
@@ -148,6 +151,41 @@ impl LimitSource {
     }
 }
 
+/// Which end of time a `Fetch` answer starts at. Rows with no time come last either way.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Order {
+    #[default]
+    NewestFirst,
+    OldestFirst,
+}
+
+impl Order {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NewestFirst => "newest_first",
+            Self::OldestFirst => "oldest_first",
+        }
+    }
+
+    /// A row's time as the first component of its `Rank`: oldest first ranks by the bitwise
+    /// complement, which reverses the order with no overflow at either end of `i64`.
+    pub fn rank_ts(self, ts: Option<i64>) -> Reverse<Option<i64>> {
+        match self {
+            Self::NewestFirst => Reverse(ts),
+            Self::OldestFirst => Reverse(ts.map(|t| !t)),
+        }
+    }
+
+    /// `rank_ts` undone: the row's own time back out of its `Rank`.
+    pub fn time_of(self, rank: Rank) -> Option<i64> {
+        let Reverse(ts) = rank.0;
+        match self {
+            Self::NewestFirst => ts,
+            Self::OldestFirst => ts.map(|t| !t),
+        }
+    }
+}
+
 /// One term: a `--match KEY=VALUE` flag, or one `"key": "value"` pair of a pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Match {
@@ -187,8 +225,10 @@ pub struct Query {
     /// Who supplied `limit`.
     pub limit_source: LimitSource,
     /// Where the last page stopped, from `QueryMeta::next_cursor`; `None` = start at the
-    /// newest row.
+    /// first row in `order`.
     pub cursor: Option<Cursor>,
+    /// Which end of time the rows start at; only a `Fetch` returns rows to order.
+    pub order: Order,
     /// The instant the query was built against - the edge `GROUP BY time(...)` zero-fills to
     /// with no `until` - kept out of `Cursor::guard` so pages a moment apart agree.
     pub now: SystemTime,
@@ -223,9 +263,20 @@ impl Query {
             limit,
             limit_source,
             cursor: if fetching { cursor } else { None },
+            order: Order::NewestFirst,
             now,
             limits,
         }
+    }
+
+    /// The query answering oldest first, or newest first. Kept out of `new` so every caller
+    /// that never orders reads as it did; a mode returning no rows ignores it, as it does a
+    /// cursor.
+    pub fn with_order(mut self, order: Order) -> Self {
+        if self.mode == QueryMode::Fetch {
+            self.order = order;
+        }
+        self
     }
 
     /// The `time(...)` width this query groups by, or `None` for every other mode.
@@ -885,6 +936,11 @@ impl Cursor {
         // The order is by the effective time, whatever a template calls its column, so a cursor
         // survives a template being created with another name between two pages.
         out.extend_from_slice(b"effective_time");
+        // Only oldest first adds bytes, so a newest-first cursor issued before `ORDER BY`
+        // existed still reads; one order's cursor is refused by the other.
+        if query.order == Order::OldestFirst {
+            out.extend_from_slice(b" ascending");
+        }
         out
     }
 
@@ -1058,9 +1114,16 @@ impl Newest {
         }
     }
 
-    /// Newest first, and the `Rank` the next page should resume after: the overflow row is
+    /// In `Rank` order, and the `Rank` the next page should resume after: the overflow row is
     /// the proof that a next page exists, and the row before it is where this one stopped.
+    #[cfg(test)]
     fn finish(self) -> (Vec<Row>, Option<Rank>) {
+        let (ranked, next) = self.finish_ranked();
+        (ranked.into_iter().map(|r| r.row).collect(), next)
+    }
+
+    /// `finish`, each row still beside its `Rank`, which holds its time.
+    fn finish_ranked(self) -> (Vec<Ranked>, Option<Rank>) {
         let keep = self.keep;
         let mut ranked = self.heap.into_sorted_vec();
         let more = keep.is_some_and(|n| ranked.len() > n);
@@ -1068,7 +1131,7 @@ impl Newest {
             ranked.truncate(n);
         }
         let next = more.then(|| ranked.last().map(|r| r.rank)).flatten();
-        (ranked.into_iter().map(|r| r.row).collect(), next)
+        (ranked, next)
     }
 }
 
@@ -1079,13 +1142,14 @@ struct Fetch<'a> {
     key: u64,
     ts: &'a str,
     after: Option<Rank>,
+    order: Order,
 }
 
 impl Visitor for Fetch<'_> {
     fn row(&mut self, row: &Row, seq: u64) {
         // `seq` comes from the store, so it is the row's own ordinal and not a count of what
         // this scan admitted.
-        let rank = (Reverse(effective_ts(row, self.ts)), self.key, seq);
+        let rank = (self.order.rank_ts(effective_ts(row, self.ts)), self.key, seq);
         // Served on an earlier page. `Rank` is a total order, so rows sharing one nanosecond
         // split across the page boundary rather than being repeated or dropped.
         if self.after.is_some_and(|stop| rank <= stop) {
@@ -1097,6 +1161,11 @@ impl Visitor for Fetch<'_> {
     /// The best `Rank` any row in this partition could carry, against the worst one already
     /// held: `seq: 0` makes it a lower bound, and `Newest` is shared so the cut tightens.
     fn wants_partition(&mut self, newest: Option<i64>) -> bool {
+        // A store says only how new a partition can be, which bounds nothing oldest first:
+        // every partition in the window is read.
+        if self.order == Order::OldestFirst {
+            return true;
+        }
         let best = (Reverse(newest), self.key, 0u64);
         self.keep.worst().is_none_or(|worst| best < worst)
     }
@@ -1104,7 +1173,7 @@ impl Visitor for Fetch<'_> {
     /// Asked before each row while there is a limit to fill, and until the gate is off.
     /// With no limit every row is kept and there is nothing to ask.
     fn wants(&self) -> Wants {
-        if self.keep.keep.is_some() && self.keep.gate {
+        if self.keep.keep.is_some() && self.keep.gate && self.order == Order::NewestFirst {
             Wants::Newest
         } else {
             Wants::Rows
@@ -1120,7 +1189,7 @@ impl Visitor for Fetch<'_> {
         if !self.keep.gate {
             return true;
         }
-        let rank = (Reverse(ts), self.key, seq);
+        let rank = (self.order.rank_ts(ts), self.key, seq);
         if self.after.is_some_and(|stop| rank <= stop) {
             return false;
         }
@@ -1304,6 +1373,7 @@ fn answer(
                     key: leaf_key(&leaf.template.path),
                     ts,
                     after: query.cursor.map(|c| c.rank),
+                    order: query.order,
                 };
                 snapshot.visit(id, &opts, &terms, &mut fetch)
             }
@@ -1332,8 +1402,9 @@ fn answer(
     }
 
     if query.mode == QueryMode::Fetch {
-        let (rows, next) = newest.finish();
-        result.rows = rows;
+        let (ranked, next) = newest.finish_ranked();
+        result.times = ranked.iter().map(|r| query.order.time_of(r.rank)).collect();
+        result.rows = ranked.into_iter().map(|r| r.row).collect();
         result.meta.next_cursor = next.map(|rank| Cursor::new(rank, query).encode());
     }
     if matches!(query.mode, QueryMode::GroupBy(_)) {
@@ -2619,6 +2690,7 @@ mod tests {
                 key: *key,
                 ts: "ts",
                 after,
+                order: Order::NewestFirst,
             };
             if ask && !fetch.wants_row(*ts, *seq, true) {
                 refused += 1;
@@ -2736,6 +2808,7 @@ mod tests {
                 key: *key,
                 ts: "ts",
                 after,
+                order: Order::NewestFirst,
             };
             let asks = offers != Offers::Every && fetch.wants() == Wants::Newest;
             for day in days {
@@ -3234,6 +3307,7 @@ mod tests {
                         key: leaf_key(&leaf.template.path),
                         ts: leaf.template.time_column.as_str(),
                         after: None,
+                        order: Order::NewestFirst,
                     },
                     asked: Vec::new(),
                     handed: 0,
@@ -3694,6 +3768,7 @@ mod tests {
                 key: leaf_key(&tied.template.path),
                 ts: tied.template.time_column.as_str(),
                 after: None,
+                order: Order::NewestFirst,
             },
             asked: Vec::new(),
             handed: 0,

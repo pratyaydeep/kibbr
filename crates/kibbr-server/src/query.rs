@@ -23,15 +23,18 @@ use crate::error::{Error, Result};
 /// and the cursor guard are not a second dialect.
 pub fn from_trieql(text: &str, now: DateTime<Utc>, limits: Limits) -> Result<Query> {
     let parsed = trieql::parse(text, now)?;
-    finish(Query::new(
-        parsed.matches,
-        parsed.mode,
-        parsed.time,
-        parsed.limit,
-        cursor(parsed.after.as_deref())?,
-        system_time(now),
-        limits,
-    ))
+    finish(
+        Query::new(
+            parsed.matches,
+            parsed.mode,
+            parsed.time,
+            parsed.limit,
+            cursor(parsed.after.as_deref())?,
+            system_time(now),
+            limits,
+        )
+        .with_order(parsed.order),
+    )
 }
 
 /// The cursor text as a `Cursor`, before there is a `Query` to check it against.
@@ -89,10 +92,19 @@ fn shaped(query: &Query, result: &QueryResult, rows: Vec<Value>) -> Value {
         .collect();
 
     let meta = &result.meta;
+    // Each row's time beside it, at the same index: the instant it was ranked by (its time
+    // column, or when it arrived), and `null` for a row with neither. Not put inside the row,
+    // where it could collide with a key the row already has.
+    let times: Vec<Value> = result
+        .times
+        .iter()
+        .map(|t| t.map_or(Value::Null, |ns| Value::String(rfc3339(ns))))
+        .collect();
     serde_json::json!({
         "exists": result.exists,
         "count": result.count,
         "rows": rows,
+        "times": times,
         "groups": Value::Array(groups),
         "meta": {
             "templates_matched": meta.templates_matched,
@@ -112,6 +124,8 @@ fn shaped(query: &Query, result: &QueryResult, rows: Vec<Value>) -> Value {
             // this says who decided that.
             "limit_source": meta.limit_source.as_str(),
             "next_cursor": meta.next_cursor,
+            // Which end of time `rows` starts at: `ORDER BY time ASC` is oldest first.
+            "order": query.order.as_str(),
             "duration_ms": meta.duration.as_secs_f64() * 1000.0,
         }
     })

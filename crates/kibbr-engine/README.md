@@ -19,14 +19,14 @@ socket and reads no flag.
 ## What it is responsible for
 
 - **TrieQL**: `COUNT`, `MATCH`, `LOG {...}`, `SINCE`, `BETWEEN`, `GROUP BY`,
-  `LIMIT`, `AFTER`. The flags of `kibbr query` build the same `Query`;
+  `ORDER BY time [ASC|DESC]`, `LIMIT`, `AFTER`. The flags of `kibbr query` build the same `Query`;
   `scripts/check/parser_equivalence.sh` holds the two to each other.
 - **Two phases, one of them free**: the trie walk costs no I/O; only the leaves it
   finds are scanned.
 - **Unknown is not empty**: a template that does not exist is `exists: false`, not a
   count of 0.
-- **The result shape**: `exists`, `count`, `rows`, `groups`, and `meta` with what
-  the query cost.
+- **The result shape**: `exists`, `count`, `rows` and the `times` each was ranked by,
+  `groups`, and `meta` with what the query cost.
 - **The backstop**: a `MATCH` with no `LIMIT` is cut at `max_rows` and says so, with a
   `next_cursor`; the `Cursor` resumes at a row's position in its template's day.
 - **Buckets**: `GROUP BY time(w)` boundaries are multiples of `w` from the Unix epoch,

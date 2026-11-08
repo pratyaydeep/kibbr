@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-use crate::engine::{Cursor, GroupKey, Match, MatchValue, QueryMode, TimeRange};
+use crate::engine::{Cursor, GroupKey, Match, MatchValue, Order, QueryMode, TimeRange};
 use crate::storage::store::system_time;
 
 /// What a query said, before the output flags - which are not in the grammar - are folded
@@ -24,6 +24,8 @@ pub struct Parsed {
     pub time: TimeRange,
     /// `None` = no `LIMIT` clause, because `LIMIT 0` is writable and has to mean "no rows".
     pub limit: Option<usize>,
+    /// `ORDER BY time ASC` or `DESC`; newest first when the query has no `ORDER BY`.
+    pub order: Order,
     /// The `AFTER` cursor, still text: `query::build` decodes it, where the `Query` it is
     /// checked against exists.
     pub after: Option<String>,
@@ -223,6 +225,7 @@ impl<'a> Parser<'a> {
             Some(keys) => QueryMode::GroupBy(keys),
             None => mode,
         };
+        let order = self.order_clause()?;
         let limit = self.limit_clause()?;
         let after = self.after_clause()?;
 
@@ -234,6 +237,7 @@ impl<'a> Parser<'a> {
             mode,
             time,
             limit,
+            order,
             after,
         })
     }
@@ -346,6 +350,25 @@ impl<'a> Parser<'a> {
             return Err(ParseError::new(self.src, pos, Kind::EmptyKey));
         }
         Ok(GroupKey::Column(key))
+    }
+
+    /// `"ORDER" "BY" "time" ["ASC" | "DESC"]`. Rows are ranked by their time and nothing
+    /// else, so `time` is the one thing to order by: a column name would promise a sort the
+    /// engine does not do. `DESC`, newest first, is what a query without the clause gets.
+    fn order_clause(&mut self) -> Result<Order, ParseError> {
+        if !self.eat_keyword("ORDER") {
+            return Ok(Order::NewestFirst);
+        }
+        self.keyword("BY")?;
+        if !self.eat_keyword("time") {
+            return Err(self.expected("`time`"));
+        }
+        if self.eat_keyword("ASC") {
+            Ok(Order::OldestFirst)
+        } else {
+            self.eat_keyword("DESC");
+            Ok(Order::NewestFirst)
+        }
     }
 
     /// `"LIMIT" number`. Last in the query, as it is last in the grammar: it applies to
@@ -838,10 +861,43 @@ mod tests {
         }
         // The exact one, so "inside the input" cannot pass by always answering 0. The
         // `é` is two bytes, so a parser counting characters would say 21.
-        let src = r#"COUNT LOG {"é": "b"} ORDER BY ts"#;
+        let src = r#"COUNT LOG {"é": "b"} SORT BY ts"#;
         let e = parse(src, now()).unwrap_err();
         assert_eq!(e.pos, 22);
-        assert_eq!(&src[e.pos..], "ORDER BY ts");
+        assert_eq!(&src[e.pos..], "SORT BY ts");
+    }
+
+    /// `order_clause`: time is the one thing to order by, ascending is oldest first, and a
+    /// query without the clause, or with `DESC`, is newest first.
+    #[test]
+    fn order_by_time_names_the_end_rows_start_at() {
+        let order = |src: &str| parse(src, now()).unwrap_or_else(|e| panic!("{e}")).order;
+        assert_eq!(order(r#"MATCH LOG {}"#), Order::NewestFirst);
+        assert_eq!(order(r#"MATCH LOG {} ORDER BY time"#), Order::NewestFirst);
+        assert_eq!(order(r#"MATCH LOG {} ORDER BY time DESC"#), Order::NewestFirst);
+        assert_eq!(order(r#"MATCH LOG {} order by TIME asc"#), Order::OldestFirst);
+        let q = parse(
+            r#"MATCH LOG {"a": *} SINCE 1h ORDER BY time ASC LIMIT 5 AFTER "v3.00""#,
+            now(),
+        );
+        assert!(q.is_err(), "the cursor is still shape-checked after ORDER BY");
+        let q = parse(r#"MATCH LOG {"a": *} SINCE 1h ORDER BY time ASC LIMIT 5"#, now())
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!((q.order, q.limit), (Order::OldestFirst, Some(5)));
+
+        // A column is not something rows are ordered by, and the clause comes before LIMIT.
+        let src = r#"MATCH LOG {} ORDER BY ts"#;
+        let e = parse(src, now()).unwrap_err();
+        assert_eq!(&src[e.pos..], "ts");
+        assert!(e.to_string().contains("`time`"), "{e}");
+        for src in [
+            r#"MATCH LOG {} ORDER time"#,
+            r#"MATCH LOG {} ORDER BY"#,
+            r#"MATCH LOG {} LIMIT 5 ORDER BY time"#,
+            r#"MATCH LOG {} ORDER BY time UP"#,
+        ] {
+            assert!(parse(src, now()).is_err(), "{src}");
+        }
     }
 
     /// `limit_clause`. `None` and `Some(0)` are different answers.

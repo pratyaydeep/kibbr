@@ -659,7 +659,16 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
     // and a grammar, and the answer is a 400 either way.
     let query = match query::from_trieql(&request.q, Utc::now(), server.limits) {
         Ok(query) => query,
-        Err(e) => return fail(StatusCode::BAD_REQUEST, &error::chain(&e)),
+        // A grammar mistake also says where: `pos`, the byte offset in `q` the parser
+        // stopped at, so a client can point at it without reading the message.
+        Err(e) => {
+            return match &e {
+                error::Error::Trieql(parse) => {
+                    fail_at(StatusCode::BAD_REQUEST, &error::chain(&e), parse.pos)
+                }
+                _ => fail(StatusCode::BAD_REQUEST, &error::chain(&e)),
+            }
+        }
     };
 
     // Set when this future is dropped before the task below has returned - a timeout or

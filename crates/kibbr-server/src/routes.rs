@@ -276,6 +276,11 @@ pub(super) fn fail(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "ok": false, "error": message }))).into_response()
 }
 
+/// `fail`, for a mistake at a place in what the client sent: `pos` is its byte offset.
+pub(super) fn fail_at(status: StatusCode, message: &str, pos: usize) -> Response {
+    (status, Json(json!({ "ok": false, "error": message, "pos": pos }))).into_response()
+}
+
 /// Counts a request as in flight, and answers it here at the shutdown deadline (503) or
 /// its own timeout (408 unread, 504 read) - never an `/ingest` body the log may have taken.
 async fn track(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {

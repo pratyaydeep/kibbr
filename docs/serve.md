@@ -91,6 +91,16 @@ Also served: `GET /` (the [viewer](viewer.md)), `POST /load` ([load](load.md)) a
   (10,000; `--max-rows`, `0` turns it off) and says so: `truncated: true`,
   `limit_source: "backstop"`, and a `next_cursor` to hand back as `AFTER`. A `LIMIT` you
   asked for is honoured above it; `COUNT` and `GROUP BY` return no rows for it to bound.
+- **`ORDER BY time ASC` answers oldest first.** Rows are ranked by their time and nothing
+  else, so `time` is the one thing to order by; `DESC`, or no `ORDER BY`, is newest first.
+  `meta.order` says which (`newest_first` or `oldest_first`), and a cursor is only good for
+  the order that gave it. Oldest first reads every day in the window: a store only says how
+  new a day can be, which lets newest first skip days and bounds nothing the other way.
+- **`times` sits beside `rows`**: at each index, the instant that row was ranked by - its
+  time column, or when it arrived - as RFC 3339 UTC, `null` for a row with neither. Not put
+  inside the row, where it could collide with a key the row already has.
+- **A query the grammar refuses is a `400` that says where**: `pos` is the byte offset in
+  `q` the parser stopped at, beside `error`. A `400` for anything else has no `pos`.
 - **Scan threads.** A day of one template is row groups, and a run of them can be shared
   between threads; the answer and every counter in `meta` are the same either way.
   `--scan-threads` is how many one query may use, its own among them: half the cores and at

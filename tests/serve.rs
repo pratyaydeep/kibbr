@@ -653,6 +653,14 @@ fn a_bad_query_is_a_400() {
         );
     }
 
+    // A grammar mistake says where it is, in bytes of `q`; one the parser did not make has
+    // no position to give.
+    let (_, text) = server.post("/query", br#"{"q": "MATCH LOG {\"\u00e9\": *} SINCE 15x"}"#);
+    let answer = json(&text);
+    assert_eq!(answer["pos"], 26, "{answer}");
+    let (_, text) = server.post("/query", br#"{"nope": 1}"#);
+    assert!(json(&text).get("pos").is_none(), "{text}");
+
     // Still serving afterwards - a rejected request must not have cost the process.
     assert_eq!(server.get("/health").0, 200);
 }
@@ -745,6 +753,79 @@ fn an_unlimited_query_is_backstopped_and_pages_to_completion() {
     let whole = server.query("MATCH LOG {} LIMIT 100000");
     assert_eq!(whole["meta"]["limit_source"], "caller");
     assert_eq!(paged, rows_as_text(&whole));
+}
+
+/// `ORDER BY time ASC` pages through the same rows as newest first, from the other end, and
+/// every row carries the time it was ranked by.
+#[test]
+fn oldest_first_pages_the_same_rows_from_the_other_end() {
+    let server = Served::start();
+    let (status, _) = server.post("/ingest", &corpus());
+    assert_eq!(status, 200);
+
+    let whole = server.query("MATCH LOG {} LIMIT 100000");
+    assert_eq!(whole["meta"]["order"], "newest_first");
+    let times = |result: &serde_json::Value| -> Vec<String> {
+        result["times"]
+            .as_array()
+            .expect("times is an array")
+            .iter()
+            .map(|t| t.as_str().expect("every generated line has a time").to_string())
+            .collect()
+    };
+    let newest = times(&whole);
+    assert_eq!(newest.len(), whole["rows"].as_array().map_or(0, Vec::len));
+    let instants: Vec<chrono::DateTime<chrono::FixedOffset>> = newest
+        .iter()
+        .map(|t| chrono::DateTime::parse_from_rfc3339(t).expect("RFC 3339"))
+        .collect();
+    assert!(instants.windows(2).all(|w| w[0] >= w[1]), "newest first is not descending");
+
+    // Oldest first, a page at a time.
+    let mut paged: Vec<String> = Vec::new();
+    let mut paged_times: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..40 {
+        let after = cursor.as_ref().map_or(String::new(), |c| format!(r#" AFTER "{c}""#));
+        let page = server.query(&format!("MATCH LOG {{}} ORDER BY time ASC LIMIT 37{after}"));
+        assert_eq!(page["meta"]["order"], "oldest_first");
+        paged.extend(rows_as_text(&page));
+        paged_times.extend(times(&page));
+        cursor = page["meta"]["next_cursor"].as_str().map(str::to_string);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(cursor, None, "paging did not finish");
+    assert_eq!(paged.len(), newest.len(), "a row was repeated or lost");
+
+    let mut oldest_instants: Vec<chrono::DateTime<chrono::FixedOffset>> = paged_times
+        .iter()
+        .map(|t| chrono::DateTime::parse_from_rfc3339(t).expect("RFC 3339"))
+        .collect();
+    assert!(
+        oldest_instants.windows(2).all(|w| w[0] <= w[1]),
+        "oldest first is not ascending"
+    );
+    // The same rows: sorted, the two answers hold the same lines.
+    let mut a = paged.clone();
+    let mut b = rows_as_text(&whole);
+    a.sort();
+    b.sort();
+    assert_eq!(a, b);
+    oldest_instants.reverse();
+    assert_eq!(oldest_instants, instants);
+
+    // A cursor belongs to its order: newest first refuses one oldest first gave.
+    let first = server.query("MATCH LOG {} ORDER BY time ASC LIMIT 5");
+    let c = first["meta"]["next_cursor"].as_str().expect("a next page");
+    let (status, _) = server.post(
+        "/query",
+        serde_json::json!({ "q": format!(r#"MATCH LOG {{}} LIMIT 5 AFTER "{c}""#) })
+            .to_string()
+            .as_bytes(),
+    );
+    assert_eq!(status, 400);
 }
 
 fn rows_as_text(result: &serde_json::Value) -> Vec<String> {
