@@ -1,4 +1,4 @@
-# Compact a finished day
+# Compact a finished day in kibbr
 
 The live door closes a row group whenever its timeout fires, so a day arrives as thousands
 of small row groups over several files. `kibbr compact` rebuilds them: each template's rows

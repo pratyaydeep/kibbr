@@ -1,4 +1,4 @@
-# Ask a running server
+# Ask a running kibbr server
 
 ```
 kibbr templates --data-dir kibbr-data     # GET /templates: id, rows, time source, path

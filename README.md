@@ -1,4 +1,4 @@
-# kibbr
+# kibbr: a log store for structured JSON logs
 
 [![crates.io](https://img.shields.io/crates/v/kibbr.svg)](https://crates.io/crates/kibbr)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
@@ -142,6 +142,8 @@ There are two ways in:
 
 ## Docs
 
+Website: **https://pratyaydeep.github.io/kibbr/**. The API of the crates is on [docs.rs](https://docs.rs/kibbr).
+
 | | |
 |---|---|
 | [docs/serve.md](docs/serve.md) | HTTP API: `/ingest`, `/query`, limits, shutdown |
@@ -166,4 +168,4 @@ If you keep logs in Elasticsearch or Loki mostly so you have them later, the mos
 
 ## Licence
 
-AGPL-3.0-only. You can run it for your own logs freely. If you modify it and offer it as a service, you must publish your changes. Contributions are accepted under MIT ([LICENSE-CONTRIBUTOR](LICENSE-CONTRIBUTOR)). Other terms: [COMMERCIAL.md](COMMERCIAL.md). kibbr was previously called TrieDB.
+AGPL-3.0-only. You can run it for your own logs freely. If you modify it and offer it as a service, you must publish your changes. Contributions are accepted under MIT ([LICENSE-CONTRIBUTOR](LICENSE-CONTRIBUTOR)). Other terms: [COMMERCIAL.md](COMMERCIAL.md).

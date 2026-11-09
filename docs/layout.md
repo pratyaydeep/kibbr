@@ -1,4 +1,4 @@
-# Layout, tests, lints
+# kibbr's layout, tests and lints
 
 A workspace of five crates, each naming only the ones under it - `kibbr`, then
 `kibbr-server`, `kibbr-engine`, `kibbr-storage`, `kibbr-core` - and `fuzz/` beside them, a

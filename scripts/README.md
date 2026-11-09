@@ -77,3 +77,9 @@ nothing.
 seconds apart. `--dry-run` stops after the dry run; `--notes` stops after the two checks and
 prints the CHANGELOG section, the text for the release. Without either it publishes for
 real, from wherever it runs: leave that to the workflow.
+
+## The website
+
+Not here: `npm run site` in `web/` (`web/scripts/site.mjs`) builds the one page in `web/site/`
+into `_site/`, what GitHub Pages serves at https://pratyaydeep.github.io/kibbr/;
+`.github/workflows/pages.yml` runs it on a push to main.

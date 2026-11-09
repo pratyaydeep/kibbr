@@ -2,6 +2,19 @@
 
 One entry per tag, newest first.
 
+## 0.2.2 — 2026-11-09
+
+- **Website**: https://pratyaydeep.github.io/kibbr/, one scroll-driven page that shows how
+  a log line is stored: split into shape and values, walked through the trie, laid into
+  typed columns, squeezed column by column, then queried. Built from `web/site/` by
+  `npm run site` (web/scripts/site.mjs) and published by `.github/workflows/pages.yml`.
+- **docs.rs**: the `kibbr` crate's front page is a tour of the code: the one idea, a
+  section per crate and module, TrieQL samples, the quickstart, limits and stability.
+- Cargo metadata: `homepage` is the website and `documentation` is docs.rs. The README
+  names kibbr in its title and links the website; every doc under docs/ names kibbr in
+  its title. CITATION.cff gains the website.
+- No code changes: the binary, the HTTP API and the on-disk format are those of 0.2.1.
+
 ## 0.2.1 — 2026-10-29
 
 - No code changes. The first release published by CI: publishing a GitHub release runs

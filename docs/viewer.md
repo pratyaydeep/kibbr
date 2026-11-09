@@ -1,4 +1,4 @@
-# Look at it in a browser
+# Look at kibbr in a browser
 
 ```
 kibbr serve --data-dir kibbr-data     # then open http://127.0.0.1:7700/

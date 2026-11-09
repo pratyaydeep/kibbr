@@ -12,7 +12,8 @@
     "res:watch": "rescript watch",
     "dev": "rescript build && vite",
     "build": "rescript build && vite build && cp dist/viewer.html ../crates/kibbr-server/src/viewer.html",
-    "screens": "node scripts/screens.mjs"
+    "screens": "node scripts/screens.mjs",
+    "site": "node scripts/site.mjs"
   },
   "dependencies": {
     "@rescript/react": "0.15.0",

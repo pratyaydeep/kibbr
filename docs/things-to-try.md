@@ -1,4 +1,4 @@
-# Things to try
+# Things to try with kibbr
 
 The type ladder, by hand. Each command is followed by what this build prints.
 

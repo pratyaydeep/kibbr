@@ -1,4 +1,4 @@
-# Settings: a flag, a variable, a file
+# kibbr settings: a flag, a variable, a file
 
 Every setting is read the same way: **the flag, or else the variable, or else the file, or
 else the default.**

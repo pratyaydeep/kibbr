@@ -1,4 +1,4 @@
-# Load closed days
+# Load closed days into kibbr
 
 `/ingest` is the live door: lines as they happen. `kibbr load` is the bulk door: a closed
 day of lines - or six months of them - loaded whole.

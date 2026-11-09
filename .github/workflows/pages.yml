@@ -1,0 +1,64 @@
+name: Pages
+
+# The website at https://pratyaydeep.github.io/kibbr/: one page, web/site/index.html, built by
+# web/scripts/site.mjs (`npm run site` in web/). Runs when it, or the build, changes on main.
+# The repository's Pages source must be set to "GitHub Actions" once, under Settings > Pages.
+on:
+  push:
+    branches: [main]
+    paths:
+      - web/site/**
+      - web/scripts/site.mjs
+      - web/package.json
+      - web/package-lock.json
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push supersedes one still building.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node, from web/.nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      - name: npm run site
+        working-directory: web
+        run: npm run site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

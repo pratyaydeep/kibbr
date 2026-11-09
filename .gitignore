@@ -40,3 +40,6 @@ sample.ndjson
 
 # The data directory the docs use in their examples (`kibbr serve --data-dir kibbr-data`).
 /kibbr-data/
+
+# The website `npm run site` in web/ renders; GitHub Actions builds and publishes it.
+/_site

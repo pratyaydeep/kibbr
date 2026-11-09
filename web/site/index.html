@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{pagetitle}}</title>
+<meta name="description" content="{{description}}">
+<link rel="canonical" href="{{canonical}}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="kibbr">
+<meta property="og:title" content="{{pagetitle}}">
+<meta property="og:description" content="{{description}}">
+<meta property="og:url" content="{{canonical}}">
+<meta property="og:image" content="{{site}}/assets/console-dark.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#121F28">
+<link rel="icon" href="{{site}}/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{site}}/site.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "kibbr",
+  "description": "{{description}}",
+  "url": "{{site}}/",
+  "codeRepository": "{{repo}}",
+  "programmingLanguage": "Rust",
+  "runtimePlatform": "Linux, macOS",
+  "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "author": { "@type": "Person", "name": "Pratyaydeep Ghanta", "url": "https://github.com/pratyaydeep" },
+  "sameAs": ["https://crates.io/crates/kibbr", "https://docs.rs/kibbr"]
+}
+</script>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <a class="brand" href="{{site}}/"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><circle class="d" cx="3" cy="34" r="1.9"/><circle class="d" cx="9.6" cy="34" r="1.9"/><circle class="d" cx="54.4" cy="34" r="1.9"/><circle class="d" cx="61" cy="34" r="1.9"/><line class="t" x1="16" y1="34" x2="48" y2="34" stroke-width="3.5" stroke-linecap="round"/><line class="t" x1="32" y1="34" x2="22" y2="20" stroke-width="4.2" stroke-linecap="round"/><line class="t" x1="32" y1="34" x2="42" y2="20" stroke-width="4.2" stroke-linecap="round"/><line class="t" x1="22" y1="20" x2="16" y2="8" stroke-width="3.8" stroke-linecap="round"/><line class="t" x1="22" y1="20" x2="28" y2="8" stroke-width="3.8" stroke-linecap="round"/><circle class="n" cx="32" cy="34" r="5.5"/><circle class="n" cx="22" cy="20" r="4.2"/><circle class="n" cx="42" cy="20" r="4.2"/><circle class="n" cx="16" cy="8" r="3.8"/><circle class="n" cx="28" cy="8" r="3.8"/><rect x="18.5" y="40" width="7" height="16" rx="2" fill="#2F6FD1"/><rect x="28.5" y="40" width="7" height="11" rx="2" fill="#D83A34"/><rect x="38.5" y="40" width="7" height="20" rx="2" fill="#A87508"/></svg>kibbr</a>
+  <nav class="links" aria-label="Links">
+    <a href="{{repo}}">GitHub</a>
+    <a href="https://crates.io/crates/kibbr">crates.io</a>
+    <a href="https://docs.rs/kibbr">docs.rs</a>
+  </nav>
+</div></header>
+
+<section class="hero"><div class="wrap">
+  <p class="kicker">kibbr · a log store for structured JSON logs</p>
+  <h1>Keep months of logs. Use <span>a quarter</span> of the disk.</h1>
+  <p>kibbr stores each log line's shape once, in a trie, and its values as typed columns. Queries come back in milliseconds, from one static binary written in Rust. Scroll to see how a line is stored.</p>
+  <button class="install" type="button" data-copy="cargo install kibbr"><span>cargo install kibbr</span><span class="cp">copy</span></button>
+  <div class="scroll-hint"><i></i> how a log line is stored</div>
+</div></section>
+
+<section class="story"><div class="wrap">
+  <div class="steps">
+<section class="step" data-step="1"><div><div class="n">01</div><h2>Logs arrive as JSON lines</h2><p>Thousands a second, through <code>POST /ingest</code>. Each line is written to the write-ahead log and fsynced before kibbr answers 200. From then on it cannot be lost.</p></div></section>
+<section class="step" data-step="2"><div><div class="n">02</div><h2>Every line is two things</h2><p>Its <strong>shape</strong>: the set of keys. Its <strong>values</strong>: what this particular line says. Shapes repeat across millions of lines. Values are new every time.</p></div></section>
+<section class="step" data-step="3"><div><div class="n">03</div><h2>Shapes go into a trie, in memory</h2><p>A line's keys become a path. The next line with the same keys walks the same path, and nothing new is stored.</p></div></section>
+<section class="step" data-step="4"><div><div class="n">04</div><h2>A new key branches off</h2><p>A line with a different key set shares the beginning and branches at the end. Every leaf is a <strong>template</strong>, with its own columns on disk.</p></div></section>
+<section class="step" data-step="5"><div><div class="n">05</div><h2>Values go to typed columns</h2><p>Under their template, grouped by key: every timestamp in one column, every user in another. Thousands of rows to a group, one file per day.</p></div></section>
+<section class="step" data-step="6"><div><div class="n">06</div><h2>Each column is squeezed its own way</h2><p>Values of one kind sit together, so each column gets the trick that fits it: the gap from the row before, a word list, fewer bytes, or nothing at all when every row says the same thing. zstd goes over the result.</p></div></section>
+<section class="step" data-step="7"><div><div class="n">07</div><h2>A query walks the trie first</h2><p>It asks the trie which templates can match, then reads only the columns it needs. Most of the disk is never touched.</p></div></section>
+  </div>
+  <div class="stage" id="stage">
+<svg viewBox="0 0 900 560" width="900" height="560" role="img" aria-label="How kibbr stores a log line: its keys as a path in a trie, its values as typed columns">
+<text class="tag shape" x="40" y="24">shape · the keys</text>
+<text class="tag values" x="190" y="24">values · what this line says</text>
+<text class="ln a" x="40" y="54" xml:space="preserve"><tspan class="p">{</tspan><tspan class="k">"ts"</tspan><tspan class="p">:</tspan><tspan class="v">"09:12:03Z"</tspan><tspan class="p">,</tspan><tspan class="k">"level"</tspan><tspan class="p">:</tspan><tspan class="v">"info"</tspan><tspan class="p">,</tspan><tspan class="k">"event"</tspan><tspan class="p">:</tspan><tspan class="v">"login_ok"</tspan><tspan class="p">,</tspan><tspan class="k">"user"</tspan><tspan class="p">:</tspan><tspan class="v">"u_812"</tspan><tspan class="p">,</tspan><tspan class="k">"ms"</tspan><tspan class="p">:</tspan><tspan class="v">41</tspan><tspan class="p">}</tspan></text>
+<text class="ln b" x="40" y="82" xml:space="preserve"><tspan class="p">{</tspan><tspan class="k">"ts"</tspan><tspan class="p">:</tspan><tspan class="v">"09:12:04Z"</tspan><tspan class="p">,</tspan><tspan class="k">"level"</tspan><tspan class="p">:</tspan><tspan class="v">"info"</tspan><tspan class="p">,</tspan><tspan class="k">"event"</tspan><tspan class="p">:</tspan><tspan class="v">"login_ok"</tspan><tspan class="p">,</tspan><tspan class="k">"user"</tspan><tspan class="p">:</tspan><tspan class="v">"u_17"</tspan><tspan class="p">,</tspan><tspan class="k">"ms"</tspan><tspan class="p">:</tspan><tspan class="v">38</tspan><tspan class="p">}</tspan></text>
+<text class="ln c" x="40" y="110" xml:space="preserve"><tspan class="p">{</tspan><tspan class="k">"ts"</tspan><tspan class="p">:</tspan><tspan class="v">"09:12:05Z"</tspan><tspan class="p">,</tspan><tspan class="k">"level"</tspan><tspan class="p">:</tspan><tspan class="v">"error"</tspan><tspan class="p">,</tspan><tspan class="k">"event"</tspan><tspan class="p">:</tspan><tspan class="v">"login_failed"</tspan><tspan class="p">,</tspan><tspan class="k">"user"</tspan><tspan class="p">:</tspan><tspan class="v">"u_17"</tspan><tspan class="p">,</tspan><tspan class="k">"reason"</tspan><tspan class="p">:</tspan><tspan class="v">"bad_password"</tspan><tspan class="p">}</tspan></text>
+<text class="q" x="40" y="54" xml:space="preserve"><tspan class="kw">COUNT LOG</tspan> {"event": <tspan class="v">"login_ok"</tspan>}</text>
+<text class="cap trie" x="40" y="172">shapes → a trie, in memory</text>
+<g class="lg">
+<text class="cap lgc" x="40" y="172">how each column is squeezed</text>
+<g class="lgr" style="--i:0"><rect x="40" y="204" width="10" height="10" rx="2"/><text class="lk" x="60" y="214">ts <tspan class="lt">· Datetime</tspan> <tspan class="lh">→ delta</tspan></text><text class="lw" x="60" y="231">the gap from the row before, a small number</text></g>
+<g class="lgr" style="--i:1"><rect x="40" y="250" width="10" height="10" rx="2"/><text class="lk" x="60" y="260">level <tspan class="lt">· String</tspan> <tspan class="lh">→ dictionary</tspan></text><text class="lw" x="60" y="277">a short word list, then a tiny index per row</text></g>
+<g class="lgr" style="--i:2"><rect x="40" y="296" width="10" height="10" rx="2"/><text class="lk" x="60" y="306">event <tspan class="lt">· String</tspan> <tspan class="lh">→ once</tspan></text><text class="lw" x="60" y="323">promoted: the value lives in the shape, one for every row</text></g>
+<g class="lgr" style="--i:3"><rect x="40" y="342" width="10" height="10" rx="2"/><text class="lk" x="60" y="352">user <tspan class="lt">· String</tspan> <tspan class="lh">→ dictionary</tspan></text><text class="lw" x="60" y="369">the same trick with a longer list; a repeat costs one number</text></g>
+<g class="lgr" style="--i:4"><rect x="40" y="388" width="10" height="10" rx="2"/><text class="lk" x="60" y="398">ms <tspan class="lt">· Int64</tspan> <tspan class="lh">→ varint</tspan></text><text class="lw" x="60" y="415">small integers in one or two bytes, not eight</text></g>
+<text class="lz" x="40" y="454">then zstd over every chunk: level 3 live, 9 on compaction</text>
+</g>
+<text class="cap cols" x="560" y="172">values → typed columns, on disk</text>
+<line class="e pa e-ts" x1="60" y1="300" x2="140" y2="300"/>
+<line class="e pa e-level" x1="140" y1="300" x2="220" y2="300"/>
+<line class="e pa e-event" x1="220" y1="300" x2="300" y2="300"/>
+<line class="e pa e-user" x1="300" y1="300" x2="380" y2="300"/>
+<line class="e pa e-ms" x1="380" y1="300" x2="460" y2="260"/>
+<line class="e pb" x1="380" y1="300" x2="460" y2="340"/>
+<path class="walk" d="M60 300 L140 300 L220 300 L300 300 L380 300 L460 260"/>
+<circle class="nd pa n-root root" cx="60" cy="300" r="7"/>
+<circle class="nd pa n-ts" cx="140" cy="300" r="7"/>
+<text class="lb pa n-ts" x="140" y="284" text-anchor="middle">ts</text>
+<circle class="nd pa n-level" cx="220" cy="300" r="7"/>
+<text class="lb pa n-level" x="220" y="284" text-anchor="middle">level</text>
+<circle class="nd pa n-event" cx="300" cy="300" r="7"/>
+<text class="lb pa n-event" x="300" y="284" text-anchor="middle">event</text>
+<circle class="nd pa n-user" cx="380" cy="300" r="7"/>
+<text class="lb pa n-user" x="380" y="284" text-anchor="middle">user</text>
+<circle class="nd pa n-ms leaf" cx="460" cy="260" r="7"/>
+<text class="lb pa n-ms leaf-lb" x="460" y="244" text-anchor="middle">ms</text>
+<circle class="nd pb leaf" cx="460" cy="340" r="7"/>
+<text class="lb pb leaf-lb" x="460" y="364" text-anchor="middle">reason</text>
+<text class="tpl a" x="478" y="264">template A</text>
+<text class="tpl b" x="478" y="344">template B</text>
+<g class="col c-ts">
+<text class="hd" x="588" y="202" text-anchor="middle">ts</text>
+<text class="ty" x="588" y="215" text-anchor="middle">Datetime</text>
+<rect class="tr" x="560" y="224" width="56" height="216" rx="4"/>
+<rect class="cell r1" style="--i:0" x="565" y="232" width="46" height="16" rx="2"/>
+<rect class="cell r2" style="--i:0" x="565" y="254" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:0" x="565" y="276" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:1" x="565" y="298" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:2" x="565" y="320" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:3" x="565" y="342" width="46" height="16" rx="2"/>
+<rect class="enc" style="--i:0" x="565" y="232" width="46" height="40" rx="2"/>
+</g>
+<g class="col c-level">
+<text class="hd" x="656" y="202" text-anchor="middle">level</text>
+<text class="ty" x="656" y="215" text-anchor="middle">String</text>
+<rect class="tr" x="628" y="224" width="56" height="216" rx="4"/>
+<rect class="cell r1" style="--i:1" x="633" y="232" width="46" height="16" rx="2"/>
+<rect class="cell r2" style="--i:1" x="633" y="254" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:4" x="633" y="276" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:5" x="633" y="298" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:6" x="633" y="320" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:7" x="633" y="342" width="46" height="16" rx="2"/>
+<rect class="enc" style="--i:1" x="633" y="232" width="46" height="22" rx="2"/>
+</g>
+<g class="col c-event">
+<text class="hd" x="724" y="202" text-anchor="middle">event</text>
+<text class="ty" x="724" y="215" text-anchor="middle">String</text>
+<rect class="tr" x="696" y="224" width="56" height="216" rx="4"/>
+<rect class="cell r1" style="--i:2" x="701" y="232" width="46" height="16" rx="2"/>
+<rect class="cell r2" style="--i:2" x="701" y="254" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:8" x="701" y="276" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:9" x="701" y="298" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:10" x="701" y="320" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:11" x="701" y="342" width="46" height="16" rx="2"/>
+<rect class="enc" style="--i:2" x="701" y="232" width="46" height="12" rx="2"/>
+</g>
+<g class="col c-user">
+<text class="hd" x="792" y="202" text-anchor="middle">user</text>
+<text class="ty" x="792" y="215" text-anchor="middle">String</text>
+<rect class="tr" x="764" y="224" width="56" height="216" rx="4"/>
+<rect class="cell r1" style="--i:3" x="769" y="232" width="46" height="16" rx="2"/>
+<rect class="cell r2" style="--i:3" x="769" y="254" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:12" x="769" y="276" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:13" x="769" y="298" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:14" x="769" y="320" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:15" x="769" y="342" width="46" height="16" rx="2"/>
+<rect class="enc" style="--i:3" x="769" y="232" width="46" height="60" rx="2"/>
+</g>
+<g class="col c-ms">
+<text class="hd" x="860" y="202" text-anchor="middle">ms</text>
+<text class="ty" x="860" y="215" text-anchor="middle">Int64</text>
+<rect class="tr" x="832" y="224" width="56" height="216" rx="4"/>
+<rect class="cell r1" style="--i:4" x="837" y="232" width="46" height="16" rx="2"/>
+<rect class="cell r2" style="--i:4" x="837" y="254" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:16" x="837" y="276" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:17" x="837" y="298" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:18" x="837" y="320" width="46" height="16" rx="2"/>
+<rect class="cell ghost" style="--i:19" x="837" y="342" width="46" height="16" rx="2"/>
+<rect class="enc" style="--i:4" x="837" y="232" width="46" height="26" rx="2"/>
+</g>
+<g class="size"><text x="560" y="478">200,000 lines · raw 97.7 MB</text><rect class="bg" x="560" y="486" width="328" height="12" rx="3"/><rect class="raw" x="560" y="486" width="328" height="12" rx="3"/><text class="pct" x="593" y="496">7.4 MB · 7.6% of raw</text></g>
+<g class="res"><rect x="560" y="466" width="328" height="60" rx="8"/><text x="578" y="490">1 of 2 templates · 1 column read</text><text class="big" x="578" y="516">count 2</text><text x="700" y="514">0.16 ms on 1M lines</text></g>
+</svg>
+  </div>
+</div></section>
+
+<section class="end"><div class="wrap">
+  <p class="kicker">Measured, on an Apple M2</p>
+  <h2>Small on disk. Quick to answer. Honest about the rest.</h2>
+  <div class="nums">
+    <div class="num o"><div class="v">7.6<small>%</small></div><p>of the original size on application logs, two thirds of gzip -9, and still queryable.</p></div>
+    <div class="num b"><div class="v">24.6<small>%</small></div><p>on 1.5 GB of real GitHub events. gzip is smaller there: prose and 1,516 shapes cost kibbr. You can't query a gzip file.</p></div>
+    <div class="num"><div class="v">0.16<small>ms</small></div><p>to count one event across a million lines. Structured JSON only; no full-text search.</p></div>
+  </div>
+  <div class="cta">
+    <button class="install" type="button" data-copy="cargo install kibbr"><span>cargo install kibbr</span><span class="cp">copy</span></button>
+    <a class="btn" href="{{repo}}">Source and docs on GitHub</a>
+    <a class="btn" href="https://crates.io/crates/kibbr">crates.io</a>
+    <a class="btn" href="https://docs.rs/kibbr">docs.rs</a>
+  </div>
+</div></section>
+
+<footer class="foot"><div class="wrap">
+  <span>kibbr 0.2.1 · Rust · one program · AGPL-3.0-only</span>
+  <span><a href="{{repo}}">github.com/pratyaydeep/kibbr</a></span>
+</div></footer>
+
+<script>
+(() => {
+  const stage = document.getElementById("stage");
+  const steps = [...document.querySelectorAll(".step")];
+  const show = (n) => {
+    steps.forEach((s, i) => s.classList.toggle("on", i + 1 === n));
+    for (let i = 1; i <= steps.length; i++) stage.classList.toggle("s" + i, i <= n);
+  };
+  // The step nearest the middle of the viewport drives the stage.
+  let current = 0;
+  const pick = () => {
+    const mid = innerHeight * 0.5;
+    let best = 0, bestD = Infinity;
+    steps.forEach((s, i) => {
+      const r = s.getBoundingClientRect();
+      const c = r.top + r.height / 2;
+      const d = Math.abs(c - mid);
+      if (r.top < innerHeight * 0.75 && d < bestD) { best = i + 1; bestD = d; }
+    });
+    const first = steps[0].getBoundingClientRect();
+    if (first.top > innerHeight * 0.75) best = 0;
+    if (best !== current) { current = best; show(best); }
+  };
+  addEventListener("scroll", pick, { passive: true });
+  addEventListener("resize", pick);
+  pick();
+
+  // On a narrow screen the whole picture is too small to read, so the stage zooms to the
+  // part each step is about, gliding between views.
+  const svg = stage.querySelector("svg");
+  const views = ["0 0 900 560", "20 0 780 130", "20 0 780 130", "20 150 520 240", "20 150 520 240", "540 150 360 380", "540 150 360 380", "0 0 900 560"];
+  const narrow = matchMedia("(max-width: 820px)");
+  let from = views[0].split(" ").map(Number), to = from, t0 = 0;
+  const glide = (now) => {
+    const k = Math.min(1, (now - t0) / 600), e = 1 - Math.pow(1 - k, 3);
+    svg.setAttribute("viewBox", from.map((v, i) => v + (to[i] - v) * e).join(" "));
+    if (k < 1) requestAnimationFrame(glide);
+  };
+  const camera = () => {
+    const want = (narrow.matches ? views[current] : views[0]).split(" ").map(Number);
+    if (want.join() === to.join()) return;
+    from = svg.getAttribute("viewBox").split(" ").map(Number); to = want; t0 = performance.now();
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) svg.setAttribute("viewBox", to.join(" "));
+    else requestAnimationFrame(glide);
+  };
+  addEventListener("scroll", camera, { passive: true });
+  narrow.addEventListener("change", camera);
+  camera();
+  document.querySelectorAll(".install").forEach((b) => b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.querySelector(".cp").textContent = "copied"; setTimeout(() => { b.querySelector(".cp").textContent = "copy"; }, 1600); } catch {}
+  }));
+})();
+</script>
+</body>
+</html>

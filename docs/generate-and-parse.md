@@ -1,4 +1,4 @@
-# Generate logs, and parse them
+# Generate logs with kibbr, and parse them
 
 `gen-logs` writes NDJSON to stdout; `parse` prints the fingerprint and the inferred type of
 every value. Both assume `kibbr` is on your `PATH`; `cargo run --release -- gen-logs --lines 5`
