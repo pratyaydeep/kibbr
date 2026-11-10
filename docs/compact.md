@@ -41,7 +41,11 @@ A compaction prints `compacted 2024-01-15: 10,000 rows, 105 row groups in 1 file
   holds it - data files, catalog and manifest, in bytes and in disk blocks, the data files
   broken down into column data, row group headers, schema records and footers - with
   kibbr's total as a share of each compressor's. `--no-zstd` leaves `zstd -19` out: it runs
-  on one core at a few MB/s, and on tens of gigabytes it is hours of the run.
+  at a few MB/s a thread, and on tens of gigabytes it is hours of the run.
+- `--zstd-threads N` is `zstd -19`'s threads, every CPU the process may use if not given. 1
+  is the plain encoder, the smallest; more split the input into jobs, a little larger and
+  close to N times faster. kibbr's own bytes are the same whatever N is. A line under the
+  table says how long `gzip -9` took on its one thread and `zstd -19` on its N.
 - The second table is the same lines as a live day: through the live door into a directory
   of its own, flushed 1,440 times over the file, or once a line if it has fewer - a day
   that arrives evenly, flushed once a minute - measured as that leaves it and again once

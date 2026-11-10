@@ -30,8 +30,16 @@ pub struct Args {
     pub keep: bool,
     /// Leave zstd -19 out of the table: on a large corpus it is most of the run.
     pub no_zstd: bool,
+    /// zstd -19's threads: 1 is the plain single-threaded encoder; more split the input
+    /// into jobs, so the bytes differ a little.
+    pub zstd_threads: u32,
     /// The settings file, for what a scratch directory's storage is opened with.
     pub settings: crate::config::File,
+}
+
+/// Every CPU this process may use, the default for `--zstd-threads`; 1 when that is unknown.
+pub fn all_threads() -> u32 {
+    std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(u32::MAX))
 }
 
 /// One file's size, and what it takes on disk.
@@ -371,31 +379,41 @@ fn measure(
     // Side by side: zstd -19 is the slow one, and the two read the input independently.
     let (gz, zst) = std::thread::scope(|scope| {
         let gz = scope.spawn(|| {
+            let started = Instant::now();
             compressed(&args.input, &gz_path, |r, f| {
                 let mut enc = flate2::write::GzEncoder::new(f, flate2::Compression::new(9));
                 io::copy(r, &mut enc)?;
                 enc.finish()?.sync_all()
             })
+            .map(|()| started.elapsed())
         });
-        // At about 3 MB/s on one core, zstd -19 is hours on a corpus of tens of gigabytes.
+        // At about 3 MB/s on one thread, zstd -19 is hours on a corpus of tens of gigabytes.
         let zst = (!args.no_zstd).then(|| {
             scope.spawn(|| {
+                let started = Instant::now();
                 compressed(&args.input, &zst_path, |r, f| {
                     let mut enc = zstd::stream::write::Encoder::new(f, 19)?;
+                    // multithread(1) is still zstd's job-splitting mode, whose bytes differ
+                    // from the plain encoder's; 1 thread is no call at all.
+                    if args.zstd_threads > 1 {
+                        enc.multithread(args.zstd_threads)?;
+                    }
                     io::copy(r, &mut enc)?;
                     enc.finish()?.sync_all()
                 })
+                .map(|()| started.elapsed())
             })
         });
         (gz.join(), zst.map(|z| z.join()))
     });
-    let joined = |r: std::thread::Result<Result<(), LoadError>>| {
+    let joined = |r: std::thread::Result<Result<Duration, LoadError>>| {
         r.unwrap_or_else(|_| Err(LoadError::Input("a compressor panicked".to_string())))
     };
-    joined(gz)?;
-    if let Some(zst) = zst {
-        joined(zst)?;
-    }
+    let gz_took = joined(gz)?;
+    let zst_took = match zst {
+        Some(zst) => Some(joined(zst)?),
+        None => None,
+    };
     let gz = size_of(&gz_path, block).map_err(io_at(&gz_path))?;
     let zst = if args.no_zstd {
         None
@@ -469,6 +487,17 @@ fn measure(
         )),
         _ => {}
     }
+    // Not "  zstd -19 ...": that starts a table row, and tests/bench.rs looks for none
+    // under --no-zstd.
+    lines.push(match zst_took {
+        Some(took) => format!(
+            "  gzip -9 ran on 1 thread in {:.1}s; zstd -19 on {} thread(s) in {:.1}s",
+            gz_took.as_secs_f64(),
+            args.zstd_threads,
+            took.as_secs_f64()
+        ),
+        None => format!("  gzip -9 ran on 1 thread in {:.1}s", gz_took.as_secs_f64()),
+    });
     lines.push(format!(
         "  disk blocks are {} bytes: what each file takes on this disk, rounded up to whole \
          blocks",

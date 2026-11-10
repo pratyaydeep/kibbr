@@ -278,3 +278,53 @@ fn no_zstd_leaves_zstd_out_and_measures_the_rest() {
     assert!(stdout.contains("kibbr total, after"), "{stdout}");
     assert!(!scratch.0.join("scratch").exists());
 }
+
+#[test]
+fn zstd_threads_change_zstd_alone_and_say_how_long_each_took() {
+    let scratch = Scratch::new("zstd-threads");
+    let input = scratch.0.join("farm.ndjson");
+    let farm = kibbr()
+        .args(["gen-logs", "--profile", "farm", "--seed", "42", "--lines", "200"])
+        .output()
+        .expect("failed to run gen-logs");
+    assert!(farm.status.success(), "gen-logs failed");
+    fs::write(&input, farm.stdout).expect("write the input");
+
+    let run = |threads: u64| {
+        let ran = kibbr()
+            .arg("bench-storage")
+            .arg(&input)
+            .args(["--zstd-threads", &threads.to_string()])
+            .arg("--scratch")
+            .arg(scratch.0.join("scratch"))
+            .env_remove("KIBBR__STORAGE__SEGMENT_MAX_BYTES")
+            .output()
+            .expect("failed to run bench-storage");
+        let stderr = String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "bench-storage --zstd-threads {threads} failed:\n{stderr}");
+        let stdout = String::from_utf8(ran.stdout).expect("stdout was not utf-8");
+        let lines: Vec<&str> = stdout.lines().collect();
+
+        // The line bench/compression.py's TIMES reads: gzip's seconds, zstd's threads and
+        // seconds. Not a table row: it does not start with a compressor's name.
+        let times = lines
+            .iter()
+            .find(|line| line.starts_with("  gzip -9 ran on "))
+            .unwrap_or_else(|| panic!("no timing line in:\n{stdout}"));
+        let (shaped, counts) = shape(times);
+        assert_eq!(
+            shaped,
+            "  gzip -N ran on N thread in N.Ns; zstd -N on N thread(s) in N.Ns",
+            "{times:?}"
+        );
+        assert_eq!(counts[5], threads, "{times:?}");
+
+        let kibbr = ["kibbr total ", "kibbr total, before", "kibbr total, after"]
+            .map(|first| block(&lines, first));
+        assert!(!scratch.0.join("scratch").exists());
+        kibbr
+    };
+
+    // zstd -19's own bytes may differ with its threads; kibbr's may not.
+    assert_eq!(run(1), run(4), "kibbr's bytes moved with zstd's threads");
+}

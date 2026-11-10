@@ -288,10 +288,15 @@ enum Command {
         /// Leave the scratch directory in place, to look at.
         #[arg(long)]
         keep: bool,
-        /// Leave zstd -19 out: it runs on one core at a few MB/s, so on tens of gigabytes it
+        /// Leave zstd -19 out: it runs on one thread at a few MB/s, so on tens of gigabytes it
         /// takes hours.
         #[arg(long)]
         no_zstd: bool,
+        /// Threads for zstd -19. 1 is the plain zstd -19, the smallest it makes; more split
+        /// the input into jobs, a little larger and close to N times faster. [default: every
+        /// CPU this process may use]
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+        zstd_threads: Option<u32>,
         /// As `load --time-columns`. Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
@@ -694,6 +699,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             scratch,
             keep,
             no_zstd,
+            zstd_threads,
             time_columns,
         } => bench_storage::run(
             &bench_storage::Args {
@@ -702,6 +708,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 scratch,
                 keep,
                 no_zstd,
+                zstd_threads: zstd_threads.unwrap_or_else(bench_storage::all_threads),
                 settings: file.clone(),
             },
             config::schema(file, time_columns),
