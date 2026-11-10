@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! `kibbr load` - the command: who runs it and what it prints. The load itself is the
-//! server crate's (`crate::server::load`). Who holds `LOCK` decides where it runs, because
+//! engine's (`crate::engine::load`). Who holds `LOCK` decides where it runs, because
 //! one process writes the catalog and the manifest: a server holding the directory is
 //! asked (`POST /load`) and polled; with none, the command takes the lock and runs alone.
 
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-pub use crate::server::load::*;
+pub use crate::engine::load::*;
 
 use crate::config::LoadStorage as _;
 

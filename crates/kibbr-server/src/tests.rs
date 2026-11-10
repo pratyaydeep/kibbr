@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use super::*;
+use crate::storage::catalog::Catalog;
+use crate::storage::db;
+use crate::storage::store::FlushKind;
+use crate::storage::wal::Wal;
 use std::io::Write;
 
 /// A server over a store in memory: the job registries and the shutdown steps are the
@@ -16,40 +20,6 @@ fn server() -> Arc<Server> {
         None,
     );
     Arc::new(server.expect("a server in memory"))
-}
-
-/// The wait keeps a compaction's last writes inside the directory's lock. A thread told
-/// to stop is usually gone already, so only one that takes its time shows the wait.
-#[test]
-fn shutdown_waits_for_a_compaction_thread_still_running() {
-    for by_request in [true, false] {
-        let server = server();
-        let ended = Arc::new(AtomicBool::new(false));
-        let thread = {
-            let ended = Arc::clone(&ended);
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(200));
-                ended.store(true, Ordering::SeqCst);
-            })
-        };
-        {
-            let mut jobs = server.compactions.lock().expect("the lock");
-            match by_request {
-                true => jobs.asked = Some(thread),
-                false => jobs.scheduled = Some(thread),
-            }
-        }
-
-        join_compactions(&server);
-        assert!(
-            ended.load(Ordering::SeqCst),
-            "shutdown went on past a compaction thread still running (asked: {by_request})"
-        );
-        assert!(server.compact_cancel.load(Ordering::Relaxed));
-        let mut jobs = server.compactions.lock().expect("the lock");
-        assert!(jobs.is_stopping() && jobs.start().is_none());
-        assert!(jobs.asked.is_none() && jobs.scheduled.is_none());
-    }
 }
 
 /// The scheduler's look is left to the next tick while a load job runs - no thread is
@@ -69,7 +39,8 @@ fn a_look_for_due_days_waits_while_a_load_job_runs() {
         .insert(1, Arc::clone(&job));
     let looked = || {
         server
-            .compactions
+            .db
+            .compaction_jobs()
             .lock()
             .expect("the lock")
             .scheduled
@@ -122,7 +93,8 @@ fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
     }
     let looked = || {
         server
-            .compactions
+            .db
+            .compaction_jobs()
             .lock()
             .expect("the lock")
             .scheduled
@@ -133,11 +105,11 @@ fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
     let now = Utc::now();
     db::read_lines(
         line,
-        &mut |_, parsed| db::ingest_line(&server.trie, Some(&server.stores), &parsed, now),
+        &mut |_, parsed| db::ingest_line(server.db.trie(), Some(server.db.stores()), &parsed, now),
         &mut |_| {},
     )
     .expect("the line is read");
-    let flushed = server.stores.flush_all(FlushKind::Tick);
+    let flushed = server.db.stores().flush_all(FlushKind::Tick);
     let waited = look_waits(&server);
     look_for_due_days(&server);
     let taken = looked();
@@ -152,7 +124,7 @@ fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
         "a look was taken on a disk that is refusing"
     );
 
-    let again = server.stores.flush_all(FlushKind::Tick);
+    let again = server.db.stores().flush_all(FlushKind::Tick);
     assert_eq!(again.failed, 0, "the flush still fails on a writable disk");
     assert!(!look_waits(&server));
     look_for_due_days(&server);
@@ -160,62 +132,6 @@ fn a_look_for_due_days_waits_while_the_last_flush_could_not_write() {
     thread.join().expect("the look's thread");
     drop(server);
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A store whose leaves will not open while `shut` is set: what the disk store never
-/// does today, and what the log's applier has to survive if a store ever does.
-struct Refusing(Arc<AtomicBool>);
-
-impl crate::storage::store::Store for Refusing {
-    fn open(
-        &self,
-        template_id: u64,
-        time_column: &str,
-    ) -> Result<Arc<dyn crate::storage::store::LeafStore>, StoreError> {
-        if self.0.load(Ordering::Relaxed) {
-            return Err(StoreError::Io {
-                template_id,
-                source: std::io::Error::other("the leaf will not open"),
-            });
-        }
-        crate::storage::store::MemoryStore::new().open(template_id, time_column)
-    }
-
-    fn kind(&self) -> &'static str {
-        "refusing"
-    }
-
-    fn base_path(&self) -> Option<&Path> {
-        None
-    }
-}
-
-/// A row the store refuses after the log has its line is held, and so is every later row
-/// of its template: a row group cut around it would say its line was stored.
-#[test]
-fn a_row_the_store_refuses_is_held_and_its_template_waits_with_it() {
-    let shut = Arc::new(AtomicBool::new(true));
-    let stores = StoreManager::new(Box::new(Refusing(Arc::clone(&shut))));
-    let held = Held::new();
-    let placed = |template_id| db::Placed {
-        template_id,
-        time_column: "ts".to_string(),
-        row: crate::storage::store::Row::new(),
-    };
-    assert_eq!(held.from(), None);
-
-    assert!(!held.apply(&stores, 40, placed(7)));
-    assert_eq!((held.from(), held.rows()), (Some(40), 1));
-
-    shut.store(false, Ordering::Relaxed);
-    assert!(
-        !held.apply(&stores, 41, placed(7)),
-        "the template was let back in"
-    );
-    assert_eq!(stores.rows(), 0);
-    assert!(held.apply(&stores, 42, placed(8)));
-    assert_eq!(stores.rows(), 1);
-    assert_eq!((held.from(), held.rows()), (Some(40), 2));
 }
 
 // ── A body of which nothing was taken ─────────────────────────────────────────────
@@ -261,7 +177,8 @@ fn server_whose_catalog_cannot_write(tag: &str, known: &[u8]) -> Arc<Server> {
     ));
     std::fs::create_dir_all(&dir).expect("mkdir");
     server
-        .trie
+        .db
+        .trie()
         .attach_catalog(Catalog::read_only(&dir.join("dead.log")).expect("read-only"));
     // The catalog keeps its handle, and nothing reads the file by name again.
     let _ = std::fs::remove_dir_all(&dir);
@@ -309,7 +226,7 @@ fn a_body_the_catalog_could_write_none_of_is_a_503_with_its_errors_by_line() {
         said.ends_with(errors[0]["msg"].as_str().unwrap_or("no message")),
         "{report}"
     );
-    assert_eq!(server.trie.template_count(), 0, "a refused template exists");
+    assert_eq!(server.db.trie().template_count(), 0, "a refused template exists");
 }
 
 /// Any line taken, or any line the sender got wrong, keeps the 200: a 503 would have a
@@ -405,7 +322,7 @@ fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
         None,
     );
     let server = Arc::new(server.expect("a server on disk"));
-    let fan = Arc::clone(server.fan.as_ref().expect("the server has scan threads"));
+    let fan = server.db.fan().expect("the server has scan threads");
     let _ = scan.set(Arc::clone(&fan));
 
     // Two row groups in one day: each tick closes what is buffered.
@@ -420,11 +337,11 @@ fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
             .collect();
         db::read_lines(
             lines.as_bytes(),
-            &mut |_, parsed| db::ingest_line(&server.trie, Some(&server.stores), &parsed, now),
+            &mut |_, parsed| db::ingest_line(server.db.trie(), Some(server.db.stores()), &parsed, now),
             &mut |_| {},
         )
         .expect("the lines are read");
-        let flushed = server.stores.flush_all(FlushKind::Tick);
+        let flushed = server.db.stores().flush_all(FlushKind::Tick);
         assert_eq!((flushed.failed, flushed.row_groups), (0, 1));
     }
 
@@ -457,12 +374,12 @@ fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
     );
 
     // The control: the engine called from a task, on the worker.
-    let query = query::from_trieql(text, Utc::now(), server.limits).expect("a query");
+    let query = answer::from_trieql(text, Utc::now(), server.limits).expect("a query");
     let held = Arc::clone(&server);
     let count = runtime
         .block_on(async {
             tokio::spawn(async move {
-                engine::engine::execute(&held.trie, &held.stores, &query).map(|result| result.count)
+                engine::engine::execute(held.db.trie(), held.db.stores(), &query).map(|result| result.count)
             })
             .await
         })
@@ -525,7 +442,7 @@ fn a_server_says_the_scan_threads_it_resolved_in_stats_and_in_its_banner() {
             None,
         );
         let server = Arc::new(server.expect("a server"));
-        assert_eq!(server.fan.is_some(), threads > 1);
+        assert_eq!(server.db.fan().is_some(), threads > 1);
         let stats: Value = runtime.block_on(async {
             let response = get_stats(State(Arc::clone(&server))).await;
             assert_eq!(response.status(), StatusCode::OK);
@@ -780,7 +697,7 @@ impl Listening {
     }
 
     fn wal(&self) -> wal::Stats {
-        self.server.wal.as_ref().expect("a log").stats()
+        self.server.db.wal().expect("a log").stats()
     }
 
     /// Permits for the parse in use.
@@ -805,16 +722,16 @@ impl Listening {
     /// `COUNT LOG {}`: every row a query can see.
     fn count(&self) -> u64 {
         let server = &self.server;
-        let query = query::from_trieql("COUNT LOG {}", Utc::now(), server.limits)
+        let query = answer::from_trieql("COUNT LOG {}", Utc::now(), server.limits)
             .expect("a query");
-        let result = engine::engine::execute(&server.trie, &server.stores, &query);
+        let result = engine::engine::execute(server.db.trie(), server.db.stores(), &query);
         result.expect("the query answers").count
     }
 
     /// Hold the log's applier still, as a replace-a-day does: bodies are written to the log
     /// and none is stored or answered until the guard is let go.
     fn still(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
-        let disk = self.server.stores.disk_store().expect("a disk store");
+        let disk = self.server.db.stores().disk_store().expect("a disk store");
         disk.still()
     }
 
@@ -1359,7 +1276,7 @@ fn a_failed_log_answers_every_waiter_with_its_reason() {
     waiting.push(at.post(lines(3)));
     until("the fourth body to wait at the door", || at.at_the_door() == 1);
 
-    let dir = at.server.wal.as_ref().expect("a log").dir().to_path_buf();
+    let dir = at.server.db.wal().expect("a log").dir().to_path_buf();
     let mode = |mode| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode));
     mode(0o555).expect("chmod -w");
     let began = Instant::now();
@@ -1370,7 +1287,7 @@ fn a_failed_log_answers_every_waiter_with_its_reason() {
         .map(|body| body.join().expect("a waiting sender"))
         .collect();
     let took = began.elapsed();
-    let degraded = at.server.degraded();
+    let degraded = at.server.db.degraded();
     mode(0o755).expect("chmod +w");
 
     assert_eq!(first.status, 200, "{first:?}");
@@ -1389,8 +1306,8 @@ fn a_failed_log_answers_every_waiter_with_its_reason() {
 
     // And the door opens again at the first write that succeeds.
     until("the log to write again", || {
-        move_checkpoint(&at.server);
-        at.server.wal.as_ref().is_some_and(Wal::is_healthy)
+        at.server.db.checkpoint();
+        at.server.db.wal().is_some_and(Wal::is_healthy)
     });
     let answer = at.post(lines(4)).join().expect("a sender");
     assert_eq!(answer.status, 200, "{answer:?}");
@@ -1409,7 +1326,7 @@ fn small_buffers(tag: &str, permits: usize) -> Listening {
 
 /// Flush as the tick does, and say so to whoever is waiting at the door for it.
 fn tick(at: &Listening) -> crate::storage::store::FlushSummary {
-    let summary = at.server.stores.flush_all(FlushKind::Tick);
+    let summary = at.server.db.stores().flush_all(FlushKind::Tick);
     at.server.flushed.notify_waiters();
     summary
 }
@@ -1424,14 +1341,14 @@ fn a_body_waits_at_the_door_while_the_buffers_are_past_twice_their_limit() {
     let at = small_buffers("door-buffers", 2);
     let first = at.post(lines(0)).join().expect("a sender");
     assert_eq!(first.status, 200, "{first:?}");
-    assert!(at.server.stores.buffers_full());
+    assert!(at.server.db.stores().buffers_full());
 
     let second = at.post(lines(1));
     until("the second body to wait at the door", || at.at_the_door() == 1);
     assert_eq!(at.parsing(), 0, "a body waiting for the flush holds a permit");
     let began = Instant::now();
     assert_eq!(tick(&at).failed, 0);
-    assert!(!at.server.stores.buffers_full());
+    assert!(!at.server.db.stores().buffers_full());
     let second = second.join().expect("the second sender");
     assert!(
         began.elapsed() < WOKEN_WITHIN,
@@ -1445,13 +1362,13 @@ fn a_body_waits_at_the_door_while_the_buffers_are_past_twice_their_limit() {
     // The store stops writing: a day with no file yet, and a directory that will
     // not take one.
     assert_eq!(tick(&at).failed, 0);
-    let data = at.server.storage.base_path.as_ref().expect("on disk");
+    let data = at.server.db.storage().base_path.as_ref().expect("on disk");
     let data = data.join(crate::storage::store::disk::DATA_DIR);
     let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
     mode(0o555).expect("chmod -w");
     let third = at.post(lines_at(1_705_401_000, 2)).join().expect("a sender");
     let failed = tick(&at).failed;
-    let full = at.server.stores.buffers_full() && at.server.write_health.is_degraded();
+    let full = at.server.db.stores().buffers_full() && at.server.db.store_failing();
     let began = Instant::now();
     let fourth = at.post(lines(3)).join().expect("a sender");
     let took = began.elapsed();
@@ -1484,12 +1401,12 @@ fn a_body_given_its_permit_onto_full_buffers_goes_back_to_wait() {
     until("the second body to hold the permit", || at.parsing() == 1);
     let third = at.post(lines(2));
     until("the third body to wait at the door", || at.at_the_door() == 1);
-    assert!(!at.server.stores.buffers_full());
+    assert!(!at.server.db.stores().buffers_full());
 
     drop(still);
     let first = first.join().expect("the first sender");
     assert_eq!(first.status, 200, "{first:?}");
-    assert!(at.server.stores.buffers_full());
+    assert!(at.server.db.stores().buffers_full());
     second.write(&body[body.len() / 2..]);
     let second = second.answer();
     assert_eq!(second.status, 200, "{second:?}");
@@ -1573,7 +1490,7 @@ fn the_flush_task_lets_in_a_body_waiting_at_the_door() {
     let at = Listening::start("door-flush-task", 2, LONG_WAIT, storage);
     let first = at.post(lines(0)).join().expect("a sender");
     assert_eq!(first.status, 200, "{first:?}");
-    assert!(at.server.stores.buffers_full());
+    assert!(at.server.db.stores().buffers_full());
     let second = at.post(lines(1));
     until("the second body to wait at the door", || at.at_the_door() == 1);
 
@@ -1646,7 +1563,7 @@ fn full_buffers(tag: &str, wait: Duration) -> Listening {
     let at = Listening::start(tag, 2, wait, storage);
     let first = at.post(lines(0)).join().expect("a sender");
     assert_eq!(first.status, 200, "{first:?}");
-    assert!(at.server.stores.buffers_full());
+    assert!(at.server.db.stores().buffers_full());
     at
 }
 
@@ -1660,7 +1577,7 @@ fn a_wait_for_the_buffers_that_runs_out_looks_at_them_once_more() {
 
     // Still full when the wait runs out: a shed, and the bytes in it are the ones
     // that are held.
-    let (held, limit) = at.server.stores.buffer_bytes();
+    let (held, limit) = at.server.db.stores().buffer_bytes();
     assert!(held > 2 * limit, "{held} of {limit}");
     let mut waiting = Box::pin(at.server.admit_waiting());
     assert!(look(&runtime, &mut waiting).is_pending());
@@ -1682,9 +1599,9 @@ fn a_wait_for_the_buffers_that_runs_out_looks_at_them_once_more() {
     // runs out, and not shed for buffers that have room.
     let mut waiting = Box::pin(at.server.admit_waiting());
     assert!(look(&runtime, &mut waiting).is_pending());
-    let flushed = at.server.stores.flush_all(FlushKind::Tick);
+    let flushed = at.server.db.stores().flush_all(FlushKind::Tick);
     assert_eq!(flushed.failed, 0);
-    assert!(!at.server.stores.buffers_full());
+    assert!(!at.server.db.stores().buffers_full());
     let admitted = runtime.block_on(&mut waiting);
     assert!(admitted.is_ok(), "shed beside buffers that had room");
     assert_eq!(at.shed(), 1, "the one shed is the first half's");
@@ -1708,8 +1625,8 @@ fn a_store_that_fails_during_a_wait_for_the_buffers_is_the_reason_given() {
     let runtime = by_hand();
     // The first body's day gets its file, and the buffers are empty again. Then a
     // day with no file yet, and a directory that will not take one.
-    assert_eq!(at.server.stores.flush_all(FlushKind::Tick).failed, 0);
-    let data = at.server.storage.base_path.as_ref().expect("on disk");
+    assert_eq!(at.server.db.stores().flush_all(FlushKind::Tick).failed, 0);
+    let data = at.server.db.storage().base_path.as_ref().expect("on disk");
     let data = data.join(crate::storage::store::disk::DATA_DIR);
     let mode = |mode| std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode));
     mode(0o555).expect("chmod -w");
@@ -1717,12 +1634,12 @@ fn a_store_that_fails_during_a_wait_for_the_buffers_is_the_reason_given() {
         .post(lines_at(1_705_401_000, 1))
         .join()
         .expect("a sender");
-    let full = at.server.stores.buffers_full();
+    let full = at.server.db.stores().buffers_full();
 
     let mut waiting = Box::pin(at.server.admit_waiting());
     let parked = look(&runtime, &mut waiting).is_pending();
-    let failed = at.server.stores.flush_all(FlushKind::Tick).failed;
-    let still_full = at.server.stores.buffers_full() && at.server.write_health.is_degraded();
+    let failed = at.server.db.stores().flush_all(FlushKind::Tick).failed;
+    let still_full = at.server.db.stores().buffers_full() && at.server.db.store_failing();
     let answered = runtime.block_on(&mut waiting);
     mode(0o755).expect("chmod +w");
 
@@ -1767,8 +1684,8 @@ fn with_no_wait_a_body_at_the_door_is_answered_at_its_first_look() {
     assert!(retry && error.starts_with("the buffers hold"), "{error}");
     assert!(!error.contains("hold 0 bytes"), "{error}");
     assert_eq!(shed.buffers.load(Ordering::Relaxed), 1);
-    assert_eq!(server.stores.flush_all(FlushKind::Tick).failed, 0);
-    assert!(!server.stores.buffers_full());
+    assert_eq!(server.db.stores().flush_all(FlushKind::Tick).failed, 0);
+    assert!(!server.db.stores().buffers_full());
 
     // No permit for the parse.
     let permits = Arc::clone(&server.ingest_permits)

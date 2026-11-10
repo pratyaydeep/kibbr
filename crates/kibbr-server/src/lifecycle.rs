@@ -52,21 +52,9 @@ async fn serve(
         schema,
         banner: how,
     } = settings;
-    // Read-only, so it runs before the lock and the port: a data directory holding a
-    // segment from another format version is not served at all.
-    if let Some(base) = storage.base_path.as_deref() {
-        crate::storage::store::disk::refuse_other_versions(base).map_err(storage_fatal)?;
-    }
-    // Taken before anything is written and before the port: two servers on one directory
-    // would each append to the catalog and the manifest over the other's records.
-    let mut lock = match storage.base_path.as_deref() {
-        Some(base) => {
-            let mut lock = crate::storage::lock::DataLock::acquire(base)?;
-            let _ = lock.announce(&crate::storage::lock::Holder::server(None, None));
-            Some(lock)
-        }
-        None => None,
-    };
+    // A data directory holding a segment from another format version is refused, and its
+    // lock taken, before anything is written and before the port: see `Database::claim`.
+    let claim = Database::claim(engine::Options { storage, schema })?;
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -80,39 +68,31 @@ async fn serve(
         .map_err(|source| Error::Bind { addr, source })?;
 
     // Written to `LOCK` beside the address: a `/load` shows it or is refused. See lock.rs.
-    let load_token = match &lock {
-        Some(_) => Some(
-            crate::storage::store::v3::file::new_file_id()
-                .map(|id| crate::storage::store::manifest::hex(&id))
-                .map_err(|e| Error::Storage {
-                    detail: format!("drawing the load token: {e}"),
-                })?,
-        ),
-        None => None,
+    let load_token = match claim.is_durable() {
+        true => Some(Database::new_token()?),
+        false => None,
     };
-    let server = Arc::new(Server::new(
+    let server = Arc::new(Server::with(
+        claim.open()?,
         Utc::now(),
         limits,
         api,
-        storage,
-        schema,
         load_token.clone(),
-    )?);
+    ));
     // Handed to `run` before anything below can fail or answer a query, so that on every
     // way out of here the scan threads are let go by `run`, after the runtime.
-    if let Some(fan) = &server.fan {
-        let _ = scan.set(Arc::clone(fan));
+    if let Some(fan) = server.db.fan() {
+        let _ = scan.set(fan);
     }
     // Where `kibbr load` finds this server - written once it can answer. An address of
     // all interfaces is reached on loopback, which is where the directory is.
-    if let Some(lock) = lock.as_mut() {
+    if server.db.is_durable() {
         let reach = if bound.ip().is_unspecified() {
             SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), bound.port())
         } else {
             bound
         };
-        let holder = crate::storage::lock::Holder::server(Some(reach.to_string()), load_token);
-        if let Err(e) = lock.announce(&holder) {
+        if let Err(e) = server.db.announce(Some(reach.to_string()), load_token) {
             log_warn(&format!(
                 "{e}; `kibbr load` and `kibbr compact` will not find this server"
             ));
@@ -206,7 +186,7 @@ async fn serve(
     // stop and is waited for inside the sequence, behind the final flush.
     let _ = compactor.await;
     let result = shutdown_sequence(&server, cut);
-    drop(lock);
+    server.db.unlock();
     // Whether requests were cut off: `run` then does not wait on their threads.
     result.map(|()| Report { addr: bound, cut })
 }
@@ -214,10 +194,10 @@ async fn serve(
 /// Ask every store whether a row group is due, each interval or when woken. The
 /// flush is `spawn_blocking` so `/health` still answers; `Delay` so a stall is not a burst.
 pub(super) async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
-    if !server.storage.is_durable() {
+    if !server.db.is_durable() {
         return;
     }
-    let mut tick = tokio::time::interval(server.storage.flush_interval);
+    let mut tick = tokio::time::interval(server.db.storage().flush_interval);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // The first tick completes immediately; consumed here so the loop's first real wait is
     // a whole interval rather than none.
@@ -231,14 +211,9 @@ pub(super) async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
             _ = tick.tick() => {}
             () = server.flush_now.notified() => {}
         }
-        let held = Arc::clone(&server);
-        let flushed = tokio::task::spawn_blocking(move || {
-            let summary = held.stores.flush_all(FlushKind::Tick);
-            // Behind the flush, never ahead of it: the checkpoint moves past a row only
-            // once the row group holding it has been flushed and published.
-            move_checkpoint(&held);
-            summary
-        });
+        let held = Arc::clone(&server.db);
+        // The checkpoint moves behind the flush, never ahead of it: see `flush_due`.
+        let flushed = tokio::task::spawn_blocking(move || held.flush_due());
         let flushed = flushed.await;
         // Said to whoever is waiting at the door for the buffers, whatever the flush
         // did: each looks again, and one that finds them still full goes on waiting.
@@ -254,7 +229,7 @@ pub(super) async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
                 }
                 if (summary.forced > 0) != forcing {
                     forcing = summary.forced > 0;
-                    let (_, limit) = server.stores.buffer_bytes();
+                    let (_, limit) = server.db.buffer_bytes();
                     if forcing {
                         log_warn(&format!(
                             "buffers - past the {} byte limit; closing the largest early \
@@ -266,7 +241,7 @@ pub(super) async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
                         log(&format!(
                             "buffers - back under the {} byte limit; {} closed early in all",
                             commas(limit),
-                            commas(server.stores.forced_closes())
+                            commas(server.db.forced_closes())
                         ));
                     }
                 }
@@ -274,38 +249,6 @@ pub(super) async fn flush_loop(server: Arc<Server>, token: CancellationToken) {
             Err(join) => log_warn(&format!("flush task failed: {join}")),
         }
     }
-}
-
-/// After a flush: ask a log that cannot write to try again, and move its checkpoint up
-/// behind the oldest row still only in memory, every tick, or the log would grow.
-pub(super) fn move_checkpoint(server: &Server) -> Option<wal::Advanced> {
-    let wal = server.wal.as_ref()?;
-    wal.probe();
-    let (moved, problem) =
-        wal.advance(
-            || match (server.stores.oldest_position(), server.held.from()) {
-                (Some(buffered), Some(held)) => Some(buffered.min(held)),
-                (buffered, held) => buffered.or(held),
-            },
-        );
-    // Told whatever else happened: the checkpoint is where it is whether or not its file
-    // could be written, and the scheduler's compaction waits on it.
-    if let (Some(moved), Some(disk)) = (moved, server.stores.disk_store()) {
-        disk.note_checkpoint(moved.checkpoint);
-    }
-    match problem {
-        None => server.checkpoint_failing.store(false, Ordering::Relaxed),
-        // Said once, not every tick: nothing is lost by it - a start reads a little more
-        // of the log, or finds a segment this could not delete and deletes it.
-        Some(e) => {
-            if !server.checkpoint_failing.swap(true, Ordering::Relaxed) {
-                log_warn(&format!(
-                    "wal - the checkpoint moved and could not be kept: {e}"
-                ));
-            }
-        }
-    }
-    moved
 }
 
 /// SIGTERM and SIGINT, both cancelling the one token. Returned rather than spawned, so
@@ -351,117 +294,8 @@ fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
         "in-flight requests complete"
     });
 
-    if server.storage.is_durable() {
-        let summary = server.stores.flush_all(FlushKind::Final);
-        // Rows still in a buffer once the final flush has done all it can. Not lost: they
-        // are in the log, and the next start puts them back.
-        let unwritten = match summary.failed {
-            0 => None,
-            leaves => Some((leaves, server.stores.buffered())),
-        };
-        // Bounded by the open days and not by the templates: one flush and one seal per day
-        // file, however many templates' row groups went into it.
-        log(&format!(
-            "final flush - {} row(s) into {} row group(s) in {} file(s), {} sealed, {} \
-             byte(s), {:.2}s{}",
-            commas(summary.rows),
-            commas(summary.row_groups as u64),
-            summary.syncs,
-            summary.sealed,
-            commas(summary.bytes),
-            summary.took.as_secs_f64(),
-            match unwritten {
-                None => String::new(),
-                Some((leaves, rows)) => format!(
-                    ", {leaves} leaf/leaves FAILED: {} row(s) were not written to a row \
-                     group. They are in the write-ahead log, and the next start puts them back",
-                    commas(rows)
-                ),
-            },
-        ));
-    } else {
-        log("final flush - skipped, storage is memory (--data-dir puts the stores on disk)");
-    }
-
-    // Not one of the six steps: it writes nothing a restart needs. Here because a
-    // compaction's own flush belongs behind the one above.
-    join_compactions(server);
-
-    // Behind the final flush, so that a clean stop leaves the checkpoint at the end of the
-    // log and the next start with nothing to read back.
-    match &server.wal {
-        Some(wal) => {
-            let moved = move_checkpoint(server);
-            let stats = wal.stats();
-            log(&format!(
-                "WAL checkpoint - position {} of {}{}; {} segment(s), {} byte(s)",
-                commas(stats.checkpoint),
-                commas(stats.last_seq),
-                match moved {
-                    Some(moved) if moved.deleted > 0 =>
-                        format!(", {} segment(s) behind it deleted", moved.deleted),
-                    _ => String::new(),
-                },
-                stats.segments,
-                commas(stats.bytes),
-            ));
-        }
-        None => log("WAL checkpoint - skipped, storage is memory"),
-    }
-
-    match server.storage.trie_file.as_deref() {
-        Some(path) => match crate::storage::triefile::save(&server.trie, path) {
-            Ok(bytes) => log(&format!(
-                "trie.json - {} {} byte(s), {} template(s)",
-                path.display(),
-                commas(bytes),
-                commas(server.trie.template_count())
-            )),
-            // Not a reason to fail the exit. Nothing loads the snapshot while the catalog
-            // exists: it is there for a human to read.
-            Err(e) => log_warn(&format!("trie.json - {}", error::chain(&e))),
-        },
-        None => log("trie.json - skipped, storage is memory"),
-    }
-
-    let stores = &server.stores;
-    // Rows still buffered never reached a file, so they do not belong in a count of what
-    // was written.
-    let held = stores.rows();
-    let unwritten = stores.buffered();
-    let kept = if server.storage.is_durable() {
-        "written"
-    } else {
-        "discarded, they were only in memory"
-    };
-    log(&format!(
-        "close stores - {} store(s), {} row(s) {kept}{}{}",
-        commas(stores.open() as u64),
-        commas(held.saturating_sub(unwritten)),
-        match (server.storage.is_durable(), unwritten) {
-            (true, 0) => String::new(),
-            (true, n) => format!(
-                ", {} row(s) still buffered: in the write-ahead log, put back at the next start",
-                commas(n)
-            ),
-            (false, _) => String::new(),
-        },
-        match server.held.rows() {
-            0 => String::new(),
-            n => format!(
-                ", {} row(s) the store refused: in the write-ahead log, stored at the next start",
-                commas(n)
-            ),
-        },
-    ));
-
-    match &server.wal {
-        Some(wal) => {
-            wal.close();
-            log("close WAL - closed");
-        }
-        None => log("close WAL - skipped, storage is memory"),
-    }
+    // Final flush, compactions, the checkpoint, `trie.json`, the stores, the log.
+    server.db.close()?;
 
     // Always 0 once it gets here: a stop that leaves every acknowledged line durable in
     // the log has lost nothing, and an orchestrator told otherwise would be told a lie.
@@ -472,7 +306,7 @@ fn shutdown_sequence(server: &Server, cut: bool) -> Result<(), Error> {
 /// The threads one query of this server may choose a day's rows on, its own among them;
 /// 1 where there is nobody to share with - the memory store, or a disk store told 0 or 1.
 pub(super) fn scan_threads(server: &Server) -> usize {
-    server.fan.as_ref().map_or(1, |_| server.storage.scan_threads)
+    server.db.scan_threads()
 }
 
 /// The banner's line about the scan threads. The default depends on the machine, and
@@ -484,7 +318,7 @@ pub(super) fn scan_line(server: &Server) -> String {
             "  scan        {threads} threads to a query, its own among them; a run of a\n\
              \x20             day's row groups under {} rows is never shared out, nor\n\
              \x20             any while an /ingest body is between the door and its answer",
-            commas(server.storage.scan_fan_rows),
+            commas(server.db.storage().scan_fan_rows),
         ),
     }
 }
@@ -494,12 +328,12 @@ pub(super) fn scan_line(server: &Server) -> String {
 fn ingest_line(server: &Server) -> String {
     let api = server.api;
     let wait = api.ingest_wait.as_millis();
-    let waits = match &server.wal {
-        Some(_) => format!(
+    let waits = match server.db.has_log() {
+        true => format!(
             "a body waits up to {wait}ms for a slot, for a flush of full buffers or\n\
              \x20             for room in the log, and is then answered 503 with a Retry-After"
         ),
-        None => format!(
+        false => format!(
             "a body waits up to {wait}ms for a slot, and is then answered 503 with\n\
              \x20             a Retry-After rather than left to time out"
         ),
@@ -524,7 +358,7 @@ fn ingest_line(server: &Server) -> String {
 fn banner(addr: SocketAddr, server: &Server, how: Banner) {
     let limits = server.limits;
     if how == Banner::Event {
-        let data_dir = server.storage.base_path.as_ref();
+        let data_dir = server.db.storage().base_path.as_ref();
         tracing::info!(
             addr = %addr,
             storage = if data_dir.is_some() { "disk" } else { "memory" },
@@ -536,7 +370,7 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
                 server.api.shutdown_deadline.map_or(0, |d| d.as_millis() as u64),
             request_timeout_ms =
                 server.api.request_timeout.map_or(0, |d| d.as_millis() as u64),
-            scan_threads = server.storage.scan_threads,
+            scan_threads = server.db.storage().scan_threads,
             "listening on http://{addr}"
         );
         if data_dir.is_none() {
@@ -554,7 +388,7 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
         String::new(),
         // Two paragraphs, one per storage mode: a warning that softens once a feature lands
         // beside it is a warning nobody reads the second time.
-        match (&server.storage.base_path, &server.storage.trie_file) {
+        match (&server.db.storage().base_path, &server.db.storage().trie_file) {
             (Some(base), trie_file) => format!(
                 "  storage     {}\n\
                  \x20             trie      {}\n\
@@ -583,10 +417,10 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
                 trie_file
                     .as_ref()
                     .map_or_else(|| "none".to_string(), |p| p.display().to_string()),
-                server.storage.row_group_timeout.as_millis(),
-                server.storage.flush_interval.as_millis(),
-                commas(server.storage.max_open_segments as u64),
-                match server.storage.compact_interval.as_millis() {
+                server.db.storage().row_group_timeout.as_millis(),
+                server.db.storage().flush_interval.as_millis(),
+                commas(server.db.storage().max_open_segments as u64),
+                match server.db.storage().compact_interval.as_millis() {
                     0 => "Not looked for (--compact-interval-ms 0):\n\
                           \x20                       `kibbr compact` does it when asked."
                         .to_string(),
@@ -597,7 +431,7 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
                 },
                 base.display(),
                 base.display(),
-                commas(server.storage.wal_queue_bytes as u64),
+                commas(server.db.storage().wal_queue_bytes as u64),
             ),
             (None, _) => {
                 "  STORAGE IS IN MEMORY. Everything ingested is lost when this process exits.\n\
@@ -676,9 +510,4 @@ pub(super) fn log(message: &str) {
 /// A line an operator should read: something was skipped, delayed or left as it was.
 pub(super) fn log_warn(message: &str) {
     tracing::warn!("{message}");
-}
-
-/// A line that says the server cannot do what it is for.
-pub(super) fn log_error(message: &str) {
-    tracing::error!("{message}");
 }

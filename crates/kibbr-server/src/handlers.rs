@@ -16,41 +16,13 @@ struct QueryRequest {
 /// stays `true` because this is the liveness check, and a restart does not empty a disk.
 /// `version` and `source` are on every answer: where this server's source is (AGPL §13).
 pub(super) async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
-    let mut answer = match server.degraded() {
+    let mut answer = match server.db.degraded() {
         Some(detail) => json!({ "ok": true, "status": "degraded", "detail": detail }),
         None => json!({ "ok": true, "status": "ok" }),
     };
     answer["version"] = json!(VERSION);
     answer["source"] = json!(SOURCE);
     Json(answer)
-}
-
-impl Server {
-    /// What is wrong with this server's writing, if anything is: the log first, because
-    /// while it cannot write `/ingest` refuses every body.
-    pub(super) fn degraded(&self) -> Option<String> {
-        if let Some(why) = self.wal.as_ref().and_then(Wal::refusal) {
-            return Some(format!(
-                "the write-ahead log cannot write, and /ingest answers 503 until it can: {why}"
-            ));
-        }
-        if self.write_health.is_degraded() {
-            return Some(
-                self.write_health
-                    .last_error()
-                    .unwrap_or_else(|| "the last flush could not write".to_string()),
-            );
-        }
-        match self.held.rows() {
-            0 => None,
-            rows => Some(format!(
-                "{} line(s) are in the write-ahead log and not in the store - the store \
-                 refused their rows, or the start could not read them back. The log keeps \
-                 them, and the next start tries again",
-                commas(rows)
-            )),
-        }
-    }
 }
 
 /// The refusal a shipper gets while the write-ahead log cannot write: 503, a
@@ -150,7 +122,7 @@ pub(super) async fn post_ingest(
     let done = tokio::task::spawn_blocking(move || {
         // Held from before the body is inflated until its answer is ready: while any body is
         // in its task a query scans on its own thread, so the scan takes no core from the parse.
-        let _body = held.fan.as_deref().map(Fan::body);
+        let _body = held.db.ingest_body();
         let decoded = decode(&body, encoding.as_deref(), held.api.max_decompressed_bytes)
             .map_err(IngestFailure::Body)?;
         ingest(&held, &decoded, now, permit).map_err(IngestFailure::Fatal)
@@ -203,16 +175,12 @@ struct Leaving<'a> {
 
 impl Drop for Leaving<'_> {
     fn drop(&mut self) {
-        if !self.armed || self.server.wal.is_none() {
+        if !self.armed || !self.server.db.has_log() {
             return;
         }
         self.place.left.store(true, Ordering::Release);
-        let server = Arc::clone(self.server);
-        let wake = move || {
-            if let Some(wal) = &server.wal {
-                wal.wake_room();
-            }
-        };
+        let db = Arc::clone(&self.server.db);
+        let wake = move || db.wake_room();
         // The wake-up takes the queue's lock, which the log's writer can keep for a while:
         // not a runtime worker's to wait on.
         match tokio::runtime::Handle::try_current() {
@@ -279,7 +247,7 @@ fn percent_decode(text: &str) -> String {
 pub(super) async fn admit(State(server): State<Arc<Server>>, mut request: Request, next: Next) -> Response {
     // First, and before the permit: a server that cannot log has no use for the slot, and
     // "at capacity" would read as "send fewer". The log, and not the store.
-    if let Some(detail) = server.wal.as_ref().and_then(Wal::refusal) {
+    if let Some(detail) = server.db.log_refusal() {
         return cannot_log(&detail);
     }
     // Nearly every body finds both permits free, and is let in without a clock read or a
@@ -301,7 +269,7 @@ impl Server {
     /// Both permits, when nothing has to be waited for; this does not jump the line, since
     /// a permit given back goes first to whoever has waited longest.
     pub(super) fn admit_now(&self) -> Option<Permit> {
-        if self.stores.buffers_full() {
+        if self.db.buffers_full() {
             return None;
         }
         let parse = Arc::clone(&self.ingest_permits)
@@ -351,19 +319,19 @@ impl Server {
                 let flushed = self.flushed.notified();
                 tokio::pin!(flushed);
                 flushed.as_mut().enable();
-                if !self.stores.buffers_full() {
+                if !self.db.buffers_full() {
                     break;
                 }
-                if let Some(detail) = self.wal.as_ref().and_then(Wal::refusal) {
+                if let Some(detail) = self.db.log_refusal() {
                     return Err(Box::new(cannot_log(&detail)));
                 }
                 // A store that cannot write: nothing leaves the buffers, so a wait would
                 // only be the same refusal later. At once, with the store's error in it.
-                if self.write_health.is_degraded() {
+                if self.db.store_failing() {
                     self.door.shed.buffers.fetch_add(1, Ordering::Relaxed);
                     return Err(Box::new(buffers_full(
-                        self.stores.buffer_bytes(),
-                        self.write_health.last_error(),
+                        self.db.buffer_bytes(),
+                        self.db.last_write_error(),
                     )));
                 }
                 if !rung {
@@ -377,7 +345,7 @@ impl Server {
                         return Err(turned_away());
                     }
                     self.door.shed.buffers.fetch_add(1, Ordering::Relaxed);
-                    return Err(Box::new(buffers_full(self.stores.buffer_bytes(), None)));
+                    return Err(Box::new(buffers_full(self.db.buffer_bytes(), None)));
                 }
                 tokio::select! {
                     biased;
@@ -409,12 +377,12 @@ impl Server {
             };
             // The buffers again, because they may have filled while a permit was waited for.
             // Full, the permits go back - a body waiting for a flush holds nothing.
-            if !self.stores.buffers_full() {
+            if !self.db.buffers_full() {
                 break Permit::of(parse, place);
             }
         };
         // The log again, because something was waited for.
-        if let Some(detail) = self.wal.as_ref().and_then(Wal::refusal) {
+        if let Some(detail) = self.db.log_refusal() {
             return Err(Box::new(cannot_log(&detail)));
         }
         Ok(permit)
@@ -423,11 +391,11 @@ impl Server {
     /// The refusal of a body whose wait at the door ran out, counted under what there was
     /// none of; a failed or full log is the reason given, whatever was waited for.
     fn out_of_time(&self, wanted: Wanted) -> Response {
-        if let Some(detail) = self.wal.as_ref().and_then(Wal::refusal) {
+        if let Some(detail) = self.db.log_refusal() {
             return cannot_log(&detail);
         }
         let shed = &self.door.shed;
-        if self.wal.as_ref().is_some_and(|wal| wal.waiting_for_room() > 0) {
+        if self.db.waiting_for_room() > 0 {
             shed.log.fetch_add(1, Ordering::Relaxed);
             return log_busy();
         }
@@ -501,16 +469,12 @@ pub(super) fn begin_stop(server: &Arc<Server>) {
     server.stopping.cancel();
     // A compaction hears of it now, while the requests in flight finish, and is waited
     // for after the final flush: see `join_compactions`.
-    cancel_compactions(server);
-    if server.wal.is_none() {
+    server.db.stop_compactions();
+    if !server.db.has_log() {
         return;
     }
-    let held = Arc::clone(server);
-    let hurry = move || {
-        if let Some(wal) = &held.wal {
-            wal.hurry();
-        }
-    };
+    let held = Arc::clone(&server.db);
+    let hurry = move || held.hurry();
     match tokio::runtime::Handle::try_current() {
         Ok(runtime) => drop(runtime.spawn_blocking(hurry)),
         Err(_) => hurry(),
@@ -657,13 +621,13 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
 
     // Parsed before the blocking task, so a bad query costs no thread: it is a string
     // and a grammar, and the answer is a 400 either way.
-    let query = match query::from_trieql(&request.q, Utc::now(), server.limits) {
+    let query = match answer::from_trieql(&request.q, Utc::now(), server.limits) {
         Ok(query) => query,
         // A grammar mistake also says where: `pos`, the byte offset in `q` the parser
         // stopped at, so a client can point at it without reading the message.
         Err(e) => {
             return match &e {
-                error::Error::Trieql(parse) => {
+                engine::Error::Trieql(parse) => {
                     fail_at(StatusCode::BAD_REQUEST, &error::chain(&e), parse.pos)
                 }
                 _ => fail(StatusCode::BAD_REQUEST, &error::chain(&e)),
@@ -692,12 +656,7 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
     let told = stop.clone();
     let done = tokio::task::spawn_blocking(move || {
         // The scan and then the answer put into JSON both ask the stop as they go.
-        let body = engine::engine::execute_until(&held.trie, &held.stores, &query, &told).and_then(
-            |result| {
-                query::result_json_until(&query, &result, &told)
-                    .ok_or(engine::engine::ExecError::Store(StoreError::Stopped))
-            },
-        )?;
+        let body = held.db.answer_until(&query, &told)?;
         held.queries.fetch_add(1, Ordering::Relaxed);
         Ok::<Value, engine::engine::ExecError>(body)
     })
@@ -850,7 +809,7 @@ fn load_options(request: LoadRequest) -> Result<load::Options, String> {
 /// Start a load job and answer at once with its number: a request held open for the
 /// load would hold up a graceful shutdown, and a client that gave up would not stop it.
 pub(super) async fn post_load(State(server): State<Arc<Server>>, headers: HeaderMap, body: Bytes) -> Response {
-    if server.stores.disk_store().is_none() {
+    if !server.db.has_disk_store() {
         return fail(
             StatusCode::SERVICE_UNAVAILABLE,
             &load::LoadError::NoDisk.to_string(),
@@ -912,13 +871,7 @@ pub(super) async fn post_load(State(server): State<Arc<Server>>, headers: Header
             // A panic is a failed job and not a job running for ever, which would refuse every
             // later load with a 409. Its staging stays for the next start to finish or remove.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                load::run(
-                    &held.trie,
-                    &held.stores,
-                    &options,
-                    &job.control,
-                    &mut |_| {},
-                )
+                held.db.load(&options, &job.control)
             }));
             let state = match result {
                 Ok(Ok(report)) => {

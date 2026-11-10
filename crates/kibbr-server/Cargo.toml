@@ -32,3 +32,5 @@ zstd.workspace = true
 [dev-dependencies]
 # The storage crate's samples and failure hooks, for the tests here that use them.
 kibbr-storage = { workspace = true, features = ["test-support"] }
+# What the tests here reach into a database with.
+kibbr-engine = { workspace = true, features = ["test-support"] }

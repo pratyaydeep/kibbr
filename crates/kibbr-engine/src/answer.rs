@@ -10,11 +10,11 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
 use crate::core::fmt::rfc3339;
-use crate::engine::engine::{
+use crate::engine::{
     self, Cursor, Group, GroupKey, Query, QueryMode, QueryResult, BUCKET_COLUMN,
 };
-use crate::engine::limits::Limits;
-use crate::engine::trieql;
+use crate::limits::Limits;
+use crate::trieql;
 use crate::storage::store::{system_time, Stop, STOP_EVERY_ROWS};
 
 use crate::error::{Error, Result};

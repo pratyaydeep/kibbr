@@ -25,47 +25,40 @@ async fn get_viewer() -> Response {
 /// Every template with its path, which is its identity: the columns alone do not say
 /// which names were promoted into the fingerprint.
 async fn get_templates(State(server): State<Arc<Server>>) -> Response {
-    let stores = &server.stores;
-    let mut templates = Vec::new();
-
-    for (path, leaf) in server.trie.leaf_paths() {
-        // A leaf whose meta will not read is a poisoned lock: skipped rather than faked, and
-        // `count` below is the length of what was readable.
-        let Ok(slot) = leaf.leaf_meta.read() else {
-            continue;
-        };
-        let Some(meta) = slot.as_ref() else {
-            continue;
-        };
-
-        let columns: Vec<Value> = meta
-            .columns
-            .iter()
-            .map(|col| {
-                json!({
-                    "name": col.name,
-                    // `null`, not "String": a column that has only ever held nulls has no
-                    // type yet, and that is a different fact from having widened to text.
-                    "type": col.col_type.map(|t| t.as_str()),
-                    "widened_at": col.widened_at.map(rfc3339_at),
+    let templates: Vec<Value> = server
+        .db
+        .templates()
+        .into_iter()
+        .map(|template| {
+            let columns: Vec<Value> = template
+                .columns
+                .iter()
+                .map(|col| {
+                    json!({
+                        "name": col.name,
+                        // `null`, not "String": a column that has only ever held nulls has no
+                        // type yet, and that is a different fact from having widened to text.
+                        "type": col.col_type.map(|t| t.as_str()),
+                        "widened_at": col.widened_at.map(rfc3339_at),
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        templates.push(json!({
-            "template_id": meta.template_id,
-            "path": path,
-            "columns": columns,
-            // A template with no store is one that exists and holds no rows. Zero, not
-            // absent - the two empty answers stay apart here as they do in the engine.
-            "rows": stores.lookup(meta.template_id).map_or(0, |s| s.len()),
-            "first_seen": rfc3339_at(meta.first_seen),
-            "last_seen": rfc3339_at(meta.last_seen),
-            "storage_path": meta.storage_path,
-            // `column:<name>` or `arrival`, as the catalog spells it.
-            "time_source": meta.time_source.as_record(),
-        }));
-    }
+            json!({
+                "template_id": template.template_id,
+                "path": template.path,
+                "columns": columns,
+                // A template with no store is one that exists and holds no rows. Zero, not
+                // absent - the two empty answers stay apart here as they do in the engine.
+                "rows": template.rows,
+                "first_seen": rfc3339_at(template.first_seen),
+                "last_seen": rfc3339_at(template.last_seen),
+                "storage_path": template.storage_path,
+                // `column:<name>` or `arrival`, as the catalog spells it.
+                "time_source": template.time_source,
+            })
+        })
+        .collect();
 
     Json(json!({ "count": templates.len(), "templates": templates })).into_response()
 }
@@ -73,10 +66,8 @@ async fn get_templates(State(server): State<Arc<Server>>) -> Response {
 /// Throughput, template count, storage sizes, and the two numbers only visible here:
 /// `buffered_rows`, and `write_failures` for a disk gone away while `/ingest` answers 200.
 pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
-    let stores = &server.stores;
-    let (open_segments, max_open_segments) = stores.open_files();
-    let (buffered_bytes, max_buffer_bytes) = stores.buffer_bytes();
-    let wal = server.wal.as_ref().map(Wal::stats);
+    let db = server.db.stats();
+    let storage = server.db.storage();
     let uptime = server.started.elapsed().as_secs_f64();
     let ingested = server.lines_ingested.load(Ordering::Relaxed);
     let queries = server.queries.load(Ordering::Relaxed);
@@ -92,63 +83,55 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
         "uptime_seconds": uptime,
         "started_at": rfc3339_at(server.started_at),
         "storage": {
-            "kind": stores.kind(),
-            "durable": server.storage.is_durable(),
-            "note": if server.storage.is_durable() {
+            "kind": db.kind,
+            "durable": storage.is_durable(),
+            "note": if storage.is_durable() {
 "a line is written to the write-ahead log under wal/ and flushed before /ingest acknowledges it, so an unclean exit loses no acknowledged line: the next start puts back every line no row group holds, once; one shared data file per UTC day, named in manifest.log; a row group closes at 8,192 rows, 8MB or the row group timeout, at most max_open_segments day files are open for writing at once and a row for a day with none open past that seals the least recently written and opens its own day's, and a day is rebuilt into full row groups in finished files the day after its last live row, once all of it is behind the log's checkpoint"
             } else {
                 "in-memory only - every row is lost when this process exits"
             },
-            "base_path": stores.base_path().map(|p| p.display().to_string()),
-            "trie_file": server
-                .storage
-                .trie_file
-                .as_ref()
-                .map(|p| p.display().to_string()),
+            "base_path": db.base_path.as_ref().map(|p| p.display().to_string()),
+            "trie_file": storage.trie_file.as_ref().map(|p| p.display().to_string()),
             // The file templates are rebuilt from. `trie_file` is the readable snapshot
             // nothing loads while this exists.
-            "catalog": server.trie.catalog_path().map(|p| p.display().to_string()),
-            "flush_interval_ms": server.storage.flush_interval.as_millis() as u64,
+            "catalog": db.catalog.as_ref().map(|p| p.display().to_string()),
+            "flush_interval_ms": storage.flush_interval.as_millis() as u64,
             // How long a row group may stay open: what a quiet template's rows wait in
             // the log and in memory before they reach a file.
-            "row_group_timeout_ms": server.storage.row_group_timeout.as_millis() as u64,
+            "row_group_timeout_ms": storage.row_group_timeout.as_millis() as u64,
             // The write-ahead log; null when storage is memory. `healthy` false is /ingest
             // answering 503, and `replay` is what this start read back.
-            "wal": wal.as_ref().map(|wal| wal_stats(&server, wal)),
-            "stores_open": stores.open(),
+            "wal": db.wal.as_ref().map(|wal| wal_stats(storage, &db, wal)),
+            "stores_open": db.stores_open,
             // Day files held open for writing, and the cap they are held under. Past it the
             // least recently written one is sealed.
-            "open_segments": open_segments,
-            "max_open_segments": max_open_segments,
-            "segment_max_bytes": server.storage.segment_max_bytes,
-            "rows": stores.rows(),
-            "buffered_rows": stores.buffered(),
+            "open_segments": db.open_segments,
+            "max_open_segments": db.max_open_segments,
+            "segment_max_bytes": storage.segment_max_bytes,
+            "rows": db.rows,
+            "buffered_rows": db.buffered_rows,
             // Estimated memory the buffered rows hold, against the limit past which the
             // largest are closed early.
-            "buffered_bytes": buffered_bytes,
-            "max_buffer_bytes": max_buffer_bytes,
+            "buffered_bytes": db.buffered_bytes,
+            "max_buffer_bytes": db.max_buffer_bytes,
             // 0 is never. `compaction` is read from the jobs' own lock: this does not wait
             // on a flush.
-            "compact_interval_ms": server.storage.compact_interval.as_millis() as u64,
-            "compaction": server
-                .compactions
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .stats(),
-            "forced_closes": stores.forced_closes(),
-            "write_failures": stores.write_failures(),
-            "last_write_error": stores.last_write_error(),
+            "compact_interval_ms": storage.compact_interval.as_millis() as u64,
+            "compaction": db.compaction,
+            "forced_closes": db.forced_closes,
+            "write_failures": db.write_failures,
+            "last_write_error": db.last_write_error,
             // True while the last flush tick failed, which is also while /health says
             // degraded; /ingest goes on answering 200 meanwhile, its lines being in the log.
-            "degraded": stores.is_degraded(),
+            "degraded": db.degraded,
             // Estimated either way: on disk the segments' bytes plus what the buffer would
             // add, in memory payload bytes. The log's segments count: this database holds them.
-            "approx_bytes": stores.approx_bytes() + wal.as_ref().map_or(0, |wal| wal.bytes),
+            "approx_bytes": db.approx_bytes,
         },
         "trie": {
-            "templates": server.trie.template_count(),
-            "nodes": server.trie.node_count(),
-            "tokens": server.trie.token_count(),
+            "templates": db.templates,
+            "nodes": db.nodes,
+            "tokens": db.tokens,
         },
         "ingest": {
             "lines_read": server.lines_read.load(Ordering::Relaxed),
@@ -201,11 +184,11 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
             "per_second": rate(queries, uptime),
             // Runs of a day's row groups chosen on more threads than the query's own. It stays
             // where it is while bodies are ingested: a query then runs on its own thread.
-            "scan_fan_outs": server.fan.as_ref().map_or(0, |fan| fan.fanned()),
+            "scan_fan_outs": db.scan_fan_outs,
             // What this server resolved: without them a count of 0 above reads the same for
             // one thread as for four with nothing worth sharing.
             "scan_threads": scan_threads(&server),
-            "scan_fan_rows": server.storage.scan_fan_rows,
+            "scan_fan_rows": storage.scan_fan_rows,
         },
     }))
     .into_response()
@@ -213,9 +196,9 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
 
 /// `/stats`'s `storage.wal`: where the log has got to, and what is waiting on it. Two
 /// objects joined, because one `json!` holds only so many keys before it stops expanding.
-fn wal_stats(server: &Server, wal: &wal::Stats) -> Value {
+fn wal_stats(storage: &engine::Storage, db: &engine::Stats, wal: &wal::Stats) -> Value {
     let mut stats = json!({
-        "dir": server.wal.as_ref().map(|w| w.dir().display().to_string()),
+        "dir": db.wal_dir.as_ref().map(|dir| dir.display().to_string()),
         "stream": format!("{:016x}", wal.stream),
         "segments": wal.segments,
         "first_segment": wal.first_segment,
@@ -226,25 +209,25 @@ fn wal_stats(server: &Server, wal: &wal::Stats) -> Value {
         "flushes": wal.flushes,
         "healthy": wal.healthy,
         "last_error": wal.last_error,
-        "segment_bytes": server.storage.wal_segment_bytes,
-        "batch_size": server.storage.wal_batch_lines,
-        "held_rows": server.held.rows(),
+        "segment_bytes": storage.wal_segment_bytes,
+        "batch_size": storage.wal_batch_lines,
+        "held_rows": db.held_rows,
         "replay": {
-            "records": server.replayed.records,
-            "applied": server.replayed.applied,
-            "covered": server.replayed.covered,
-            "held": server.replayed.held,
-            "replaced": server.replayed.replaced,
-            "behind_checkpoint": server.replayed.behind,
-            "torn": server.replayed.torn,
-            "corrupt": server.replayed.corrupt,
-            "seconds": server.replayed.seconds,
+            "records": db.replayed.records,
+            "applied": db.replayed.applied,
+            "covered": db.replayed.covered,
+            "held": db.replayed.held,
+            "replaced": db.replayed.replaced,
+            "behind_checkpoint": db.replayed.behind,
+            "torn": db.replayed.torn,
+            "corrupt": db.replayed.corrupt,
+            "seconds": db.replayed.seconds,
         },
     });
     let queue = json!({
         // The two counts are each exact and are not read together, so their sum can miss the
         // one body the writer is taking at that instant, and never counts one twice.
-        "queue_max_bytes": server.storage.wal_queue_bytes,
+        "queue_max_bytes": storage.wal_queue_bytes,
         "queue_bytes": wal.queue_bytes,
         "unapplied_bytes": wal.unapplied_bytes,
         "queue_peak_bytes": wal.queue_peak_bytes,

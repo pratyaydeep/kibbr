@@ -13,6 +13,24 @@
 use kibbr_core as core;
 use kibbr_storage as storage;
 
+pub mod answer;
+pub mod compact;
+pub mod database;
 pub mod engine;
+pub mod error;
+mod lifecycle;
 pub mod limits;
+pub mod load;
 pub mod trieql;
+
+pub use database::{
+    Claim, CompactRefused, Database, Ingested, LineError, Opener, Options, Refused, Schema,
+    Stats, Storage, Template, TemplateColumn,
+};
+pub use error::{Error, IngestError, Result};
+pub use lifecycle::Replayed;
+
+/// The trie and the stores of a data directory, restored with its log left as it is; the
+/// caller holds the directory's `LOCK`. What the commands open a directory with until they
+/// open a `Database`.
+pub use lifecycle::open_durable;

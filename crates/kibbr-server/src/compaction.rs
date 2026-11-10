@@ -27,7 +27,7 @@ pub(super) async fn post_compact(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if server.stores.disk_store().is_none() {
+    if !server.db.has_disk_store() {
         return fail(
             StatusCode::SERVICE_UNAVAILABLE,
             compact::NO_DISK,
@@ -57,45 +57,25 @@ pub(super) async fn post_compact(
     };
     let threads = request.threads.unwrap_or_else(load::server_threads).max(1);
 
-    let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
-    if jobs.is_stopping() {
-        return fail(
+    match server.db.compact(day, threads) {
+        Ok(id) => (StatusCode::ACCEPTED, Json(json!({"ok": true, "job": id}))).into_response(),
+        Err(CompactRefused::Stopping) => fail(
             StatusCode::SERVICE_UNAVAILABLE,
             "this server is shutting down; nothing was compacted",
-        );
-    }
-    let Some(id) = jobs.start() else {
-        return fail(
+        ),
+        Err(CompactRefused::Running(running)) => fail(
             StatusCode::CONFLICT,
-            &match jobs.running() {
+            &match running {
                 Some(id) => {
                     format!("compaction job {id} is still running; one compaction runs at a time")
                 }
                 None => "a compaction is still running; one runs at a time".to_string(),
             },
-        );
-    };
-    // Reap the last one's thread, which has finished: no job was running, and a job's
-    // state is the last thing its thread touches here.
-    if let Some(done) = jobs.asked.take() {
-        let _ = done.join();
-    }
-    let held = Arc::clone(&server);
-    let spawned = std::thread::Builder::new()
-        .name(format!("compact-{id}"))
-        .spawn(move || compaction(&held, day, threads, Some(id)));
-    match spawned {
-        Ok(handle) => {
-            jobs.asked = Some(handle);
-            (StatusCode::ACCEPTED, Json(json!({"ok": true, "job": id}))).into_response()
-        }
-        Err(e) => {
-            jobs.forget(id);
-            fail(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("starting the compaction job: {e}"),
-            )
-        }
+        ),
+        Err(CompactRefused::Spawn(e)) => fail(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("starting the compaction job: {e}"),
+        ),
     }
 }
 
@@ -109,11 +89,7 @@ pub(super) async fn get_compact(
     if let Some(refused) = compact_refused(&server, &headers) {
         return refused;
     }
-    let state = server
-        .compactions
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .state(id);
+    let state = server.db.compaction_state(id);
     let body = match state {
         None => return fail(StatusCode::NOT_FOUND, &format!("no compaction job {id}")),
         Some(compact::State::Running) => json!({"ok": true, "job": id, "state": "running"}),
@@ -127,125 +103,13 @@ pub(super) async fn get_compact(
     Json(body).into_response()
 }
 
-/// A compaction thread. It lists the due days itself, since the listing takes the flush's
-/// lock, and the scheduler's takes a job number only once it has a day to try.
-fn compaction(server: &Server, day: Option<i64>, threads: usize, job: Option<u64>) {
-    let jobs = || server.compactions.lock().unwrap_or_else(|e| e.into_inner());
-    let every = server.storage.compact_interval;
-    let scheduled = job.is_none();
-    // Held from the moment there is a job, so that nothing which ends this thread - the
-    // panic caught below, or one that is not - leaves the job `running`.
-    let ending = |id| compact::Ending::of(&server.compactions, id);
-    let asked = job.map(ending);
-    let Some(store) = server.stores.disk_store() else {
-        if let Some(asked) = asked {
-            let why = compact::NO_DISK.to_string();
-            let state = compact::State::Failed(why, compact::Report::default());
-            asked.finish(state, false);
-        }
-        return;
-    };
-    let mut days = compact::plan(store, day);
-    let (id, ending) = match job.zip(asked) {
-        Some(asked) => asked,
-        None => {
-            // A failed day with nothing left to compact is never tried again, so its failure is
-            // dropped here. Listed before the jobs' lock is taken: the two are never held together.
-            let compactable = store.compactable_days();
-            let mut jobs = jobs();
-            jobs.forget_except(&compactable);
-            days.retain(|planned| jobs.wait(*planned, every).is_none());
-            if days.is_empty() {
-                return;
-            }
-            // None while a request's job runs, or once shutdown began: the next look.
-            let Some(id) = jobs.start() else {
-                return;
-            };
-            (id, ending(id))
-        }
-    };
-    log(&format!(
-        "compaction job {id} - {}",
-        match day {
-            Some(day) => crate::storage::store::disk::day_name(day),
-            None => format!("{} day(s) due", days.len()),
-        }
-    ));
-    let opts = CompactOptions {
-        threads,
-        cancel: Arc::clone(&server.compact_cancel),
-    };
-    let mut noted = 0;
-    // A panic is a failed job and not a job running for ever, as for a load. Whatever it
-    // had written is unnamed, and the next start removes it.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compact::run(store, &days, &opts, &mut |planned, result| {
-            noted += 1;
-            let wait = {
-                let mut jobs = jobs();
-                jobs.note(planned, result);
-                jobs.wait(planned, every).filter(|_| scheduled)
-            };
-            match result {
-                Ok(done) => log(&format!("compaction job {id} - {}", compact::line(done))),
-                Err(e @ (StoreError::Cancelled { .. } | StoreError::InputsChanged { .. })) => {
-                    log(&format!("compaction job {id} - {}", error::chain(e)))
-                }
-                Err(e) => log_warn(&format!(
-                    "compaction job {id} - {}{}",
-                    error::chain(e),
-                    wait.map_or_else(String::new, |left| format!(
-                        "; the day is left for {}s, unless its files change first",
-                        left.as_secs().max(1)
-                    ))
-                )),
-            }
-        })
-    }));
-    let state = match result {
-        Ok(ran) => match ran.failed.first() {
-            None => compact::State::Done(ran.report),
-            Some(first) => {
-                let mut why = error::chain(first);
-                if ran.failed.len() > 1 {
-                    why.push_str(&format!(
-                        "; and {} more day(s) failed, each in this server's log",
-                        ran.failed.len() - 1
-                    ));
-                }
-                compact::State::Failed(why, ran.report)
-            }
-        },
-        Err(_) => {
-            let why = "the compaction failed on a bug in this build (a panic); a file it wrote \
-                       and had not named is removed by the next start";
-            log_warn(&format!("compaction job {id} - {why}"));
-            // The day it was on, remembered as failed: a look every interval would
-            // otherwise walk into the same panic every interval.
-            if let Some(planned) = days.get(noted) {
-                let failed = Err(StoreError::CompactFailed {
-                    day: crate::storage::store::disk::day_name(planned.0),
-                    source: Box::new(StoreError::Io {
-                        template_id: 0,
-                        source: std::io::Error::other(why),
-                    }),
-                });
-                jobs().note(*planned, &failed);
-            }
-            compact::State::Failed(why.to_string(), compact::Report::default())
-        }
-    };
-    ending.finish(state, !days.is_empty());
-}
-
 /// Look for due days every interval, starting a thread for each look so that nothing
 /// here takes the store's flush lock on the runtime.
 pub(super) async fn compact_loop(server: Arc<Server>, token: CancellationToken) {
-    let every = server.storage.compact_interval;
+    let every = server.db.storage().compact_interval;
     // Zero is "never look", and is returned on before it reaches an interval, which
     // panics on a period of zero.
-    if !server.storage.is_durable() || every.is_zero() {
+    if !server.db.is_durable() || every.is_zero() {
         return;
     }
     let mut tick = tokio::time::interval(every);
@@ -265,7 +129,7 @@ pub(super) async fn compact_loop(server: Arc<Server>, token: CancellationToken) 
 /// Whether this look is left to the next tick: a load would waste the rebuild, and a
 /// disk refusing the flush has no room for one.
 pub(super) fn look_waits(server: &Server) -> bool {
-    server.stores.is_degraded() || load_running(server)
+    server.db.store_failing() || load_running(server)
 }
 
 /// One look: start the scheduler's thread, unless the look waits (`look_waits`), a
@@ -274,52 +138,5 @@ pub(super) fn look_for_due_days(server: &Arc<Server>) {
     if look_waits(server) {
         return;
     }
-    let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
-    if jobs.is_stopping() || jobs.running().is_some() {
-        return;
-    }
-    // Joined only once it has finished: a thread still looking may be waiting for the
-    // lock held here.
-    match jobs.scheduled.take() {
-        Some(last) if !last.is_finished() => {
-            jobs.scheduled = Some(last);
-            return;
-        }
-        Some(last) => {
-            let _ = last.join();
-        }
-        None => {}
-    }
-    let held = Arc::clone(server);
-    let spawned = std::thread::Builder::new()
-        .name("compact-due".to_string())
-        .spawn(move || compaction(&held, None, load::server_threads(), None));
-    match spawned {
-        Ok(handle) => jobs.scheduled = Some(handle),
-        Err(e) => log_warn(&format!("compaction - starting the look for due days: {e}")),
-    }
-}
-
-/// Shutdown has begun: tell the running compaction to stop and start no other, at the
-/// signal rather than at the join, so there is less to wait for.
-pub(super) fn cancel_compactions(server: &Server) {
-    let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
-    jobs.stop();
-    server.compact_cancel.store(true, Ordering::Relaxed);
-}
-
-/// Wait for the compaction threads: after the final flush, so a kill during the wait
-/// costs nothing, and before the lock is released.
-pub(super) fn join_compactions(server: &Server) {
-    cancel_compactions(server);
-    let threads = {
-        let mut jobs = server.compactions.lock().unwrap_or_else(|e| e.into_inner());
-        [jobs.asked.take(), jobs.scheduled.take()]
-    };
-    for thread in threads.into_iter().flatten() {
-        if !thread.is_finished() {
-            log("waiting for the running compaction to stop");
-        }
-        let _ = thread.join();
-    }
+    server.db.compact_due();
 }

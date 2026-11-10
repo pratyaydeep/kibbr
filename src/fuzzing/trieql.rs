@@ -90,7 +90,9 @@ fn check(src: &str) {
                     other,
                     CliError::Cursor(CursorError::WrongQuery)
                         | CliError::Exec(ExecError::Buckets(_))
-                        | CliError::Serve(crate::server::Error::BucketKeyClash)
+                        | CliError::Serve(crate::server::Error::Database(
+                            crate::engine::Error::BucketKeyClash
+                        ))
                 ),
                 "{}: parsed, and then refused for something a parsed query cannot be: {other}",
                 shown(src)

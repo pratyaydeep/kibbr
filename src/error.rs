@@ -148,12 +148,23 @@ impl From<crate::server::Error> for CliError {
     /// The engine's errors the server crate carries through stay the variants they always
     /// were, so a TrieQL string refused by `kibbr query` and by `POST /query` is one failure.
     fn from(e: crate::server::Error) -> Self {
-        use crate::server::Error;
+        match e {
+            crate::server::Error::Database(e) => e.into(),
+            e => CliError::Serve(e),
+        }
+    }
+}
+
+impl From<crate::engine::Error> for CliError {
+    /// As above, for the database's own error: a query's are their own variants, and the
+    /// rest is what a server could not start or finish with, as it always printed.
+    fn from(e: crate::engine::Error) -> Self {
+        use crate::engine::Error;
         match e {
             Error::Trieql(e) => CliError::Trieql(e),
             Error::Cursor(e) => CliError::Cursor(e),
             Error::Exec(e) => CliError::Exec(e),
-            e => CliError::Serve(e),
+            e => CliError::Serve(crate::server::Error::Database(e)),
         }
     }
 }

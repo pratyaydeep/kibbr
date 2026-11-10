@@ -84,16 +84,10 @@ pub(super) fn decode<'a>(
     Ok(Cow::Owned(out))
 }
 
-/// One malformed line: `{"line":400,"msg":"..."}`.
-pub(super) struct LineError {
-    pub(super) line: usize,
-    pub(super) msg: String,
-}
-
 /// What one `/ingest` body did.
 pub(super) struct IngestReport {
     ingested: u64,
-    pub(super) errors: Vec<LineError>,
+    pub(super) errors: Vec<engine::LineError>,
     /// Rejections past `MAX_REPORTED_ERRORS`, counted but not described.
     omitted: u64,
     /// Of the lines rejected, those that parsed and were refused because the catalog could
@@ -143,8 +137,8 @@ pub(super) enum IngestFailure {
     Fatal(IngestError),
 }
 
-/// An NDJSON body into the database, in the order that is the durability: parsed, routed
-/// to a template made durable, logged, and answered once the rows are applied.
+/// An NDJSON body into the database (`Database::ingest`), and the door's counts of what it
+/// did: the parse permit goes back once the body is in the log's queue.
 pub(super) fn ingest(
     server: &Server,
     body: &[u8],
@@ -157,145 +151,42 @@ pub(super) fn ingest(
         parse: permit,
         body: place,
     } = permit;
-    // A body no write of the log would hold is refused before it is parsed: it would
-    // be refused after, and the parse of that many lines is the cost.
-    if let Some(wal::Refused::TooLarge { bytes, limit }) =
-        server.wal.as_ref().and_then(|_| wal::too_large(body))
-    {
-        return Err(IngestError::TooLarge { bytes, limit });
-    }
-
-    // ── Half one: split and parse, holding nothing ─────────────────────────────────
-    let mut parse_errors = Vec::new();
-    let (parsed, stats) = db::parse_and_prepare(Cursor::new(body), &mut |e: DetectorError| {
-        // Past the cap the rejection is counted and dropped. `stats.rejected` is
-        // still the true total, so nothing is lost but the text.
-        if parse_errors.len() < MAX_REPORTED_ERRORS {
-            parse_errors.push(LineError {
-                line: e.line,
-                msg: e.kind.to_string(),
-            });
+    let mut permit = Some(permit);
+    let done = server.db.ingest(
+        body,
+        now,
+        server.api.ingest_wait,
+        &place.left,
+        // The permit is for the parse and the routing, so it is not held across the flush;
+        // kept across a wait for room, it bounds the parsed bodies held in memory.
+        || drop(permit.take()),
+    );
+    let done = match done {
+        Ok(done) => done,
+        // A body the log refuses was read and routed, and none of it was taken: its lines
+        // are counted as read and as rejected, whichever refusal it was.
+        Err(refused) => {
+            server.lines_read.fetch_add(refused.read, Ordering::Relaxed);
+            server
+                .lines_rejected
+                .fetch_add(refused.rejected, Ordering::Relaxed);
+            return Err(refused.error);
         }
-    })
-    // Reading a body in memory fails only on a line longer than a line may hold, which a
-    // larger `--max-body-bytes` allows: a message, and a 500.
-    .map_err(|e| IngestError::Body(error::chain(&e)))?;
+    };
 
-    // ── Half two: route each line to its template, durably ─────────────────────────
-    //
-    // Before the log, because the log's record carries the template's id: the catalog
-    // record that defines the id is flushed by the time `place_in` returns.
-    let mut apply_errors = Vec::new();
-    let mut rejected = stats.rejected;
-    let mut unwritten = 0u64;
-    let mut lines: Vec<wal::Line> = Vec::with_capacity(parsed.len());
-    for (line, parsed, prepared) in parsed {
-        let kind = match db::place_in(&server.trie, &parsed, prepared, now) {
-            Ok(Some(placed)) => {
-                lines.push(wal::Line {
-                    raw: parsed.raw_line,
-                    // The time the row is filed under, as the store reads it: what the
-                    // log writes down beside the line, for replay to hold it to.
-                    time: crate::storage::store::effective_ts(&placed.row, &placed.time_column)
-                        .unwrap_or(0),
-                    placed,
-                });
-                continue;
-            }
-            // The template's own lock is poisoned: nothing can say which template the
-            // line is, so there is no id to log it under.
-            Ok(None) => DetectorErrorKind::NotDurable {
-                detail: "the template's lock is poisoned".to_string(),
-            },
-            // The line parsed and its template could not be made durable: reported as a
-            // line that did not parse, and the message says which.
-            Err(e @ TrieError::Catalog(_)) => {
-                // Counted apart, as a write that failed and is worth sending again; a record
-                // that would not encode would not encode the next time either.
-                if !matches!(e, TrieError::Catalog(CatalogError::Serialize { .. })) {
-                    unwritten += 1;
-                }
-                DetectorErrorKind::NotDurable {
-                    detail: error::chain(&e),
-                }
-            }
-            // The trie's lock poisoned, which fails every line after it too.
-            Err(e) => return Err(e.into()),
-        };
-        rejected += 1;
-        if apply_errors.len() < MAX_REPORTED_ERRORS {
-            apply_errors.push(LineError {
-                line,
-                msg: kind.to_string(),
-            });
-        }
-    }
-
-    // ── Half three: the log, and then the rows ─────────────────────────────────────
-    //
-    // With a log, the lines are durable in one flush and applied in the log's order; with
-    // none, applied here. All of the body or none of it, so a refused sender can resend.
-    let ingested = lines.len() as u64;
-    match &server.wal {
-        Some(wal) => {
-            // A body the log refuses was read and routed, and none of it was taken: its
-            // lines are counted as read and as rejected, whichever refusal it was.
-            let refused = |refused: wal::Refused| {
-                server.lines_read.fetch_add(stats.read, Ordering::Relaxed);
-                server
-                    .lines_rejected
-                    .fetch_add(rejected + ingested, Ordering::Relaxed);
-                match refused {
-                    wal::Refused::Cannot(why) => IngestError::Log(why),
-                    wal::Refused::Busy => IngestError::Busy,
-                    wal::Refused::Left => IngestError::Left,
-                    wal::Refused::TooLarge { bytes, limit } => {
-                        IngestError::TooLarge { bytes, limit }
-                    }
-                }
-            };
-            // A log with no room makes the body wait, for as long as a body may be kept
-            // waiting: shed at once, its sender's retry pays for the parse again.
-            let wait = wal::Wait {
-                at_most: server.api.ingest_wait,
-                left: &place.left,
-            };
-            let ticket = wal
-                .enqueue(lines, db::arrival_nanos(now), wait)
-                .map_err(&refused)?;
-            // The permit is for the parse and the routing, so it is not held across the flush;
-            // kept across a wait for room, it bounds the parsed bodies held in memory.
-            drop(permit);
-            ticket.wait().map_err(&refused)?;
-        }
-        None => {
-            for line in lines {
-                server.held.apply(&server.stores, 0, line.placed);
-            }
-            drop(permit);
-        }
-    }
-
-    // Two passes meet their rejections in two runs, so the merge puts them back in line
-    // order; capping each half at `MAX_REPORTED_ERRORS` first loses nothing.
-    let mut errors = parse_errors;
-    errors.extend(apply_errors);
-    errors.sort_by_key(|e| e.line);
-    errors.truncate(MAX_REPORTED_ERRORS);
-
-    server.lines_read.fetch_add(stats.read, Ordering::Relaxed);
-    server.lines_ingested.fetch_add(ingested, Ordering::Relaxed);
-    server.lines_rejected.fetch_add(rejected, Ordering::Relaxed);
+    server.lines_read.fetch_add(done.read, Ordering::Relaxed);
+    server.lines_ingested.fetch_add(done.ingested, Ordering::Relaxed);
+    server.lines_rejected.fetch_add(done.rejected, Ordering::Relaxed);
     // Past the memory limit the flush runs now, not at its next tick: a burst that filled
     // the buffers in one body should not get half a second more to fill them further.
-    if server.stores.over_buffer_limit() {
+    if done.over_buffer_limit {
         server.flush_now.notify_one();
     }
 
     Ok(IngestReport {
-        ingested,
-        omitted: rejected - errors.len() as u64,
-        errors,
-        unwritten,
+        ingested: done.ingested,
+        omitted: done.omitted,
+        errors: done.errors,
+        unwritten: done.unwritten,
     })
 }

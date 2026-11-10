@@ -551,11 +551,14 @@ name = "kibbr-engine"
 version = "0.2.3"
 dependencies = [
  "chrono",
+ "flate2",
  "kibbr-core",
  "kibbr-storage",
  "serde",
  "serde_json",
  "thiserror",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]

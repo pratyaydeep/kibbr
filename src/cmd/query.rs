@@ -19,8 +19,8 @@ use crate::config::{Limits, Schema};
 use crate::error::{CliError, QueryError};
 // A TrieQL string into a `Query` and an answer into JSON are the server crate's, since
 // `POST /query` is their other caller: here under the names this module always had.
-use crate::server::query::{self as wire, canonical, row_json};
-pub use crate::server::query::{result_json, result_json_until};
+use crate::engine::answer::{self as wire, canonical, row_json};
+pub use crate::engine::answer::{result_json, result_json_until};
 use crate::core::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
 use crate::engine::engine::{
     self, Cursor, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
