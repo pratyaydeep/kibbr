@@ -85,6 +85,11 @@ tracing.workspace = true
 tokio-util.workspace = true
 zstd.workspace = true
 
+[features]
+# The fuzz targets' harnesses, here and in the engine, for fuzz/ and for
+# tests/fuzz_regressions.rs; off by default, so the binary carries none of them.
+fuzzing = ["kibbr-engine/fuzzing"]
+
 [dev-dependencies]
 # The engine's samples and failure hooks, for the tests here that hold a server to them.
 kibbr-engine = { workspace = true, features = ["test-support"] }

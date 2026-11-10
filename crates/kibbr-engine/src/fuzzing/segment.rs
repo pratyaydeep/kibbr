@@ -38,13 +38,13 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::mem::size_of;
 use std::path::Path;
 
-use crate::engine::model::types::ColValue;
-use crate::engine::format::frame::{self, Next};
-use crate::engine::format::build::RowGroup;
-use crate::engine::format::column::{Column, Memo};
-use crate::engine::format::file::{self, Entry, Index, Reader};
-use crate::engine::format::read::{self, Cell, ChunkDir, Header, PieceDir};
-use crate::engine::format::{
+use crate::model::types::ColValue;
+use crate::format::frame::{self, Next};
+use crate::format::build::RowGroup;
+use crate::format::column::{Column, Memo};
+use crate::format::file::{self, Entry, Index, Reader};
+use crate::format::read::{self, Cell, ChunkDir, Header, PieceDir};
+use crate::format::{
     type_byte, Bad, Bytes, Form, FormatError, JsonKind, Source, DAY_NS, HEADER_LEN, KIND_FOOTER,
     KIND_ROW_GROUP, KIND_SCHEMA, MAGIC, MAX_BODY, MAX_ROWS, NO_COMPRESSION, OPTIONAL,
     PRE_RENAME_MAGIC, TRAILER_LEN, VERSION, ZSTD,
@@ -1454,16 +1454,16 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::engine::parse::flatten::parse_line;
-    use crate::engine::ingest::row_of;
-    use crate::engine::format::build::{build as build_group, schema_of, Level};
-    use crate::engine::format::file::Writer;
-    use crate::engine::format::{put_varint, zigzag};
-    use crate::engine::rows::{effective_ts, Row};
+    use crate::parse::flatten::parse_line;
+    use crate::ingest::row_of;
+    use crate::format::build::{build as build_group, schema_of, Level};
+    use crate::format::file::Writer;
+    use crate::format::{put_varint, zigzag};
+    use crate::rows::{effective_ts, Row};
 
     fn vector(name: &str) -> Vec<u8> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata")
+            .join("../../testdata")
             .join("format")
             .join(name);
         std::fs::read(path).expect("a test vector")
@@ -2140,14 +2140,14 @@ mod tests {
         }
     }
 
-    /// Writes the seed corpus: `cargo test --lib fuzzing::v3_segment -- --ignored`.
+    /// Writes the seed corpus: `cargo test -p kibbr-engine --features fuzzing --lib fuzzing::segment -- --ignored`.
     #[test]
-    #[ignore = "writes fuzz/corpus/v3_segment"]
+    #[ignore = "writes fuzz/corpus/segment"]
     fn write_the_seed_corpus() {
         let dir: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("fuzz")
+            .join("../../fuzz")
             .join("corpus")
-            .join("v3_segment");
+            .join("segment");
         std::fs::create_dir_all(&dir).expect("mkdir");
         for (name, seed) in seeds() {
             std::fs::write(dir.join(name), seed).expect("write");

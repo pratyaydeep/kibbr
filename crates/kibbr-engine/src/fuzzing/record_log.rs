@@ -27,11 +27,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::engine::model::types::{ColumnType, TimeSource};
-use crate::engine::templates::catalog::{self, Token};
-use crate::engine::format::frame::{self, Next, Opened, HEADER};
-use crate::engine::rows::manifest::{self, Decoded, FileRecord, WalMark};
-use crate::engine::templates::trie::Trie;
+use crate::model::types::{ColumnType, TimeSource};
+use crate::templates::catalog::{self, Token};
+use crate::format::frame::{self, Next, Opened, HEADER};
+use crate::rows::manifest::{self, Decoded, FileRecord, WalMark};
+use crate::templates::trie::Trie;
 
 /// The kinds the catalog has, written out here and not borrowed from the reader: a
 /// kind dropped from the reader's own list would otherwise be dropped from the check too.
@@ -700,7 +700,7 @@ fn check_rebuild(records: &[catalog::Record]) {
     if tokens > MAX_TOKENS {
         return;
     }
-    let time_columns = || crate::config::Schema::default().time_columns;
+    let time_columns = || crate::database::Schema::default().time_columns;
     let (trie, backfill) =
         match Trie::from_catalog_with("fuzz", records, time_columns(), &mut |_| {}) {
             Ok(rebuilt) => rebuilt,

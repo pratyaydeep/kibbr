@@ -33,6 +33,8 @@ pub mod compact;
 pub mod query;
 mod lifecycle;
 pub mod database;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 
 pub use database::{
     Claim, CompactRefused, Database, Ingested, LineError, Opener, Options, Refused, Schema,

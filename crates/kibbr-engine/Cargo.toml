@@ -29,3 +29,6 @@ zstd.workspace = true
 # What a test of a crate above this one builds its rows and files from, and reaches into a
 # database with: a `#[cfg(test)]` item is not there for another crate's tests.
 test-support = []
+# The fuzz targets' harnesses over the log, the data files and the two record logs, for
+# fuzz/ and tests/fuzz_regressions.rs; off by default, so a build carries none of them.
+fuzzing = []

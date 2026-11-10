@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Every input a fuzz target ever crashed on, and the committed corpus, replayed through
-//! the code the fuzzer runs (`kibbr::fuzzing`) on the stable toolchain, so a change that
-//! breaks an input the fuzzer already reached fails here.
+//! the code the fuzzer runs (`kibbr::fuzzing` and `kibbr_engine::fuzzing`) on the stable
+//! toolchain, so a change that breaks an input the fuzzer already reached fails here.
+//! Compiled with the `fuzzing` feature: `cargo test --all-features`.
+
+#![cfg(feature = "fuzzing")]
 
 use std::fs;
 use std::path::Path;
@@ -35,7 +38,7 @@ fn trieql() {
 
 #[test]
 fn wal_record() {
-    replay("wal_record", kibbr::fuzzing::wal_record::run);
+    replay("wal_record", kibbr_engine::fuzzing::wal_record::run);
 }
 
 #[test]
@@ -44,11 +47,11 @@ fn cursor() {
 }
 
 #[test]
-fn v3_segment() {
-    replay("v3_segment", kibbr::fuzzing::v3_segment::run);
+fn segment() {
+    replay("segment", kibbr_engine::fuzzing::segment::run);
 }
 
 #[test]
 fn record_log() {
-    replay("record_log", kibbr::fuzzing::record_log::run);
+    replay("record_log", kibbr_engine::fuzzing::record_log::run);
 }

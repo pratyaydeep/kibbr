@@ -16,6 +16,11 @@ libfuzzer-sys = "0.4"
 
 [dependencies.kibbr]
 path = ".."
+features = ["fuzzing"]
+
+[dependencies.kibbr-engine]
+path = "../crates/kibbr-engine"
+features = ["fuzzing"]
 
 # Not a member of any workspace: `cargo build` at the root never builds the fuzzers.
 [workspace]
@@ -42,8 +47,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "v3_segment"
-path = "fuzz_targets/v3_segment.rs"
+name = "segment"
+path = "fuzz_targets/segment.rs"
 test = false
 doc = false
 bench = false

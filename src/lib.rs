@@ -133,6 +133,7 @@ pub mod client;
 pub mod cmd;
 pub mod config;
 pub mod error;
+#[cfg(feature = "fuzzing")]
 pub mod fuzzing;
 pub mod gen;
 pub mod logs;
