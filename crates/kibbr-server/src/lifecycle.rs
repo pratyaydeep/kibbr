@@ -54,7 +54,7 @@ async fn serve(
     } = settings;
     // A data directory holding a segment from another format version is refused, and its
     // lock taken, before anything is written and before the port: see `Database::claim`.
-    let claim = Database::claim(engine::Options { storage, schema })?;
+    let mut claim = Database::claim(engine::Options { storage, schema })?;
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -72,13 +72,19 @@ async fn serve(
         true => Some(Database::new_token()?),
         false => None,
     };
+    // The moment the start began, before the directory is read back: `/stats`'s
+    // `started_at`. A failed open leaves the lock with the claim, let go after the port.
+    let started_at = Utc::now();
     let server = Arc::new(Server::with(
         claim.open()?,
-        Utc::now(),
+        started_at,
         limits,
         api,
         load_token.clone(),
     ));
+    // The lock is let go on every way out of here, as when it was a local of this function:
+    // after the listener and whatever serves on it, once nothing else is left to write.
+    let _unlock = Unlock(&server.db);
     // Handed to `run` before anything below can fail or answer a query, so that on every
     // way out of here the scan threads are let go by `run`, after the runtime.
     if let Some(fan) = server.db.fan() {
@@ -100,7 +106,14 @@ async fn serve(
     }
     // Installed before the banner: a server that cannot hear SIGTERM is killed by the
     // SIGKILL that follows. The token is the caller's, so both stop it the same way.
-    let signals = signals(token.clone())?;
+    let signals = match signals(token.clone()) {
+        Ok(signals) => signals,
+        // The port goes before the lock, as it always has.
+        Err(e) => {
+            drop(listener);
+            return Err(e);
+        }
+    };
 
     banner(bound, &server, how);
     tokio::spawn(signals);
@@ -189,6 +202,15 @@ async fn serve(
     server.db.unlock();
     // Whether requests were cut off: `run` then does not wait on their threads.
     result.map(|()| Report { addr: bound, cut })
+}
+
+/// Lets a database's directory go when dropped: see `serve`.
+struct Unlock<'a>(&'a Database);
+
+impl Drop for Unlock<'_> {
+    fn drop(&mut self) {
+        self.0.unlock();
+    }
 }
 
 /// Ask every store whether a row group is due, each interval or when woken. The

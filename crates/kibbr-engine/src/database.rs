@@ -220,9 +220,13 @@ impl Claim {
     }
 
     /// Restore the trie and the stores, replay the log and apply it, and start the log: a
-    /// server's start. In memory, an empty database.
-    pub fn open(self) -> Result<Database, Error> {
-        Database::serving(self.options, self.lock)
+    /// server's start. In memory, an empty database. The lock goes to the database only
+    /// once it is open: on a failure the claim still holds it, so whoever holds the claim
+    /// lets go of what it took after the claim (a port) before the lock.
+    pub fn open(&mut self) -> Result<Database, Error> {
+        let db = Database::serving(self.options.clone(), None)?;
+        *db.lock.lock().unwrap_or_else(|e| e.into_inner()) = self.lock.take();
+        Ok(db)
     }
 }
 
