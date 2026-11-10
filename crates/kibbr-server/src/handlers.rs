@@ -871,7 +871,7 @@ pub(super) async fn post_load(State(server): State<Arc<Server>>, headers: Header
             // A panic is a failed job and not a job running for ever, which would refuse every
             // later load with a 409. Its staging stays for the next start to finish or remove.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                held.db.load(&options, &job.control)
+                held.db.load(&options, &job.control, &mut |_| {})
             }));
             let state = match result {
                 Ok(Ok(report)) => {

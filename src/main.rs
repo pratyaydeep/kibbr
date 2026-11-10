@@ -848,7 +848,7 @@ fn is_broken_pipe(e: &CliError) -> bool {
     let io_error = match e {
         CliError::Write(inner) => Some(inner),
         CliError::Read { source, .. } => Some(source),
-        CliError::Input(kibbr::storage::db::ReadError::Read { source, .. }) => Some(source),
+        CliError::Input(kibbr::engine::ReadError::Read { source, .. }) => Some(source),
         CliError::Gen(error::GenError::Write(inner)) => Some(inner),
         _ => None,
     };

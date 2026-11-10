@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 
 use crate::compact;
 use crate::core::error::DetectorError;
+use crate::core::flatten::ParsedLog;
 use crate::core::types::ColumnType;
 use crate::engine::{self, ExecError, Plan, Query, QueryResult};
 use crate::error::{self, DetectorErrorKind, Error, IngestError};
@@ -32,7 +33,15 @@ use crate::storage::store::{FlushSummary, Stop, StoreError, StoreManager, WriteH
 use crate::storage::trie::{Trie, TrieError};
 use crate::storage::wal::{self, Wal};
 
-pub use crate::storage::trie::Schema;
+pub use crate::storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
+
+/// The defaults of `Storage`'s fields that the stores and the log decide.
+pub use crate::storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES;
+pub use crate::storage::store::{DEFAULT_FAN_ROWS, DEFAULT_MAX_BUFFER_BYTES, DEFAULT_MAX_OPEN_SEGMENTS};
+pub use crate::storage::wal::{
+    DEFAULT_BATCH_LINES as DEFAULT_WAL_BATCH_LINES, DEFAULT_QUEUE_BYTES as DEFAULT_WAL_QUEUE_BYTES,
+    DEFAULT_SEGMENT_BYTES as DEFAULT_WAL_SEGMENT_BYTES,
+};
 
 // ── Options ────────────────────────────────────────────────────────────────────────
 
@@ -709,12 +718,45 @@ impl Database {
     // ── Loads ──
 
     /// A bulk load of closed days: staged, and committed in one manifest record.
+    /// `on_error` is told of each line that does not parse.
     pub fn load(
         &self,
         options: &load::Options,
         control: &load::Control,
+        on_error: &mut dyn FnMut(&DetectorError),
     ) -> Result<load::Report, load::LoadError> {
-        load::run(&self.trie, &self.stores, options, control, &mut |_| {})
+        load::run(&self.trie, &self.stores, options, control, on_error)
+    }
+
+    /// Where a load stages its files, which the next start deletes: `None` in memory.
+    pub fn staging_dir(&self) -> Option<PathBuf> {
+        self.storage
+            .base_path
+            .as_ref()
+            .map(|base| base.join(disk::STAGING_DIR))
+    }
+
+    // ── A database read from a file ──
+
+    /// Every line of `input` into this database, each arriving at `now` and with no log
+    /// behind it, a line that does not parse reported and skipped: what `kibbr query FILE`
+    /// answers from. With `rows` false only the templates are learned, as `--explain` needs.
+    pub fn ingest_file<R: std::io::BufRead>(
+        &self,
+        input: R,
+        now: DateTime<Utc>,
+        rows: bool,
+    ) -> Result<db::LoadStats, db::ReadError> {
+        db::read_lines(
+            input,
+            &mut |_, parsed| db::ingest_line(&self.trie, rows.then_some(&*self.stores), &parsed, now),
+            &mut db::report_rejected,
+        )
+    }
+
+    /// One parsed line's template, and no row: a trie to plan on.
+    pub fn learn(&self, parsed: &ParsedLog, now: DateTime<Utc>) -> Result<(), TrieError> {
+        self.trie.ingest(parsed, now).map(drop)
     }
 
     // ── The periodic work ──
@@ -878,6 +920,25 @@ impl Database {
                 Err(CompactRefused::Spawn(e))
             }
         }
+    }
+
+    /// Compact `day`, or every day that is due, here and now on `threads`, telling `each`
+    /// how every day went: what `kibbr compact` runs alone. The days it tried, and how the
+    /// run ended; `None` for a database with no files.
+    pub fn compact_now(
+        &self,
+        day: Option<i64>,
+        threads: usize,
+        each: &mut dyn FnMut(compact::Planned, &Result<disk::Compacted, StoreError>),
+    ) -> Option<(Vec<compact::Planned>, compact::Ran)> {
+        let store = self.stores.disk_store()?;
+        let opts = CompactOptions {
+            threads,
+            cancel: Arc::default(),
+        };
+        let days = compact::plan(store, day);
+        let ran = compact::run(store, &days, &opts, each);
+        Some((days, ran))
     }
 
     /// How compaction job `id` stands, while it is one of the recent ones.
@@ -1055,6 +1116,14 @@ impl Database {
             }
         };
         ending.finish(state, !days.is_empty());
+    }
+}
+
+/// The parts a diagnostic command of the command line reads past the handle: see
+/// `internals`.
+impl Database {
+    pub(crate) fn parts(&self) -> (&Trie, &StoreManager) {
+        (&self.trie, &self.stores)
     }
 }
 

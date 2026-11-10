@@ -20,7 +20,8 @@ use crate::core::lines::{
     read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
 };
 use crate::core::types::ColumnType;
-use crate::storage::trie::{Node, Trie, TrieError, ROOT_LABEL};
+use crate::engine::internals::{Node, Trie, ROOT_LABEL};
+use crate::engine::TrieError;
 
 const BRANCH_MID: &str = "├── ";
 const BRANCH_LAST: &str = "└── ";

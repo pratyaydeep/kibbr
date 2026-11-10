@@ -18,10 +18,11 @@ use crate::config::{LoadStorage as _, Schema, Storage};
 use crate::error::{CliError, DetectorErrorKind};
 use crate::cmd::load::{self, Asked, LoadError};
 use crate::core::fmt::commas;
-use crate::storage::db::{self, ReadError, SinkError};
-use crate::storage::store::disk::{self, CompactOptions};
-use crate::storage::store::v3::{HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN};
-use crate::storage::store::{FlushKind, FlushSummary};
+use crate::engine::internals::{
+    self as raw, CompactOptions, FlushKind, SinkError, HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP,
+    KIND_SCHEMA, TRAILER_LEN,
+};
+use crate::engine::{Database, FlushSummary, Opener, ReadError};
 
 pub struct Args {
     pub input: PathBuf,
@@ -103,8 +104,8 @@ fn parts_of(path: &Path) -> Result<Parts, LoadError> {
     };
     let mut at = HEADER_LEN;
     loop {
-        match crate::storage::frame::read(&bytes, at, u32::MAX) {
-            crate::storage::frame::Next::Frame { payload, end } => {
+        match raw::read_frame(&bytes, at, u32::MAX) {
+            raw::Next::Frame { payload, end } => {
                 let frame = (end - at) as u64;
                 match payload[0] {
                     KIND_SCHEMA => parts.schemas += frame,
@@ -152,7 +153,7 @@ fn held(data: &Path, block: u64) -> Result<Held, LoadError> {
     };
     let mut files = Size::default();
     let mut parts = Parts::default();
-    for path in disk::data_files(data) {
+    for path in raw::data_files(data) {
         files += size_of(&path, block).map_err(io_at(&path))?;
         let p = parts_of(&path)?;
         parts.columns += p.columns;
@@ -162,8 +163,8 @@ fn held(data: &Path, block: u64) -> Result<Held, LoadError> {
         parts.file_headers += p.file_headers;
         parts.other += p.other;
     }
-    let catalog_path = crate::storage::catalog::path_in(data);
-    let manifest_path = crate::storage::store::manifest::path_in(data);
+    let catalog_path = raw::catalog_path(data);
+    let manifest_path = crate::engine::manifest_path(data);
     let catalog = size_of(&catalog_path, block).map_err(io_at(&catalog_path))?;
     let manifest = size_of(&manifest_path, block).map_err(io_at(&manifest_path))?;
     let mut total = files;
@@ -218,8 +219,8 @@ struct Counts {
 
 fn counts_of(data: &Path) -> Result<Counts, LoadError> {
     let mut counts = Counts::default();
-    for path in disk::data_files(data) {
-        let index = crate::storage::store::v3::file::open_sealed(&path)?.ok_or_else(|| {
+    for path in raw::data_files(data) {
+        let index = raw::open_sealed(&path)?.ok_or_else(|| {
             LoadError::Input(format!("{}: not a sealed data file", path.display()))
         })?;
         counts.files += 1;
@@ -289,6 +290,16 @@ fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), Loa
     result
 }
 
+/// A scratch directory opened alone, as `kibbr load` opens one with no server: the lock
+/// taken and held until the handle goes, and nothing written to say who holds it.
+fn open(storage: &Storage, schema: &Schema) -> Result<Database, LoadError> {
+    Database::open_offline(crate::config::options(storage, schema), Opener::Quiet).map_err(|e| match e {
+        crate::engine::Error::Lock(e) => e.into(),
+        crate::engine::Error::Store(e) => e.into(),
+        e => crate::error::CliError::from(e).into(),
+    })
+}
+
 fn measure(
     args: &Args,
     schema: Schema,
@@ -325,9 +336,7 @@ fn measure(
         None,
     )
     .map_err(CliError::from)?;
-    let lock = crate::storage::lock::DataLock::acquire(&data)?;
-    let (trie, stores) =
-        crate::engine::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
+    let db = open(&storage, &schema)?;
     let opts = load::Options {
         inputs: load::resolve(std::slice::from_ref(&args.input), None)?,
         replace_day: None,
@@ -340,12 +349,10 @@ fn measure(
         proceed: true,
         max_arrival_share: load::DEFAULT_MAX_ARRIVAL_SHARE,
     };
-    let report = load::run(&trie, &stores, &opts, &load::Control::default(), &mut |e| {
+    let report = db.load(&opts, &load::Control::default(), &mut |e| {
         crate::error::report(e)
     })?;
-    drop(stores);
-    drop(trie);
-    drop(lock);
+    drop(db);
 
     let bulk = held(&data, block)?;
     let io_at = |path: &Path| {
@@ -623,8 +630,8 @@ fn live_day(
     // every buffer that holds a row.
     storage.row_group_timeout = Duration::ZERO;
 
-    let lock = crate::storage::lock::DataLock::acquire(data)?;
-    let (trie, stores) = crate::engine::open_durable(&storage, schema).map_err(CliError::from)?;
+    let db = open(&storage, schema)?;
+    let (trie, stores) = raw::parts(&db);
     // One arrival time for the whole file, as the bulk door gives it one: a clock read per
     // line could split the file over midnight.
     let now = chrono::Utc::now();
@@ -632,10 +639,10 @@ fn live_day(
     // Compared against the flushes already behind, not a line number: a flush that falls after
     // a blank or unparsed line is made at the next line that reaches this.
     let (mut behind, mut flushes) = (0u64, 0u64);
-    let stats = db::read_lines(
+    let stats = raw::read_lines(
         BufReader::new(load::open_decoded(&args.input)?),
         &mut |at, parsed| {
-            db::ingest_line(&trie, Some(&stores), &parsed, now)?;
+            raw::ingest_line(trie, Some(stores), &parsed, now)?;
             let due = flushes_due(at as u64, lines);
             if due > behind {
                 behind = due;
@@ -659,9 +666,7 @@ fn live_day(
     .map_err(CliError::from)?;
     written(stores.flush_all(FlushKind::Final))?;
     let ingested_in = started.elapsed().as_secs_f64();
-    drop(stores);
-    drop(trie);
-    drop(lock);
+    drop(db);
     let before = (held(data, block)?, counts_of(data)?);
     if before.1.rows != stats.ingested {
         return Err(LoadError::Input(format!(
@@ -671,16 +676,15 @@ fn live_day(
         )));
     }
 
-    let lock = crate::storage::lock::DataLock::acquire(data)?;
-    let (trie, stores) = crate::engine::open_durable(&storage, schema).map_err(CliError::from)?;
-    let store = stores.disk_store().ok_or(LoadError::NoDisk)?;
+    let db = open(&storage, schema)?;
+    let store = raw::parts(&db).1.disk_store().ok_or(LoadError::NoDisk)?;
     let opts = CompactOptions {
         threads: load::alone_threads(),
         cancel: Arc::default(),
     };
     let started = Instant::now();
     for name in &before.1.days {
-        let day = disk::day_of_name(name).ok_or_else(|| {
+        let day = crate::engine::day_of_name(name).ok_or_else(|| {
             LoadError::Input(format!(
                 "{name}: a directory of data files that is not named for a day"
             ))
@@ -688,9 +692,7 @@ fn live_day(
         store.compact_day(day, &opts)?;
     }
     let compacted_in = started.elapsed().as_secs_f64();
-    drop(stores);
-    drop(trie);
-    drop(lock);
+    drop(db);
     let after = (held(data, block)?, counts_of(data)?);
     // The two a reader takes on trust when comparing the blocks: the same rows, and no
     // file left as the live door wrote it.

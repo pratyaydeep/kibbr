@@ -18,7 +18,7 @@ use crate::core::infer::EpochWindow;
 // The two groups of settings the crates below this one read, declared where they are
 // read; this module is where they are loaded and what the commands name them by.
 pub use crate::engine::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
-pub use crate::storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
+pub use crate::engine::database::{Options, Schema, DEFAULT_TIME_COLUMNS};
 
 // What a server runs on is declared in the server crate, where it is read; this module
 // is where each is loaded and what the commands name them by.
@@ -450,6 +450,14 @@ pub fn log(
     Ok(Log { level, format })
 }
 
+/// What a command opens a database with, once its storage and its schema are resolved.
+pub fn options(storage: &Storage, schema: &Schema) -> Options {
+    Options {
+        storage: storage.clone(),
+        schema: schema.clone(),
+    }
+}
+
 /// Which key names may carry a template's time: flag > environment > file > default, the
 /// variable comma-separated with blanks dropped.
 pub fn schema(file: &File, time_columns: Option<Vec<String>>) -> Schema {
@@ -583,7 +591,7 @@ impl LoadStorage for Storage {
             max_open_segments,
             MAX_OPEN_SEGMENTS_ENV,
             file.storage.max_open_segments,
-            crate::storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
+            crate::engine::database::DEFAULT_MAX_OPEN_SEGMENTS,
         )?;
         if max_open_segments == 0 {
             return Err(ConfigError::NoOpenSegments);
@@ -601,14 +609,14 @@ impl LoadStorage for Storage {
             segment_max_bytes,
             SEGMENT_MAX_BYTES_ENV,
             file.storage.segment_max_bytes,
-            crate::storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            crate::engine::database::DEFAULT_SEGMENT_MAX_BYTES,
             "segment max bytes",
         )?;
         let max_buffer_bytes = bytes(
             max_buffer_bytes,
             MAX_BUFFER_BYTES_ENV,
             file.storage.max_buffer_bytes,
-            crate::storage::store::DEFAULT_MAX_BUFFER_BYTES,
+            crate::engine::database::DEFAULT_MAX_BUFFER_BYTES,
             "max buffer bytes",
         )?;
         // The default here, and the variable not read: only `serve` looks for due days, and
@@ -617,14 +625,14 @@ impl LoadStorage for Storage {
 
         // The defaults here too, for the reason the compaction interval's is: only `serve`
         // writes a log, and it resolves its flags over the variables in `with_wal`.
-        let wal_segment_bytes = crate::storage::wal::DEFAULT_SEGMENT_BYTES;
-        let wal_batch_lines = crate::storage::wal::DEFAULT_BATCH_LINES;
-        let wal_queue_bytes = crate::storage::wal::DEFAULT_QUEUE_BYTES;
+        let wal_segment_bytes = crate::engine::database::DEFAULT_WAL_SEGMENT_BYTES;
+        let wal_batch_lines = crate::engine::database::DEFAULT_WAL_BATCH_LINES;
+        let wal_queue_bytes = crate::engine::database::DEFAULT_WAL_QUEUE_BYTES;
 
         // No scan threads here, for the same reason again: only `serve` answers a query from
         // a disk store, and it asks for its threads in `with_scan`.
         let scan_threads = 0;
-        let scan_fan_rows = crate::storage::store::DEFAULT_FAN_ROWS;
+        let scan_fan_rows = crate::engine::database::DEFAULT_FAN_ROWS;
 
         if !durable {
             return Ok(Self {
@@ -710,7 +718,7 @@ impl LoadStorage for Storage {
             segment_bytes,
             WAL_SEGMENT_BYTES_ENV,
             file.storage.wal_segment_bytes,
-            crate::storage::wal::DEFAULT_SEGMENT_BYTES as usize,
+            crate::engine::database::DEFAULT_WAL_SEGMENT_BYTES as usize,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -723,7 +731,7 @@ impl LoadStorage for Storage {
             batch_lines,
             BATCH_SIZE_ENV,
             file.ingestor.batch_size,
-            crate::storage::wal::DEFAULT_BATCH_LINES,
+            crate::engine::database::DEFAULT_WAL_BATCH_LINES,
         )? {
             0 => return Err(ConfigError::NoBatch),
             n => n,
@@ -732,7 +740,7 @@ impl LoadStorage for Storage {
             queue_bytes,
             WAL_QUEUE_BYTES_ENV,
             file.storage.wal_queue_bytes,
-            crate::storage::wal::DEFAULT_QUEUE_BYTES,
+            crate::engine::database::DEFAULT_WAL_QUEUE_BYTES,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -768,7 +776,7 @@ impl LoadStorage for Storage {
             fan_rows,
             SCAN_FAN_ROWS_ENV,
             file.query.scan_fan_rows,
-            crate::storage::store::DEFAULT_FAN_ROWS as usize,
+            crate::engine::database::DEFAULT_FAN_ROWS as usize,
         )? as u64;
         Ok(self)
     }
@@ -1132,7 +1140,7 @@ mod tests {
         let untouched = Storage::default();
         assert_eq!(
             (untouched.scan_threads, untouched.scan_fan_rows),
-            (0, crate::storage::store::DEFAULT_FAN_ROWS)
+            (0, crate::engine::database::DEFAULT_FAN_ROWS)
         );
         assert_eq!(untouched.disk_options().scan_threads, 0);
 
@@ -1145,7 +1153,7 @@ mod tests {
         assert_eq!(default, (cores / 2).clamp(1, 4));
         assert_eq!(
             scan(None, None).expect("the defaults"),
-            (default, crate::storage::store::DEFAULT_FAN_ROWS)
+            (default, crate::engine::database::DEFAULT_FAN_ROWS)
         );
 
         // The variable over the default, and the flag over the variable.
@@ -1279,7 +1287,7 @@ mod tests {
                 .with_wal(&File::default(), None, None, flag)
                 .map(|storage| (storage.wal_queue_bytes, storage.wal_options().queue_bytes))
         };
-        let default = crate::storage::wal::DEFAULT_QUEUE_BYTES;
+        let default = crate::engine::database::DEFAULT_WAL_QUEUE_BYTES;
         assert_eq!(default, 256 * 1024 * 1024);
         assert_eq!(Storage::default().wal_queue_bytes, default);
         assert_eq!(bound(None).expect("the default"), (default, default));

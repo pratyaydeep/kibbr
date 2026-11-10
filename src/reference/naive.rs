@@ -18,8 +18,7 @@ use crate::engine::engine::{
     group_values, leaf_key, split_keys, value_matches, ExecError, Group, MatchValue, Query,
     QueryMeta, QueryMode, QueryResult,
 };
-use crate::storage::db::row_of;
-use crate::storage::store::Row;
+use crate::engine::{row_of, Row};
 
 /// The system column, spelled out here rather than imported: a backslash and an
 /// underscore.

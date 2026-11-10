@@ -27,8 +27,7 @@ use crate::engine::engine::{
     QueryResult, TimeRange,
 };
 use crate::engine::trieql::{self, ago};
-use crate::storage::db;
-use crate::storage::store::system_time;
+use crate::engine::{system_time, Database, LoadStats, Row};
 
 /// Blank columns between two cells of a rendered table.
 const GUTTER: usize = 2;
@@ -80,20 +79,20 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     // `--explain` executes nothing, so it never asks for rows; the plan line reports
     // `Plan::duration`, not the load.
     if args.explain {
-        let db = db::load(input, false, now, schema)?;
-        note(db.stats);
-        let plan = engine::plan(&db.trie, &query);
+        let db = in_memory(schema);
+        note(db.ingest_file(input, now, false)?);
+        let plan = db.plan(&query);
         return explain(out, &query, &plan);
     }
 
     let result = if args.reference {
-        let (lines, stats) = db::load_lines(input)?;
+        let (lines, stats) = crate::engine::load_lines(input)?;
         note(stats);
         crate::reference::naive::run(&lines, &query, &schema.time_columns)?
     } else {
-        let db = db::load(input, true, now, schema)?;
-        note(db.stats);
-        engine::execute(&db.trie, &db.stores, &query)?
+        let db = in_memory(schema);
+        note(db.ingest_file(input, now, true)?);
+        db.execute(&query)?
     };
 
     match args.format {
@@ -105,7 +104,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
 
 /// stderr, so it never lands in the JSON on stdout: the answer does not cover the lines
 /// that could not be read, and an operator should not have to infer that from a row count.
-fn note(stats: db::LoadStats) {
+fn note(stats: LoadStats) {
     if stats.rejected > 0 {
         eprintln!(
             "kibbr query: {} of {} lines rejected; the answer covers the other {}",
@@ -114,6 +113,14 @@ fn note(stats: db::LoadStats) {
             commas(stats.ingested)
         );
     }
+}
+
+/// The database a file is read into: in memory, with no log, gone with the command.
+fn in_memory(schema: &Schema) -> Database {
+    Database::in_memory(crate::engine::Options {
+        schema: schema.clone(),
+        ..crate::engine::Options::default()
+    })
 }
 
 // ── Text and flags to a Query ──────────────────────────────────────────────────────
@@ -664,7 +671,7 @@ fn bucket_json(key: &GroupKey, group: &Group, cell: String) -> Value {
     }
 }
 
-fn render_rows<W: Write>(out: &mut W, rows: &[&crate::storage::store::Row]) -> Result<(), CliError> {
+fn render_rows<W: Write>(out: &mut W, rows: &[&Row]) -> Result<(), CliError> {
     if rows.is_empty() {
         return Ok(());
     }
@@ -672,7 +679,7 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&crate::storage::store::Row]) -> R
     let shown: Vec<BTreeMap<String, String>> = rows
         .iter()
         .map(|row| {
-            crate::storage::store::present(row)
+            crate::engine::present(row)
                 .into_iter()
                 .map(|(name, key)| (name, cell_text(row, key)))
                 .collect()
@@ -698,7 +705,7 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&crate::storage::store::Row]) -> R
 
 /// A value as the table shows it: as the line wrote it where the row records that, and
 /// through `col_text` otherwise.
-fn cell_text(row: &crate::storage::store::Row, key: &str) -> String {
+fn cell_text(row: &Row, key: &str) -> String {
     match row.written(key) {
         Some(Value::String(text)) => text.clone(),
         Some(other) => other.to_string(),

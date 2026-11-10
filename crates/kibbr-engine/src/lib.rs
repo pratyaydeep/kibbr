@@ -35,11 +35,39 @@ pub use lifecycle::Replayed;
 // go last, and how a UTC day and a line's limit are said.
 pub use core::fmt;
 pub use core::lines::MAX_LINE_BYTES;
-pub use storage::lock::LockError;
-pub use storage::store::disk::{day_name, day_of_name};
+pub use storage::db::{load_lines, row_of, LoadStats, ReadError};
+pub use storage::lock::{holder, Holder, LockError, LOCK_FILE};
+pub use storage::store::{present, system_time, Row};
+pub use storage::trie::TrieError;
+pub use storage::store::disk::{day_name, day_of_name, refuse_other_versions, STAGING_DIR};
+pub use storage::store::manifest::path_in as manifest_path;
 pub use storage::store::fan::Fan;
 pub use storage::store::{FlushSummary, Stop, StoreError};
 pub use storage::wal::{Advanced, Stats as WalStats};
+
+/// What the command line's diagnostic commands reach past the handle for: `demo` draws the
+/// trie, and `bench-storage` writes a live day without a log and walks the frames of the
+/// files it measures. No stability promise, and `kibbr-server` never names it
+/// (`scripts/check/no_internals.sh`).
+#[doc(hidden)]
+pub mod internals {
+    pub use crate::storage::catalog::path_in as catalog_path;
+    pub use crate::storage::db::{ingest_line, read_lines, SinkError};
+    pub use crate::storage::frame::{read as read_frame, Next};
+    pub use crate::storage::lock::DataLock;
+    pub use crate::storage::store::disk::{data_files, CompactOptions};
+    pub use crate::storage::store::v3::file::open_sealed;
+    pub use crate::storage::store::v3::{
+        HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN,
+    };
+    pub use crate::storage::store::{FlushKind, StoreManager};
+    pub use crate::storage::trie::{Node, Trie, ROOT_LABEL};
+
+    /// A database's trie and stores, as they are.
+    pub fn parts(db: &crate::Database) -> (&Trie, &StoreManager) {
+        db.parts()
+    }
+}
 
 /// What the tests of the crates above reach the database's parts with: not for anything
 /// but a test, and no promise of any kind.

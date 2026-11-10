@@ -9,16 +9,14 @@
 
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
 use crate::config::LoadStorage as _;
 
-use crate::engine::compact::{line, plan, run, Report, NO_DISK};
-use crate::storage::store::disk::{self, CompactOptions};
-use crate::storage::store::StoreError;
+use crate::engine::compact::{line, Report, NO_DISK};
+use crate::engine::StoreError;
 
 #[derive(Debug, Error)]
 pub enum CompactError {
@@ -50,8 +48,8 @@ impl From<crate::error::CliError> for CompactError {
     }
 }
 
-impl From<crate::storage::lock::LockError> for CompactError {
-    fn from(e: crate::storage::lock::LockError) -> Self {
+impl From<crate::engine::LockError> for CompactError {
+    fn from(e: crate::engine::LockError) -> Self {
         CompactError::Input(e.to_string())
     }
 }
@@ -76,12 +74,12 @@ pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactEr
     let day =
         match day {
             None => None,
-            Some(text) => Some(disk::day_of_name(text).ok_or_else(|| {
+            Some(text) => Some(crate::engine::day_of_name(text).ok_or_else(|| {
                 CompactError::Input(format!("--day {text}: not a YYYY-MM-DD day"))
             })?),
         };
-    disk::refuse_other_versions(base)?;
-    if !crate::storage::store::manifest::path_in(base).is_file() {
+    crate::engine::refuse_other_versions(base)?;
+    if !crate::engine::manifest_path(base).is_file() {
         return Err(CompactError::Input(format!(
             "{}: not a kibbr data directory (no manifest.log); nothing was compacted",
             base.display()
@@ -105,11 +103,15 @@ pub fn command(
         .ok_or_else(|| CompactError::Input("no data directory".to_string()))?;
     let waited = Instant::now();
     loop {
-        match crate::storage::lock::DataLock::acquire(&base) {
-            Ok(lock) => return alone(lock, &args, day, &storage, &schema, out),
-            Err(crate::storage::lock::LockError::Held { path, holder }) => {
-                match crate::storage::lock::holder(&base) {
-                    Some(crate::storage::lock::Holder {
+        let opened = crate::engine::Database::open_offline(
+            crate::config::options(&storage, &schema),
+            crate::engine::Opener::Compact,
+        );
+        match opened {
+            Ok(db) => return alone(db, &args, day, out),
+            Err(crate::engine::Error::Lock(crate::engine::LockError::Held { path, holder })) => {
+                match crate::engine::holder(&base) {
+                    Some(crate::engine::Holder {
                         address: Some(address),
                         token,
                         ..
@@ -118,17 +120,17 @@ pub fn command(
                         return client(&address, &token, &base, &args, out);
                     }
                     // A load or another compaction running alone: no server to ask.
-                    Some(crate::storage::lock::Holder { load: true, .. }) => {
-                        return Err(crate::storage::lock::LockError::Held { path, holder }.into())
+                    Some(crate::engine::Holder { load: true, .. }) => {
+                        return Err(crate::engine::LockError::Held { path, holder }.into())
                     }
                     // A server still starting: it writes its address once it can answer.
                     _ if waited.elapsed() < crate::cmd::load::SERVER_STARTING_WAIT => {
                         std::thread::sleep(crate::cmd::load::POLL);
                     }
-                    _ => return Err(crate::storage::lock::LockError::Held { path, holder }.into()),
+                    _ => return Err(crate::engine::LockError::Held { path, holder }.into()),
                 }
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(opened_alone(e)),
         }
     }
 }
@@ -150,36 +152,36 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
     written.map_err(|e| crate::error::CliError::Write(e).into())
 }
 
+/// What opening the directory alone failed with, as the command has always said it: the
+/// lock's and the version check's own errors, and the start's as the server's.
+fn opened_alone(e: crate::engine::Error) -> CompactError {
+    match e {
+        crate::engine::Error::Lock(e) => e.into(),
+        crate::engine::Error::Store(e) => e.into(),
+        e => crate::error::CliError::from(e).into(),
+    }
+}
+
 /// The compaction in this process, holding the directory's lock.
 fn alone(
-    mut lock: crate::storage::lock::DataLock,
+    db: crate::engine::Database,
     args: &Args,
     day: Option<i64>,
-    storage: &crate::config::Storage,
-    schema: &crate::config::Schema,
     out: &mut dyn io::Write,
 ) -> Result<(), CompactError> {
-    let base = storage.base_path.clone().unwrap_or_default();
-    let _ = lock.announce(&crate::storage::lock::Holder::compact());
-    disk::refuse_other_versions(&base)?;
-    let (_trie, stores) =
-        crate::engine::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
-    let store = stores.disk_store().ok_or(CompactError::NoDisk)?;
-    let opts = CompactOptions {
-        threads: args
-            .threads
-            .unwrap_or_else(crate::cmd::load::alone_threads)
-            .max(1),
-        cancel: Arc::default(),
-    };
-    let days = plan(store, day);
-    let ran = run(store, &days, &opts, &mut |_, result| {
-        // One day asked for is one error, and the command ends on it. Of the days that
-        // were due, each failure is said where it happened and the command ends on a count.
-        if let (None, Err(e)) = (day, result) {
-            crate::error::report(e);
-        }
-    });
+    let threads = args
+        .threads
+        .unwrap_or_else(crate::cmd::load::alone_threads)
+        .max(1);
+    let (days, ran) = db
+        .compact_now(day, threads, &mut |_, result| {
+            // One day asked for is one error, and the command ends on it. Of the days that
+            // were due, each failure is said where it happened and the command ends on a count.
+            if let (None, Err(e)) = (day, result) {
+                crate::error::report(e);
+            }
+        })
+        .ok_or(CompactError::NoDisk)?;
     print_report(&ran.report, args.json, out)?;
     let failed = ran.failed.len();
     match (day, ran.failed.into_iter().next()) {
@@ -374,18 +376,22 @@ mod tests {
 
         // A directory with no day in it: the run is over at once, and what it wrote to
         // `LOCK` while it ran is still there to read.
-        let lock = crate::storage::lock::DataLock::acquire(&dir).expect("the lock");
+        let db = crate::engine::Database::open_offline(
+            crate::config::options(&storage, &schema),
+            crate::engine::Opener::Compact,
+        )
+        .expect("the directory, alone");
         let mut out = Vec::new();
-        alone(lock, &args(), None, &storage, &schema, &mut out).expect("compact alone");
+        alone(db, &args(), None, &mut out).expect("compact alone");
         assert!(out.is_empty(), "no day was due, and it printed {out:?}");
-        let said = crate::storage::lock::holder(&dir).expect("LOCK does not say who held it");
+        let said = crate::engine::holder(&dir).expect("LOCK does not say who held it");
         assert!(
             said.compact && said.load && said.address.is_none(),
             "{said:?}"
         );
 
         // Those words under a lock that is held are a compaction still running.
-        let _held = crate::storage::lock::DataLock::acquire(&dir).expect("the lock");
+        let _held = crate::engine::internals::DataLock::acquire(&dir).expect("the lock");
         let asked = Instant::now();
         match command(args(), None, storage, schema, &mut out) {
             Err(CompactError::Input(why)) => {

@@ -98,7 +98,7 @@ pub enum CliError {
 
     /// What ended a read of lines below any command: the read loop's own error (`db::ReadError`).
     #[error(transparent)]
-    Input(#[from] crate::storage::db::ReadError),
+    Input(#[from] crate::engine::ReadError),
 
     #[error(transparent)]
     Gen(#[from] GenError),
@@ -107,7 +107,7 @@ pub enum CliError {
     Config(#[from] crate::config::ConfigError),
 
     #[error(transparent)]
-    Trie(#[from] crate::storage::trie::TrieError),
+    Trie(#[from] crate::engine::TrieError),
 
     #[error(transparent)]
     Query(#[from] QueryError),
@@ -123,7 +123,7 @@ pub enum CliError {
     Cursor(#[from] crate::engine::engine::CursorError),
 
     #[error(transparent)]
-    Store(#[from] crate::storage::store::StoreError),
+    Store(#[from] crate::engine::StoreError),
 
     // Transparent for the reason `Trieql` is - `BucketError`'s own sentence names the
     // requested and permitted counts, and a wrapper would print a vaguer one above it.

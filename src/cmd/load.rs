@@ -82,7 +82,7 @@ pub fn command(
     let replace_day = match args.replace_day.as_deref() {
         None => None,
         Some(text) => Some(
-            crate::storage::store::disk::day_of_name(text).ok_or_else(|| {
+            crate::engine::day_of_name(text).ok_or_else(|| {
                 LoadError::Input(format!("--replace-day {text}: not a YYYY-MM-DD day"))
             })?,
         ),
@@ -108,8 +108,12 @@ pub fn command(
     }
     let waited = Instant::now();
     loop {
-        match crate::storage::lock::DataLock::acquire(&base) {
-            Ok(lock) => {
+        let opened = crate::engine::Database::open_offline(
+            crate::config::options(&storage, &schema),
+            crate::engine::Opener::Load,
+        );
+        match opened {
+            Ok(db) => {
                 let opts = Options {
                     inputs: Vec::new(),
                     replace_day,
@@ -120,11 +124,11 @@ pub fn command(
                     proceed: args.proceed,
                     max_arrival_share: share,
                 };
-                return alone(lock, &args, opts, &storage, &schema, out);
+                return alone(db, &args, opts, out);
             }
-            Err(crate::storage::lock::LockError::Held { path, holder }) => {
-                match crate::storage::lock::holder(&base) {
-                    Some(crate::storage::lock::Holder {
+            Err(crate::engine::Error::Lock(crate::engine::LockError::Held { path, holder })) => {
+                match crate::engine::holder(&base) {
+                    Some(crate::engine::Holder {
                         address: Some(address),
                         token,
                         ..
@@ -132,17 +136,17 @@ pub fn command(
                         let token = token.unwrap_or_default();
                         return client(&address, &token, &base, &args, share, out);
                     }
-                    Some(crate::storage::lock::Holder { load: true, .. }) => {
-                        return Err(crate::storage::lock::LockError::Held { path, holder }.into())
+                    Some(crate::engine::Holder { load: true, .. }) => {
+                        return Err(crate::engine::LockError::Held { path, holder }.into())
                     }
                     // A server still starting: it writes its address once it can answer.
                     _ if waited.elapsed() < SERVER_STARTING_WAIT => {
                         std::thread::sleep(POLL);
                     }
-                    _ => return Err(crate::storage::lock::LockError::Held { path, holder }.into()),
+                    _ => return Err(crate::engine::LockError::Held { path, holder }.into()),
                 }
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(opened_alone(e)),
         }
     }
 }
@@ -157,23 +161,26 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
     writeln!(out, "{text}").map_err(|e| crate::error::CliError::Write(e).into())
 }
 
+/// What opening the directory alone failed with, as the command has always said it: the
+/// lock's and the version check's own errors, and the start's as the server's.
+fn opened_alone(e: crate::engine::Error) -> LoadError {
+    match e {
+        crate::engine::Error::Lock(e) => e.into(),
+        crate::engine::Error::Store(e) => e.into(),
+        e => crate::error::CliError::from(e).into(),
+    }
+}
+
 /// The load in this process, holding the directory's lock.
 fn alone(
-    mut lock: crate::storage::lock::DataLock,
+    db: crate::engine::Database,
     args: &Args,
     mut opts: Options,
-    storage: &crate::config::Storage,
-    schema: &crate::config::Schema,
     out: &mut dyn io::Write,
 ) -> Result<(), LoadError> {
-    let base = storage.base_path.clone().unwrap_or_default();
-    let _ = lock.announce(&crate::storage::lock::Holder::load());
-    crate::storage::store::disk::refuse_other_versions(&base)?;
-    let (trie, stores) =
-        crate::engine::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
     // Standard input is spooled inside `staging/`, which the next start deletes: a load
     // that dies leaves nothing behind that anything names.
-    let staging = base.join(crate::storage::store::disk::STAGING_DIR);
+    let staging = db.staging_dir().unwrap_or_default();
     let spool = staging.join(format!("stdin-{}.spool", std::process::id()));
     if args.inputs.iter().any(|a| a.as_os_str() == "-") {
         fs::create_dir_all(&staging).map_err(|source| LoadError::Read {
@@ -183,9 +190,7 @@ fn alone(
     }
     let result = resolve(&args.inputs, Some(&spool)).and_then(|inputs| {
         opts.inputs = inputs;
-        run(&trie, &stores, &opts, &Control::default(), &mut |e| {
-            crate::error::report(e)
-        })
+        db.load(&opts, &Control::default(), &mut |e| crate::error::report(e))
     });
     let _ = fs::remove_file(&spool);
     print_report(&result?, args.json, out)
@@ -209,7 +214,7 @@ fn client(
     }
     // Spooled inside the data directory's `staging/`, which the server can read because it
     // owns it, and which its next start clears if this client is killed.
-    let staging = base.join(crate::storage::store::disk::STAGING_DIR);
+    let staging = base.join(crate::engine::STAGING_DIR);
     let spool = staging.join(format!(
         "stdin-{}-{}.spool",
         std::process::id(),
