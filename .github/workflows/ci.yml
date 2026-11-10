@@ -47,6 +47,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/check/no_internals.sh
 
+      - name: src/cmd never names src/tools
+        if: ${{ !cancelled() }}
+        run: scripts/check/cmd_no_tools.sh
+
       - name: scripts/check/agree.sh
         if: ${{ !cancelled() }}
         run: scripts/check/agree.sh
