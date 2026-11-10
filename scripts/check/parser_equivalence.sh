@@ -292,6 +292,10 @@ def instant(row):
         v = row.get(k)
         if v is None:
             continue
+        # An epoch comes back as it arrived, and the generator writes it as a JSON number:
+        # read its digits the same as a string of them.
+        if isinstance(v, int) and not isinstance(v, bool):
+            v = str(v)
         if isinstance(v, str) and v.isdigit() and len(v) == 10:
             return datetime.fromtimestamp(int(v), timezone.utc).isoformat()
         if isinstance(v, str) and v.isdigit() and len(v) == 13:
