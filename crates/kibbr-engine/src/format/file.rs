@@ -148,7 +148,7 @@ fn put_schema(out: &mut Vec<u8>, columns: &[String]) {
 }
 
 /// The 24-byte header.
-pub fn header_bytes(file_id: &[u8; 16]) -> [u8; HEADER_LEN] {
+pub(crate) fn header_bytes(file_id: &[u8; 16]) -> [u8; HEADER_LEN] {
     let mut out = [0u8; HEADER_LEN];
     out[..4].copy_from_slice(&MAGIC);
     out[4] = VERSION;
@@ -158,14 +158,14 @@ pub fn header_bytes(file_id: &[u8; 16]) -> [u8; HEADER_LEN] {
 
 /// A fresh file id from the operating system's random source: a path is a place, not an
 /// identity, and an id cannot come back.
-pub fn new_file_id() -> std::io::Result<[u8; 16]> {
+pub(crate) fn new_file_id() -> std::io::Result<[u8; 16]> {
     let mut id = [0u8; 16];
     File::open("/dev/urandom")?.read_exact(&mut id)?;
     Ok(id)
 }
 
 /// The header checked - magic, version 3, zero reserved bytes - and its file id back.
-pub fn check_header(path: &Path, bytes: &[u8]) -> Result<[u8; 16], FormatError> {
+pub(crate) fn check_header(path: &Path, bytes: &[u8]) -> Result<[u8; 16], FormatError> {
     let corrupt = |offset: u64, what: &str| FormatError::Corrupt {
         path: path.to_path_buf(),
         offset,
@@ -201,7 +201,7 @@ pub fn check_header(path: &Path, bytes: &[u8]) -> Result<[u8; 16], FormatError> 
 
 /// The id in a file's header, checked, without reading the rest: how startup matches a
 /// file a load left in `staging/` to the manifest record that named it.
-pub fn file_id_of(path: &Path) -> Result<[u8; 16], FormatError> {
+pub(crate) fn file_id_of(path: &Path) -> Result<[u8; 16], FormatError> {
     let mut head = Vec::with_capacity(HEADER_LEN);
     File::open(path)
         .and_then(|f| f.take(HEADER_LEN as u64).read_to_end(&mut head))
@@ -214,7 +214,7 @@ pub fn file_id_of(path: &Path) -> Result<[u8; 16], FormatError> {
 
 /// The version byte of a file that starts with the magic, read before the port is taken
 /// to refuse a directory of another version; the pre-rename magic is `PreRename`.
-pub fn version_of(path: &Path) -> Result<Option<u8>, FormatError> {
+pub(crate) fn version_of(path: &Path) -> Result<Option<u8>, FormatError> {
     let io = |source| FormatError::Io {
         path: path.to_path_buf(),
         source,
@@ -240,7 +240,7 @@ pub fn version_of(path: &Path) -> Result<Option<u8>, FormatError> {
 
 /// A footer frame's payload, every rule checked; `base` is its file offset, so
 /// its frame starts eight bytes before that, where the row groups it lists must end.
-pub fn footer(payload: &[u8], base: u64, file_id: [u8; 16]) -> Result<Index, Bad> {
+pub(crate) fn footer(payload: &[u8], base: u64, file_id: [u8; 16]) -> Result<Index, Bad> {
     let mut r = Bytes::new(payload, base);
     let kind = r.u8("footer kind")?;
     if kind != KIND_FOOTER {
@@ -412,7 +412,7 @@ pub fn footer(payload: &[u8], base: u64, file_id: [u8; 16]) -> Result<Index, Bad
 }
 
 /// A schema's columns: sorted, distinct, UTF-8.
-pub fn schema_columns(r: &mut Bytes<'_>) -> Result<Vec<String>, Bad> {
+pub(crate) fn schema_columns(r: &mut Bytes<'_>) -> Result<Vec<String>, Bad> {
     let count = r.u32("column_count")?;
     let mut columns: Vec<String> = Vec::new();
     for _ in 0..count {
@@ -449,7 +449,7 @@ pub fn open_sealed(path: &Path) -> Result<Option<Index>, FormatError> {
 
 /// `open_sealed` over whatever holds the file, so the fuzz target reads a file held in
 /// memory through the same code a file on disk goes through.
-pub fn sealed(
+pub(crate) fn sealed(
     path: &Path,
     len: u64,
     mut read: impl FnMut(u64, &mut [u8]) -> Result<(), FormatError>,
@@ -491,7 +491,7 @@ pub fn sealed(
 
 /// What a walk kept, and where it stopped.
 #[derive(Debug)]
-pub struct Walk {
+pub(crate) struct Walk {
     pub index: Index,
     /// The first byte the walk did not keep: a tear, a footer frame, or the end.
     pub end: u64,
@@ -499,7 +499,7 @@ pub struct Walk {
 
 /// Walk an unsealed file's bytes from its header, frame by frame, every CRC checked, to
 /// the first tear; every chunk kept is also decoded, so a query can read it.
-pub fn walk(path: &Path, bytes: &[u8]) -> Result<Walk, FormatError> {
+pub(crate) fn walk(path: &Path, bytes: &[u8]) -> Result<Walk, FormatError> {
     let file_id = check_header(path, bytes)?;
     let mut index = Index::new(file_id);
     let mut at = HEADER_LEN;
@@ -619,7 +619,7 @@ fn check_chunks(
 
 /// What recovering a file did.
 #[derive(Debug)]
-pub struct Recovered {
+pub(crate) struct Recovered {
     pub index: Index,
     /// Where the file was cut, and how long it was.
     pub torn_at: Option<(u64, u64)>,
@@ -627,7 +627,7 @@ pub struct Recovered {
 
 /// The bytes of a file that ends inside its header, held to being the start of one;
 /// apart from `recover` so the fuzz target asks the same of bytes held in memory.
-pub fn cut_in_header(path: &Path, bytes: &[u8]) -> Result<(), FormatError> {
+pub(crate) fn cut_in_header(path: &Path, bytes: &[u8]) -> Result<(), FormatError> {
     // Even cut inside the magic: the first bytes say which build wrote it.
     if !bytes.is_empty() && PRE_RENAME_MAGIC.starts_with(&bytes[..bytes.len().min(4)]) {
         return Err(FormatError::PreRename {
@@ -655,7 +655,7 @@ pub fn cut_in_header(path: &Path, bytes: &[u8]) -> Result<(), FormatError> {
 
 /// Seal an unsealed file: walk it, truncate at the tear, append the footer of what the
 /// walk kept and the trailer, and flush.
-pub fn recover(path: &Path) -> Result<Recovered, FormatError> {
+pub(crate) fn recover(path: &Path) -> Result<Recovered, FormatError> {
     let io = |source| FormatError::Io {
         path: path.to_path_buf(),
         source,
@@ -695,7 +695,7 @@ pub fn recover(path: &Path) -> Result<Recovered, FormatError> {
 
 /// Where a writer was: what `Writer::rollback` cuts the file and its index back to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Mark {
+pub(crate) struct Mark {
     len: u64,
     schemas: usize,
     entries: usize,
@@ -703,13 +703,13 @@ pub struct Mark {
 
 impl Mark {
     /// Schema ids from here on were written after the mark.
-    pub fn schemas(&self) -> usize {
+    pub(crate) fn schemas(&self) -> usize {
         self.schemas
     }
 }
 
 /// A file being written, append only.
-pub struct Writer {
+pub(crate) struct Writer {
     path: PathBuf,
     file: File,
     index: Index,
@@ -724,7 +724,7 @@ pub struct Writer {
 impl Writer {
     /// Create the file with its header, and make both the bytes and the directory entry
     /// durable before anything names it.
-    pub fn create(path: &Path) -> Result<Self, FormatError> {
+    pub(crate) fn create(path: &Path) -> Result<Self, FormatError> {
         let io = |source| FormatError::Io {
             path: path.to_path_buf(),
             source,
@@ -755,19 +755,21 @@ impl Writer {
         })
     }
 
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    pub fn index(&self) -> &Index {
+    pub(crate) fn index(&self) -> &Index {
         &self.index
     }
 
-    pub fn len(&self) -> u64 {
+    pub(crate) fn len(&self) -> u64 {
         self.len
     }
 
-    pub fn is_empty(&self) -> bool {
+    // Beside `len`, as clippy asked of it while it was public; nothing calls it.
+    #[allow(dead_code)]
+    pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -799,7 +801,7 @@ impl Writer {
     }
 
     /// The schema id for this column set, writing its record first if the file has none.
-    pub fn schema_id(&mut self, columns: &[String]) -> Result<u32, FormatError> {
+    pub(crate) fn schema_id(&mut self, columns: &[String]) -> Result<u32, FormatError> {
         if let Some(id) = self.schema_ids.get(columns) {
             return Ok(*id);
         }
@@ -815,7 +817,7 @@ impl Writer {
 
     /// Append a row group built against a schema id from `schema_id`, not flushed: the
     /// caller appends every row group that is due and then calls `sync` once.
-    pub fn append(&mut self, template_id: u64, rg: &RowGroup) -> Result<Entry, FormatError> {
+    pub(crate) fn append(&mut self, template_id: u64, rg: &RowGroup) -> Result<Entry, FormatError> {
         let offset = self.len;
         let mut bytes = Vec::with_capacity(rg.frame.len() + rg.chunks.len());
         bytes.extend_from_slice(&rg.frame);
@@ -841,14 +843,14 @@ impl Writer {
         Ok(entry)
     }
 
-    pub fn sync(&mut self) -> Result<(), FormatError> {
+    pub(crate) fn sync(&mut self) -> Result<(), FormatError> {
         self.file.sync_all().map_err(|source| FormatError::Io {
             path: self.path.clone(),
             source,
         })
     }
 
-    pub fn mark(&self) -> Mark {
+    pub(crate) fn mark(&self) -> Mark {
         Mark {
             len: self.len,
             schemas: self.index.schemas.len(),
@@ -858,7 +860,7 @@ impl Writer {
 
     /// Cut the file back to `mark` and forget everything written since, so rows that go
     /// back to their buffer are not held twice once the retry lands.
-    pub fn rollback(&mut self, mark: Mark) -> Result<(), FormatError> {
+    pub(crate) fn rollback(&mut self, mark: Mark) -> Result<(), FormatError> {
         if self.torn {
             return Err(self.torn_error());
         }
@@ -883,18 +885,18 @@ impl Writer {
 
     /// Flag the file finished - written whole, by a bulk load or by compaction, so compaction
     /// skips it - which takes effect at `seal`.
-    pub fn finish(&mut self) {
+    pub(crate) fn finish(&mut self) {
         self.index.finished = true;
     }
 
     /// Name the files this one replaces, by path under `data/` and file id: the cross-check
     /// a start holds the manifest's `replace` record to.
-    pub fn replaces(&mut self, parents: Vec<(String, [u8; 16])>) {
+    pub(crate) fn replaces(&mut self, parents: Vec<(String, [u8; 16])>) {
         self.index.replaced = parents;
     }
 
     /// Whether a write could not be cut back, so the file takes nothing more.
-    pub fn is_torn(&self) -> bool {
+    pub(crate) fn is_torn(&self) -> bool {
         self.torn
     }
 
@@ -909,7 +911,7 @@ impl Writer {
     }
 
     /// Append the footer and trailer and flush; the file is sealed once this returns.
-    pub fn seal(mut self) -> Result<Index, FormatError> {
+    pub(crate) fn seal(mut self) -> Result<Index, FormatError> {
         let bytes = self.index.seal_bytes();
         self.write(&bytes)?;
         self.sync()?;

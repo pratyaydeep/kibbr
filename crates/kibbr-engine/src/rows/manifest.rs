@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::templates::catalog;
 use crate::format::frame::{self, Log, LogError};
 
-pub const MANIFEST_FILE_NAME: &str = "manifest.log";
+pub(crate) const MANIFEST_FILE_NAME: &str = "manifest.log";
 
 /// A payload longer than this is a bad length, not a record.
 const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
@@ -35,7 +35,7 @@ pub enum ManifestError {
 
 /// One data file, by its path under `data/` and the id in its header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileRecord {
+pub(crate) struct FileRecord {
     pub path: String,
     /// The header's file id, as 32 hex digits: a path is a place, not an identity.
     pub file_id: String,
@@ -53,7 +53,7 @@ pub struct FileRecord {
 
 impl FileRecord {
     /// A file just created by the live door: named, not yet sealed.
-    pub fn open(path: String, file_id: &[u8; 16]) -> Self {
+    pub(crate) fn open(path: String, file_id: &[u8; 16]) -> Self {
         Self {
             path,
             file_id: hex(file_id),
@@ -66,7 +66,7 @@ impl FileRecord {
     }
 
     /// A sealed file, with the numbers its footer holds.
-    pub fn sealed(path: String, index: &crate::format::file::Index) -> Self {
+    pub(crate) fn sealed(path: String, index: &crate::format::file::Index) -> Self {
         Self {
             path,
             file_id: hex(&index.file_id),
@@ -79,7 +79,7 @@ impl FileRecord {
     }
 }
 
-pub fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -94,7 +94,7 @@ fn hex_digit(digit: u8) -> Option<u8> {
 }
 
 /// The file id 32 hex digits spell, `None` for anything `hex` does not write.
-pub fn file_id_of(hex: &str) -> Option<[u8; 16]> {
+pub(crate) fn file_id_of(hex: &str) -> Option<[u8; 16]> {
     let digits = hex.as_bytes();
     if digits.len() != 32 {
         return None;
@@ -108,15 +108,15 @@ pub fn file_id_of(hex: &str) -> Option<[u8; 16]> {
 
 /// A compaction's `source`, never read as a load's: compaction writes its files in place,
 /// so none is looked for in `staging/`.
-pub const COMPACT_SOURCE: &str = "compact";
+pub(crate) const COMPACT_SOURCE: &str = "compact";
 
 /// A bulk load's `source`: `load:` and its id as 16 hex digits.
-pub fn load_source(load_id: u64) -> String {
+pub(crate) fn load_source(load_id: u64) -> String {
     format!("load:{load_id:016x}")
 }
 
 /// The load id a `source` names, `None` for anything `load_source` does not write.
-pub fn load_of(source: &str) -> Option<u64> {
+pub(crate) fn load_of(source: &str) -> Option<u64> {
     let digits = source.strip_prefix("load:")?.as_bytes();
     if digits.len() != 16 {
         return None;
@@ -128,7 +128,7 @@ pub fn load_of(source: &str) -> Option<u64> {
 
 /// Every load a record names as its source, committed or since retired, so running one
 /// again is refused by its id.
-pub fn load_ids(records: &[Record]) -> std::collections::BTreeSet<u64> {
+pub(crate) fn load_ids(records: &[Record]) -> std::collections::BTreeSet<u64> {
     records
         .iter()
         .filter_map(|record| match record {
@@ -142,7 +142,7 @@ pub fn load_ids(records: &[Record]) -> std::collections::BTreeSet<u64> {
 
 /// The load that published each path: where startup looks for a file a commit named and
 /// a crash left in `staging/<load id>/`.
-pub fn published_by_load(records: &[Record]) -> BTreeMap<String, u64> {
+pub(crate) fn published_by_load(records: &[Record]) -> BTreeMap<String, u64> {
     let mut out = BTreeMap::new();
     for record in records {
         let (files, source) = match record {
@@ -169,7 +169,7 @@ pub fn published_by_load(records: &[Record]) -> BTreeMap<String, u64> {
 /// What a replace-a-day tells the write-ahead log's replay: `day`'s lines up to `through`
 /// were replaced, and without it a replayed day comes back beside its replacement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WalMark {
+pub(crate) struct WalMark {
     /// The log's id, as 16 hex digits.
     pub stream: String,
     /// The day's directory name.
@@ -178,7 +178,7 @@ pub struct WalMark {
 }
 
 impl WalMark {
-    pub fn new(stream: u64, day: String, through: u64) -> Self {
+    pub(crate) fn new(stream: u64, day: String, through: u64) -> Self {
         Self {
             stream: format!("{stream:016x}"),
             day,
@@ -189,7 +189,7 @@ impl WalMark {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Record {
+pub(crate) enum Record {
     Add {
         files: Vec<FileRecord>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,7 +218,7 @@ const KNOWN_KINDS: &[&str] = &["add", "seal", "remove", "replace"];
 
 /// What one intact payload is.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Decoded {
+pub(crate) enum Decoded {
     Record(Record),
     /// A kind this build does not know, skipped so a later version can add kinds.
     Unknown(String),
@@ -229,7 +229,7 @@ pub enum Decoded {
 
 /// One intact payload, read through the catalog's `read_record` so an array in the place
 /// of an object is malformed; never an error.
-pub fn decode(payload: &[u8]) -> Decoded {
+pub(crate) fn decode(payload: &[u8]) -> Decoded {
     match catalog::read_record::<Record>(payload) {
         Ok(record) => Decoded::Record(record),
         Err(e) => match catalog::kind_of(payload) {
@@ -241,7 +241,7 @@ pub fn decode(payload: &[u8]) -> Decoded {
 
 /// Every intact frame of `bytes` as `(offset, what it is)` and the offset of the first
 /// torn byte: what `Manifest::open` does, without the file, for the `record_log` fuzz target.
-pub fn parse(bytes: &[u8]) -> (Vec<(u64, Decoded)>, Option<u64>) {
+pub(crate) fn parse(bytes: &[u8]) -> (Vec<(u64, Decoded)>, Option<u64>) {
     let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
     let decoded = frames
         .into_iter()
@@ -251,7 +251,7 @@ pub fn parse(bytes: &[u8]) -> (Vec<(u64, Decoded)>, Option<u64>) {
 }
 
 /// The live files, by path, after every record is applied in order.
-pub fn live(records: &[Record]) -> BTreeMap<String, FileRecord> {
+pub(crate) fn live(records: &[Record]) -> BTreeMap<String, FileRecord> {
     let mut files = BTreeMap::new();
     for record in records {
         apply(&mut files, record);
@@ -261,7 +261,7 @@ pub fn live(records: &[Record]) -> BTreeMap<String, FileRecord> {
 
 /// One record applied to a live set, shared by `live` and a running store so the two
 /// cannot disagree.
-pub fn apply(files: &mut BTreeMap<String, FileRecord>, record: &Record) {
+pub(crate) fn apply(files: &mut BTreeMap<String, FileRecord>, record: &Record) {
     match record {
         Record::Add { files: added, .. } | Record::Seal { files: added } => {
             for f in added {
@@ -285,14 +285,14 @@ pub fn apply(files: &mut BTreeMap<String, FileRecord>, record: &Record) {
 }
 
 /// An open manifest, positioned at its end.
-pub struct Manifest {
+pub(crate) struct Manifest {
     log: Log,
 }
 
 impl Manifest {
     /// Open for appending, reading every record already there; a torn tail is truncated and
     /// an unknown or malformed record skipped, each with a warning.
-    pub fn open(
+    pub(crate) fn open(
         path: &Path,
         warn: &mut dyn FnMut(String),
     ) -> Result<(Self, Vec<Record>), ManifestError> {
@@ -324,7 +324,7 @@ impl Manifest {
     }
 
     /// Append and return only once every byte is on disk.
-    pub fn append(&mut self, records: &[Record]) -> Result<(), ManifestError> {
+    pub(crate) fn append(&mut self, records: &[Record]) -> Result<(), ManifestError> {
         let mut payloads = Vec::with_capacity(records.len());
         for record in records {
             payloads.push(serde_json::to_vec(record).map_err(|source| {
@@ -337,22 +337,22 @@ impl Manifest {
         Ok(self.log.append(&payloads)?)
     }
 
-    pub fn len(&self) -> u64 {
+    pub(crate) fn len(&self) -> u64 {
         self.log.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.log.is_empty()
     }
 
     /// Whether a failed append could not be cut back, so no record is written until a restart.
-    pub fn is_torn(&self) -> bool {
+    pub(crate) fn is_torn(&self) -> bool {
         self.log.is_torn()
     }
 
     /// Flush the log as it stands: what tells a failed append that was cut back from one that
     /// may be on disk.
-    pub fn sync(&mut self) -> Result<(), ManifestError> {
+    pub(crate) fn sync(&mut self) -> Result<(), ManifestError> {
         Ok(self.log.sync()?)
     }
 

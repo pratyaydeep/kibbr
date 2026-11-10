@@ -67,7 +67,7 @@ pub fn day_of_name(name: &str) -> Option<i64> {
 
 /// Today, as days since the epoch, UTC: the `today` a caller with no clock of its own
 /// hands `DiskStore::due_days`.
-pub fn today() -> i64 {
+pub(crate) fn today() -> i64 {
     day_of(nanos_of(SystemTime::now()))
 }
 
@@ -166,7 +166,7 @@ fn dirs(dir: &Path) -> Vec<PathBuf> {
 /// A data file a row group lives in, deleted once retired when its last reader lets go:
 /// a query that copied a day's row groups opens their file only when it reaches them.
 #[derive(Debug)]
-pub struct DataFile {
+pub(crate) struct DataFile {
     pub path: PathBuf,
     retired: AtomicBool,
 }
@@ -2000,7 +2000,7 @@ struct LeafState {
     buffered: u64,
 }
 
-pub struct DiskLeaf {
+pub(crate) struct DiskLeaf {
     template_id: u64,
     /// The template's time column: what a row's day, and its row group's time range, are
     /// read from, falling back to the arrival time a row without one carries.

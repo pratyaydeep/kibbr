@@ -9,7 +9,7 @@
 use crate::rows::Row;
 
 /// Term texts, and the JSON strings a line carries; no text is here twice.
-pub const TEXTS: &[&str] = &[
+pub(crate) const TEXTS: &[&str] = &[
     // Text built to sit on every rung's edge: the list the decoder's shortcut for plain
     // text is held to the ladder over, in `format::read`'s tests.
     "",
@@ -87,7 +87,7 @@ pub const TEXTS: &[&str] = &[
 
 /// The JSON a line can carry that is not a string, each also a text above so the same
 /// characters are ingested quoted and bare; and `null`.
-pub const LITERALS: &[&str] = &[
+pub(crate) const LITERALS: &[&str] = &[
     "0",
     "45",
     "200",
@@ -103,7 +103,7 @@ pub const LITERALS: &[&str] = &[
 
 /// Every value of the pool as the JSON a line writes it: each text as a string, then
 /// each literal bare.
-pub fn written() -> Vec<String> {
+pub(crate) fn written() -> Vec<String> {
     TEXTS
         .iter()
         .map(|text| serde_json::Value::String((*text).to_string()).to_string())
@@ -113,20 +113,20 @@ pub fn written() -> Vec<String> {
 
 /// The row ingest stores for a line whose one key, `v`, holds `json`, through the parser
 /// and `parse::flatten::row_of`.
-pub fn row_of(json: &str) -> Row {
+pub(crate) fn row_of(json: &str) -> Row {
     let line = format!("{{\"v\":{json}}}");
     let parsed = crate::parse::flatten::parse_line(line.as_bytes(), 1).expect("a line of one key");
     crate::ingest::row_of(&parsed)
 }
 
 /// One row for every value of the pool, in `written`'s order.
-pub fn rows() -> Vec<Row> {
+pub(crate) fn rows() -> Vec<Row> {
     written().iter().map(|json| row_of(json)).collect()
 }
 
 /// Values as a line writes them, one type in one spelling per list, so a few draws reach
 /// every way a writer lays a column out.
-pub const KINDS: &[&[&str]] = &[
+pub(crate) const KINDS: &[&[&str]] = &[
     // Words.
     &[
         r#""INFO""#,
@@ -233,7 +233,7 @@ pub const KINDS: &[&[&str]] = &[
 
 /// Every text of the pool and every value of `KINDS`, as the text a term asks for: a
 /// string's characters, a bare number or bool as it is written.
-pub fn terms() -> Vec<String> {
+pub(crate) fn terms() -> Vec<String> {
     let mut texts: std::collections::BTreeSet<String> =
         TEXTS.iter().map(|text| (*text).to_string()).collect();
     for json in KINDS.iter().flat_map(|kind| kind.iter()) {

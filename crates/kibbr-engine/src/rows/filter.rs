@@ -25,7 +25,7 @@ const _: () = assert!(WORDS * 64 == MAX_ROWS as usize);
 /// Which rows of one row group are still in, one bit a row: a bitmap because terms are
 /// ANDed, counted and walked in row order, and bits at and past `rows` are always clear.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Sel {
+pub(crate) struct Sel {
     bits: [u64; WORDS],
     rows: usize,
 }
@@ -40,7 +40,7 @@ impl std::fmt::Debug for Sel {
 
 impl Sel {
     /// Every row in.
-    pub fn all(rows: usize) -> Self {
+    pub(crate) fn all(rows: usize) -> Self {
         let mut sel = Self::none(rows);
         let whole = sel.rows / 64;
         for word in &mut sel.bits[..whole] {
@@ -53,7 +53,7 @@ impl Sel {
     }
 
     /// No row in.
-    pub fn none(rows: usize) -> Self {
+    pub(crate) fn none(rows: usize) -> Self {
         Self {
             bits: [0; WORDS],
             rows: rows.min(WORDS * 64),
@@ -84,42 +84,42 @@ impl Sel {
     }
 
     /// How many rows the selection is over, in or out.
-    pub fn rows(&self) -> usize {
+    pub(crate) fn rows(&self) -> usize {
         self.rows
     }
 
     /// Put a row in; a row the selection is not over stays out.
-    pub fn set(&mut self, row: usize) {
+    pub(crate) fn set(&mut self, row: usize) {
         if row < self.rows {
             self.bits[row / 64] |= 1 << (row % 64);
         }
     }
 
-    pub fn get(&self, row: usize) -> bool {
+    pub(crate) fn get(&self, row: usize) -> bool {
         row < self.rows && self.bits[row / 64] & (1 << (row % 64)) != 0
     }
 
     /// Keep only the rows `other` has in too.
-    pub fn and(&mut self, other: &Sel) {
+    pub(crate) fn and(&mut self, other: &Sel) {
         for (mine, theirs) in self.bits.iter_mut().zip(&other.bits) {
             *mine &= theirs;
         }
     }
 
     /// How many rows are in.
-    pub fn count(&self) -> u64 {
+    pub(crate) fn count(&self) -> u64 {
         self.bits
             .iter()
             .map(|word| u64::from(word.count_ones()))
             .sum()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.bits.iter().all(|word| *word == 0)
     }
 
     /// The row of the `n`-th row that is in, counting from 0 in row order.
-    pub fn nth(&self, n: u64) -> Option<usize> {
+    pub(crate) fn nth(&self, n: u64) -> Option<usize> {
         let mut left = n;
         for (at, word) in self.bits.iter().enumerate() {
             let here = u64::from(word.count_ones());
@@ -137,7 +137,7 @@ impl Sel {
     }
 
     /// The rows that are in, in row order.
-    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.bits.iter().enumerate().flat_map(|(at, word)| {
             let mut left = *word;
             std::iter::from_fn(move || {
@@ -156,7 +156,7 @@ impl Sel {
 
 /// The rows of `column` that `term` matches, by typed compare; under `text_column` a stored
 /// `Datetime` is compared as the text it arrived as, and a null matches no term, `*` included.
-pub fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
+pub(crate) fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
     let rows = column.rows();
     let [a, b] = column.pieces()?;
     let Some(a) = a else {
@@ -193,7 +193,7 @@ pub fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad>
 
 /// The same rows by definition, every row's cell printed as `read::chunk` prints it and
 /// the term asked of it: what `hits` is held to.
-pub fn hits_by_row(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
+pub(crate) fn hits_by_row(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
     let mut sel = Sel::none(column.rows());
     let mut memo = Memo::default();
     for row in 0..column.rows() {
@@ -413,7 +413,7 @@ impl Asked<'_> {
 
 /// Each row's instant, as `instant_of` reads the row's cell, borrowed from the column
 /// when it is one `Datetime` piece holding every row.
-pub struct Instants<'c> {
+pub(crate) struct Instants<'c> {
     /// A row's instant where it has one. Shorter than the rows only when no row has one.
     ns: Cow<'c, [i64]>,
     /// The rows that have an instant. `None`: every row has.
@@ -497,7 +497,7 @@ fn stamps<'c>(piece: &PieceRef<'c>) -> Result<Stamps<'c>, Bad> {
 }
 
 /// Each row's instant off a decoded column.
-pub fn instants(column: Col<'_>) -> Result<Instants<'_>, Bad> {
+pub(crate) fn instants(column: Col<'_>) -> Result<Instants<'_>, Bad> {
     let rows = column.rows();
     let [a, b] = column.pieces()?;
     let Some(a) = a else {
@@ -530,7 +530,7 @@ pub fn instants(column: Col<'_>) -> Result<Instants<'_>, Bad> {
 
 impl<'c> Instants<'c> {
     /// What a column the row group's schema does not have gives: no row an instant.
-    pub fn absent(rows: usize) -> Instants<'static> {
+    pub(crate) fn absent(rows: usize) -> Instants<'static> {
         Instants {
             ns: Cow::Borrowed(&[]),
             has: Some(Sel::none(rows)),
@@ -566,7 +566,7 @@ impl<'c> Instants<'c> {
     }
 
     /// A row's instant, or `None` for a row that has none.
-    pub fn get(&self, row: usize) -> Option<i64> {
+    pub(crate) fn get(&self, row: usize) -> Option<i64> {
         match &self.has {
             Some(has) if !has.get(row) => None,
             _ => self.ns.get(row).copied(),
@@ -574,13 +574,13 @@ impl<'c> Instants<'c> {
     }
 
     /// Whether some row has no instant, and a fallback is worth decoding.
-    pub fn missing(&self) -> bool {
+    pub(crate) fn missing(&self) -> bool {
         self.has.is_some()
     }
 
     /// These instants, and `fallback`'s for the rows that have none here: a row's effective
     /// time is its time column's instant or else the arrival time it was stored with.
-    pub fn or(self, fallback: &Instants<'_>) -> Instants<'c> {
+    pub(crate) fn or(self, fallback: &Instants<'_>) -> Instants<'c> {
         let Instants { ns, has } = self;
         let Some(mut has) = has else {
             return Instants { ns, has: None };
@@ -604,7 +604,7 @@ impl<'c> Instants<'c> {
 
     /// The rows whose instant is in `[since, until)`; a row with no instant is outside every
     /// window.
-    pub fn window(&self, since: Option<i64>, until: Option<i64>) -> Sel {
+    pub(crate) fn window(&self, since: Option<i64>, until: Option<i64>) -> Sel {
         let inside = |ns: &i64| in_window(Some(*ns), since, until);
         match &self.has {
             None => Sel::of(&self.ns, inside),

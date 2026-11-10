@@ -38,9 +38,9 @@ pub struct PieceDir {
     pub encoding: u8,
 }
 
-pub const SOME_NULL: u8 = 0b001;
-pub const TWO_PIECES: u8 = 0b010;
-pub const ALL_NULL: u8 = 0b100;
+pub(crate) const SOME_NULL: u8 = 0b001;
+pub(crate) const TWO_PIECES: u8 = 0b010;
+pub(crate) const ALL_NULL: u8 = 0b100;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Section {
@@ -81,7 +81,7 @@ impl Header {
 
 /// A header frame's payload; `base` is the file offset of its first byte, and `columns`
 /// says how many columns a schema has, `None` for a schema not yet written.
-pub fn header(
+pub(crate) fn header(
     payload: &[u8],
     base: u64,
     columns: impl Fn(u32) -> Option<usize>,
@@ -295,11 +295,11 @@ fn piece_form(r: &mut Bytes<'_>) -> Result<PieceDir, Bad> {
 
 /// One decoded value: what a row holds and, where printing that would not give back what
 /// was ingested, the JSON value that was.
-pub type Cell = (ColValue, Option<Value>);
+pub(crate) type Cell = (ColValue, Option<Value>);
 
 /// A chunk's stored bytes, already CRC-checked, into one cell per row; `rows` is held to
 /// `MAX_ROWS` here too, since an all-null chunk's cells are made from the count alone.
-pub fn chunk(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Vec<Cell>, Bad> {
+pub(crate) fn chunk(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Vec<Cell>, Bad> {
     if rows > MAX_ROWS as usize {
         return Err(too_many_rows(base, rows));
     }
@@ -759,7 +759,7 @@ pub(super) fn cell(
 
 /// Text the ladder certainly reads as `String`, told apart without running it: running
 /// every rung over every string in a scan costs more than the scan.
-pub fn surely_text(text: &str) -> bool {
+pub(crate) fn surely_text(text: &str) -> bool {
     let Some(first) = text.bytes().next() else {
         return true;
     };

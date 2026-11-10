@@ -6,6 +6,10 @@
 //! Three sources: every file under `testdata/format/`, row groups the builder makes, and
 //! pieces laid out plain by hand, which a file from before the encodings still holds.
 
+// What this crate's tests build from; with `test-support` alone nothing in the library
+// calls it.
+#![cfg_attr(not(test), allow(dead_code))]
+
 use std::path::{Path, PathBuf};
 
 use super::build::{build, schema_of, Level};
@@ -18,7 +22,7 @@ use crate::model::types::RECEIVED_AT_COLUMN;
 use crate::model::types::ColValue;
 
 /// One chunk as a file stores it, with the directory entry that says how to read it.
-pub struct Stored {
+pub(crate) struct Stored {
     pub dir: ChunkDir,
     pub bytes: Vec<u8>,
     /// The offset the bytes start at, in whatever holds them.
@@ -27,13 +31,13 @@ pub struct Stored {
 
 impl Stored {
     /// The chunk's cells, as `read::chunk` decodes them.
-    pub fn cells(&self, rows: usize) -> Vec<Cell> {
+    pub(crate) fn cells(&self, rows: usize) -> Vec<Cell> {
         read::chunk(&self.bytes, self.at, &self.dir, rows).expect("a sample decodes")
     }
 }
 
 /// One row group: its schema, its row count and each column's chunk.
-pub struct Sample {
+pub(crate) struct Sample {
     pub name: String,
     pub columns: Vec<String>,
     pub rows: usize,
@@ -43,13 +47,13 @@ pub struct Sample {
 
 impl Sample {
     /// A column's place in the schema, when the row group has it.
-    pub fn place(&self, column: &str) -> Option<usize> {
+    pub(crate) fn place(&self, column: &str) -> Option<usize> {
         self.columns.iter().position(|c| c == column)
     }
 
     /// Every row as a query would build it before rendering: each column's cell, put in
     /// with what its line wrote.
-    pub fn built(&self) -> Vec<Row> {
+    pub(crate) fn built(&self) -> Vec<Row> {
         let cells: Vec<Vec<Cell>> = self.chunks.iter().map(|c| c.cells(self.rows)).collect();
         (0..self.rows)
             .map(|r| {
@@ -66,7 +70,7 @@ impl Sample {
 
 /// Rows of one template as the row group the store would build of them, each row's time
 /// its effective time under the time column `ts`.
-pub fn of_rows(name: &str, rows: &[Row]) -> Sample {
+pub(crate) fn of_rows(name: &str, rows: &[Row]) -> Sample {
     let refs: Vec<&Row> = rows.iter().collect();
     let times: Vec<i64> = rows
         .iter()
@@ -106,20 +110,20 @@ pub fn of_rows(name: &str, rows: &[Row]) -> Sample {
 }
 
 /// A line through the real parser into the row a store is handed.
-pub fn row(line: &str) -> Row {
+pub(crate) fn row(line: &str) -> Row {
     crate::parse::flatten::row_of(
         &crate::parse::flatten::parse_line(line.as_bytes(), 1).expect("a line that parses"),
     )
 }
 
 /// Lines of one template, through the parser, as one row group.
-pub fn of_lines(name: &str, lines: &[String]) -> Sample {
+pub(crate) fn of_lines(name: &str, lines: &[String]) -> Sample {
     let rows: Vec<Row> = lines.iter().map(|line| row(line)).collect();
     of_rows(name, &rows)
 }
 
 /// One line for each value, `{"ts": .., "v": <value>}`, a second apart within one hour.
-pub fn lines_of(values: &[&str]) -> Vec<String> {
+pub(crate) fn lines_of(values: &[&str]) -> Vec<String> {
     values
         .iter()
         .enumerate()
@@ -134,7 +138,7 @@ pub fn lines_of(values: &[&str]) -> Vec<String> {
 }
 
 /// A row group of the columns `ts` and `v`, `v` holding these JSON values.
-pub fn of_values(name: &str, values: &[&str]) -> Sample {
+pub(crate) fn of_values(name: &str, values: &[&str]) -> Sample {
     of_lines(name, &lines_of(values))
 }
 
@@ -183,7 +187,7 @@ fn vectors_dir() -> PathBuf {
 }
 
 /// The `.col` files under `testdata/format/`, by name.
-pub fn vector_files() -> Vec<PathBuf> {
+pub(crate) fn vector_files() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(vectors_dir())
         .expect("testdata/format")
         .map(|entry| entry.expect("a directory entry").path())
@@ -195,7 +199,7 @@ pub fn vector_files() -> Vec<PathBuf> {
 
 /// Every row group of every file under `testdata/format/`: a sealed file through its footer,
 /// the cut one through the walk, each chunk read as a query reads it.
-pub fn vectors() -> Vec<Sample> {
+pub(crate) fn vectors() -> Vec<Sample> {
     let mut out = Vec::new();
     for path in vector_files() {
         let index = match open_sealed(&path).expect("a vector opens") {
@@ -234,7 +238,7 @@ pub fn vectors() -> Vec<Sample> {
 
 /// Row groups of `ts` and `v` that between them hold every layout a writer makes, and the
 /// plain ones a writer no longer does.
-pub fn layouts() -> Vec<Sample> {
+pub(crate) fn layouts() -> Vec<Sample> {
     const LOWER: &str = r#""550e8400-e29b-41d4-a716-446655440000""#;
     const OTHER: &str = r#""6ba7b810-9dad-11d1-80b4-00c04fd430c8""#;
     const UPPER: &str = r#""550E8400-E29B-41D4-A716-446655440000""#;
@@ -611,7 +615,7 @@ pub fn layouts() -> Vec<Sample> {
 }
 
 /// Every sample: the vectors, then the layouts.
-pub fn all() -> Vec<Sample> {
+pub(crate) fn all() -> Vec<Sample> {
     let mut out = vectors();
     out.extend(layouts());
     out

@@ -109,12 +109,12 @@ pub fn ingest_line(
 
 /// A line's row, built before anything is locked, so `/ingest` builds its rows first and
 /// then only appends them.
-pub struct Prepared {
+pub(crate) struct Prepared {
     pub row: Row,
 }
 
 impl Prepared {
-    pub fn of(parsed: &ParsedLog) -> Self {
+    pub(crate) fn of(parsed: &ParsedLog) -> Self {
         Self {
             row: row_of(parsed),
         }
@@ -122,7 +122,7 @@ impl Prepared {
 }
 
 /// The rest of `ingest_line`, with the row already built.
-pub fn ingest_prepared(
+pub(crate) fn ingest_prepared(
     trie: &Trie,
     stores: Option<&StoreManager>,
     parsed: &ParsedLog,
@@ -156,7 +156,7 @@ pub struct Placed {
 
 /// A line through the trie and its row stamped with an arrival time if it has none of
 /// its own; both doors call this, so a line is stored the same through either.
-pub fn place(
+pub(crate) fn place(
     trie: &Trie,
     parsed: &ParsedLog,
     prepared: Prepared,
@@ -167,7 +167,7 @@ pub fn place(
 
 /// `place`, failing only as the trie fails; the template is in the catalog, flushed, when
 /// this returns, so an id is never in the write-ahead log ahead of its record.
-pub fn place_in(
+pub(crate) fn place_in(
     trie: &Trie,
     parsed: &ParsedLog,
     prepared: Prepared,
@@ -193,7 +193,7 @@ pub fn place_in(
 }
 
 /// An arrival time as a row stores it, and as the write-ahead log records it.
-pub fn arrival_nanos(now: DateTime<Utc>) -> i64 {
+pub(crate) fn arrival_nanos(now: DateTime<Utc>) -> i64 {
     crate::rows::nanos_of(crate::rows::system_time(now))
 }
 
@@ -210,7 +210,7 @@ fn stamp(row: &mut Row, time_column: &str, received_at: i64) {
 
 /// A line read back from the write-ahead log as the row it was first stored as, with the
 /// record's arrival time: stamped at replay it could move to another day.
-pub fn row_from_log(
+pub(crate) fn row_from_log(
     line: &[u8],
     time_column: &str,
     received_at: i64,
@@ -251,7 +251,7 @@ pub fn load_lines<R: BufRead>(input: R) -> Result<(Vec<ParsedLog>, LoadStats), R
 
 /// Split and parse, taking no lock and touching no trie: the first half of the write
 /// path, with each line's number beside it and `stats.ingested` left to the caller.
-pub fn parse_only<R: BufRead>(
+pub(crate) fn parse_only<R: BufRead>(
     input: R,
     on_error: &mut dyn FnMut(DetectorError),
 ) -> Result<(Vec<(usize, ParsedLog)>, LoadStats), ReadError> {
@@ -268,11 +268,11 @@ pub fn parse_only<R: BufRead>(
 }
 
 /// One parsed line, its number, and the row built from it.
-pub type PreparedLine = (usize, ParsedLog, Prepared);
+pub(crate) type PreparedLine = (usize, ParsedLog, Prepared);
 
 /// The same, with each line's row built as well, so `/ingest` has nothing left to do but
 /// walk the trie and append.
-pub fn parse_and_prepare<R: BufRead>(
+pub(crate) fn parse_and_prepare<R: BufRead>(
     input: R,
     on_error: &mut dyn FnMut(DetectorError),
 ) -> Result<(Vec<PreparedLine>, LoadStats), ReadError> {
@@ -290,7 +290,7 @@ pub fn parse_and_prepare<R: BufRead>(
 }
 
 /// What the CLI does with a rejected line: name it on stderr and carry on.
-pub fn report_rejected(e: DetectorError) {
+pub(crate) fn report_rejected(e: DetectorError) {
     crate::error::report(&e);
 }
 

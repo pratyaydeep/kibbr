@@ -16,23 +16,23 @@ use thiserror::Error;
 
 use crate::model::types::ColumnType;
 
-pub mod build;
-pub mod column;
-pub mod frame;
+pub(crate) mod build;
+pub(crate) mod column;
+pub(crate) mod frame;
 #[cfg(test)]
 mod encodings;
-pub mod file;
-pub mod read;
+pub(crate) mod file;
+pub(crate) mod read;
 #[cfg(any(test, feature = "test-support"))]
-pub mod samples;
+pub(crate) mod samples;
 #[cfg(test)]
 mod vectors;
 
-pub const MAGIC: [u8; 4] = *b"KBBR";
+pub(crate) const MAGIC: [u8; 4] = *b"KBBR";
 /// The magic 0.1.0-alpha.1 wrote, before the rename: a file that starts with it is refused
 /// by path, since nothing reads it and there is nothing to migrate.
-pub const PRE_RENAME_MAGIC: [u8; 4] = [0x54, 0x52, 0x44, 0x42];
-pub const VERSION: u8 = 3;
+pub(crate) const PRE_RENAME_MAGIC: [u8; 4] = [0x54, 0x52, 0x44, 0x42];
+pub(crate) const VERSION: u8 = 3;
 pub const HEADER_LEN: usize = 24;
 pub const TRAILER_LEN: usize = 8;
 
@@ -41,16 +41,16 @@ pub const KIND_ROW_GROUP: u8 = 2;
 pub const KIND_FOOTER: u8 = 3;
 
 /// A kind with this bit set is optional: a reader that does not know it steps over it.
-pub const OPTIONAL: u8 = 0x80;
+pub(crate) const OPTIONAL: u8 = 0x80;
 
 /// The largest chunk body a reader will allocate; no writer produces one.
-pub const MAX_BODY: u32 = 256 * 1024 * 1024;
+pub(crate) const MAX_BODY: u32 = 256 * 1024 * 1024;
 
 /// The most rows a row group holds, refused by a reader before anything is allocated by
 /// it, since an all-null chunk stores no bytes that vouch for the count.
-pub const MAX_ROWS: u32 = 8_192;
+pub(crate) const MAX_ROWS: u32 = 8_192;
 
-pub const DAY_NS: i64 = 86_400 * 1_000_000_000;
+pub(crate) const DAY_NS: i64 = 86_400 * 1_000_000_000;
 const NANOS: i64 = 1_000_000_000;
 
 // ── Errors ─────────────────────────────────────────────────────────────────────────
@@ -134,6 +134,8 @@ impl<'a> Bytes<'a> {
         self.bytes.len() - self.at
     }
 
+    // Called by the tests and the fuzz harnesses, not by the library.
+    #[cfg_attr(not(any(test, feature = "fuzzing")), allow(dead_code))]
     pub fn is_empty(&self) -> bool {
         self.remaining() == 0
     }
@@ -223,17 +225,17 @@ impl<'a> Bytes<'a> {
 
 /// A signed number as an unsigned one with its sign in the lowest bit, so a small negative
 /// number is a small number: 0, -1, 1, -2 become 0, 1, 2, 3.
-pub fn zigzag(n: i64) -> u64 {
+pub(crate) fn zigzag(n: i64) -> u64 {
     ((n << 1) ^ (n >> 63)) as u64
 }
 
-pub fn unzigzag(n: u64) -> i64 {
+pub(crate) fn unzigzag(n: u64) -> i64 {
     ((n >> 1) as i64) ^ -((n & 1) as i64)
 }
 
 /// An unsigned LEB128: seven bits a byte, lowest first, the high bit set on every byte but
 /// the last.
-pub fn put_varint(mut n: u64, out: &mut Vec<u8>) {
+pub(crate) fn put_varint(mut n: u64, out: &mut Vec<u8>) {
     while n >= 0x80 {
         out.push(n as u8 | 0x80);
         n >>= 7;
@@ -244,7 +246,7 @@ pub fn put_varint(mut n: u64, out: &mut Vec<u8>) {
 // ── Numbers ────────────────────────────────────────────────────────────────────────
 
 /// The type byte.
-pub fn type_byte(ty: ColumnType) -> u8 {
+pub(crate) fn type_byte(ty: ColumnType) -> u8 {
     match ty {
         ColumnType::String => 0,
         ColumnType::Int64 => 1,
@@ -256,7 +258,7 @@ pub fn type_byte(ty: ColumnType) -> u8 {
     }
 }
 
-pub fn type_of_byte(b: u8) -> Option<ColumnType> {
+pub(crate) fn type_of_byte(b: u8) -> Option<ColumnType> {
     Some(match b {
         0 => ColumnType::String,
         1 => ColumnType::Int64,
@@ -270,20 +272,20 @@ pub fn type_of_byte(b: u8) -> Option<ColumnType> {
 }
 
 /// An encoding is how a piece's values are laid out; plain holds every type.
-pub const PLAIN: u8 = 0;
+pub(crate) const PLAIN: u8 = 0;
 /// One value, in plain layout, that every row of the piece holds.
-pub const CONSTANT: u8 = 1;
+pub(crate) const CONSTANT: u8 = 1;
 /// `String`: a word list in the order rows first name its words, then one index per row.
-pub const DICTIONARY: u8 = 2;
+pub(crate) const DICTIONARY: u8 = 2;
 /// `Int64`: per value zigzag, then LEB128, at most 10 bytes.
-pub const VARINT: u8 = 3;
+pub(crate) const VARINT: u8 = 3;
 /// `Datetime`: the first value, then each value minus the one before it, zigzag LEB128.
-pub const DELTA: u8 = 4;
+pub(crate) const DELTA: u8 = 4;
 /// `Bool`: `ceil(n/8)` bytes, bit i = row i, the bits past the last row zero.
-pub const BITS: u8 = 5;
+pub(crate) const BITS: u8 = 5;
 
 /// Whether this build reads a piece of type `ty` laid out with `encoding`.
-pub fn encodes(ty: ColumnType, encoding: u8) -> bool {
+pub(crate) fn encodes(ty: ColumnType, encoding: u8) -> bool {
     match encoding {
         PLAIN | CONSTANT => true,
         DICTIONARY => ty == ColumnType::String,
@@ -295,7 +297,7 @@ pub fn encodes(ty: ColumnType, encoding: u8) -> bool {
 }
 
 /// The width of a dictionary's indexes, by how many words it has.
-pub fn index_width(words: usize) -> usize {
+pub(crate) fn index_width(words: usize) -> usize {
     match words {
         0..=256 => 1,
         257..=65_536 => 2,
@@ -304,9 +306,9 @@ pub fn index_width(words: usize) -> usize {
 }
 
 /// Compression 0, none: the body is stored as it is.
-pub const NO_COMPRESSION: u8 = 0;
+pub(crate) const NO_COMPRESSION: u8 = 0;
 /// Compression 1, zstd: one frame holding the whole body and nothing else.
-pub const ZSTD: u8 = 1;
+pub(crate) const ZSTD: u8 = 1;
 
 /// Where a row group's rows came from, so replay skips exactly what a durable row
 /// group's range covers.
@@ -378,12 +380,12 @@ impl JsonKind {
 }
 
 /// One byte per row, where a form's digit count is `PER_ROW`.
-pub const PER_ROW: u8 = 255;
+pub(crate) const PER_ROW: u8 = 255;
 
 /// `Datetime`'s units.
-pub const RFC3339: u8 = 0;
-pub const EPOCH_SECS: u8 = 1;
-pub const EPOCH_MILLIS: u8 = 2;
+pub(crate) const RFC3339: u8 = 0;
+pub(crate) const EPOCH_SECS: u8 = 1;
+pub(crate) const EPOCH_MILLIS: u8 = 2;
 
 /// How a piece's values were written, so the reader writes them back the same way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -596,7 +598,7 @@ impl Form {
 // these miss costs its row its typing and never its value.
 
 /// An `Int64` string row: an optional sign, then the digits zero-padded to `width`.
-pub fn print_int(value: i64, plus: bool, width: u8) -> String {
+pub(crate) fn print_int(value: i64, plus: bool, width: u8) -> String {
     let digits = value.unsigned_abs().to_string();
     let mut out = String::with_capacity(digits.len().max(width as usize) + 1);
     if value < 0 {
@@ -613,19 +615,19 @@ pub fn print_int(value: i64, plus: bool, width: u8) -> String {
 
 /// A `Float64` string row: plain decimal with exactly `digits` places, the double's exact
 /// value rounded ties-to-even - what `{:.N}` prints.
-pub fn print_float(value: f64, digits: u8) -> String {
+pub(crate) fn print_float(value: f64, digits: u8) -> String {
     format!("{value:.prec$}", prec = digits as usize)
 }
 
 /// A `Float64` literal row: the shortest decimal that reads back as the same double,
 /// which is what serde_json prints.
-pub fn float_json(value: f64) -> Option<Value> {
+pub(crate) fn float_json(value: f64) -> Option<Value> {
     serde_json::Number::from_f64(value).map(Value::Number)
 }
 
 /// The number of fraction digits canonical RFC 3339 (`AutoSi`) prints for this instant:
 /// 0, 3, 6 or 9, whichever holds it exactly.
-pub fn autosi_digits(ns: i64) -> u8 {
+pub(crate) fn autosi_digits(ns: i64) -> u8 {
     let sub = ns.rem_euclid(NANOS);
     if sub == 0 {
         0
@@ -640,7 +642,7 @@ pub fn autosi_digits(ns: i64) -> u8 {
 
 /// RFC 3339 for an instant moved by the offset; `None` when that is outside what the type
 /// holds, or when `digits` would drop a nonzero sub-second digit.
-pub fn print_rfc3339(ns: i64, separator: u8, zone: u8, offset: u16, digits: u8) -> Option<String> {
+pub(crate) fn print_rfc3339(ns: i64, separator: u8, zone: u8, offset: u16, digits: u8) -> Option<String> {
     if digits > 9 {
         return None;
     }
@@ -687,7 +689,7 @@ pub fn print_rfc3339(ns: i64, separator: u8, zone: u8, offset: u16, digits: u8) 
 
 /// A `Datetime` in whole epoch seconds or milliseconds; `None` when it is not a whole
 /// number of its unit.
-pub fn epoch_of(ns: i64, unit: u8) -> Option<i64> {
+pub(crate) fn epoch_of(ns: i64, unit: u8) -> Option<i64> {
     let per = match unit {
         EPOCH_SECS => NANOS,
         EPOCH_MILLIS => 1_000_000,
@@ -697,7 +699,7 @@ pub fn epoch_of(ns: i64, unit: u8) -> Option<i64> {
 }
 
 /// A UUID's sixteen bytes as 8-4-4-4-12 hex.
-pub fn print_uuid(bytes: &[u8; 16], upper: bool) -> String {
+pub(crate) fn print_uuid(bytes: &[u8; 16], upper: bool) -> String {
     let mut out = String::with_capacity(36);
     for (n, b) in bytes.iter().enumerate() {
         if matches!(n, 4 | 6 | 8 | 10) {
@@ -714,7 +716,7 @@ pub fn print_uuid(bytes: &[u8; 16], upper: bool) -> String {
 
 /// A UUID's text as its bytes, in the order the text reads; `None` for anything that is
 /// not 8-4-4-4-12 hex.
-pub fn uuid_bytes(text: &str) -> Option<[u8; 16]> {
+pub(crate) fn uuid_bytes(text: &str) -> Option<[u8; 16]> {
     let raw = text.as_bytes();
     if raw.len() != 36 {
         return None;
@@ -737,7 +739,7 @@ pub fn uuid_bytes(text: &str) -> Option<[u8; 16]> {
 }
 
 /// An address in one of the spellings a form names.
-pub fn print_ip(bytes: &[u8], spelling: u8) -> Option<String> {
+pub(crate) fn print_ip(bytes: &[u8], spelling: u8) -> Option<String> {
     match (spelling, bytes.len()) {
         (4, 4) => Some(Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]).to_string()),
         (6..=9, 16) => {
@@ -804,7 +806,7 @@ fn rfc5952(groups: &[u16; 8]) -> String {
 }
 
 /// An address's text as its bytes: 4 for IPv4, 16 for IPv6.
-pub fn ip_bytes(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn ip_bytes(text: &str) -> Option<Vec<u8>> {
     match text.parse::<IpAddr>().ok()? {
         IpAddr::V4(v4) => Some(v4.octets().to_vec()),
         IpAddr::V6(v6) => Some(Ipv6Addr::octets(&v6).to_vec()),
@@ -812,14 +814,14 @@ pub fn ip_bytes(text: &str) -> Option<Vec<u8>> {
 }
 
 /// UTC day of an instant, in days since 1970-01-01.
-pub fn day_of(ns: i64) -> i64 {
+pub(crate) fn day_of(ns: i64) -> i64 {
     ns.div_euclid(DAY_NS)
 }
 
 // ── Bitmaps ────────────────────────────────────────────────────────────────────────
 
 /// Bit i is bit (i mod 8) of byte (i div 8), lowest first; `ceil(n/8)` bytes.
-pub fn bitmap(bits: impl ExactSizeIterator<Item = bool>) -> Vec<u8> {
+pub(crate) fn bitmap(bits: impl ExactSizeIterator<Item = bool>) -> Vec<u8> {
     let mut out = vec![0u8; bits.len().div_ceil(8)];
     for (i, set) in bits.enumerate() {
         if set {
@@ -829,12 +831,12 @@ pub fn bitmap(bits: impl ExactSizeIterator<Item = bool>) -> Vec<u8> {
     out
 }
 
-pub fn bit(map: &[u8], i: usize) -> bool {
+pub(crate) fn bit(map: &[u8], i: usize) -> bool {
     map[i / 8] & (1 << (i % 8)) != 0
 }
 
 /// Read a bitmap of `n` bits, refusing one with a bit set past the last row.
-pub fn read_bitmap<'a>(r: &mut Bytes<'a>, n: usize, what: &str) -> Result<&'a [u8], Bad> {
+pub(crate) fn read_bitmap<'a>(r: &mut Bytes<'a>, n: usize, what: &str) -> Result<&'a [u8], Bad> {
     let at = r.offset();
     let map = r.take(n.div_ceil(8), what)?;
     if !n.is_multiple_of(8) {
@@ -850,7 +852,7 @@ pub fn read_bitmap<'a>(r: &mut Bytes<'a>, n: usize, what: &str) -> Result<&'a [u
     Ok(map)
 }
 
-pub fn count_set(map: &[u8]) -> usize {
+pub(crate) fn count_set(map: &[u8]) -> usize {
     map.iter().map(|b| b.count_ones() as usize).sum()
 }
 

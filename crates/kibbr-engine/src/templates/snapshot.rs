@@ -29,7 +29,7 @@ use crate::model::types::{ColumnType, TimeSource};
 const MAX_DEPTH: usize = 4096;
 
 #[derive(Debug, Error)]
-pub enum TrieFileError {
+pub(crate) enum TrieFileError {
     #[error("{path}: {source}")]
     Io {
         path: String,
@@ -118,7 +118,7 @@ struct ColumnRecord {
 
 /// Write the trie and return the byte length: `.tmp`, fsync, rename, fsync the parent,
 /// so a reader sees the whole file or the previous one.
-pub fn save(trie: &Trie, path: &Path) -> Result<u64, TrieFileError> {
+pub(crate) fn save(trie: &Trie, path: &Path) -> Result<u64, TrieFileError> {
     let display = path.display().to_string();
     let io = |source| TrieFileError::Io {
         path: display.clone(),
@@ -222,11 +222,11 @@ fn collect(node: &Arc<Node>, out: &mut Vec<NodeRecord>, depth: usize) -> Result<
 
 /// The trie in `path`, or an empty one: there is no `Result`, so no caller can make a
 /// bad snapshot fatal by accident.
-pub fn load(path: &Path, data_dir: &str) -> Trie {
+pub(crate) fn load(path: &Path, data_dir: &str) -> Trie {
     load_reporting(path, data_dir).0
 }
 
-pub fn load_reporting(path: &Path, data_dir: &str) -> (Trie, Option<TrieFileError>) {
+pub(crate) fn load_reporting(path: &Path, data_dir: &str) -> (Trie, Option<TrieFileError>) {
     match read(path, data_dir) {
         Ok(trie) => (trie, None),
         Err(e) => (Trie::new_in(data_dir), Some(e)),

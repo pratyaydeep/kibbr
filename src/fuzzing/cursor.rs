@@ -20,7 +20,7 @@ use crate::engine::parse::flatten;
 use crate::engine::model::types::ColValue;
 use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
 use crate::engine::query::trieql::Kind;
-use crate::engine::ingest::{self as db, Db};
+use crate::engine::internals::{self as db, Db};
 
 /// 2024-01-16T00:00:00Z: the instant every query is built against, and the arrival time of
 /// every fixture line - the day after their timestamps, so `SINCE 1d` has rows both sides.
@@ -570,7 +570,7 @@ impl Fixture {
 }
 
 /// The lines an answer's rows are, by the `n` each was written with.
-fn numbers(rows: &[crate::engine::rows::Row]) -> Vec<i64> {
+fn numbers(rows: &[crate::engine::Row]) -> Vec<i64> {
     rows.iter()
         .map(|row| match row.get("n") {
             Some(ColValue::Int64(n)) => *n,

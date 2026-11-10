@@ -21,7 +21,7 @@ use crate::model::tokens::{key_token, promoted_token};
 use crate::model::types::ColumnType;
 
 /// The file, inside the data directory so one path moves everything.
-pub const CATALOG_FILE_NAME: &str = "catalog.log";
+pub(crate) const CATALOG_FILE_NAME: &str = "catalog.log";
 
 /// `payload_len` + `crc`.
 #[cfg(test)]
@@ -129,7 +129,7 @@ impl Record {
 
 /// What one pass over the bytes found.
 #[derive(Debug, Default)]
-pub struct Parsed {
+pub(crate) struct Parsed {
     pub records: Vec<Record>,
     /// The offset of the first byte that is not a whole, intact record - `None` when the
     /// file ends on a record boundary.
@@ -149,7 +149,9 @@ pub fn frame(record: &Record) -> Result<Vec<u8>, serde_json::Error> {
 
 /// Every intact record from the start of `bytes`, stopping at the first tear; never
 /// panics and never fails, the worst input being a file that reads as empty.
-pub fn parse(bytes: &[u8]) -> Parsed {
+// Called by the tests and the fuzz harnesses, not by the library.
+#[cfg_attr(not(any(test, feature = "fuzzing")), allow(dead_code))]
+pub(crate) fn parse(bytes: &[u8]) -> Parsed {
     let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
     let mut parsed = Parsed {
         torn_at,

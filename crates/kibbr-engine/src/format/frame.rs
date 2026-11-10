@@ -12,16 +12,16 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// `payload_len` + `crc`.
-pub const HEADER: usize = 8;
+pub(crate) const HEADER: usize = 8;
 
 /// CRC-32C (Castagnoli), by the CPU's CRC instruction where there is one and a table
 /// where there is not.
-pub fn crc32c(bytes: &[u8]) -> u32 {
+pub(crate) fn crc32c(bytes: &[u8]) -> u32 {
     crc32c::crc32c(bytes)
 }
 
 /// One frame around `payload`.
-pub fn frame(payload: &[u8]) -> Vec<u8> {
+pub(crate) fn frame(payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER + payload.len());
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&crc32c(payload).to_le_bytes());
@@ -70,7 +70,7 @@ pub fn read(bytes: &[u8], at: usize, max: u32) -> Next<'_> {
 
 /// Every intact frame from the start of `bytes` as `(offset, payload)`, and the offset of
 /// the first byte that is not one - `None` when the bytes end on a frame boundary.
-pub fn read_all(bytes: &[u8], max: u32) -> (Vec<(u64, &[u8])>, Option<u64>) {
+pub(crate) fn read_all(bytes: &[u8], max: u32) -> (Vec<(u64, &[u8])>, Option<u64>) {
     let mut frames = Vec::new();
     let mut at = 0usize;
     loop {
@@ -87,7 +87,7 @@ pub fn read_all(bytes: &[u8], max: u32) -> (Vec<(u64, &[u8])>, Option<u64>) {
 
 /// `read_all`, with each payload as its range of `bytes`, so `Log::open_with` can move the
 /// bytes into `Opened` beside the ranges.
-pub fn spans(bytes: &[u8], max: u32) -> (Vec<(u64, std::ops::Range<usize>)>, Option<u64>) {
+pub(crate) fn spans(bytes: &[u8], max: u32) -> (Vec<(u64, std::ops::Range<usize>)>, Option<u64>) {
     let (found, torn_at) = read_all(bytes, max);
     let frames = found
         .iter()
@@ -125,7 +125,7 @@ pub enum LogError {
 }
 
 /// What `Log::open` found in the file.
-pub struct Opened {
+pub(crate) struct Opened {
     /// The whole file as it was read, before any truncation.
     pub bytes: Vec<u8>,
     /// `(offset, start, end)` of every intact frame's payload in `bytes`.
@@ -135,7 +135,7 @@ pub struct Opened {
 }
 
 impl Opened {
-    pub fn payloads(&self) -> impl Iterator<Item = (u64, &[u8])> {
+    pub(crate) fn payloads(&self) -> impl Iterator<Item = (u64, &[u8])> {
         self.frames
             .iter()
             .map(|(offset, range)| (*offset, &self.bytes[range.clone()]))
@@ -143,7 +143,7 @@ impl Opened {
 }
 
 /// An open log, positioned at its end: `catalog.log` and `manifest.log`.
-pub struct Log {
+pub(crate) struct Log {
     path: PathBuf,
     file: File,
     /// The byte the next frame starts at. Kept here rather than asked of the file so a
@@ -156,7 +156,7 @@ pub struct Log {
 impl Log {
     /// Open for appending and read every frame already there, cutting a torn tail on disk,
     /// fsyncing a created file's directory and flushing an existing file: what is read is durable.
-    pub fn open_with(
+    pub(crate) fn open_with(
         path: &Path,
         max: u32,
         sync_dir: &mut dyn FnMut(&Path) -> std::io::Result<()>,
@@ -222,7 +222,7 @@ impl Log {
     /// A log whose every append fails, as on a full disk or a dead mount: the handle is
     /// read-only.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn read_only(path: &Path) -> Result<Self, LogError> {
+    pub(crate) fn read_only(path: &Path) -> Result<Self, LogError> {
         let io = |source| LogError::Io {
             path: path.display().to_string(),
             source,
@@ -237,13 +237,13 @@ impl Log {
         })
     }
 
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
     /// Append one frame per payload as one durable unit, cutting the file back on failure;
     /// if the cut fails the log refuses every later append (`LogError::Torn`).
-    pub fn append(&mut self, payloads: &[Vec<u8>]) -> Result<(), LogError> {
+    pub(crate) fn append(&mut self, payloads: &[Vec<u8>]) -> Result<(), LogError> {
         let display = self.path.display().to_string();
         if let Some(offset) = self.torn {
             return Err(LogError::Torn {
@@ -280,22 +280,22 @@ impl Log {
     }
 
     /// Bytes on disk, as of the last successful append.
-    pub fn len(&self) -> u64 {
+    pub(crate) fn len(&self) -> u64 {
         self.end
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.end == 0
     }
 
     /// Whether a failed append could not be cut back: see `LogError::Torn`.
-    pub fn is_torn(&self) -> bool {
+    pub(crate) fn is_torn(&self) -> bool {
         self.torn.is_some()
     }
 
     /// Flush the file as it stands, which after a failed append that was cut back is what
     /// makes the cut durable.
-    pub fn sync(&mut self) -> Result<(), LogError> {
+    pub(crate) fn sync(&mut self) -> Result<(), LogError> {
         self.file.sync_all().map_err(|source| LogError::Io {
             path: self.path.display().to_string(),
             source,
@@ -304,7 +304,7 @@ impl Log {
 }
 
 /// The directory holding `path`; `.` for a bare file name.
-pub fn parent_of(path: &Path) -> &Path {
+pub(crate) fn parent_of(path: &Path) -> &Path {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -312,7 +312,7 @@ pub fn parent_of(path: &Path) -> &Path {
 }
 
 /// fsync a directory, so the entries in it survive a crash.
-pub fn sync_dir(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
     File::open(dir).and_then(|handle| handle.sync_all())
 }
 

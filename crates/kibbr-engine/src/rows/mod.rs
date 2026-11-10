@@ -22,18 +22,18 @@ use thiserror::Error;
 use crate::model::infer::infer;
 use crate::model::types::ColValue;
 
-pub mod disk;
-pub mod filter;
-pub mod manifest;
-pub mod memory;
+pub(crate) mod disk;
+pub(crate) mod filter;
+pub(crate) mod manifest;
+pub(crate) mod memory;
 #[cfg(any(test, feature = "test-support"))]
-pub mod samples;
-pub mod scan_threads;
+pub(crate) mod samples;
+pub(crate) mod scan_threads;
 
-pub use disk::DiskStore;
-pub use memory::MemoryStore;
+pub(crate) use disk::DiskStore;
+pub(crate) use memory::MemoryStore;
 // A row, and its place in time, are the model's: the format builds from them too.
-pub use crate::model::row::{effective_ts, instant_of, ts_of, Row};
+pub(crate) use crate::model::row::{effective_ts, instant_of, ts_of, Row};
 
 /// One term of a pattern that the path could not settle: the key it reads and what it wants
 /// there, as data read through the ladder once so a scan only compares.
@@ -127,14 +127,14 @@ impl Term {
 
 /// The column a time filter reads when none is named: a fallback for a `_leaf.json` that
 /// predates the time source.
-pub const DEFAULT_TS_COLUMN: &str = "ts";
+pub(crate) const DEFAULT_TS_COLUMN: &str = "ts";
 
 /// The system column holding a row's arrival time.
-pub use crate::model::types::RECEIVED_AT_COLUMN;
+pub(crate) use crate::model::types::RECEIVED_AT_COLUMN;
 
 /// What a query returns the system column as, unless the row has an ingested key of that
 /// name - then the ingested one is shown and the system value is left out.
-pub const RECEIVED_AT_NAME: &str = "_received_at";
+pub(crate) const RECEIVED_AT_NAME: &str = "_received_at";
 
 #[derive(Debug, Default, Clone)]
 pub struct ScanOptions {
@@ -177,7 +177,7 @@ impl std::fmt::Debug for Stop {
 }
 
 /// How many rows the memory store reads between two looks at its `Stop`.
-pub const STOP_EVERY_ROWS: usize = 4096;
+pub(crate) const STOP_EVERY_ROWS: usize = 4096;
 
 impl Stop {
     /// A stop that can be set.
@@ -591,7 +591,7 @@ pub trait Visitor {
 
 /// The visitor of a count: it reads nothing of a row, and says so, so that a store which
 /// would have to build each row out of columns builds none.
-pub struct Counted;
+pub(crate) struct Counted;
 
 impl Visitor for Counted {
     fn row(&mut self, _: &Row, _: u64) {}
@@ -603,7 +603,7 @@ impl Visitor for Counted {
 
 /// A closure as a `Visitor`; not a blanket impl over `FnMut`, which coherence would then
 /// hold against every hand-written `Visitor`.
-pub struct Rows<F>(pub F);
+pub(crate) struct Rows<F>(pub F);
 
 impl<F: FnMut(&Row, u64)> Visitor for Rows<F> {
     fn row(&mut self, row: &Row, seq: u64) {
@@ -1157,7 +1157,7 @@ impl Default for StoreManager {
 
 /// Whether an instant falls in `[since, until)`; a row with no effective time is outside
 /// every window.
-pub fn in_window(ts: Option<i64>, since: Option<i64>, until: Option<i64>) -> bool {
+pub(crate) fn in_window(ts: Option<i64>, since: Option<i64>, until: Option<i64>) -> bool {
     let Some(ns) = ts else {
         return false;
     };
@@ -1182,7 +1182,7 @@ pub fn present(row: &Row) -> BTreeMap<String, &str> {
 
 /// A `Datetime` stored in a column that is now text, as the text a query compares it
 /// against: the JSON the line said; `None` for any other value.
-pub fn render_text(value: &ColValue, written: Option<&serde_json::Value>) -> Option<ColValue> {
+pub(crate) fn render_text(value: &ColValue, written: Option<&serde_json::Value>) -> Option<ColValue> {
     let ColValue::Datetime(ns) = value else {
         return None;
     };
@@ -1195,7 +1195,7 @@ pub fn render_text(value: &ColValue, written: Option<&serde_json::Value>) -> Opt
 
 /// A row with every text column's `Datetime` rendered back to the text it arrived as,
 /// or `None` when nothing in it needs rendering.
-pub fn render_row(row: &Row, text_columns: &[String]) -> Option<Row> {
+pub(crate) fn render_row(row: &Row, text_columns: &[String]) -> Option<Row> {
     let mut out: Option<Row> = None;
     for column in text_columns {
         let Some(value) = row.get(column) else {
@@ -1222,7 +1222,7 @@ pub fn system_time(dt: chrono::DateTime<chrono::Utc>) -> SystemTime {
 
 /// Unix nanoseconds, saturating at both ends: a bound outside 1677-2262 is clamped to the
 /// near end, never wrapped past the far one.
-pub fn nanos_of(t: SystemTime) -> i64 {
+pub(crate) fn nanos_of(t: SystemTime) -> i64 {
     match t.duration_since(UNIX_EPOCH) {
         Ok(d) => i64::try_from(d.as_nanos()).unwrap_or(i64::MAX),
         Err(e) => i64::try_from(e.duration().as_nanos()).map_or(i64::MIN, |n| -n),
@@ -1231,7 +1231,7 @@ pub fn nanos_of(t: SystemTime) -> i64 {
 
 /// One value's payload width: a string's bytes, or the fixed-width cell the column store
 /// writes.
-pub fn value_bytes(value: &ColValue) -> usize {
+pub(crate) fn value_bytes(value: &ColValue) -> usize {
     match value {
         ColValue::String(s) => s.len(),
         ColValue::Int64(_) | ColValue::Float64(_) | ColValue::Datetime(_) => 8,
@@ -1240,7 +1240,7 @@ pub fn value_bytes(value: &ColValue) -> usize {
     }
 }
 
-pub fn project(row: &Row, columns: &[String]) -> Row {
+pub(crate) fn project(row: &Row, columns: &[String]) -> Row {
     if columns.is_empty() {
         return row.clone();
     }

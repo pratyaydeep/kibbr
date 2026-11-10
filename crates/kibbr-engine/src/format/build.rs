@@ -45,13 +45,13 @@ pub enum BuildError {
 /// How hard zstd works on a row group's chunks: fast where the live door closes one, harder
 /// where a file is written whole and then read for months.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Level {
+pub(crate) enum Level {
     Live,
     Finished,
 }
 
 impl Level {
-    pub fn zstd(self) -> i32 {
+    pub(crate) fn zstd(self) -> i32 {
         match self {
             Level::Live => 3,
             Level::Finished => 9,
@@ -71,7 +71,7 @@ pub struct RowGroup {
 }
 
 /// The sorted, distinct keys of these rows: the schema a row group of them uses.
-pub fn schema_of<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Vec<String> {
+pub(crate) fn schema_of<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for row in rows {
         for key in row.keys() {
@@ -85,7 +85,9 @@ pub fn schema_of<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Vec<String> {
 
 /// Encode `rows` - every one of template `template_id`, all on one UTC day by `times` -
 /// as one row group over `columns`, the schema numbered `schema_id` in its file.
-pub fn build(
+// Called by the tests and the fuzz harnesses, not by the library.
+#[cfg_attr(not(any(test, feature = "fuzzing")), allow(dead_code))]
+pub(crate) fn build(
     template_id: u64,
     schema_id: u32,
     columns: &[String],
@@ -100,7 +102,7 @@ pub fn build(
 /// A row group with every column encoded and no schema number yet, split off `build` so a
 /// flush can encode on many threads and number them in file order.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Encoded {
+pub(crate) struct Encoded {
     template_id: u64,
     row_count: u32,
     min_time: i64,
@@ -111,7 +113,7 @@ pub struct Encoded {
 }
 
 /// The expensive half of `build`: every check, and every column encoded.
-pub fn encode(
+pub(crate) fn encode(
     template_id: u64,
     columns: &[String],
     rows: &[&Row],
@@ -170,7 +172,7 @@ pub fn encode(
 impl Encoded {
     /// The row group whole, as schema `schema_id` of its file; the CRC covers the header
     /// alone, so framing is cheap however large the chunks are.
-    pub fn frame(self, schema_id: u32) -> RowGroup {
+    pub(crate) fn frame(self, schema_id: u32) -> RowGroup {
         let (source_byte, stream, first, last) = self.source.bytes();
         let mut payload = Vec::with_capacity(64 + self.directory.len());
         payload.push(KIND_ROW_GROUP);

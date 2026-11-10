@@ -15,10 +15,10 @@ use super::{
     StoreError, Term, Visitor, DEFAULT_TS_COLUMN,
 };
 
-pub struct MemoryStore;
+pub(crate) struct MemoryStore;
 
 impl MemoryStore {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self
     }
 }
@@ -43,13 +43,13 @@ impl Store for MemoryStore {
     }
 }
 
-pub struct MemoryLeaf {
+pub(crate) struct MemoryLeaf {
     template_id: u64,
     rows: RwLock<Vec<Row>>,
 }
 
 impl MemoryLeaf {
-    pub fn new(template_id: u64) -> Self {
+    pub(crate) fn new(template_id: u64) -> Self {
         Self {
             template_id,
             rows: RwLock::new(Vec::new()),

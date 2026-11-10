@@ -20,27 +20,27 @@ use crate::model::types::{join, ColumnType, TimeSource};
 
 mod keys;
 
-pub use keys::Template;
-pub use keys::{KeyIndex, Posting};
+pub(crate) use keys::Template;
+pub(crate) use keys::{KeyIndex, Posting};
 
 /// The root carries a label so that a rendered tree and a serialized one agree about
 /// what sits above the first edge.
 pub const ROOT_LABEL: &str = "__root__";
 
 /// How a `Placeholder` renders and, therefore, the label `walk` falls back to.
-pub const PLACEHOLDER_LABEL: &str = "[*]";
+pub(crate) const PLACEHOLDER_LABEL: &str = "[*]";
 
 /// Template ids start here rather than at 0 so that a leaf id is never confused with a
 /// node id in a log line or a query plan, which prints both.
-pub const FIRST_TEMPLATE_ID: u64 = 101;
+pub(crate) const FIRST_TEMPLATE_ID: u64 = 101;
 
 /// The largest id a template can have: one short of `u64::MAX`, which is the counter's
 /// word for "nothing left" and is never an id.
-pub const LAST_TEMPLATE_ID: u64 = u64::MAX - 1;
+pub(crate) const LAST_TEMPLATE_ID: u64 = u64::MAX - 1;
 
 /// Where a leaf's columns live when nothing said otherwise - the CLI, which has no data
 /// directory because it rebuilds the database per invocation.
-pub const DEFAULT_DATA_DIR: &str = "/var/lib/kibbr/data";
+pub(crate) const DEFAULT_DATA_DIR: &str = "/var/lib/kibbr/data";
 
 /// How a trie operation fails; a poisoned lock may mean half-inserted children, and the
 /// caller decides whether that ends the run.
@@ -926,7 +926,7 @@ impl Trie {
 
 /// The `Datetime`-typed keys an operator could add to `time_columns`, comma-separated, or
 /// `none`: one spelling for the WARN and for the bulk loader's refusal.
-pub fn datetime_keys<'a>(
+pub(crate) fn datetime_keys<'a>(
     columns: impl IntoIterator<Item = (&'a str, Option<ColumnType>)>,
 ) -> String {
     let dated: Vec<&str> = columns

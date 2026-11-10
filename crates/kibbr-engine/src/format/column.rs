@@ -60,7 +60,7 @@ fn bit_at(map: &[u8], i: usize) -> bool {
 /// Where one row's value is - piece A or B, and which of its values - or nowhere, for a
 /// null: two bytes a row, since an index into a piece takes thirteen bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Slot(u16);
+pub(crate) struct Slot(u16);
 
 impl Slot {
     const NULL: Slot = Slot(u16::MAX);
@@ -72,7 +72,7 @@ impl Slot {
     }
 
     /// Whether the value is in piece B, and its place in its piece; `None` for a null.
-    pub fn get(self) -> Option<(bool, usize)> {
+    pub(crate) fn get(self) -> Option<(bool, usize)> {
         (self != Self::NULL).then_some((
             self.0 & Self::PIECE_B != 0,
             usize::from(self.0 & !Self::PIECE_B),
@@ -83,7 +83,7 @@ impl Slot {
 /// One chunk, decoded and not printed; it owns what it decoded, and is read through `over`
 /// with the stored bytes it was decoded from.
 #[derive(Debug)]
-pub struct Column {
+pub(crate) struct Column {
     rows: usize,
     /// How many stored bytes it was decoded from: `over` takes no other length.
     stored_len: usize,
@@ -164,7 +164,7 @@ struct Laid {
 impl Column {
     /// A chunk's stored bytes, already CRC-checked, as typed values; `rows` is held to what a
     /// row group holds before anything is made for it.
-    pub fn decode(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Self, Bad> {
+    pub(crate) fn decode(stored: &[u8], base: u64, dir: &ChunkDir, rows: usize) -> Result<Self, Bad> {
         if rows > MAX_ROWS as usize {
             return Err(read::too_many_rows(base, rows));
         }
@@ -197,7 +197,7 @@ impl Column {
 
     /// This column over the bytes it was decoded from; bytes of another length are refused,
     /// so the wrong bytes are an error or the wrong text and never a panic.
-    pub fn over<'c>(&'c self, stored: &'c [u8]) -> Result<Col<'c>, Bad> {
+    pub(crate) fn over<'c>(&'c self, stored: &'c [u8]) -> Result<Col<'c>, Bad> {
         if stored.len() != self.stored_len {
             return Err(Bad::at(
                 self.base,
@@ -639,7 +639,7 @@ impl Piece {
 
 /// A decoded column and its body: what a filter, a time window and a row build read.
 #[derive(Debug, Clone, Copy)]
-pub struct Col<'c> {
+pub(crate) struct Col<'c> {
     column: &'c Column,
     body: &'c [u8],
 }
@@ -647,13 +647,13 @@ pub struct Col<'c> {
 /// A word or a constant printed once per spelling and copied after, since printing text
 /// runs the type ladder and a row group names the same few words thousands of times.
 #[derive(Debug, Default)]
-pub struct Memo {
+pub(crate) struct Memo {
     a: Vec<Option<Cell>>,
     b: Vec<Option<Cell>>,
 }
 
 impl<'c> Col<'c> {
-    pub fn rows(&self) -> usize {
+    pub(crate) fn rows(&self) -> usize {
         self.column.rows
     }
 
@@ -687,7 +687,7 @@ impl<'c> Col<'c> {
     }
 
     /// The cell `read::chunk` gives this row.
-    pub fn cell(&self, row: usize) -> Result<Cell, Bad> {
+    pub(crate) fn cell(&self, row: usize) -> Result<Cell, Bad> {
         match self.place(row)? {
             None => Ok((ColValue::Null, None)),
             Some((_, piece, at)) => self.print(piece, at, row),
@@ -695,7 +695,7 @@ impl<'c> Col<'c> {
     }
 
     /// `cell`, printing a word or a constant once for each way rows spell it.
-    pub fn cell_with(&self, row: usize, memo: &mut Memo) -> Result<Cell, Bad> {
+    pub(crate) fn cell_with(&self, row: usize, memo: &mut Memo) -> Result<Cell, Bad> {
         let Some((in_b, piece, at)) = self.place(row)? else {
             return Ok((ColValue::Null, None));
         };
@@ -721,12 +721,12 @@ impl<'c> Col<'c> {
     }
 
     /// Where each row's value is; `None` when piece A holds every row in row order.
-    pub fn slots(&self) -> Option<&'c [Slot]> {
+    pub(crate) fn slots(&self) -> Option<&'c [Slot]> {
         self.column.slots.as_deref()
     }
 
     /// Piece A and piece B, as slices; neither when every row is null.
-    pub fn pieces(&self) -> Result<[Option<PieceRef<'c>>; 2], Bad> {
+    pub(crate) fn pieces(&self) -> Result<[Option<PieceRef<'c>>; 2], Bad> {
         let column = self.column;
         let over = |piece: &'c Option<Piece>| {
             piece
@@ -740,7 +740,7 @@ impl<'c> Col<'c> {
 
 /// One piece of a column as borrowed slices: what a typed compare runs over.
 #[derive(Debug)]
-pub struct PieceRef<'c> {
+pub(crate) struct PieceRef<'c> {
     pub form: Form,
     /// How many values the piece holds.
     pub n: usize,
@@ -753,7 +753,7 @@ pub struct PieceRef<'c> {
 
 /// A piece's values, by what its encoding holds.
 #[derive(Debug)]
-pub enum ValuesRef<'c> {
+pub(crate) enum ValuesRef<'c> {
     Ints(&'c [i64]),
     Floats(&'c [f64]),
     /// Nanoseconds.
@@ -781,7 +781,7 @@ pub enum ValuesRef<'c> {
 
 impl PieceRef<'_> {
     /// Whether value `i` was a JSON number or bool on its line, and not a string.
-    pub fn lit(&self, i: usize) -> bool {
+    pub(crate) fn lit(&self, i: usize) -> bool {
         match self.form.kind() {
             JsonKind::Str => false,
             JsonKind::Lit => true,
@@ -790,13 +790,13 @@ impl PieceRef<'_> {
     }
 
     /// Value `i` of the piece printed through its form.
-    pub fn cell(&self, i: usize) -> Result<Cell, Bad> {
+    pub(crate) fn cell(&self, i: usize) -> Result<Cell, Bad> {
         self.piece.cell(self.body, self.base, i)
     }
 
     /// A word of a String piece, or its constant, printed as a string row or as a literal
     /// row: the cell of every row that names the word and is of that kind.
-    pub fn text_cell(&self, word: &[u8], lit: bool) -> Result<Cell, Bad> {
+    pub(crate) fn text_cell(&self, word: &[u8], lit: bool) -> Result<Cell, Bad> {
         read::cell(&Raw::Text(word), &self.form, lit, None, self.base)
     }
 }

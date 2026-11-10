@@ -70,7 +70,7 @@ impl Template {
 
 /// A template in a list: its id, held beside the handle so that lists are merged and
 /// searched without following it.
-pub type Posting = (u64, Arc<Template>);
+pub(crate) type Posting = (u64, Arc<Template>);
 
 /// A template as a walk of the nodes finds it: its id, its column names and what
 /// `Template::of` makes of it. What a held index is compared with.

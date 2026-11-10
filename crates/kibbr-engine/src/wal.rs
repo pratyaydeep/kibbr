@@ -24,13 +24,13 @@ use crate::format::frame;
 
 /// The log's directory inside the data directory, beside `data/` and never under it: a
 /// start deletes every file there that the manifest does not name.
-pub const DIR: &str = "wal";
+pub(crate) const DIR: &str = "wal";
 const CHECKPOINT_FILE: &str = "checkpoint";
 
 const MAGIC: [u8; 4] = *b"KWAL";
 const VERSION: u8 = 1;
-pub const HEADER_LEN: usize = 28;
-pub const KIND_BATCH: u8 = 1;
+pub(crate) const HEADER_LEN: usize = 28;
+pub(crate) const KIND_BATCH: u8 = 1;
 /// `crc`, `seq`, `template_id`, `received_at`, `len`.
 const RECORD_HEADER: usize = 32;
 
@@ -50,7 +50,7 @@ const MAX_BODY_RAW: usize = 1024 * 1024 * 1024;
 
 /// The most a batch may claim to decompress to: one body and the bodies a flush took before
 /// it, held on writing as on reading so a frame this build wrote is one it reads.
-pub const MAX_RAW: usize = MAX_BODY_RAW + 2 * BATCH_BYTES;
+pub(crate) const MAX_RAW: usize = MAX_BODY_RAW + 2 * BATCH_BYTES;
 
 // A frame says how long its batch is in four bytes.
 const _: () = assert!(MAX_RAW <= u32::MAX as usize);
@@ -156,7 +156,7 @@ fn number_of(name: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-pub fn header_bytes(stream: u64, base: u64) -> [u8; HEADER_LEN] {
+pub(crate) fn header_bytes(stream: u64, base: u64) -> [u8; HEADER_LEN] {
     let mut out = [0u8; HEADER_LEN];
     out[..4].copy_from_slice(&MAGIC);
     out[4] = VERSION;
@@ -180,7 +180,7 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
 }
 
 /// A segment's `(stream, base)`, or what is wrong with its header.
-pub fn read_header(bytes: &[u8]) -> Result<(u64, u64), String> {
+pub(crate) fn read_header(bytes: &[u8]) -> Result<(u64, u64), String> {
     let Some(header) = bytes.get(..HEADER_LEN) else {
         return Err(format!(
             "{} byte(s), short of the {HEADER_LEN}-byte header",
@@ -206,7 +206,7 @@ pub fn read_header(bytes: &[u8]) -> Result<(u64, u64), String> {
     Ok((stream, base))
 }
 
-pub fn put_record(out: &mut Vec<u8>, seq: u64, template_id: u64, received_at: i64, line: &[u8]) {
+pub(crate) fn put_record(out: &mut Vec<u8>, seq: u64, template_id: u64, received_at: i64, line: &[u8]) {
     let start = out.len();
     out.extend_from_slice(&[0u8; 4]);
     out.extend_from_slice(&seq.to_le_bytes());
@@ -415,7 +415,7 @@ impl Ticket<'_> {
 
 /// Whether a body is past what one frame holds, told from its bytes before it is parsed:
 /// an upper bound, so a body it refuses costs no parse.
-pub fn too_large(body: &[u8]) -> Option<Refused> {
+pub(crate) fn too_large(body: &[u8]) -> Option<Refused> {
     const PER_LINE: usize = RECORD_HEADER + 8;
     // The shortest line is a byte and its newline.
     if (body.len() / 2 + 1) * PER_LINE + body.len() <= MAX_BODY_RAW {
@@ -648,7 +648,7 @@ struct Batch {
 }
 
 /// What the applier does with a batch: every row with its position, in order.
-pub type Apply = Box<dyn FnMut(Vec<(u64, Placed)>) + Send>;
+pub(crate) type Apply = Box<dyn FnMut(Vec<(u64, Placed)>) + Send>;
 
 enum State {
     /// Opened or created, and read back: `next_seq` is the first position a writer gives.
@@ -816,6 +816,8 @@ impl Wal {
 
     /// What the last flush that could not write failed with: the reason the log is
     /// refusing for now, or the one kept from before it wrote again.
+    // Called by the tests and the fuzz harnesses, not by the library.
+    #[cfg_attr(not(any(test, feature = "fuzzing")), allow(dead_code))]
     pub fn last_error(&self) -> Option<String> {
         self.shared.health().report().1
     }
@@ -1220,7 +1222,7 @@ fn read_checkpoint(dir: &Path) -> u64 {
 
 /// One segment's frames, read as `Wal::replay` reads them, returning the offset the reading
 /// stopped at; it takes the file's bytes and no file, so the fuzz target can call it.
-pub fn read_segment(
+pub(crate) fn read_segment(
     path: &Path,
     bytes: &[u8],
     checkpoint: u64,
@@ -1297,7 +1299,7 @@ pub fn read_segment(
 }
 
 /// A frame's payload as the batch it holds.
-pub fn unpack(payload: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn unpack(payload: &[u8]) -> Result<Vec<u8>, String> {
     let (Some(kind), Some(len)) = (payload.first(), payload.get(1..5)) else {
         return Err("a frame too short to hold a batch".to_string());
     };
@@ -1325,7 +1327,7 @@ pub fn unpack(payload: &[u8]) -> Result<Vec<u8>, String> {
 
 /// A batch's records, every one checked before the first is handed over; one that fails is
 /// a writer's fault and not a tear, so it is not skipped.
-pub fn records(raw: &[u8]) -> Result<Vec<Record<'_>>, String> {
+pub(crate) fn records(raw: &[u8]) -> Result<Vec<Record<'_>>, String> {
     let Some(count) = raw.get(..4) else {
         return Err("a batch too short to hold its count".to_string());
     };

@@ -14,20 +14,12 @@ pub mod parse;
 pub mod fmt;
 pub mod rng;
 pub mod error;
-// Public, out of the docs, only until the binary's three storage fuzz harnesses move in
-// beside them; then crate-private.
-#[doc(hidden)]
-pub mod lock;
-#[doc(hidden)]
-pub mod format;
-#[doc(hidden)]
-pub mod templates;
-#[doc(hidden)]
-pub mod rows;
-#[doc(hidden)]
-pub mod ingest;
-#[doc(hidden)]
-pub mod wal;
+pub(crate) mod lock;
+pub(crate) mod format;
+pub(crate) mod templates;
+pub(crate) mod rows;
+pub(crate) mod ingest;
+pub(crate) mod wal;
 pub mod load;
 pub mod compact;
 pub mod query;
@@ -49,7 +41,8 @@ pub use lifecycle::Replayed;
 pub use parse::lines::MAX_LINE_BYTES;
 pub use ingest::{load_lines, row_of, LoadStats, ReadError};
 pub use lock::{holder, Holder, LockError, LOCK_FILE};
-pub use rows::{present, system_time, Row};
+pub use model::row::Row;
+pub use rows::{present, system_time};
 pub use templates::trie::TrieError;
 pub use rows::disk::{day_name, day_of_name, refuse_other_versions, STAGING_DIR};
 pub use rows::manifest::path_in as manifest_path;
@@ -58,17 +51,18 @@ pub use rows::{FlushSummary, Stop, StoreError};
 pub use wal::{Advanced, Stats as WalStats};
 
 /// What the command line's diagnostic commands reach past the handle for: `demo` draws the
-/// trie, and `bench-storage` writes a live day without a log and walks the frames of the
-/// files it measures. No stability promise, and `kibbr-server` never names it
+/// trie, `bench-storage` writes a live day without a log and walks the frames of the files
+/// it measures, and the `cursor` fuzz harness builds a database from its lines in memory. No stability promise, and `kibbr-server` never names it
 /// (`scripts/check/no_internals.sh`).
 #[doc(hidden)]
 pub mod internals {
     pub use crate::templates::catalog::path_in as catalog_path;
-    pub use crate::ingest::{ingest_line, read_lines, SinkError};
+    pub use crate::ingest::{ingest_line, load, read_lines, Db, SinkError};
     pub use crate::format::frame::{read as read_frame, Next};
     pub use crate::lock::DataLock;
     pub use crate::rows::disk::{data_files, CompactOptions};
-    pub use crate::format::file::open_sealed;
+    pub use crate::format::file::{open_sealed, Reader};
+    pub use crate::format::FormatError;
     pub use crate::format::{
         HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN,
     };
