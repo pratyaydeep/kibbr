@@ -77,16 +77,18 @@
 //!
 //! [`server`] (`kibbr-server`) is the HTTP side over one `Database`: `/ingest`, `/query`,
 //! `/templates`, `/stats`, `/health`, the web console, and the loads and compactions it
-//! runs. [`cmd`] holds the subcommands of the binary itself: `serve`, `load`, `compact`,
-//! `query`, `explain`, `templates`, `stats`, `health`, `parse`, `demo`, `gen-logs`,
-//! `bench` and `bench-storage`. [`client`] is the small HTTP client `load`, `compact` and
+//! runs. The subcommands of the binary itself are in two halves. [`cmd`] is what someone
+//! runs in production: `serve`, `load`, `compact`, `query`, `explain`, `templates`,
+//! `stats` and `health`. [`tools`] is what someone runs to try, measure or test kibbr:
+//! `parse`, `demo`, `gen-logs`, `bench`, `bench-storage` and the fuzz harnesses; nothing
+//! in `cmd` names it. [`client`] is the small HTTP client `load`, `compact` and
 //! `bench-storage` use to talk to a server.
 //!
 //! ## Generated logs and the oracle
 //!
-//! [`gen`] writes reproducible fake logs (`kibbr gen-logs --profile farm --seed 42`), the
-//! same lines on every machine, so a benchmark or a fault test means the same thing
-//! everywhere. [`reference::naive`] is the oracle: every line, a closure, a counter.
+//! [`tools::gen`] writes reproducible fake logs (`kibbr gen-logs --profile farm --seed
+//! 42`), the same lines on every machine, so a benchmark or a fault test means the same
+//! thing everywhere. [`cmd::oracle`] is the oracle: every line, a closure, a counter.
 //! Obviously correct and never shipped, it judges the real engine in `--reference` runs
 //! and differential tests.
 //!
@@ -124,9 +126,9 @@
 //! # Stability
 //!
 //! The modules here are public so the fuzz targets under `fuzz/` can call the harnesses
-//! in `fuzzing` (here `cursor` and `trieql`, the other three in `kibbr_engine::fuzzing`),
-//! and so the three crates can be read as one. None of it is a stable
-//! interface: use the binary and its HTTP API, which are versioned in the
+//! in `tools::fuzzing` (here `cursor` and `trieql`, the other three in
+//! `kibbr_engine::fuzzing`), and so the three crates can be read as one. None of it is a
+//! stable interface: use the binary and its HTTP API, which are versioned in the
 //! [changelog](https://github.com/pratyaydeep/kibbr/blob/main/CHANGELOG.md).
 //!
 //! Licensed AGPL-3.0-only; contributions under MIT.
@@ -138,13 +140,5 @@ pub mod client;
 pub mod cmd;
 pub mod config;
 pub mod error;
-#[cfg(feature = "fuzzing")]
-pub mod fuzzing;
-pub mod gen;
 pub mod logs;
-
-/// The oracle, compiled in only so `--reference` and a differential test can judge the
-/// real engine.
-pub mod reference {
-    pub mod naive;
-}
+pub mod tools;

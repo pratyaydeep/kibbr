@@ -3603,7 +3603,7 @@ pub fn log_summary(log: &mut Log, file: &ResultFile) -> Result<(), SpeedError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::bench::{flags, plan, queries, Args};
+    use crate::tools::bench::{flags, plan, queries, Args};
 
     #[test]
     fn a_result_is_written_under_the_names_a_reader_is_told_and_reads_back_the_same() {
@@ -4690,7 +4690,7 @@ S4 under ingest: the buffer limit was reached in 291 of 300 baseline laps and 0 
         write(&paths[0], &baseline().file, "").expect("saved");
         write(&paths[1], &columns().file, "").expect("saved");
         let mut out = Vec::new();
-        crate::cmd::bench::table(&paths, &mut out).expect("no FAIL line");
+        crate::tools::bench::table(&paths, &mut out).expect("no FAIL line");
         assert_eq!(String::from_utf8(out).expect("text"), format!("{TWO}\n"));
     }
 

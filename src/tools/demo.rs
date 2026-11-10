@@ -357,6 +357,6 @@ fn render_columns<W: Write>(columns: &[String], indent: &str, out: &mut W) -> Re
 
 /// The `demo` arm of `main.rs`: the input opened, then `run`.
 pub fn cli<W: Write>(input: &str, out: &mut W, full: bool) -> Result<(), CliError> {
-    let reader = super::open(input)?;
+    let reader = crate::cmd::open(input)?;
     run(reader, out, full)
 }

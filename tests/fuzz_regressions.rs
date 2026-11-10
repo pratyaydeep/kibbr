@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Every input a fuzz target ever crashed on, and the committed corpus, replayed through
-//! the code the fuzzer runs (`kibbr::fuzzing` and `kibbr_engine::fuzzing`) on the stable
-//! toolchain, so a change that breaks an input the fuzzer already reached fails here.
+//! the code the fuzzer runs (`kibbr::tools::fuzzing` and `kibbr_engine::fuzzing`) on the
+//! stable toolchain, so a change that breaks an input the fuzzer already reached fails here.
 //! Compiled with the `fuzzing` feature: `cargo test --all-features`.
 
 #![cfg(feature = "fuzzing")]
@@ -33,7 +33,7 @@ fn replay(target: &str, run: fn(&[u8])) {
 
 #[test]
 fn trieql() {
-    replay("trieql", kibbr::fuzzing::trieql::run);
+    replay("trieql", kibbr::tools::fuzzing::trieql::run);
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn wal_record() {
 
 #[test]
 fn cursor() {
-    replay("cursor", kibbr::fuzzing::cursor::run);
+    replay("cursor", kibbr::tools::fuzzing::cursor::run);
 }
 
 #[test]

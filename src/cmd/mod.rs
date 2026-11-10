@@ -1,24 +1,23 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The commands: one module for each, and what `main.rs` dispatches to.
+//! The commands someone runs in production: one module for each, and what `main.rs`
+//! dispatches to. What tries, measures or tests kibbr is in `tools`, which nothing here names.
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
 use crate::error::CliError;
 
-pub mod ask;
-pub mod bench;
-pub mod bench_storage;
 pub mod compact;
-pub mod demo;
 pub mod load;
-pub mod parse;
+pub mod oracle;
 pub mod query;
+pub mod serve;
+pub mod status;
 
 /// The input a command reads: a file by its path, or standard input for `-`.
-fn open(input: &str) -> Result<Box<dyn BufRead>, CliError> {
+pub(crate) fn open(input: &str) -> Result<Box<dyn BufRead>, CliError> {
     if input == "-" {
         return Ok(Box::new(BufReader::new(io::stdin())));
     }

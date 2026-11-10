@@ -1923,7 +1923,7 @@ mod tests {
             &mut conn,
             || "a listener of this test".to_string(),
             "S2",
-            &wire::query_request(crate::cmd::bench::S2),
+            &wire::query_request(crate::tools::bench::S2),
             limit,
         )
     }

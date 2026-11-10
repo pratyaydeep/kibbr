@@ -3,8 +3,10 @@
 
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-use kibbr::cmd::{ask, bench, bench_storage, compact, demo, load, parse, query};
-use kibbr::gen::{self, Profile};
+use kibbr::cmd::serve::{self, StorageKind};
+use kibbr::cmd::{compact, load, query, status};
+use kibbr::tools::gen::{self, Profile};
+use kibbr::tools::{bench, bench_storage, demo, parse};
 use kibbr::{config, error, logs};
 use kibbr::engine::model::infer;
 
@@ -13,7 +15,6 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use tokio_util::sync::CancellationToken;
 
 use error::CliError;
 
@@ -533,14 +534,6 @@ enum Command {
     },
 }
 
-/// A flag rather than inferred from `--data-dir`, so that `--storage memory --data-dir /x`
-/// reads as an instruction and not as a contradiction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum StorageKind {
-    Disk,
-    Memory,
-}
-
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -642,11 +635,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 scan_fan_rows,
                 time_columns,
             };
-            let settings = config::settings(file, flags, log)?;
-            // Nothing here cancels the token: a server started from the command line is
-            // stopped by SIGTERM or SIGINT, which it hears for itself.
-            let report = kibbr::server::run(settings, CancellationToken::new())?;
-            code = exit_code(&report);
+            code = serve::cli(file, flags, log)?;
             Ok(())
         }
         Command::Load {
@@ -758,17 +747,17 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             addr,
             data_dir,
             json,
-        } => ask::templates(&mut out, &ask::server(file, addr, data_dir)?, json),
+        } => status::templates(&mut out, &status::server(file, addr, data_dir)?, json),
         Command::Stats {
             addr,
             data_dir,
             json,
-        } => ask::stats(&mut out, &ask::server(file, addr, data_dir)?, json),
+        } => status::stats(&mut out, &status::server(file, addr, data_dir)?, json),
         Command::Health {
             addr,
             data_dir,
             json,
-        } => ask::health(&mut out, &ask::server(file, addr, data_dir)?, json),
+        } => status::health(&mut out, &status::server(file, addr, data_dir)?, json),
         Command::Query {
             input,
             query: trieql,
@@ -822,14 +811,6 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         Err(e) => Err(CliError::Write(e)),
         Ok(()) => Ok(code),
     }
-}
-
-/// What `kibbr serve` exits with: 0 for every run that ended in a report, the deadline's
-/// cut included, because every acknowledged line is in the write-ahead log.
-fn exit_code(report: &kibbr::server::Report) -> ExitCode {
-    // Every field named, so that one added to the report is looked at here.
-    let kibbr::server::Report { addr: _, cut: _ } = report;
-    ExitCode::SUCCESS
 }
 
 /// `bench --runs`: an odd count, so that the median of the runs is one of them and not a

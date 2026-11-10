@@ -139,9 +139,9 @@ pub enum CliError {
     #[error(transparent)]
     Compact(#[from] crate::cmd::compact::CompactError),
     #[error(transparent)]
-    Speed(#[from] crate::cmd::bench::SpeedError),
+    Speed(#[from] crate::tools::bench::SpeedError),
     #[error(transparent)]
-    Ask(#[from] crate::cmd::ask::AskError),
+    Ask(#[from] crate::cmd::status::AskError),
 }
 
 impl From<crate::server::Error> for CliError {

@@ -1047,7 +1047,7 @@ pub fn plan_only(samples: usize, out: &mut dyn Write) -> Result<(), SpeedError> 
 pub fn cli(
     out: &mut dyn Write,
     lines: Option<u64>,
-    profile: Option<crate::gen::Profile>,
+    profile: Option<crate::tools::gen::Profile>,
     save: Option<PathBuf>,
     baseline: Option<PathBuf>,
     label: Option<String>,
@@ -1066,7 +1066,7 @@ pub fn cli(
         self::table(&table, out)
     } else {
         match (lines, profile) {
-            (Some(lines), Some(crate::gen::Profile::Farm)) => run(
+            (Some(lines), Some(crate::tools::gen::Profile::Farm)) => run(
                 &Args {
                     lines,
                     out: save,

@@ -14,7 +14,7 @@ use std::io::Write;
 use serde_json::{Map, Value};
 
 use crate::error::GenError;
-use crate::gen::civil_from_days;
+use crate::tools::gen::civil_from_days;
 use crate::engine::rng::Rng;
 
 pub struct Options {

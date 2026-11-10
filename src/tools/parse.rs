@@ -243,6 +243,6 @@ pub fn cli<W: Write>(
     limit: Option<u64>,
     json: bool,
 ) -> Result<(), CliError> {
-    let reader = super::open(input)?;
+    let reader = crate::cmd::open(input)?;
     run(reader, out, limit, json)
 }

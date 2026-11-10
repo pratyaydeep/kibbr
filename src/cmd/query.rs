@@ -88,7 +88,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     let result = if args.reference {
         let (lines, stats) = crate::engine::load_lines(input)?;
         note(stats);
-        crate::reference::naive::run(&lines, &query, &schema.time_columns)?
+        crate::cmd::oracle::run(&lines, &query, &schema.time_columns)?
     } else {
         let db = in_memory(schema);
         note(db.ingest_file(input, now, true)?);
