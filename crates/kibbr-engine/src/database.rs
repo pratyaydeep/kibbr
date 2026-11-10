@@ -302,7 +302,22 @@ impl Database {
                 detail: "no data directory".to_string(),
             });
         };
-        let mut lock = DataLock::acquire(&base)?;
+        Self::open_offline_locking(&base, options, opener)
+    }
+
+    /// `open_offline`, with the lock taken through `lock_dir`: the same directory, by the
+    /// path a caller built rather than the canonical one, which a refusal then names.
+    pub fn open_offline_locking(
+        lock_dir: &std::path::Path,
+        options: Options,
+        opener: Opener,
+    ) -> Result<Self, Error> {
+        let Some(base) = options.storage.base_path.clone() else {
+            return Err(Error::Storage {
+                detail: "no data directory".to_string(),
+            });
+        };
+        let mut lock = DataLock::acquire(lock_dir)?;
         let holder = match opener {
             Opener::Load => Some(Holder::load()),
             Opener::Compact => Some(Holder::compact()),

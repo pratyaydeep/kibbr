@@ -291,9 +291,11 @@ fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), Loa
 }
 
 /// A scratch directory opened alone, as `kibbr load` opens one with no server: the lock
-/// taken and held until the handle goes, and nothing written to say who holds it.
-fn open(storage: &Storage, schema: &Schema) -> Result<Database, LoadError> {
-    Database::open_offline(crate::config::options(storage, schema), Opener::Quiet).map_err(|e| match e {
+/// taken through `dir`, the path this command built, and held until the handle goes, and
+/// nothing written to say who holds it.
+fn open(dir: &Path, storage: &Storage, schema: &Schema) -> Result<Database, LoadError> {
+    let options = crate::config::options(storage, schema);
+    Database::open_offline_locking(dir, options, Opener::Quiet).map_err(|e| match e {
         crate::engine::Error::Lock(e) => e.into(),
         crate::engine::Error::Store(e) => e.into(),
         e => crate::error::CliError::from(e).into(),
@@ -336,7 +338,7 @@ fn measure(
         None,
     )
     .map_err(CliError::from)?;
-    let db = open(&storage, &schema)?;
+    let db = open(&data, &storage, &schema)?;
     let opts = load::Options {
         inputs: load::resolve(std::slice::from_ref(&args.input), None)?,
         replace_day: None,
@@ -630,7 +632,7 @@ fn live_day(
     // every buffer that holds a row.
     storage.row_group_timeout = Duration::ZERO;
 
-    let db = open(&storage, schema)?;
+    let db = open(data, &storage, schema)?;
     let (trie, stores) = raw::parts(&db);
     // One arrival time for the whole file, as the bulk door gives it one: a clock read per
     // line could split the file over midnight.
@@ -676,7 +678,7 @@ fn live_day(
         )));
     }
 
-    let db = open(&storage, schema)?;
+    let db = open(data, &storage, schema)?;
     let store = raw::parts(&db).1.disk_store().ok_or(LoadError::NoDisk)?;
     let opts = CompactOptions {
         threads: load::alone_threads(),
