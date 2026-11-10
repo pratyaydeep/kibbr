@@ -1,5 +1,7 @@
 # kibbr-core
 
+From 0.3.0, `kibbr-core` is part of `kibbr-engine`; 0.2.3 is its last version.
+
 What a log line is before anything stores it: its keys flattened, each value typed by the
 ladder, and the fingerprint its template is found by - with the errors a line is refused
 with, and the few things every crate above prints and draws with.

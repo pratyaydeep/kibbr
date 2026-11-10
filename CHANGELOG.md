@@ -2,6 +2,24 @@
 
 One entry per tag, newest first.
 
+## 0.2.3 — 2026-11-11
+
+- **`bench-storage --zstd-threads N`**: zstd -19 runs on N threads, every CPU the process
+  may use when not given; on one thread it is about 3 MB/s, hours on a corpus of tens of
+  gigabytes. 1 is the plain encoder and the smallest. kibbr's own bytes are the same at
+  any N. A line under the first table gives gzip -9's and zstd -19's seconds.
+- **Bench tooling**: `bench/compression.py` passes `--zstd-threads`, keeps the timings,
+  records the machine's physical cores, and lists CockroachDB, Elasticsearch and Spark
+  from YScope's CLP datasets. `bench/cloud/` runs a job on an EC2 box that uploads its
+  results and terminates itself; see bench/cloud/README.md.
+- **The oracle answers with `times`**, as the engine has since 0.2.2, so
+  `scripts/check/agree.sh` passes again. `scripts/check/parser_equivalence.sh` reads an
+  epoch given as a JSON number.
+- `kibbr-core` and `kibbr-storage` become part of `kibbr-engine` from 0.3.0; this is their
+  last version.
+- No change to the binary's commands other than the new flag, nor to the HTTP API or the
+  on-disk format.
+
 ## 0.2.2 — 2026-11-09
 
 - **Website**: https://pratyaydeep.github.io/kibbr/, one scroll-driven page that shows how

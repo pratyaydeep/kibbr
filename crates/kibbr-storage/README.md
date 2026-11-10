@@ -1,5 +1,7 @@
 # kibbr-storage
 
+From 0.3.0, `kibbr-storage` is part of `kibbr-engine`; 0.2.3 is its last version.
+
 Where templates and rows are kept: the trie and its catalog, the stores under it, the
 write-ahead log, `db` - the write path for one parsed line - and `lock`.
 
