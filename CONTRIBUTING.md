@@ -56,14 +56,16 @@ repository root:
 
 ```
 cargo build --release
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 scripts/check/spdx.sh
+scripts/check/no_internals.sh
 scripts/check/agree.sh
 ROUNDS=3 scripts/fault/crash_test.sh
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same on Linux.
+CI (`.github/workflows/ci.yml`) runs the same on Linux. Without `--all-features` the fuzzing
+feature is off and the fuzz regressions are not replayed.
 
 The scripts run the release binary and need `bash`, `curl` and `python3`.
 [scripts/README.md](scripts/README.md) lists the rest of them and what each prints when it
@@ -72,11 +74,11 @@ copyright line and `// SPDX-License-Identifier: AGPL-3.0-only`.
 
 ## Releases
 
-A GitHub release publishes the five crates to crates.io:
+A GitHub release publishes the three crates to crates.io:
 `.github/workflows/release.yml` runs when a release is published (not a draft).
 
 Once per repository, add the token: on crates.io, Account Settings > API Tokens, make one
-with the `publish-update` scope for the five kibbr crates; on GitHub, Settings > Secrets and
+with the `publish-update` scope for the three kibbr crates; on GitHub, Settings > Secrets and
 variables > Actions, add it as the repository secret `CARGO_REGISTRY_TOKEN`.
 
 For each version, for example 0.3.0:
@@ -84,7 +86,7 @@ For each version, for example 0.3.0:
 1. `scripts/bump.sh 0.3.0` sets the version in Cargo.toml, Cargo.lock and the docs, and
    adds a `## 0.3.0 — DATE` section to CHANGELOG.md. Write that section in place of its
    placeholder, which the release refuses, and commit.
-2. Check it: `scripts/publish.sh --dry-run 0.3.0`. The dry run builds the five crates,
+2. Check it: `scripts/publish.sh --dry-run 0.3.0`. The dry run builds the three crates,
    about 2 GB in `target/`.
 3. Push the commit. Tag it `v0.3.0` and push the tag, or let the release form make the tag.
 4. On GitHub, Releases > Draft a new release: tag `v0.3.0`, the notes from
@@ -92,5 +94,5 @@ For each version, for example 0.3.0:
 
 The workflow fails before publishing anything if the tag is not the workspace version,
 CHANGELOG.md has no section for it, `web/` does not build the committed `viewer.html`, the
-token is missing, or the dry run fails. Then it publishes in dependency order, 30 seconds
-apart. [scripts/README.md](scripts/README.md) describes the scripts.
+token is missing, or the dry run fails. Then it publishes in dependency order,
+kibbr-engine, kibbr-server, kibbr, 30 seconds apart. [scripts/README.md](scripts/README.md) describes the scripts.

@@ -1,6 +1,6 @@
 [package]
 name = "kibbr-engine"
-description = "The query planner, executor and TrieQL of kibbr (https://github.com/pratyaydeep/kibbr); internal, no API stability promised."
+description = "The whole database of kibbr (https://github.com/pratyaydeep/kibbr) behind one handle: the parser, the trie, the day files, the write-ahead log and the query engine; no API stability promised."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

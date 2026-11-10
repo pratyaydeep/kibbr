@@ -30,17 +30,22 @@ jobs:
         run: cargo build --release
 
       # Every step below runs even when one before it failed, so one run shows all of them.
-      - name: cargo test --workspace
+      # Every feature on: without `fuzzing` the fuzz regressions are silently not replayed.
+      - name: cargo test --workspace --all-features
         if: ${{ !cancelled() }}
-        run: cargo test --workspace --no-fail-fast
+        run: cargo test --workspace --all-features --no-fail-fast
 
       - name: cargo clippy -D warnings
         if: ${{ !cancelled() }}
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: SPDX headers
         if: ${{ !cancelled() }}
         run: scripts/check/spdx.sh
+
+      - name: kibbr-server never names the engine's internals
+        if: ${{ !cancelled() }}
+        run: scripts/check/no_internals.sh
 
       - name: scripts/check/agree.sh
         if: ${{ !cancelled() }}

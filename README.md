@@ -158,7 +158,7 @@ Website: **https://pratyaydeep.github.io/kibbr/**. The API of the crates is on [
 | [docs/layout.md](docs/layout.md) | the code, the tests, the lints |
 | [bench/README.md](bench/README.md) | running the benchmarks yourself |
 
-The code is a workspace of five crates: [`kibbr-core`](crates/kibbr-core/README.md) (flattening, types, fingerprints), [`kibbr-storage`](crates/kibbr-storage/README.md) (trie, catalog, day files, WAL), [`kibbr-engine`](crates/kibbr-engine/README.md) (TrieQL, planning, scanning), [`kibbr-server`](crates/kibbr-server/README.md) (HTTP), and the `kibbr` binary over them.
+The code is a workspace of three crates: [`kibbr-engine`](crates/kibbr-engine/README.md) (the whole database behind one handle, `Database`: flattening, types, trie, catalog, day files, WAL, TrieQL, planning, scanning), [`kibbr-server`](crates/kibbr-server/README.md) (HTTP over one `Database`), and the `kibbr` binary over them. What were `kibbr-core` and `kibbr-storage` are now modules of `kibbr-engine` (`model` and `parse`; `format`, `templates`, `rows`, `ingest`, `wal` and `lock`); on crates.io their names stop at 0.2.3.
 
 ## Status
 

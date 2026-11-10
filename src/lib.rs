@@ -12,8 +12,8 @@
 //!
 //! - **Store**: `POST /ingest` or `kibbr load`, both into the same day files, every line
 //!   in a write-ahead log before it is acknowledged.
-//! - **Query**: [TrieQL](engine::trieql), a small language over keys and values, through
-//!   `POST /query`, `kibbr query` or the built-in web console.
+//! - **Query**: [TrieQL](engine::query::trieql), a small language over keys and values,
+//!   through `POST /query`, `kibbr query` or the built-in web console.
 //! - **Run**: `cargo install kibbr`, then `kibbr serve`. No cluster, no JVM, no sidecar.
 //!
 //! The guide, benchmarks and operating docs are on the
@@ -22,8 +22,9 @@
 //!
 //! # A tour of kibbr
 //!
-//! The binary is built from four library crates, stacked so that each names only the
-//! ones under it, plus the modules in this crate that make them a command.
+//! The binary is built from two library crates, stacked so that each names only the
+//! ones under it, plus the modules in this crate that make them a command. Those modules
+//! never open a data directory any way but through [`Database`](engine::Database).
 //!
 //! ## The one idea
 //!
@@ -40,24 +41,27 @@
 //! a *template*: the keys, each value's type, and an id. A query walks the trie first, so
 //! templates that cannot match are skipped without touching disk.
 //!
-//! ## From a line to a template
+//! ## The engine
 //!
-//! [`core`] (the `kibbr-core` crate) is what a line is before anything stores it: the
-//! parser that flattens nested JSON into dotted keys, the *type ladder* that decides
-//! whether a value is a `Datetime`, `Int64`, `Uuid`, `Ip`, `String` and so on, and the
-//! fingerprint a template is found by. It has no I/O.
+//! [`engine`] (the `kibbr-engine` crate) is the whole database behind one handle,
+//! [`Database`](engine::Database). It never does HTTP, flags or an async runtime. The
+//! server and the command line each hold one `Database`, opened to serve, offline, or in
+//! memory.
 //!
-//! ## Where rows live
+//! [`model`](engine::model) and [`parse`](engine::parse) are what a line is before
+//! anything stores it: the parser that flattens nested JSON into dotted keys, the *type
+//! ladder* that decides whether a value is a `Datetime`, `Int64`, `Uuid`, `Ip`, `String`
+//! and so on, and the fingerprint a template is found by. They have no I/O of their own.
 //!
-//! [`storage`] (`kibbr-storage`) keeps templates and rows: the trie and the catalog log
-//! that rebuilds it, the write-ahead log, the day files of row groups and compressed
-//! column chunks, the manifest that says which files count, and compaction. Each column
-//! chunk picks its own encoding, then zstd on top: same-value-once, deltas for
-//! timestamps, varints for integers, a dictionary for strings.
+//! Under the handle, and private to the engine, `templates` keeps the trie and the
+//! catalog log that rebuilds it, `ingest` files one parsed line into the trie and its
+//! store, `wal` is the write-ahead log, and `rows` keeps the day files of row groups and
+//! compressed column chunks, the manifest that says which files count, and compaction.
+//! `format` is how a day file is laid out. Each column chunk picks its own encoding,
+//! then zstd on top: same-value-once, deltas for timestamps, varints for integers, a
+//! dictionary for strings.
 //!
-//! ## Answering a question
-//!
-//! [`engine`] (`kibbr-engine`) parses TrieQL, plans a query over the trie's key index and
+//! [`query`](engine::query) parses TrieQL, plans a query over the trie's key index and
 //! runs it over the stores, reading only the columns the query names:
 //!
 //! ```text
@@ -71,11 +75,11 @@
 //!
 //! ## The server and the commands
 //!
-//! [`server`] (`kibbr-server`) is the HTTP side: `/ingest`, `/query`, `/templates`,
-//! `/stats`, `/health`, the web console, and the loads and compactions it runs. [`cmd`]
-//! holds the subcommands of the binary itself: `serve`, `load`, `compact`, `query`,
-//! `explain`, `templates`, `stats`, `health`, `parse`, `demo`, `gen-logs`, `bench` and
-//! `bench-storage`. [`client`] is the small HTTP client `load`, `compact` and
+//! [`server`] (`kibbr-server`) is the HTTP side over one `Database`: `/ingest`, `/query`,
+//! `/templates`, `/stats`, `/health`, the web console, and the loads and compactions it
+//! runs. [`cmd`] holds the subcommands of the binary itself: `serve`, `load`, `compact`,
+//! `query`, `explain`, `templates`, `stats`, `health`, `parse`, `demo`, `gen-logs`,
+//! `bench` and `bench-storage`. [`client`] is the small HTTP client `load`, `compact` and
 //! `bench-storage` use to talk to a server.
 //!
 //! ## Generated logs and the oracle
@@ -120,7 +124,8 @@
 //! # Stability
 //!
 //! The modules here are public so the fuzz targets under `fuzz/` can call the harnesses
-//! in [`fuzzing`], and so the four crates can be read as one. None of it is a stable
+//! in `fuzzing` (here `cursor` and `trieql`, the other three in `kibbr_engine::fuzzing`),
+//! and so the three crates can be read as one. None of it is a stable
 //! interface: use the binary and its HTTP API, which are versioned in the
 //! [changelog](https://github.com/pratyaydeep/kibbr/blob/main/CHANGELOG.md).
 //!

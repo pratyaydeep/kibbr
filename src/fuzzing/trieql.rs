@@ -15,7 +15,7 @@ use crate::cmd::query;
 use crate::engine::query::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
 use crate::engine::query::trieql::{self, Kind, ParseError, Parsed};
 
-/// The instant `SINCE` is counted back from. Fixed, and the one `crates/kibbr-engine/src/trieql.rs` tests
+/// The instant `SINCE` is counted back from. Fixed, and the one `crates/kibbr-engine/src/query/trieql.rs` tests
 /// against, so a seed taken from a test parses to the window the test saw.
 const NOW_SECS: i64 = 1_700_000_000;
 

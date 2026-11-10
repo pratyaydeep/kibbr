@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Check a version and publish the five crates to crates.io: what a GitHub release runs
+# Check a version and publish the three crates to crates.io: what a GitHub release runs
 # (.github/workflows/release.yml). Run here, it checks a version before the release.
 #
-# In this order, each after the ones it depends on: kibbr-core, kibbr-storage,
-# kibbr-engine, kibbr-server, kibbr. Before anything is published:
+# In this order, each after the ones it depends on: kibbr-engine, kibbr-server, kibbr.
+# Before anything is published:
 #
 #   1. VERSION is the workspace version in Cargo.toml.
 #   2. CHANGELOG.md has a `## VERSION ...` section.
-#   3. The five dry-runs pass. They run as one `cargo publish --dry-run`, so a crate is
+#   3. The three dry-runs pass. They run as one `cargo publish --dry-run`, so a crate is
 #      checked against the ones under it as they are here, not as crates.io has them.
 #
-# Then the five real publishes, 30 seconds apart so crates.io has indexed one before the
+# Then the three real publishes, 30 seconds apart so crates.io has indexed one before the
 # next asks for it. cargo reads the token from `cargo login` or CARGO_REGISTRY_TOKEN.
 #
 #   scripts/publish.sh 0.1.0             checks, dry run, publish
@@ -26,7 +26,7 @@ case ${1:-} in
     --notes) MODE=notes; shift ;;
 esac
 VERSION=${1:?usage: scripts/publish.sh [--dry-run | --notes] VERSION}
-CRATES=(kibbr-core kibbr-storage kibbr-engine kibbr-server kibbr)
+CRATES=(kibbr-engine kibbr-server kibbr)
 WAIT_SECONDS=30
 
 fail() { echo "publish: $*" >&2; exit 1; }

@@ -2,8 +2,8 @@
 
 **How it was checked**
 
-- [ ] `cargo test --workspace`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo test --workspace --all-features`
+- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - [ ] `scripts/check/agree.sh`, and any other script under `scripts/` the change touches
 
 **Sign-off**

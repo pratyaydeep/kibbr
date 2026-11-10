@@ -2,6 +2,27 @@
 
 One entry per tag, newest first.
 
+## 0.3.0 — 2026-11-11
+
+- **Three crates, from five.** `kibbr-engine` is now the whole database behind one handle,
+  `Database`: what was `kibbr-core` is its `model` and `parse` modules, and what was
+  `kibbr-storage` is its `format`, `templates`, `rows`, `ingest`, `wal` and `lock`
+  modules. The bulk load, compaction runs and the answer JSON move into it from
+  `kibbr-server`, which keeps HTTP and depends on `kibbr-engine` alone. `kibbr` is the
+  command line, and opens a data directory only through `Database`.
+- `kibbr-core` and `kibbr-storage` are not published from 0.3.0 on; their last version is
+  0.2.3. A library crate that named either names `kibbr-engine` instead. Below 1.0 this is
+  the breaking middle number, and the internal dependencies are pinned exactly (`=0.3.0`).
+- The fuzz harnesses are behind a `fuzzing` feature, off by default, in `kibbr-engine`
+  (`wal_record`, `segment`, `record_log`) and in `kibbr` (`cursor`, `trieql`). The
+  `v3_segment` target is now `segment`. `cargo test --workspace --all-features` replays
+  every fuzz regression; CI runs it so.
+- Each module's unit tests are in a `tests.rs` beside it. The format test vectors are
+  `testdata/format/`.
+- No change for anyone using the binary or the HTTP API: the commands and flags, the
+  settings, TrieQL, every route and answer, and the on-disk format (version 3) are those
+  of 0.2.3.
+
 ## 0.2.3 — 2026-11-11
 
 - **`bench-storage --zstd-threads N`**: zstd -19 runs on N threads, every CPU the process

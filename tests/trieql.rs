@@ -214,7 +214,7 @@ fn errors_report_a_position_inside_the_query() {
 // ── Never panics ───────────────────────────────────────────────────────────────────
 
 /// Whatever goes in, what comes out is a parse error or a query, never a panic (exit 101).
-/// A NUL cannot pass through `argv`: `crates/kibbr-engine/src/trieql.rs` checks that one.
+/// A NUL cannot pass through `argv`: `crates/kibbr-engine/src/query/trieql.rs` checks that one.
 #[test]
 fn no_input_panics() {
     let mut hostile: Vec<String> = vec![

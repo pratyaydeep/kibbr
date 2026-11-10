@@ -80,8 +80,8 @@ jobs:
             exit 1
           }
 
-      # The tag is the workspace version, CHANGELOG.md has its section, the five-crate dry
-      # run passes; then the five publishes in dependency order, 30 s apart. All of it is
+      # The tag is the workspace version, CHANGELOG.md has its section, the three-crate dry
+      # run passes; then the three publishes in dependency order, 30 s apart. All of it is
       # scripts/publish.sh, which a release from a laptop runs too.
       - name: scripts/publish.sh
         env:

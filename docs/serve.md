@@ -11,7 +11,7 @@ curl -s -X POST --data-binary @logs.ndjson http://127.0.0.1:7700/ingest     # ND
 curl -s -X POST -d '{"q": "COUNT LOG {\"level\": \"error\"}"}' http://127.0.0.1:7700/query
 curl -s http://127.0.0.1:7700/templates       # every template, its columns and row count
 curl -s http://127.0.0.1:7700/stats           # throughput, template count, storage size
-curl -s http://127.0.0.1:7700/health          # {"ok":true,"status":"ok","version":"0.2.3","source":"https://github.com/pratyaydeep/kibbr"}
+curl -s http://127.0.0.1:7700/health          # {"ok":true,"status":"ok","version":"0.3.0","source":"https://github.com/pratyaydeep/kibbr"}
 gzip -c logs.ndjson | curl -s -X POST --data-binary @- \
   -H 'Content-Encoding: gzip' http://127.0.0.1:7700/ingest                  # gzip in
 ```
@@ -129,7 +129,7 @@ The first, on the quickstart's `day.ndjson`, prints 36 buckets, `2024-01-15T09:0
 - A second key is zero-filled too: three levels are three series, each with every bucket.
 - The range emits every bucket it touches. `SINCE 6h` at `time(5m)` is 72 buckets if `now`
   is on a five-minute boundary and 73 otherwise; the first and last are partial. The comment
-  above `bucket_of` in `crates/kibbr-engine/src/engine.rs` draws it.
+  above `bucket_of` in `crates/kibbr-engine/src/query/buckets.rs` draws it.
 - A bucketed query returns aggregates, so `max_rows` does not reach it; `max_buckets`
   (10,000) and `max_groups` (100,000) do, and going over is a refusal naming both counts.
 
