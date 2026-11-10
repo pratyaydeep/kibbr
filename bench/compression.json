@@ -15,6 +15,33 @@
       "time_columns": [
         "t.$date"
       ]
+    },
+    {
+      "tag": "cockroachdb",
+      "url": "https://zenodo.org/records/10516387/files/cockroachdb.tar.gz?download=1",
+      "checksum": "md5:49bdbd43a93edd30f028c7f3a2ed43d7",
+      "note": "One node's JSON logs from a three-node CockroachDB cluster under YCSB for three days (Zenodo 10516387), from YScope's CLP datasets: 9.79 GiB, 16,520,377 lines",
+      "time_columns": [
+        "timestamp"
+      ]
+    },
+    {
+      "tag": "elasticsearch",
+      "url": "https://zenodo.org/records/10516227/files/elasticsearch.tar.gz?download=1",
+      "checksum": "md5:d8d5f8998d3de0fbac80980bfd4997a7",
+      "note": "Elasticsearch 8 server JSON logs while it indexed another dataset (Zenodo 10516227), from YScope's CLP datasets: 7.98 GiB, 14,001,234 lines",
+      "time_columns": [
+        "@timestamp"
+      ]
+    },
+    {
+      "tag": "spark",
+      "url": "https://zenodo.org/records/10516346/files/spark-event-logs.tar.gz?download=1",
+      "checksum": "md5:99d441cf23d374b5870204622acd474e",
+      "note": "Spark event logs from HiBench workloads over six days (Zenodo 10516346), from YScope's CLP datasets: 1.98 GiB, 1,011,651 lines",
+      "time_columns": [
+        "Timestamp"
+      ]
     }
   ]
 }

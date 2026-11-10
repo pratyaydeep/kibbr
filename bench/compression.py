@@ -15,6 +15,8 @@
 #      "checksum": "md5:...",          optional: md5:<hex> or sha256:<hex>, as Zenodo gives it;
 #                                      the download must have this hash
 #      "sha256": "...",                optional: the same, for a sha256
+#      "zstd_threads": 1,              optional: as `bench-storage --zstd-threads`; this
+#                                      source's own wins over --zstd-threads
 #      "note": "..."}                  optional: copied into the result
 #   ]}
 #
@@ -45,7 +47,10 @@
 #   --no-build      use target/release/kibbr as it is
 #   --md-dir DIR    where each tag's .md goes                   [the output without .json]
 #   --no-zstd       leave zstd -19 out, as `bench-storage --no-zstd`: at about 3 MB/s on one
-#                   core it is most of the run on a big corpus (7 hours of 69.6 GB of MongoDB)
+#                   thread it is most of the run on a big corpus (7 hours of 69.6 GB of MongoDB)
+#   --zstd-threads N  zstd -19's threads, as `bench-storage --zstd-threads`: 1 is the plain,
+#                   smallest zstd -19; more are a little larger and close to N times faster.
+#                   A source's own "zstd_threads" wins. [bench-storage's: every CPU]
 
 import argparse
 import datetime
@@ -99,6 +104,9 @@ def load_sources(path):
         seen.add(tag)
         if ("url" in s) == ("path" in s):
             fail(f"{path}: source {tag} needs one of `url` and `path`")
+        t = s.get("zstd_threads")
+        if t is not None and (not isinstance(t, int) or isinstance(t, bool) or t < 1):
+            fail(f"{path}: source {tag}'s zstd_threads must be a whole number, 1 or more: {t!r}")
     return sources
 
 
@@ -335,6 +343,8 @@ def input_file(source, work):
 
 NUM = r"[\d,]+"
 ROW = re.compile(rf"^(?P<indent> +)(?P<name>\S.*?) {{2,}}(?P<bytes>{NUM})(?: +(?P<blocks>{NUM}))? +(?P<ratio>[\d.]+|-)$")
+TIMES = re.compile(
+    r"^  gzip -9 ran on 1 thread in (?P<gz>[\d.]+)s(?:; zstd -19 on (?P<n>\d+) thread\(s\) in (?P<zst>[\d.]+)s)?$")
 BULK = re.compile(
     rf"^  (?P<lines>{NUM}) lines, (?P<rows>{NUM}) rows as load \S+: (?P<groups>{NUM}) row groups "
     rf"in (?P<files>{NUM}) file\(s\) over (?P<days>{NUM}) day\(s\), loaded in (?P<s>[\d.]+)s$")
@@ -388,6 +398,7 @@ def parse_report(text):
         else:
             tables[slug(m["name"])] = row
         stack.append((indent, row))
+    times = next((m for m in map(TIMES.match, text.splitlines()) if m), None)
     gz_ratio = re.search(r"kibbr total is ([\d.]+) of gzip -9", text)
     zst_ratio = re.search(r"and ([\d.]+) of zstd -19", text)
     # zstd -19 is absent from a run under --no-zstd.
@@ -416,6 +427,10 @@ def parse_report(text):
         "kibbr_x_raw": tables["kibbr_total"].get("x_raw"),
         "kibbr_x_gzip_9": float(gz_ratio[1]) if gz_ratio else None,
         "kibbr_x_zstd_19": float(zst_ratio[1]) if zst_ratio else None,
+        # A bench-storage from before --zstd-threads printed no timings, and ran zstd on one.
+        "zstd_19_threads": (int(times["n"]) if times and times["n"] else 1) if zst else None,
+        "gzip_9_seconds": float(times["gz"]) if times else None,
+        "zstd_19_seconds": float(times["zst"]) if times and times["zst"] else None,
     }
     after = tables.get("kibbr_total_after")
     if after:
@@ -444,12 +459,40 @@ def machine():
             r = subprocess.run(["sysctl", "-n", name], capture_output=True, text=True)
             if r.returncode == 0:
                 m[key] = int(r.stdout) if key != "cpu" else r.stdout.strip()
+        r = subprocess.run(["sysctl", "-n", "hw.physicalcpu"], capture_output=True, text=True)
+        if r.returncode == 0:
+            m["physical_cores"] = int(r.stdout)
     else:
         m["cores"] = os.cpu_count()
+        try:
+            # Physical cores: the unique (physical id, core id) pairs, one per core's threads.
+            cores, phys = set(), None
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    key, _, value = line.partition(":")
+                    key, value = key.strip(), value.strip()
+                    if key == "model name" and "cpu" not in m:
+                        m["cpu"] = value
+                    elif key == "physical id":
+                        phys = value
+                    elif key == "core id":
+                        cores.add((phys, value))
+            if cores:
+                m["physical_cores"] = len(cores)
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        m["memory_bytes"] = int(line.split()[1]) * 1024
+                        break
+        except OSError:
+            pass
+    # What the box is, as whoever started it says: bench/cloud/ sets it to the instance type.
+    if os.environ.get("KIBBR_MACHINE"):
+        m["host"] = os.environ["KIBBR_MACHINE"]
     return m
 
 
-def measure(source, bin_path, no_zstd=False):
+def measure(source, bin_path, no_zstd=False, zstd_threads=None):
     tag = source["tag"]
     work = os.path.join(WORK, tag)
     began = time.monotonic()
@@ -462,6 +505,9 @@ def measure(source, bin_path, no_zstd=False):
         cmd += ["--time-columns", ",".join(source["time_columns"])]
     if no_zstd:
         cmd.append("--no-zstd")
+    threads = source.get("zstd_threads", zstd_threads)
+    if threads is not None and not no_zstd:
+        cmd += ["--zstd-threads", str(threads)]
     say(f"{tag}: {' '.join(shown(c) for c in cmd)}")
     os.makedirs(work, exist_ok=True)
     log =os.path.join(work, f"bench-storage-{stamp}.log")
@@ -481,7 +527,7 @@ def measure(source, bin_path, no_zstd=False):
     result = parse_report(r.stdout)
     result.update({
         "tag": tag,
-        "source": {k: source[k] for k in ("url", "path", "files", "time_columns", "checksum", "note") if k in source},
+        "source": {k: source[k] for k in ("url", "path", "files", "time_columns", "zstd_threads", "checksum", "note") if k in source},
         "download": fetched,
         "measured_files": members,
         "measured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -509,7 +555,7 @@ def write_markdown(result, into):
     rows = [
         ("ingested, as a plain file", sm["raw_bytes"], get("ingested_disk_bytes"), 1.0, None, None),
         ("gzip -9", sm["gzip_9_bytes"], get("gzip_9_disk_bytes"), sm["gzip_9_x_raw"], None, None),
-        *([("zstd -19", sm["zstd_19_bytes"], get("zstd_19_disk_bytes"), sm["zstd_19_x_raw"], None, None)]
+        *([(f"zstd -19, {get('zstd_19_threads') or 1} thread(s)", sm["zstd_19_bytes"], get("zstd_19_disk_bytes"), sm["zstd_19_x_raw"], None, None)]
           if sm.get("zstd_19_bytes") is not None else []),
         ("kibbr, bulk load", sm["kibbr_bytes"], get("kibbr_disk_bytes"), sm["kibbr_x_raw"],
          sm["kibbr_x_gzip_9"], sm["kibbr_x_zstd_19"]),
@@ -563,7 +609,10 @@ def write_markdown(result, into):
         f"- {k['version']}, commit `{k['commit']}`" + (", **with uncommitted changes**" if k["dirty"] else ""),
         f"- `kibbr {' '.join(k['argv'])}`",
         f"- {m.get('os')} {m.get('os_version')}, {m.get('arch')}, {m.get('cpu', '-')}, "
-        f"{m.get('cores', '-')} cores, {num(m.get('memory_bytes'))} bytes of memory",
+        f"{m.get('cores', '-')} cores"
+        + (f" ({m['physical_cores']} physical)" if m.get("physical_cores") else "")
+        + f", {num(m.get('memory_bytes'))} bytes of memory"
+        + (f", on {m['host']}" if m.get("host") else ""),
         f"- {result['warnings']} warning(s) in bench-storage's log; {result['seconds']} s start to end, "
         "download included",
         "",
@@ -581,8 +630,12 @@ def main():
     p.add_argument("--bin", help="the kibbr to run; nothing is built")
     p.add_argument("--no-build", action="store_true", help="use target/release/kibbr as it is")
     p.add_argument("--no-zstd", action="store_true", help="as bench-storage --no-zstd: hours saved on a big corpus")
+    p.add_argument("--zstd-threads", type=int, metavar="N",
+                   help="as bench-storage --zstd-threads; a source's own zstd_threads wins")
     p.add_argument("--md-dir", help="where each tag's .md goes [the output's path without .json]")
     args = p.parse_args()
+    if args.zstd_threads is not None and args.zstd_threads < 1:
+        fail(f"--zstd-threads must be 1 or more: {args.zstd_threads}")
     md_dir = args.md_dir or os.path.splitext(os.path.abspath(args.output))[0]
 
     sources = load_sources(args.input)
@@ -614,7 +667,7 @@ def main():
 
     failed = 0
     for s in todo:
-        result = measure(s, bin_path, args.no_zstd)
+        result = measure(s, bin_path, args.no_zstd, args.zstd_threads)
         if result is None:
             failed += 1
             continue
