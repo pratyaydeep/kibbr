@@ -9,8 +9,8 @@
 
 use std::path::Path;
 
-use crate::storage::frame;
-use crate::storage::wal::{self, Record, Scanned, WalError};
+use crate::engine::format::frame;
+use crate::engine::wal::{self, Record, Scanned, WalError};
 
 /// The most one frame may claim to decompress to and still be read here: the reader
 /// allocates the claim before a byte is decompressed, under the fuzzer's allocation limit.

@@ -9,19 +9,19 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::core::fmt::commas;
+use crate::fmt::commas;
 use crate::database::{Database, Schema, Storage};
 use crate::error::{self, Error};
-use crate::storage;
-use crate::storage::catalog::Catalog;
-use crate::storage::db;
-use crate::storage::store::{FlushKind, StoreError, StoreManager};
-use crate::storage::trie::Trie;
-use crate::storage::wal::{self, Wal};
+use crate::templates::catalog::Catalog;
+use crate::ingest;
+use crate::rows::{FlushKind, StoreError, StoreManager};
+use crate::templates::trie::Trie;
+use crate::wal::{self, Wal};
 
 /// The trie and the stores of a data directory, restored as a server's start restores
 /// them but with the log left be; the caller holds the directory's `LOCK`.
-pub fn open_durable(
+#[cfg(test)]
+pub(crate) fn open_durable(
     storage: &Storage,
     schema: &Schema,
 ) -> Result<(Trie, StoreManager), Error> {
@@ -150,7 +150,7 @@ fn replay(
         let mut highest_template = 0u64;
         let scanned = wal.replay(&mut warn, &mut |record| {
             highest_template = highest_template.max(record.template_id);
-            let day = storage::store::v3::day_of(record.time);
+            let day = crate::format::day_of(record.time);
             if replaced
                 .get(&day)
                 .is_none_or(|through| record.seq > *through)
@@ -203,7 +203,7 @@ fn replay(
     let mut flush_failed = false;
     let scanned = wal.replay(&mut warn, &mut |record| {
         highest_template = highest_template.max(record.template_id);
-        let day = storage::store::v3::day_of(record.time);
+        let day = crate::format::day_of(record.time);
         // A day a load replaced: the lines the log held of it then were in the files the
         // replace retired, and no row group covers them any more.
         if replaced
@@ -248,7 +248,7 @@ fn replay(
             out.held += 1;
             return Ok(());
         };
-        let row = match db::row_from_log(record.line, time_column, record.received_at) {
+        let row = match ingest::row_from_log(record.line, time_column, record.received_at) {
             Ok(row) => row,
             Err(e) => {
                 unreadable.get_or_insert_with(|| (record.seq, e.kind.to_string()));
@@ -257,14 +257,14 @@ fn replay(
                 return Ok(());
             }
         };
-        let time = storage::store::effective_ts(&row, time_column).unwrap_or(0);
+        let time = crate::rows::effective_ts(&row, time_column).unwrap_or(0);
         if time != record.time {
             moved.get_or_insert((record.seq, record.time, time));
             held.set_aside(record.template_id, record.seq);
             out.held += 1;
             return Ok(());
         }
-        let placed = db::Placed {
+        let placed = ingest::Placed {
             template_id: record.template_id,
             time_column: time_column.clone(),
             row,
@@ -347,7 +347,7 @@ fn replay(
 
 /// An instant as replay's warnings print it.
 fn rfc3339_nanos(ns: i64) -> String {
-    crate::core::fmt::rfc3339(ns)
+    crate::fmt::rfc3339(ns)
 }
 
 /// Rows the store would not take from the log: not an error, since the line is durable
@@ -370,7 +370,7 @@ impl Held {
 
     /// Hand one row to the store at its position in the log; 0 is a row with no log
     /// behind it. Whether the store took it.
-    pub(crate) fn apply(&self, stores: &StoreManager, position: u64, placed: db::Placed) -> bool {
+    pub(crate) fn apply(&self, stores: &StoreManager, position: u64, placed: ingest::Placed) -> bool {
         let template_id = placed.template_id;
         let deferred = self
             .templates
@@ -452,10 +452,10 @@ impl Held {
 pub(crate) fn storage_fatal(e: StoreError) -> Error {
     match e {
         StoreError::LegacyLayout { path } => Error::LegacyLayout { path },
-        StoreError::Format(storage::store::v3::FormatError::Version { path, found }) => {
+        StoreError::Format(crate::format::FormatError::Version { path, found }) => {
             Error::SegmentVersion { path, found }
         }
-        StoreError::Format(storage::store::v3::FormatError::PreRename { path }) => {
+        StoreError::Format(crate::format::FormatError::PreRename { path }) => {
             Error::PreRename { path }
         }
         e => Error::Storage {
@@ -472,7 +472,7 @@ fn open_catalog(
     data_dir: &str,
     schema: &Schema,
 ) -> Result<Trie, Error> {
-    let path = storage::catalog::path_in(base);
+    let path = crate::templates::catalog::path_in(base);
     let existed = path.exists();
     let mut warn = |message: String| log_warn(&format!("catalog.log - {message}"));
     fn storage_error(e: &(dyn std::error::Error + 'static)) -> Error {
@@ -488,7 +488,7 @@ fn open_catalog(
         match trie_file {
             Some(snapshot) if snapshot.exists() => {
                 let (from_snapshot, failure) =
-                    storage::triefile::load_reporting(snapshot, data_dir);
+                    crate::templates::snapshot::load_reporting(snapshot, data_dir);
                 match failure {
                     Some(e) => {
                         log_warn(&format!("trie.json - {}", error::chain(&e)));
@@ -649,7 +649,7 @@ pub(crate) fn close(db: &Database) -> Result<(), Error> {
     }
 
     match db.storage.trie_file.as_deref() {
-        Some(path) => match crate::storage::triefile::save(&db.trie, path) {
+        Some(path) => match crate::templates::snapshot::save(&db.trie, path) {
             Ok(bytes) => log(&format!(
                 "trie.json - {} {} byte(s), {} template(s)",
                 path.display(),
@@ -731,19 +731,19 @@ mod tests {
     /// does today, and what the log's applier has to survive if a store ever does.
     struct Refusing(Arc<AtomicBool>);
 
-    impl crate::storage::store::Store for Refusing {
+    impl crate::rows::Store for Refusing {
         fn open(
             &self,
             template_id: u64,
             time_column: &str,
-        ) -> Result<Arc<dyn crate::storage::store::LeafStore>, StoreError> {
+        ) -> Result<Arc<dyn crate::rows::LeafStore>, StoreError> {
             if self.0.load(Ordering::Relaxed) {
                 return Err(StoreError::Io {
                     template_id,
                     source: std::io::Error::other("the leaf will not open"),
                 });
             }
-            crate::storage::store::MemoryStore::new().open(template_id, time_column)
+            crate::rows::MemoryStore::new().open(template_id, time_column)
         }
 
         fn kind(&self) -> &'static str {
@@ -762,10 +762,10 @@ mod tests {
         let shut = Arc::new(AtomicBool::new(true));
         let stores = StoreManager::new(Box::new(Refusing(Arc::clone(&shut))));
         let held = Held::new();
-        let placed = |template_id| db::Placed {
+        let placed = |template_id| ingest::Placed {
             template_id,
             time_column: "ts".to_string(),
-            row: crate::storage::store::Row::new(),
+            row: crate::rows::Row::new(),
         };
         assert_eq!(held.from(), None);
 

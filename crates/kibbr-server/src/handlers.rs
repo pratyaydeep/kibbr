@@ -658,7 +658,7 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
         // The scan and then the answer put into JSON both ask the stop as they go.
         let body = held.db.answer_until(&query, &told)?;
         held.queries.fetch_add(1, Ordering::Relaxed);
-        Ok::<Value, engine::engine::ExecError>(body)
+        Ok::<Value, engine::query::ExecError>(body)
     })
     .await;
     // The task has returned: there is no scan left to tell.
@@ -668,12 +668,12 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
         Ok(Ok(body)) => (StatusCode::OK, Json(body)).into_response(),
         // Read by nobody, as a rule: what set the stop also dropped this future or has
         // answered in its place. Said all the same, for a caller that is not `track`.
-        Ok(Err(e @ engine::engine::ExecError::Store(StoreError::Stopped))) => {
+        Ok(Err(e @ engine::query::ExecError::Store(StoreError::Stopped))) => {
             fail(StatusCode::SERVICE_UNAVAILABLE, &error::chain(&e))
         }
         // A bucket count over the cap is the client's to fix, so it is a 400 beside the parse
         // errors above; a storage failure is the server's and stays a 500.
-        Ok(Err(e @ engine::engine::ExecError::Buckets(_))) => {
+        Ok(Err(e @ engine::query::ExecError::Buckets(_))) => {
             fail(StatusCode::BAD_REQUEST, &error::chain(&e))
         }
         Ok(Err(e)) => fail(StatusCode::INTERNAL_SERVER_ERROR, &error::chain(&e)),

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! `kibbr compact` - the command: who runs it and what it prints. The rebuild is the
-//! store's (`store::disk::compact`) and the run the engine's
+//! store's (`rows::disk::compact`) and the run the engine's
 //! (`crate::engine::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
 //! one process writes the manifest, so a server holding the directory is asked
 //! (`POST /compact`), and with none the command takes the lock and compacts alone.

@@ -376,7 +376,7 @@ fn a_scan_is_shared_out_from_a_blocking_thread_and_never_from_a_worker() {
     let count = runtime
         .block_on(async {
             tokio::spawn(async move {
-                engine::engine::execute(held.db.trie(), held.db.stores(), &query).map(|result| result.count)
+                engine::query::execute(held.db.trie(), held.db.stores(), &query).map(|result| result.count)
             })
             .await
         })
@@ -721,7 +721,7 @@ impl Listening {
         let server = &self.server;
         let query = answer::from_trieql("COUNT LOG {}", Utc::now(), server.limits)
             .expect("a query");
-        let result = engine::engine::execute(server.db.trie(), server.db.stores(), &query);
+        let result = engine::query::execute(server.db.trie(), server.db.stores(), &query);
         result.expect("the query answers").count
     }
 

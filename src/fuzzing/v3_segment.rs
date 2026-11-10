@@ -38,13 +38,13 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::mem::size_of;
 use std::path::Path;
 
-use crate::core::types::ColValue;
-use crate::storage::frame::{self, Next};
-use crate::storage::store::v3::build::RowGroup;
-use crate::storage::store::v3::column::{Column, Memo};
-use crate::storage::store::v3::file::{self, Entry, Index, Reader};
-use crate::storage::store::v3::read::{self, Cell, ChunkDir, Header, PieceDir};
-use crate::storage::store::v3::{
+use crate::engine::model::types::ColValue;
+use crate::engine::format::frame::{self, Next};
+use crate::engine::format::build::RowGroup;
+use crate::engine::format::column::{Column, Memo};
+use crate::engine::format::file::{self, Entry, Index, Reader};
+use crate::engine::format::read::{self, Cell, ChunkDir, Header, PieceDir};
+use crate::engine::format::{
     type_byte, Bad, Bytes, Form, FormatError, JsonKind, Source, DAY_NS, HEADER_LEN, KIND_FOOTER,
     KIND_ROW_GROUP, KIND_SCHEMA, MAGIC, MAX_BODY, MAX_ROWS, NO_COMPRESSION, OPTIONAL,
     PRE_RENAME_MAGIC, TRAILER_LEN, VERSION, ZSTD,
@@ -1454,17 +1454,17 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::core::flatten::parse_line;
-    use crate::storage::db::row_of;
-    use crate::storage::store::v3::build::{build as build_group, schema_of, Level};
-    use crate::storage::store::v3::file::Writer;
-    use crate::storage::store::v3::{put_varint, zigzag};
-    use crate::storage::store::{effective_ts, Row};
+    use crate::engine::parse::flatten::parse_line;
+    use crate::engine::ingest::row_of;
+    use crate::engine::format::build::{build as build_group, schema_of, Level};
+    use crate::engine::format::file::Writer;
+    use crate::engine::format::{put_varint, zigzag};
+    use crate::engine::rows::{effective_ts, Row};
 
     fn vector(name: &str) -> Vec<u8> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata")
-            .join("v3")
+            .join("format")
             .join(name);
         std::fs::read(path).expect("a test vector")
     }

@@ -14,7 +14,7 @@ sample.ndjson
 !/testdata/fixture.ndjson
 !/testdata/roundtrip.ndjson
 !/testdata/sample_logs.ndjson
-!/testdata/v3/
+!/testdata/format/
 
 # `kibbr bench` keeps its loaded directory, its work and its default results under
 # testdata/bench/, and all of that is scratch. A result saved there by name, with the raw

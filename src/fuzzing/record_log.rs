@@ -27,11 +27,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::core::types::{ColumnType, TimeSource};
-use crate::storage::catalog::{self, Token};
-use crate::storage::frame::{self, Next, Opened, HEADER};
-use crate::storage::store::manifest::{self, Decoded, FileRecord, WalMark};
-use crate::storage::trie::Trie;
+use crate::engine::model::types::{ColumnType, TimeSource};
+use crate::engine::templates::catalog::{self, Token};
+use crate::engine::format::frame::{self, Next, Opened, HEADER};
+use crate::engine::rows::manifest::{self, Decoded, FileRecord, WalMark};
+use crate::engine::templates::trie::Trie;
 
 /// The kinds the catalog has, written out here and not borrowed from the reader: a
 /// kind dropped from the reader's own list would otherwise be dropped from the check too.

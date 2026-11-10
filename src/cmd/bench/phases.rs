@@ -16,7 +16,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::core::fmt::commas;
+use crate::engine::fmt::commas;
 
 use super::corpus::{self, Corpus, LiveStream};
 use super::host::{self, Cpu};

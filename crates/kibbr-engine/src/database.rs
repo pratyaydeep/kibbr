@@ -17,28 +17,28 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::compact;
-use crate::core::error::DetectorError;
-use crate::core::flatten::ParsedLog;
-use crate::core::types::ColumnType;
-use crate::engine::{self, ExecError, Plan, Query, QueryResult};
+use crate::error::DetectorError;
+use crate::parse::flatten::ParsedLog;
+use crate::model::types::ColumnType;
+use crate::query::{self, ExecError, Plan, Query, QueryResult};
 use crate::error::{self, DetectorErrorKind, Error, IngestError};
 use crate::lifecycle::{self, log, log_warn, Held, Replayed};
 use crate::load;
-use crate::storage::catalog::CatalogError;
-use crate::storage::db;
-use crate::storage::lock::{DataLock, Holder};
-use crate::storage::store::disk::{self, CompactOptions};
-use crate::storage::store::fan::{self, Fan};
-use crate::storage::store::{FlushSummary, Stop, StoreError, StoreManager, WriteHealth};
-use crate::storage::trie::{Trie, TrieError};
-use crate::storage::wal::{self, Wal};
+use crate::templates::catalog::CatalogError;
+use crate::ingest;
+use crate::lock::{DataLock, Holder};
+use crate::rows::disk::{self, CompactOptions};
+use crate::rows::scan_threads::{self, Fan};
+use crate::rows::{FlushSummary, Stop, StoreError, StoreManager, WriteHealth};
+use crate::templates::trie::{Trie, TrieError};
+use crate::wal::{self, Wal};
 
-pub use crate::storage::trie::{Schema, DEFAULT_TIME_COLUMNS};
+pub use crate::templates::trie::{Schema, DEFAULT_TIME_COLUMNS};
 
 /// The defaults of `Storage`'s fields that the stores and the log decide.
-pub use crate::storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES;
-pub use crate::storage::store::{DEFAULT_FAN_ROWS, DEFAULT_MAX_BUFFER_BYTES, DEFAULT_MAX_OPEN_SEGMENTS};
-pub use crate::storage::wal::{
+pub use crate::rows::disk::DEFAULT_SEGMENT_MAX_BYTES;
+pub use crate::rows::{DEFAULT_FAN_ROWS, DEFAULT_MAX_BUFFER_BYTES, DEFAULT_MAX_OPEN_SEGMENTS};
+pub use crate::wal::{
     DEFAULT_BATCH_LINES as DEFAULT_WAL_BATCH_LINES, DEFAULT_QUEUE_BYTES as DEFAULT_WAL_QUEUE_BYTES,
     DEFAULT_SEGMENT_BYTES as DEFAULT_WAL_SEGMENT_BYTES,
 };
@@ -99,23 +99,23 @@ impl Default for Storage {
             trie_file: None,
             flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
             row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
-            max_open_segments: crate::storage::store::DEFAULT_MAX_OPEN_SEGMENTS,
-            segment_max_bytes: crate::storage::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
-            max_buffer_bytes: crate::storage::store::DEFAULT_MAX_BUFFER_BYTES,
+            max_open_segments: crate::rows::DEFAULT_MAX_OPEN_SEGMENTS,
+            segment_max_bytes: crate::rows::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            max_buffer_bytes: crate::rows::DEFAULT_MAX_BUFFER_BYTES,
             compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
-            wal_segment_bytes: crate::storage::wal::DEFAULT_SEGMENT_BYTES,
-            wal_batch_lines: crate::storage::wal::DEFAULT_BATCH_LINES,
-            wal_queue_bytes: crate::storage::wal::DEFAULT_QUEUE_BYTES,
+            wal_segment_bytes: crate::wal::DEFAULT_SEGMENT_BYTES,
+            wal_batch_lines: crate::wal::DEFAULT_BATCH_LINES,
+            wal_queue_bytes: crate::wal::DEFAULT_QUEUE_BYTES,
             scan_threads: 0,
-            scan_fan_rows: crate::storage::store::DEFAULT_FAN_ROWS,
+            scan_fan_rows: crate::rows::DEFAULT_FAN_ROWS,
         }
     }
 }
 
 impl Storage {
     /// What the write-ahead log is written with.
-    pub fn wal_options(&self) -> crate::storage::wal::Options {
-        crate::storage::wal::Options {
+    pub fn wal_options(&self) -> crate::wal::Options {
+        crate::wal::Options {
             segment_bytes: self.wal_segment_bytes,
             batch_lines: self.wal_batch_lines,
             queue_bytes: self.wal_queue_bytes,
@@ -127,16 +127,16 @@ impl Storage {
     }
 
     /// The row group thresholds these settings imply; only the timeout is worth a knob.
-    pub fn row_group_limits(&self) -> crate::storage::store::RowGroupLimits {
-        crate::storage::store::RowGroupLimits {
+    pub fn row_group_limits(&self) -> crate::rows::RowGroupLimits {
+        crate::rows::RowGroupLimits {
             age: self.row_group_timeout,
-            ..crate::storage::store::RowGroupLimits::default()
+            ..crate::rows::RowGroupLimits::default()
         }
     }
 
     /// What the disk store is held to.
-    pub fn disk_options(&self) -> crate::storage::store::DiskOptions {
-        crate::storage::store::DiskOptions {
+    pub fn disk_options(&self) -> crate::rows::DiskOptions {
+        crate::rows::DiskOptions {
             row_groups: self.row_group_limits(),
             max_open_files: self.max_open_segments,
             segment_max_bytes: self.segment_max_bytes,
@@ -150,7 +150,7 @@ impl Storage {
     /// rather than authority, see `trie::DEFAULT_DATA_DIR`.
     pub fn data_dir(&self) -> String {
         self.base_path.as_ref().map_or_else(
-            || crate::storage::trie::DEFAULT_DATA_DIR.to_string(),
+            || crate::templates::trie::DEFAULT_DATA_DIR.to_string(),
             |path| path.display().to_string(),
         )
     }
@@ -431,7 +431,7 @@ impl Database {
         &self,
         address: Option<String>,
         token: Option<String>,
-    ) -> Result<(), crate::storage::lock::LockError> {
+    ) -> Result<(), crate::lock::LockError> {
         let mut lock = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         match lock.as_mut() {
             Some(lock) => lock.announce(&Holder::server(address, token)),
@@ -442,8 +442,8 @@ impl Database {
     /// A token nobody can guess, for whoever holds the directory to have a load show: see
     /// `lock.rs`.
     pub fn new_token() -> Result<String, Error> {
-        crate::storage::store::v3::file::new_file_id()
-            .map(|id| crate::storage::store::manifest::hex(&id))
+        crate::format::file::new_file_id()
+            .map(|id| crate::rows::manifest::hex(&id))
             .map_err(|e| Error::Storage {
                 detail: format!("drawing the load token: {e}"),
             })
@@ -509,7 +509,7 @@ impl Database {
 
         // ── Half one: split and parse, holding nothing ─────────────────────────────────
         let mut parse_errors = Vec::new();
-        let (parsed, stats) = db::parse_and_prepare(Cursor::new(body), &mut |e: DetectorError| {
+        let (parsed, stats) = ingest::parse_and_prepare(Cursor::new(body), &mut |e: DetectorError| {
             // Past the cap the rejection is counted and dropped. `stats.rejected` is
             // still the true total, so nothing is lost but the text.
             if parse_errors.len() < MAX_REPORTED_ERRORS {
@@ -532,13 +532,13 @@ impl Database {
         let mut unwritten = 0u64;
         let mut lines: Vec<wal::Line> = Vec::with_capacity(parsed.len());
         for (line, parsed, prepared) in parsed {
-            let kind = match db::place_in(&self.trie, &parsed, prepared, now) {
+            let kind = match ingest::place_in(&self.trie, &parsed, prepared, now) {
                 Ok(Some(placed)) => {
                     lines.push(wal::Line {
                         raw: parsed.raw_line,
                         // The time the row is filed under, as the store reads it: what the
                         // log writes down beside the line, for replay to hold it to.
-                        time: crate::storage::store::effective_ts(&placed.row, &placed.time_column)
+                        time: crate::rows::effective_ts(&placed.row, &placed.time_column)
                             .unwrap_or(0),
                         placed,
                     });
@@ -601,7 +601,7 @@ impl Database {
                     left,
                 };
                 let ticket = wal
-                    .enqueue(lines, db::arrival_nanos(now), wait)
+                    .enqueue(lines, ingest::arrival_nanos(now), wait)
                     .map_err(&refused)?;
                 // The permit is for the parse and the routing, so it is not held across the flush;
                 // kept across a wait for room, it bounds the parsed bodies held in memory.
@@ -689,11 +689,11 @@ impl Database {
 
     /// Held for as long as an ingested body is in its task: a query meanwhile scans on its
     /// own thread, so the scan takes no core from the parse. `None` with no scan threads.
-    pub fn ingest_body(&self) -> Option<fan::Body<'_>> {
+    pub fn ingest_body(&self) -> Option<scan_threads::Body<'_>> {
         self.fan.as_deref().map(Fan::body)
     }
 
-    /// The scan threads, for whoever must let them go last: see `store::fan`.
+    /// The scan threads, for whoever must let them go last: see `rows::scan_threads`.
     pub fn fan(&self) -> Option<Arc<Fan>> {
         self.fan.clone()
     }
@@ -708,24 +708,24 @@ impl Database {
 
     /// The templates a query must read, without reading a row.
     pub fn plan(&self, query: &Query) -> Plan {
-        engine::plan(&self.trie, query)
+        query::plan(&self.trie, query)
     }
 
     /// A query over the stores.
     pub fn execute(&self, query: &Query) -> Result<QueryResult, ExecError> {
-        engine::execute(&self.trie, &self.stores, query)
+        query::execute(&self.trie, &self.stores, query)
     }
 
     /// `execute`, for a caller that may stop wanting the answer.
     pub fn execute_until(&self, query: &Query, stop: &Stop) -> Result<QueryResult, ExecError> {
-        engine::execute_until(&self.trie, &self.stores, query, stop)
+        query::execute_until(&self.trie, &self.stores, query, stop)
     }
 
     /// The answer as the one JSON every surface gives (`answer::result_json`): the scan and
     /// then the answer put into JSON both ask `stop` as they go.
     pub fn answer_until(&self, query: &Query, stop: &Stop) -> Result<serde_json::Value, ExecError> {
-        engine::execute_until(&self.trie, &self.stores, query, stop).and_then(|result| {
-            crate::answer::result_json_until(query, &result, stop)
+        query::execute_until(&self.trie, &self.stores, query, stop).and_then(|result| {
+            crate::query::answer::result_json_until(query, &result, stop)
                 .ok_or(ExecError::Store(StoreError::Stopped))
         })
     }
@@ -761,11 +761,11 @@ impl Database {
         input: R,
         now: DateTime<Utc>,
         rows: bool,
-    ) -> Result<db::LoadStats, db::ReadError> {
-        db::read_lines(
+    ) -> Result<ingest::LoadStats, ingest::ReadError> {
+        ingest::read_lines(
             input,
-            &mut |_, parsed| db::ingest_line(&self.trie, rows.then_some(&*self.stores), &parsed, now),
-            &mut db::report_rejected,
+            &mut |_, parsed| ingest::ingest_line(&self.trie, rows.then_some(&*self.stores), &parsed, now),
+            &mut ingest::report_rejected,
         )
     }
 
@@ -779,7 +779,7 @@ impl Database {
     /// One flush tick: every row group that is due is closed and written, and the
     /// checkpoint moved up behind it.
     pub fn flush_due(&self) -> FlushSummary {
-        let summary = self.stores.flush_all(crate::storage::store::FlushKind::Tick);
+        let summary = self.stores.flush_all(crate::rows::FlushKind::Tick);
         // Behind the flush, never ahead of it: the checkpoint moves past a row only
         // once the row group holding it has been flushed and published.
         lifecycle::move_checkpoint(self);
@@ -815,7 +815,7 @@ impl Database {
                 "{} line(s) are in the write-ahead log and not in the store - the store \
                  refused their rows, or the start could not read them back. The log keeps \
                  them, and the next start tries again",
-                crate::core::fmt::commas(rows)
+                crate::fmt::commas(rows)
             )),
         }
     }
@@ -1062,7 +1062,7 @@ impl Database {
         log(&format!(
             "compaction job {id} - {}",
             match day {
-                Some(day) => crate::storage::store::disk::day_name(day),
+                Some(day) => crate::rows::disk::day_name(day),
                 None => format!("{} day(s) due", days.len()),
             }
         ));
@@ -1119,7 +1119,7 @@ impl Database {
                 // otherwise walk into the same panic every interval.
                 if let Some(planned) = days.get(noted) {
                     let failed = Err(StoreError::CompactFailed {
-                        day: crate::storage::store::disk::day_name(planned.0),
+                        day: crate::rows::disk::day_name(planned.0),
                         source: Box::new(StoreError::Io {
                             template_id: 0,
                             source: std::io::Error::other(why),

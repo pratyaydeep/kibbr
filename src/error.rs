@@ -5,7 +5,7 @@ use thiserror::Error;
 
 // What is wrong with one line is the flattener's to say, and it is two crates down; here
 // under the names every command already uses.
-pub use crate::core::error::{chain, report, BadByte, DetectorError, DetectorErrorKind};
+pub use crate::engine::error::{chain, report, BadByte, DetectorError, DetectorErrorKind};
 
 /// Errors from the log generator.
 #[derive(Debug, Error)]
@@ -115,12 +115,12 @@ pub enum CliError {
     // Transparent, not wrapped: `ParseError` says where it was and `report` walks the
     // source chain, so a wrapper would print the same sentence twice.
     #[error(transparent)]
-    Trieql(#[from] crate::engine::trieql::ParseError),
+    Trieql(#[from] crate::engine::query::trieql::ParseError),
 
     // Transparent for the reason `Trieql` is. No `--after:` prefix either - the flag and
     // `AFTER` both land here, and naming one of them would be wrong half the time.
     #[error(transparent)]
-    Cursor(#[from] crate::engine::engine::CursorError),
+    Cursor(#[from] crate::engine::query::CursorError),
 
     #[error(transparent)]
     Store(#[from] crate::engine::StoreError),
@@ -128,7 +128,7 @@ pub enum CliError {
     // Transparent for the reason `Trieql` is - `BucketError`'s own sentence names the
     // requested and permitted counts, and a wrapper would print a vaguer one above it.
     #[error(transparent)]
-    Exec(#[from] crate::engine::engine::ExecError),
+    Exec(#[from] crate::engine::query::ExecError),
 
     /// What a server could not start or finish with, or refused a TrieQL string with: the
     /// server crate's own error.

@@ -19,9 +19,9 @@ use chrono::{DateTime, Utc};
 use crate::config::Limits;
 use crate::cmd::query;
 use crate::{error, gen};
-use crate::core::flatten;
-use crate::core::fmt::commas;
-use crate::engine::engine::Query;
+use crate::engine::parse::flatten;
+use crate::engine::fmt::commas;
+use crate::engine::query::Query;
 use crate::engine::{Database, Options, Schema};
 
 use super::phases::percentile;

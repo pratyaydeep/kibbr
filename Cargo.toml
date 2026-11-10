@@ -1,8 +1,8 @@
 [workspace]
-# Five crates, each allowed to name only the ones under it: kibbr -> kibbr-server ->
-# kibbr-engine -> kibbr-storage -> kibbr-core.
+# Three crates: kibbr-engine, the whole database, and the two layers over it that name it,
+# kibbr-server (HTTP) and kibbr (the command line), which names both.
 # fuzz/ is a workspace of its own, so `cargo build` here never builds a fuzzer.
-members = ["crates/kibbr-core", "crates/kibbr-storage", "crates/kibbr-engine", "crates/kibbr-server"]
+members = ["crates/kibbr-engine", "crates/kibbr-server"]
 exclude = ["fuzz", "lab-rs"]
 resolver = "2"
 
@@ -20,8 +20,6 @@ keywords = ["logs", "logging", "database", "columnar", "observability"]
 # is here; a crate takes what it calls with `workspace = true`.
 [workspace.dependencies]
 # The four crates by path here, and by this version once published: `cargo publish` wants both.
-kibbr-core = { path = "crates/kibbr-core", version = "0.2.3" }
-kibbr-storage = { path = "crates/kibbr-storage", version = "0.2.3" }
 kibbr-engine = { path = "crates/kibbr-engine", version = "0.2.3" }
 kibbr-server = { path = "crates/kibbr-server", version = "0.2.3" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
@@ -70,8 +68,6 @@ categories = ["database-implementations", "command-line-utilities"]
 exclude = ["/testdata/", "/bench/", "/deploy/", "/docs/", "/scripts/", "/fuzz/", "/.github/", "/lab/", "/lab-rs/", "/web/"]
 
 [dependencies]
-kibbr-core.workspace = true
-kibbr-storage.workspace = true
 kibbr-engine.workspace = true
 kibbr-server.workspace = true
 chrono.workspace = true
@@ -90,7 +86,7 @@ tokio-util.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
-# The storage crate's samples and failure hooks, for the tests here that hold a server to them.
-kibbr-storage = { workspace = true, features = ["test-support"] }
+# The engine's samples and failure hooks, for the tests here that hold a server to them.
+kibbr-engine = { workspace = true, features = ["test-support"] }
 # The `/ingest` tests build their own gzip bodies, the bomb included, not the machine's `gzip(1)`.
 flate2.workspace = true

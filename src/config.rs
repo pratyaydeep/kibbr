@@ -13,11 +13,11 @@ use std::time::Duration;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::core::infer::EpochWindow;
+use crate::engine::model::infer::EpochWindow;
 
 // The two groups of settings the crates below this one read, declared where they are
 // read; this module is where they are loaded and what the commands name them by.
-pub use crate::engine::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
+pub use crate::engine::query::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
 pub use crate::engine::database::{Options, Schema, DEFAULT_TIME_COLUMNS};
 
 // What a server runs on is declared in the server crate, where it is read; this module
@@ -858,10 +858,10 @@ impl LoadApiLimits for ApiLimits {
             file.api.max_decompressed_bytes,
             DEFAULT_MAX_DECOMPRESSED_BYTES,
         )?;
-        if max_decompressed_bytes > crate::core::lines::MAX_LINE_BYTES {
+        if max_decompressed_bytes > crate::engine::parse::lines::MAX_LINE_BYTES {
             return Err(ConfigError::DecompressedAboveLineCap {
                 asked: max_decompressed_bytes,
-                limit: crate::core::lines::MAX_LINE_BYTES,
+                limit: crate::engine::parse::lines::MAX_LINE_BYTES,
             });
         }
 

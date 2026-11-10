@@ -3,7 +3,7 @@
 
 //! What a server keeps about the compactions it runs, and the run itself.
 //!
-//! The rebuild is the store's (`store::disk::compact`); here is what is around it: which
+//! The rebuild is the store's (`rows::disk::compact`); here is what is around it: which
 //! days a run takes, what it reports, and the jobs, counters and failures a server keeps.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::fmt::commas;
-use crate::storage::store::disk::{self, CompactOptions, Compacted, DiskStore, Due};
-use crate::storage::store::StoreError;
+use crate::fmt::commas;
+use crate::rows::disk::{self, CompactOptions, Compacted, DiskStore, Due};
+use crate::rows::StoreError;
 
 // ── What a run did ─────────────────────────────────────────────────────────────────
 
@@ -248,7 +248,7 @@ impl Jobs {
                         inputs,
                         times: before.saturating_add(1),
                         at: Instant::now(),
-                        error: crate::core::error::chain(e),
+                        error: crate::error::chain(e),
                     },
                 );
             }

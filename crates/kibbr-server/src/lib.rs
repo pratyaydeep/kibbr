@@ -43,7 +43,8 @@ use std::path::Path;
 
 use crate::error::IngestError;
 use engine::fmt::{commas, rfc3339_at};
-use engine::{answer, compact, load, CompactRefused, Database, Fan, Stop, StoreError};
+use engine::query::answer;
+use engine::{compact, load, CompactRefused, Database, Fan, Stop, StoreError};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;

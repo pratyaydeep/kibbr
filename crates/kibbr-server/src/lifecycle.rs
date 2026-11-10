@@ -22,7 +22,7 @@ pub struct Report {
 /// by SIGTERM or SIGINT; the runtime is built here because the settings size it.
 pub fn run(settings: Settings, cancel: CancellationToken) -> Result<Report> {
     // The scan threads' last owner. Declared before the runtime, so let go after it, on
-    // the calling thread when no runtime thread exists (see `store::fan`).
+    // the calling thread when no runtime thread exists (see the engine's `rows::scan_threads`).
     let scan: OnceLock<Arc<Fan>> = OnceLock::new();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

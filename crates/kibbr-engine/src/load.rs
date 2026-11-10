@@ -21,22 +21,22 @@ use flate2::read::MultiGzDecoder;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::core::error::{DetectorError, DetectorErrorKind};
-use crate::core::flatten::{parse_line, ParsedLog};
-use crate::core::lines::{
+use crate::error::{DetectorError, DetectorErrorKind};
+use crate::parse::flatten::{parse_line, ParsedLog};
+use crate::parse::lines::{
     read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
 };
-use crate::core::types::TimeSource;
-use crate::storage::db::{self, Prepared, SinkError};
-use crate::storage::store::disk::{day_name, Committed, LoadCommit, StagedFile};
-use crate::storage::store::v3::build::{self, schema_of, Level};
-use crate::storage::store::v3::file::Writer;
-use crate::storage::store::v3::{day_of, Source};
-use crate::storage::store::{
+use crate::model::types::TimeSource;
+use crate::ingest::{self, Prepared, SinkError};
+use crate::rows::disk::{day_name, Committed, LoadCommit, StagedFile};
+use crate::format::build::{self, schema_of, Level};
+use crate::format::file::Writer;
+use crate::format::{day_of, Source};
+use crate::rows::{
     effective_ts, ts_of, value_bytes, DiskStore, Row, RowGroupLimits, StoreError, StoreManager,
     RECEIVED_AT_COLUMN,
 };
-use crate::storage::trie::Trie;
+use crate::templates::trie::Trie;
 
 /// How many rows the early arrival-time check reads before anything is staged: enough
 /// that a share of 1% is a hundred of them, and an early exit only.
@@ -213,7 +213,7 @@ const MAX_REPORTED_ERRORS: usize = 1_000;
 impl Report {
     /// One line for a terminal.
     pub fn summary(&self) -> String {
-        use crate::core::fmt::commas;
+        use crate::fmt::commas;
         let mut out = format!(
             "loaded {} rows from {} lines ({} rejected) as load {}: {} row groups in {} \
              file(s) over {} day(s), {:.1}s",
@@ -284,7 +284,7 @@ pub enum LoadError {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
-    Format(#[from] crate::storage::store::v3::FormatError),
+    Format(#[from] crate::format::FormatError),
     /// `counted` says which rows the share is of - the head's, or every row - and `advice`
     /// differs with it: see `Checked`.
     #[error(
@@ -320,7 +320,7 @@ pub enum LoadError {
     /// What ended the read of the input's lines: the read loop's own error, printed as
     /// the sentence it wrote.
     #[error(transparent)]
-    Lines(#[from] db::ReadError),
+    Lines(#[from] ingest::ReadError),
     /// The data directory could not be opened as a server's start opens it.
     #[error(transparent)]
     Open(#[from] crate::Error),
@@ -330,8 +330,8 @@ pub enum LoadError {
     Caller(Box<dyn std::error::Error + Send + Sync>),
 }
 
-impl From<crate::storage::lock::LockError> for LoadError {
-    fn from(e: crate::storage::lock::LockError) -> Self {
+impl From<crate::lock::LockError> for LoadError {
+    fn from(e: crate::lock::LockError) -> Self {
         LoadError::Input(e.to_string())
     }
 }
@@ -729,7 +729,7 @@ impl<'a> Lines<'a> {
                     })? {
                         Resync::Done => return Ok(Some((at, None))),
                         Resync::NotDelimited { scanned } => {
-                            return Err(db::ReadError::NotNewlineDelimited {
+                            return Err(ingest::ReadError::NotNewlineDelimited {
                                 line: at,
                                 scanned,
                                 limit: MAX_LINE_BYTES,
@@ -888,7 +888,7 @@ impl Tally {
                         match &meta.time_source {
                             TimeSource::Arrival => format!(
                                 "Datetime-typed keys: {}",
-                                crate::storage::trie::datetime_keys(
+                                crate::templates::trie::datetime_keys(
                                     meta.columns.iter().map(|c| (c.name.as_str(), c.col_type)),
                                 )
                             ),
@@ -1007,7 +1007,7 @@ fn head_row(
             .or_insert_with(|| {
                 let source =
                     TimeSource::choose(trie.time_columns(), |name| parsed.column_type(name));
-                let keys = crate::storage::trie::datetime_keys(
+                let keys = crate::templates::trie::datetime_keys(
                     parsed
                         .keys
                         .iter()
@@ -1088,7 +1088,7 @@ impl Stage<'_> {
             let day_dir = self.dir.join(day_name(day));
             if !day_dir.exists() {
                 fs::create_dir_all(&day_dir).map_err(Self::io(&day_dir))?;
-                crate::storage::frame::sync_dir(self.dir).map_err(Self::io(self.dir))?;
+                crate::format::frame::sync_dir(self.dir).map_err(Self::io(self.dir))?;
             }
             let seq = {
                 let n = self.next.entry(day).or_insert(1);
@@ -1506,8 +1506,8 @@ fn run_inner(
         return Err(StoreError::LoadRepeated { load_id }.into());
     }
     let limit = opts.max_arrival_share;
-    let day = day_name(day_of(crate::storage::store::nanos_of(
-        crate::storage::store::system_time(opts.received_at),
+    let day = day_name(day_of(crate::rows::nanos_of(
+        crate::rows::system_time(opts.received_at),
     )));
     let head = arrival_head(trie, &inputs, &unpaced, &Rounds::of(opts))?;
     if !opts.proceed && head.share() > limit {
@@ -1701,7 +1701,7 @@ fn stage_all(
                         continue;
                     }
                 };
-                let placed = match db::place(trie, &parsed, prepared, opts.received_at) {
+                let placed = match ingest::place(trie, &parsed, prepared, opts.received_at) {
                     Ok(Some(placed)) => placed,
                     Ok(None) => {
                         let e = DetectorError::new(
@@ -1865,7 +1865,7 @@ mod tests {
     struct Store {
         trie: Trie,
         stores: StoreManager,
-        _lock: crate::storage::lock::DataLock,
+        _lock: crate::lock::DataLock,
     }
 
     impl Store {
@@ -1880,8 +1880,8 @@ mod tests {
                 trie_file: Some(base.join("trie.json")),
                 ..crate::Storage::default()
             };
-            let lock = crate::storage::lock::DataLock::acquire(&base).expect("lock");
-            let (trie, stores) = crate::open_durable(&storage, &crate::Schema::default())
+            let lock = crate::lock::DataLock::acquire(&base).expect("lock");
+            let (trie, stores) = crate::lifecycle::open_durable(&storage, &crate::Schema::default())
                 .expect("open the data directory");
             Self {
                 trie,
@@ -1917,7 +1917,7 @@ mod tests {
                     continue;
                 };
                 let scan = store
-                    .scan(&crate::storage::store::ScanOptions::default(), &[])
+                    .scan(&crate::rows::ScanOptions::default(), &[])
                     .expect("scan");
                 out.extend(scan.rows.into_iter().map(|row| (id, row)));
             }
@@ -1986,7 +1986,7 @@ mod tests {
         let mut seen = vec![false; LINES];
         let mut last: HashMap<(u64, i64), i64> = HashMap::new();
         for (template, row) in store.rows() {
-            let Some(crate::core::types::ColValue::Int64(n)) = row.get("n") else {
+            let Some(crate::model::types::ColValue::Int64(n)) = row.get("n") else {
                 panic!("a row with no n: {row:?}");
             };
             let day = day_of(effective_ts(&row, "ts").expect("a time"));
@@ -2182,7 +2182,7 @@ mod tests {
         let staging = scratch
             .0
             .join("store")
-            .join(crate::storage::store::disk::STAGING_DIR);
+            .join(crate::rows::disk::STAGING_DIR);
         let left: Vec<_> = fs::read_dir(&staging)
             .map(|d| d.flatten().map(|e| e.path()).collect())
             .unwrap_or_default();

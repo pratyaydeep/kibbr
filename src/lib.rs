@@ -126,8 +126,6 @@
 //!
 //! Licensed AGPL-3.0-only; contributions under MIT.
 
-pub use kibbr_core as core;
-pub use kibbr_storage as storage;
 pub use kibbr_engine as engine;
 pub use kibbr_server as server;
 

@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::core::flatten::ParsedLog;
-use crate::core::types::{ColValue, ColumnType};
-use crate::engine::engine::{
+use crate::engine::parse::flatten::ParsedLog;
+use crate::engine::model::types::{ColValue, ColumnType};
+use crate::engine::query::{
     group_values, leaf_key, split_keys, value_matches, ExecError, Group, MatchValue, Query,
     QueryMeta, QueryMode, QueryResult,
 };
@@ -86,7 +86,7 @@ pub fn run(
             let slot = col_types
                 .entry((line.template_id, key.clone()))
                 .or_insert(None);
-            *slot = crate::core::types::join(*slot, incoming);
+            *slot = crate::engine::model::types::join(*slot, incoming);
         }
     }
 

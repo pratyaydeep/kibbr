@@ -6,7 +6,7 @@
 use kibbr::cmd::{ask, bench, bench_storage, compact, demo, load, parse, query};
 use kibbr::gen::{self, Profile};
 use kibbr::{config, error, logs};
-use kibbr::core::infer;
+use kibbr::engine::model::infer;
 
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;

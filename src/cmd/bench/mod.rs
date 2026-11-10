@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use chrono::{SecondsFormat, Utc};
 use thiserror::Error;
 
-use crate::core::fmt::commas;
+use crate::engine::fmt::commas;
 
 use corpus::{BuiltBy, Corpus};
 use host::Swap;

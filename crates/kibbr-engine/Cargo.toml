@@ -14,20 +14,18 @@ keywords.workspace = true
 categories = ["database-implementations"]
 
 [dependencies]
-kibbr-core.workspace = true
-kibbr-storage.workspace = true
 chrono.workspace = true
+crc32c.workspace = true
 flate2.workspace = true
+libc.workspace = true
+rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 zstd.workspace = true
 
-[dev-dependencies]
-kibbr-storage = { workspace = true, features = ["test-support"] }
-
 [features]
-# What a test of a crate above this one reaches into a database with: see `Database`'s
-# test-only methods. A `#[cfg(test)]` item is not there for another crate's tests.
-test-support = ["kibbr-storage/test-support"]
+# What a test of a crate above this one builds its rows and files from, and reaches into a
+# database with: a `#[cfg(test)]` item is not there for another crate's tests.
+test-support = []

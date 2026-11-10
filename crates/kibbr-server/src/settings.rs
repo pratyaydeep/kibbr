@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-pub use crate::engine::limits::Limits;
+pub use crate::engine::query::limits::Limits;
 // Where rows are kept is the database's to say, and is declared there; a server is
 // started with it all the same.
 pub use crate::engine::database::{
