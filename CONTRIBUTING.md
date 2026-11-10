@@ -60,6 +60,7 @@ cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 scripts/check/spdx.sh
 scripts/check/no_internals.sh
+scripts/check/cmd_no_tools.sh
 scripts/check/agree.sh
 ROUNDS=3 scripts/fault/crash_test.sh
 ```

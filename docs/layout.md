@@ -13,35 +13,41 @@ modules of `kibbr-engine` now (`model` and `parse`; `format`, `templates`, `rows
 The command line over a `Database`. It opens a data directory no other way.
 
 ```
-Cargo.toml                the workspace, and the `kibbr` crate: the binary - the command line
-src/main.rs               the clap definitions and the dispatch
-src/config.rs             where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
-src/logs.rs               the process's own log: `tracing` events as lines of text or of JSON
-src/error.rs              thiserror enums of the commands, and what ends one
-src/client.rs             the small HTTP client `load`, `compact` and `bench-storage --es` speak
-src/cmd/parse.rs          the `parse` output
-src/cmd/demo.rs           the `demo` tree
-src/cmd/query.rs          the `query` command: the flags, the table, the plan
-src/cmd/load.rs           `kibbr load` - the command: alone, or asked of the server holding the directory
-src/cmd/compact.rs        `kibbr compact` - the command, the same two ways
-src/cmd/ask.rs            `kibbr templates`, `kibbr stats` and `kibbr health`
-src/cmd/bench_storage.rs  `kibbr bench-storage`
-src/cmd/bench/            `kibbr bench`
-src/gen/                  the generators - `hostile` (mod.rs) and the log farm (farm.rs)
-src/reference/            the brute-force oracle behind `query --reference`
-src/fuzzing/              the `cursor` and `trieql` harnesses, behind the `fuzzing` feature
-tests/fixture.rs          outer-surface tests
-tests/serve.rs            the HTTP contract, over a bare TcpStream - in this process, or of the binary
-Dockerfile                the image: a static binary on distroless, and the `bench` target
-bench/run.sh              `kibbr bench` in a container; bench/results/ holds what it measured
-deploy/                   the Kubernetes manifests and the Vector sinks
-scripts/                  the check, fault and measure scripts
+Cargo.toml                  the workspace, and the `kibbr` crate: the binary - the command line
+src/main.rs                 the clap definitions and the dispatch
+src/config.rs               where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
+src/logs.rs                 the process's own log: `tracing` events as lines of text or of JSON
+src/error.rs                thiserror enums of the commands, and what ends one
+src/client.rs               the small HTTP client `load`, `compact` and `bench-storage --es` speak
+src/cmd/                    what someone runs in production; it never names src/tools/
+src/cmd/serve.rs            `kibbr serve` - the server's settings made, the server run, the exit code
+src/cmd/load.rs             `kibbr load` - the command: alone, or asked of the server holding the directory
+src/cmd/compact.rs          `kibbr compact` - the command, the same two ways
+src/cmd/query.rs            the `query` command: the flags, the table, the plan
+src/cmd/oracle.rs           the brute-force oracle behind `query --reference`
+src/cmd/status.rs           `kibbr templates`, `kibbr stats` and `kibbr health`
+src/tools/                  what someone runs to try, measure or test kibbr
+src/tools/parse.rs          the `parse` output
+src/tools/demo.rs           the `demo` tree
+src/tools/gen/              the generators - `hostile` (mod.rs) and the log farm (farm.rs)
+src/tools/bench_storage.rs  `kibbr bench-storage`
+src/tools/bench/            `kibbr bench`
+src/tools/fuzzing/          the `cursor` and `trieql` harnesses, behind the `fuzzing` feature
+tests/fixture.rs            outer-surface tests
+tests/serve.rs              the HTTP contract, over a bare TcpStream - in this process, or of the binary
+Dockerfile                  the image: a static binary on distroless, and the `bench` target
+bench/run.sh                `kibbr bench` in a container; bench/results/ holds what it measured
+deploy/                     the Kubernetes manifests and the Vector sinks
+scripts/                    the check, fault and measure scripts
 ```
 
-- **No traits.** There is one implementation of everything so far, and an interface with a
-  single caller is a guess. That includes the ingest path: a future `Ingestor` would sit
-  between the API and the trie, and it is a plain function until something gives it a
-  second caller to answer to.
+- **Traits only where there are two.** The engine's row stores are the one place with a
+  second implementation, and four traits in `rows/mod.rs`: `Store`, `LeafStore` and
+  `Snapshot`, each implemented in memory (`rows/memory.rs`, whose snapshot is `Live`
+  beside the traits) and on disk (`rows/disk.rs`), and `Visitor`, where a
+  scan hands its rows - a count, a fetch, a group-by. Everything else has one
+  implementation, and an interface with a single caller is a guess. That includes the
+  ingest path: it is a plain function until something gives it a second caller.
 - **The allocator is [mimalloc](https://github.com/microsoft/mimalloc).** On macOS arm64 the
   system one aborted the server with "pointer being freed was not allocated" at unrelated
   free sites that neither the code (no `unsafe`) nor AddressSanitizer could account for.

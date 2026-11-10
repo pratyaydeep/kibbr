@@ -27,6 +27,7 @@ seed of the generated lines.
 | `time_columns.sh` | `every row has a time`: the count equals the windowed count, no `undated` directory |
 | `spdx.sh` | `N files, 0 without the header`: every `.rs` file starts with the copyright and SPDX lines; `--fix` adds them |
 | `no_internals.sh` | `kibbr-server never names kibbr_engine::internals`: no file under `crates/kibbr-server/` names the engine's doc-hidden module |
+| `cmd_no_tools.sh` | `src/cmd/ never names src/tools/`: what runs in production never names the bench, the generators or the fuzz harnesses |
 | `strip_comments.py` | not a check of the binary: prints Rust source without comments, to show a diff changed comments only |
 
 `store_agree.sh`, `two_doors.sh` and `roundtrip.sh` print `scan fan-outs ...`, and with
