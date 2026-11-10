@@ -14,8 +14,6 @@ keywords.workspace = true
 categories = ["database-implementations"]
 
 [dependencies]
-kibbr-core.workspace = true
-kibbr-storage.workspace = true
 kibbr-engine.workspace = true
 axum.workspace = true
 chrono.workspace = true
@@ -27,10 +25,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-zstd.workspace = true
 
 [dev-dependencies]
-# The storage crate's samples and failure hooks, for the tests here that use them.
-kibbr-storage = { workspace = true, features = ["test-support"] }
-# What the tests here reach into a database with.
+# What the tests here reach into a database with, and the storage's failure hooks.
 kibbr-engine = { workspace = true, features = ["test-support"] }

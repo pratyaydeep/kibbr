@@ -45,7 +45,7 @@ pub(super) async fn post_compact(
     }
     let day = match request.day.as_deref() {
         None => None,
-        Some(text) => match crate::storage::store::disk::day_of_name(text) {
+        Some(text) => match crate::engine::day_of_name(text) {
             Some(day) => Some(day),
             None => {
                 return fail(

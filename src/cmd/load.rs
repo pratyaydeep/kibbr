@@ -170,7 +170,7 @@ fn alone(
     let _ = lock.announce(&crate::storage::lock::Holder::load());
     crate::storage::store::disk::refuse_other_versions(&base)?;
     let (trie, stores) =
-        crate::server::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
+        crate::engine::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
     // Standard input is spooled inside `staging/`, which the next start deletes: a load
     // that dies leaves nothing behind that anything names.
     let staging = base.join(crate::storage::store::disk::STAGING_DIR);

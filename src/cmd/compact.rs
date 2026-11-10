@@ -163,7 +163,7 @@ fn alone(
     let _ = lock.announce(&crate::storage::lock::Holder::compact());
     disk::refuse_other_versions(&base)?;
     let (_trie, stores) =
-        crate::server::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
+        crate::engine::open_durable(storage, schema).map_err(crate::error::CliError::from)?;
     let store = stores.disk_store().ok_or(CompactError::NoDisk)?;
     let opts = CompactOptions {
         threads: args

@@ -772,7 +772,7 @@ fn load_options(request: LoadRequest) -> Result<load::Options, String> {
     let replace_day = match request.replace_day.as_deref() {
         None => None,
         Some(text) => Some(
-            crate::storage::store::disk::day_of_name(text)
+            crate::engine::day_of_name(text)
                 .ok_or_else(|| format!("replace_day `{text}` is not a YYYY-MM-DD day"))?,
         ),
     };
@@ -865,7 +865,7 @@ pub(super) async fn post_load(State(server): State<Arc<Server>>, headers: Header
                 options.inputs.len(),
                 options
                     .replace_day
-                    .map(|d| format!(", replacing {}", crate::storage::store::disk::day_name(d)))
+                    .map(|d| format!(", replacing {}", crate::engine::day_name(d)))
                     .unwrap_or_default()
             ));
             // A panic is a failed job and not a job running for ever, which would refuse every

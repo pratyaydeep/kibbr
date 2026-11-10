@@ -327,7 +327,7 @@ fn measure(
     .map_err(CliError::from)?;
     let lock = crate::storage::lock::DataLock::acquire(&data)?;
     let (trie, stores) =
-        crate::server::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
+        crate::engine::open_durable(&storage, &schema).map_err(crate::error::CliError::from)?;
     let opts = load::Options {
         inputs: load::resolve(std::slice::from_ref(&args.input), None)?,
         replace_day: None,
@@ -624,7 +624,7 @@ fn live_day(
     storage.row_group_timeout = Duration::ZERO;
 
     let lock = crate::storage::lock::DataLock::acquire(data)?;
-    let (trie, stores) = crate::server::open_durable(&storage, schema).map_err(CliError::from)?;
+    let (trie, stores) = crate::engine::open_durable(&storage, schema).map_err(CliError::from)?;
     // One arrival time for the whole file, as the bulk door gives it one: a clock read per
     // line could split the file over midnight.
     let now = chrono::Utc::now();
@@ -672,7 +672,7 @@ fn live_day(
     }
 
     let lock = crate::storage::lock::DataLock::acquire(data)?;
-    let (trie, stores) = crate::server::open_durable(&storage, schema).map_err(CliError::from)?;
+    let (trie, stores) = crate::engine::open_durable(&storage, schema).map_err(CliError::from)?;
     let store = stores.disk_store().ok_or(LoadError::NoDisk)?;
     let opts = CompactOptions {
         threads: load::alone_threads(),

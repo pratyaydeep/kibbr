@@ -11,8 +11,6 @@
 //! Nothing here reads a flag or writes to stderr, and the flush clock lives here, not in
 //! the store: deciding when to write is a fact about the process lifecycle.
 
-use kibbr_core as core;
-use kibbr_storage as storage;
 use kibbr_engine as engine;
 
 use std::borrow::Cow;
@@ -44,11 +42,8 @@ use tokio_util::sync::CancellationToken;
 use std::path::Path;
 
 use crate::error::IngestError;
-use core::fmt::{commas, rfc3339_at};
-use engine::{answer, compact, load, CompactRefused, Database};
-use storage::store::fan::Fan;
-use storage::store::{Stop, StoreError};
-use storage::wal;
+use engine::fmt::{commas, rfc3339_at};
+use engine::{answer, compact, load, CompactRefused, Database, Fan, Stop, StoreError};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
@@ -323,15 +318,6 @@ impl Server {
         let db = engine::Claim::unlocked(engine::Options { storage, schema }).open()?;
         Ok(Self::with(db, now, limits, api, load_token))
     }
-}
-
-/// The trie and the stores of a data directory, restored as a server's start restores
-/// them but with the log left be; the caller holds the directory's `LOCK`.
-pub fn open_durable(
-    storage: &Storage,
-    schema: &Schema,
-) -> Result<(storage::trie::Trie, storage::store::StoreManager), Error> {
-    Ok(engine::open_durable(storage, schema)?)
 }
 
 /// Increments the in-flight count for as long as it is alive; a `Drop` guard, because

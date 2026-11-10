@@ -196,7 +196,7 @@ pub(super) async fn get_stats(State(server): State<Arc<Server>>) -> Response {
 
 /// `/stats`'s `storage.wal`: where the log has got to, and what is waiting on it. Two
 /// objects joined, because one `json!` holds only so many keys before it stops expanding.
-fn wal_stats(storage: &engine::Storage, db: &engine::Stats, wal: &wal::Stats) -> Value {
+fn wal_stats(storage: &engine::Storage, db: &engine::Stats, wal: &engine::WalStats) -> Value {
     let mut stats = json!({
         "dir": db.wal_dir.as_ref().map(|dir| dir.display().to_string()),
         "stream": format!("{:016x}", wal.stream),

@@ -24,7 +24,7 @@ pub const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// The largest an `/ingest` body may become once decompressed, capped at
 /// `lines::MAX_LINE_BYTES` so `LineTooLong` stays unreachable over HTTP.
-pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = crate::core::lines::MAX_LINE_BYTES;
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = crate::engine::MAX_LINE_BYTES;
 
 /// How many `/ingest` bodies may be in the parse-and-walk at once: one per core, as the
 /// work is CPU-bound, and 1 where the core count is unknowable.
