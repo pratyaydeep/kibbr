@@ -129,7 +129,9 @@ pub fn run(
     // `engine::Rank`'s tiebreak: `engine::leaf_key`, called because which number a key set
     // hashes to is contract, then file order over every line of the template.
     let mut seq: HashMap<u64, u64> = HashMap::new();
-    let mut ranked: Vec<(Rank, Row)> = Vec::new();
+    // Each row kept with its own time: the instant `effective` read off this line, its time
+    // column or its arrival, and never anything the engine computed.
+    let mut ranked: Vec<(Rank, Row, i64)> = Vec::new();
     // The group keys, split the way the engine splits them: what the clause named is
     // contract, not mechanism.
     let (width, columns) = match &query.mode {
@@ -184,7 +186,7 @@ pub fn run(
                 // page is still a row that matched, so the total is the same on every page.
                 let rank = (Reverse(Some(at_ns)), key, at);
                 if query.cursor.is_none_or(|c| rank > c.rank()) {
-                    ranked.push((rank, row));
+                    ranked.push((rank, row, at_ns));
                 }
             }
             QueryMode::GroupBy(_) => {
@@ -201,7 +203,7 @@ pub fn run(
     if query.mode == QueryMode::Fetch {
         // Sort everything and take the front: an oracle that shared `engine::Newest`'s bounded
         // version would stop being an independent answer.
-        ranked.sort_by_key(|(rank, _)| *rank);
+        ranked.sort_by_key(|(rank, _, _)| *rank);
         if let Some(n) = query.limit {
             if ranked.len() > n {
                 // `LIMIT 0` has no last row to resume after and so no cursor, as the
@@ -209,11 +211,16 @@ pub fn run(
                 result.meta.next_cursor = n
                     .checked_sub(1)
                     .and_then(|last| ranked.get(last))
-                    .map(|(rank, _)| query.cursor_at(*rank).encode());
+                    .map(|(rank, _, _)| query.cursor_at(*rank).encode());
             }
             ranked.truncate(n);
         }
-        result.rows = ranked.into_iter().map(|(_, row)| row).collect();
+        // `times` beside `rows`, index for index. Every line has a time here: a line with no
+        // time column takes its arrival, so no entry is `None`.
+        (result.rows, result.times) = ranked
+            .into_iter()
+            .map(|(_, row, at_ns)| (row, Some(at_ns)))
+            .unzip();
     }
     if matches!(query.mode, QueryMode::GroupBy(_)) {
         result.groups = fill(tally, width.filter(|_| timed), query, columns.len());
