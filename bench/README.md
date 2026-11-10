@@ -38,6 +38,9 @@ bench/run.sh --lines 1000000 --threads 8
 
 `--threads` is at most the box's cores; say what the box is when quoting the number.
 
+To start a box that runs a job, uploads its results and terminates itself, with nothing
+to log in to, see [cloud/README.md](cloud/README.md): `bench/cloud/aws.sh launch`.
+
 ## What it writes
 
 Under `bench/results/`, named for the UTC date (`-2`, `-3` for a second and third run of
