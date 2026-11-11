@@ -203,6 +203,7 @@ fn column_record(id: u64, name: &str, col_type: Option<ColumnType>) -> Record {
         template_id: id,
         name: name.into(),
         col_type,
+        epoch_digits: None,
         widened_from: None,
         at: None,
     }
@@ -372,6 +373,7 @@ fn a_template_id_with_no_next_id_is_skipped_and_never_fails_a_start() {
             template_id: u64::MAX,
             name: "ts".into(),
             col_type: Some(ColumnType::Datetime),
+            epoch_digits: None,
             widened_from: None,
             at: None,
         },
@@ -564,6 +566,7 @@ fn a_datetime_column_of_epoch_digits_that_meets_an_integer_becomes_int64() {
             widened[..],
             [Record::Column {
                 col_type: Some(ColumnType::Int64),
+                epoch_digits: None,
                 widened_from: Some(ColumnType::Datetime),
                 ..
             }]
@@ -637,13 +640,131 @@ fn the_other_widenings_of_dates_and_integers_are_unchanged() {
             "{first} then {second}"
         );
     }
-    // A date that was RFC 3339 all along, an integer, and then the next date: `String`.
-    let trie = Trie::new();
-    let line = r#"{"v":"2024-01-15T10:30:00Z"}"#;
-    feed(
-        &trie,
-        &[line, r#"{"v":5}"#, r#"{"v":"2024-01-15T10:30:01Z"}"#],
+    // A column of RFC 3339 dates is no column of counts: an integer makes it `String`,
+    // whether or not epoch digits arrived beside the dates.
+    let (rfc, digits, int) = (
+        r#"{"v":"2024-01-15T10:30:00Z"}"#,
+        r#"{"v":1679711330}"#,
+        r#"{"v":5}"#,
     );
+    for lines in [
+        vec![rfc, int],
+        vec![rfc, digits, int],
+        vec![digits, rfc, int],
+        vec![digits, int, rfc],
+        vec![int, digits, rfc],
+    ] {
+        let trie = Trie::new();
+        feed(&trie, &lines);
+        assert_eq!(
+            column_of(&trie, lines[0], "v").0,
+            Some(ColumnType::String),
+            "{lines:?}"
+        );
+    }
+}
+
+/// What the catalog's records say `v` is, last record winning: its type and what it says
+/// of its values.
+fn recorded(records: &[Record]) -> (Option<ColumnType>, Option<bool>) {
+    records
+        .iter()
+        .filter_map(|record| match record {
+            Record::Column {
+                name,
+                col_type,
+                epoch_digits,
+                ..
+            } if name == "v" => Some((*col_type, *epoch_digits)),
+            _ => None,
+        })
+        .next_back()
+        .expect("a record of `v`")
+}
+
+/// **A `Datetime` column records whether its values were all epoch digits, and a restart
+/// reads it back**: so the column widens after a restart as it would have before it -
+/// digits and an integer to `Int64`, an RFC 3339 date and an integer to `String`.
+#[test]
+fn a_datetime_column_records_what_its_values_were_across_a_restart() {
+    let (rfc, digits, millis) = (
+        r#"{"v":"2024-01-15T10:30:00Z"}"#,
+        r#"{"v":1679711330}"#,
+        r#"{"v":"1679711331000"}"#,
+    );
+    // The lines before the restart, what the catalog then says of `v`, and the type an
+    // integer arriving after the restart makes it.
+    let cases: [(Vec<&str>, Option<bool>, ColumnType); 4] = [
+        (vec![digits], Some(true), ColumnType::Int64),
+        (vec![digits, millis], Some(true), ColumnType::Int64),
+        (vec![rfc], Some(false), ColumnType::String),
+        // The first RFC 3339 date in a column of digits is a record of its own.
+        (vec![digits, rfc], Some(false), ColumnType::String),
+    ];
+    for (at, (lines, says, then)) in cases.into_iter().enumerate() {
+        let dir = scratch(&format!("epoch-digits-{at}"));
+        let path = crate::templates::catalog::path_in(&dir);
+        let trie = Trie::new_in(&dir.display().to_string());
+        trie.attach_catalog(Catalog::open(&path, &mut |_| {}).expect("open").0);
+        feed(&trie, &lines);
+        let before = std::fs::metadata(&path).expect("the catalog").len();
+        // More of what it has already seen changes nothing, and writes nothing.
+        feed(&trie, &lines[lines.len() - 1..]);
+        assert_eq!(std::fs::metadata(&path).expect("the catalog").len(), before);
+        drop(trie);
+
+        let (catalog, records) = Catalog::open(&path, &mut |_| {}).expect("reopen");
+        assert_eq!(
+            recorded(&records),
+            (Some(ColumnType::Datetime), says),
+            "{lines:?}"
+        );
+        let again = Trie::from_catalog("data", &records, &mut |w| panic!("{w}")).expect("rebuild");
+        again.attach_catalog(catalog);
+        feed(&again, &[r#"{"v":5}"#]);
+        assert_eq!(column_of(&again, lines[0], "v").0, Some(then), "{lines:?}");
+        drop(again);
+        // The widened column says nothing of its values: it is not a `Datetime`.
+        let (_, records) = Catalog::open(&path, &mut |_| {}).expect("reopen");
+        assert_eq!(recorded(&records), (Some(then), None), "{lines:?}");
+    }
+}
+
+/// **A catalog from before the fact was kept says nothing of a `Datetime` column's
+/// values**: an integer is then taken as the sign that they are counts, and the first RFC
+/// 3339 date settles that they are not - and is recorded, so it stays settled.
+#[test]
+fn a_datetime_column_from_an_older_catalog_learns_what_its_values_are() {
+    let older = || {
+        vec![
+            template_record(101, "v"),
+            column_record(101, "v", Some(ColumnType::Datetime)),
+        ]
+    };
+    let line = r#"{"v":1679711330}"#;
+
+    let trie = Trie::from_catalog("data", &older(), &mut |w| panic!("{w}")).expect("rebuild");
+    feed(&trie, &[line, r#"{"v":5}"#]);
+    assert_eq!(column_of(&trie, line, "v").0, Some(ColumnType::Int64));
+
+    let dir = scratch("epoch-digits-older");
+    let path = crate::templates::catalog::path_in(&dir);
+    let trie = Trie::from_catalog("data", &older(), &mut |w| panic!("{w}")).expect("rebuild");
+    trie.attach_catalog(Catalog::open(&path, &mut |_| {}).expect("open").0);
+    // Digits say nothing of the values before them: no record. A date in text does.
+    feed(&trie, &[line]);
+    assert_eq!(std::fs::metadata(&path).expect("the catalog").len(), 0);
+    feed(&trie, &[r#"{"v":"2024-01-15T10:30:00Z"}"#]);
+    drop(trie);
+    let (_, records) = Catalog::open(&path, &mut |_| {}).expect("reopen");
+    assert_eq!(
+        recorded(&records),
+        (Some(ColumnType::Datetime), Some(false))
+    );
+    let mut all = older();
+    all.extend(records);
+    let trie = Trie::from_catalog("data", &all, &mut |w| panic!("{w}")).expect("rebuild");
+    feed(&trie, &[r#"{"v":5}"#]);
     assert_eq!(column_of(&trie, line, "v").0, Some(ColumnType::String));
 }
 
@@ -768,4 +889,22 @@ fn a_form_outside_a_time_column_or_one_not_read_makes_no_time_source() {
         column_of(&trie, line, "time_us"),
         (None, TimeSource::Arrival)
     );
+}
+
+/// **`trie.json` keeps what a `Datetime` column says of its values too**, so a trie
+/// restored from the snapshot alone widens as the one that was saved would.
+#[test]
+fn a_trie_restored_from_its_snapshot_knows_what_its_datetime_columns_held() {
+    let dir = scratch("epoch-digits-snapshot");
+    let file = dir.join("trie.json");
+    let (counts, dated) = (r#"{"a":1679711330}"#, r#"{"b":"2024-01-15T10:30:00Z"}"#);
+    let trie = Trie::new();
+    feed(&trie, &[counts, dated]);
+    crate::templates::snapshot::save(&trie, &file).expect("save");
+
+    let (back, failed) = crate::templates::snapshot::load_reporting(&file, "data");
+    assert!(failed.is_none(), "the snapshot did not load");
+    feed(&back, &[r#"{"a":5}"#, r#"{"b":5}"#]);
+    assert_eq!(column_of(&back, counts, "a").0, Some(ColumnType::Int64));
+    assert_eq!(column_of(&back, dated, "b").0, Some(ColumnType::String));
 }

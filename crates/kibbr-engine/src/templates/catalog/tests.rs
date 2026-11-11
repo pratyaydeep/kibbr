@@ -26,6 +26,7 @@ fn column(id: u64, name: &str, col_type: Option<ColumnType>) -> Record {
         template_id: id,
         name: name.into(),
         col_type,
+        epoch_digits: None,
         widened_from: None,
         at: None,
     }
@@ -44,6 +45,7 @@ fn corpus() -> Vec<Record> {
             template_id: 101,
             name: "ts".into(),
             col_type: Some(ColumnType::String),
+            epoch_digits: None,
             widened_from: Some(ColumnType::Datetime),
             at: Some(DateTime::from_timestamp(1_705_314_700, 0).expect("valid")),
         },
@@ -360,4 +362,46 @@ fn a_directory_that_cannot_be_synced_fails_the_first_open() {
         !left,
         "a catalog whose directory entry was never synced was left behind"
     );
+}
+
+/// **What a `Datetime` column says of its values is one optional field, `epoch_digits`**:
+/// written only where there is something to say, so every other record is the bytes a
+/// build from before the field wrote, and a record from such a build - which has no such
+/// field - reads as a column that does not say.
+#[test]
+fn a_column_record_keeps_epoch_digits_and_reads_a_record_without_it() {
+    let said = |epoch_digits| Record::Column {
+        template_id: 101,
+        name: "ts".into(),
+        col_type: Some(ColumnType::Datetime),
+        epoch_digits,
+        widened_from: None,
+        at: None,
+    };
+    // As ae7d8ca wrote a column record, byte for byte: no field.
+    let older = br#"{"kind":"column","template_id":101,"name":"ts","type":"Datetime"}"#;
+    assert_eq!(serde_json::to_vec(&said(None)).expect("json"), older);
+    assert_eq!(read_record::<Record>(older), Ok(said(None)));
+    assert_eq!(
+        serde_json::to_string(&column(101, "n", Some(ColumnType::Int64))).expect("json"),
+        r#"{"kind":"column","template_id":101,"name":"n","type":"Int64"}"#
+    );
+
+    for epoch_digits in [Some(true), Some(false)] {
+        let record = said(epoch_digits);
+        let payload = serde_json::to_vec(&record).expect("json");
+        let text = String::from_utf8(payload.clone()).expect("utf-8");
+        assert!(
+            text.contains(&format!(r#""epoch_digits":{}"#, epoch_digits == Some(true))),
+            "{text}"
+        );
+        assert_eq!(read_record::<Record>(&payload), Ok(record.clone()));
+        // And through the file, framed, beside records of the other kinds.
+        let mut records = corpus();
+        records.push(record);
+        assert_eq!(parse(&bytes_of(&records)).records, records);
+    }
+    // The field is a boolean: any other JSON there is a malformed record, not a guess.
+    let wrong = br#"{"kind":"column","template_id":101,"name":"ts","type":"Datetime","epoch_digits":"yes"}"#;
+    assert!(read_record::<Record>(wrong).is_err());
 }

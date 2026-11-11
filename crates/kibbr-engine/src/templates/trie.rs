@@ -106,6 +106,11 @@ pub struct ColumnDef {
     /// `None` means the column has been seen but has only ever held nulls - a different
     /// fact from `String`, which is why `ColumnType` has no `Null`.
     pub col_type: Option<ColumnType>,
+    /// For a `Datetime` column, whether every value so far was rule 2's epoch digits:
+    /// `Some(false)` once one was RFC 3339 text, and `None` on any other column and where
+    /// the catalog never said. What decides that an integer makes the column `Int64`
+    /// (`types::widen`).
+    pub epoch_digits: Option<bool>,
     /// The last ⊔ that changed `col_type`, `None` if it never did: partitions older than it
     /// hold the pre-widening type and need promotion on read, and nothing newer does.
     pub widened_at: Option<DateTime<Utc>>,
@@ -355,6 +360,7 @@ impl Trie {
                     template_id,
                     name,
                     col_type,
+                    epoch_digits,
                     at,
                     ..
                 } => {
@@ -373,6 +379,7 @@ impl Trie {
                         ColumnDef {
                             name: name.clone(),
                             col_type: *col_type,
+                            epoch_digits: *epoch_digits,
                             widened_at: *at,
                         },
                     );
@@ -472,6 +479,7 @@ impl Trie {
                         .map(|c| ColumnDef {
                             name: c.name.clone(),
                             col_type: c.col_type,
+                            epoch_digits: c.epoch_digits,
                             widened_at: c.widened_at,
                         })
                         .collect(),
@@ -506,6 +514,7 @@ impl Trie {
                     template_id: meta.template_id,
                     name: col.name.clone(),
                     col_type: col.col_type,
+                    epoch_digits: col.epoch_digits,
                     widened_from: None,
                     at: col.widened_at,
                 });
@@ -565,16 +574,17 @@ impl Trie {
         &self,
         meta: &mut LeafMeta,
         path: &[String],
-        changes: Vec<(String, Option<ColumnType>, bool)>,
+        changes: Vec<Change>,
         now: DateTime<Utc>,
     ) {
-        for (name, col_type, widened) in changes {
+        for (name, col_type, epoch_digits, widened) in changes {
             match meta
                 .columns
                 .binary_search_by(|col| col.name.as_str().cmp(&name))
             {
                 Ok(at) => {
                     meta.columns[at].col_type = col_type;
+                    meta.columns[at].epoch_digits = epoch_digits;
                     if widened {
                         meta.columns[at].widened_at = Some(now);
                     }
@@ -584,6 +594,7 @@ impl Trie {
                     ColumnDef {
                         name,
                         col_type,
+                        epoch_digits,
                         widened_at: None,
                     },
                 ),
@@ -793,10 +804,14 @@ impl Trie {
                 let columns: Vec<ColumnDef> = parsed
                     .keys
                     .iter()
-                    .map(|key| ColumnDef {
-                        name: key.clone(),
-                        col_type: parsed.column_type(key),
-                        widened_at: None,
+                    .map(|key| {
+                        let (col_type, epoch_digits) = first_type(parsed, key);
+                        ColumnDef {
+                            name: key.clone(),
+                            col_type,
+                            epoch_digits,
+                            widened_at: None,
+                        }
                     })
                     .collect();
                 let mut records = Vec::with_capacity(1 + columns.len());
@@ -821,6 +836,7 @@ impl Trie {
                     template_id,
                     name: col.name.clone(),
                     col_type: col.col_type,
+                    epoch_digits: col.epoch_digits,
                     widened_from: None,
                     at: None,
                 }));
@@ -863,7 +879,7 @@ impl Trie {
                 // What this line changes, decided before anything is touched: the record has to be
                 // durable first, or a refused change would leave the trie ahead of the file.
                 let mut records = Vec::new();
-                let mut changes: Vec<(String, Option<ColumnType>, bool)> = Vec::new();
+                let mut changes: Vec<Change> = Vec::new();
                 for key in &parsed.keys {
                     let incoming = parsed.column_type(key);
                     match meta
@@ -873,8 +889,12 @@ impl Trie {
                         Ok(at) => {
                             let col = &meta.columns[at];
                             // `join`, but digits rule 2 read as an instant and an integer
-                            // are one column of integers, not text.
-                            let joined = widen(col.col_type, incoming, parsed.is_epoch_digits(key));
+                            // are one column of integers, not text - unless the column is
+                            // known to hold RFC 3339 dates.
+                            let epoch = incoming == Some(ColumnType::Datetime)
+                                && parsed.is_epoch_digits(key);
+                            let (joined, epoch_digits) =
+                                widen(col.col_type, col.epoch_digits, incoming, epoch);
                             if joined != col.col_type {
                                 // The one place an operator can learn that a column widened.
                                 // `None ⊔ T` is a column learning its first type: no warning.
@@ -892,23 +912,41 @@ impl Trie {
                                     template_id: meta.template_id,
                                     name: key.clone(),
                                     col_type: joined,
+                                    epoch_digits,
                                     widened_from: col.col_type,
                                     at: Some(now),
                                 });
-                                changes.push((key.clone(), joined, true));
+                                changes.push((key.clone(), joined, epoch_digits, true));
+                            } else if epoch_digits != col.epoch_digits {
+                                // The type stands and what the column says of its values
+                                // does not: its first RFC 3339 date. Recorded, so a restart
+                                // widens the column as this process would; `at` is the
+                                // widening the column already had, which the last record
+                                // must not lose.
+                                records.push(Record::Column {
+                                    template_id: meta.template_id,
+                                    name: key.clone(),
+                                    col_type: joined,
+                                    epoch_digits,
+                                    widened_from: None,
+                                    at: col.widened_at,
+                                });
+                                changes.push((key.clone(), joined, epoch_digits, false));
                             }
                         }
                         // A key not on the path: a leaf from before `=` was escaped can hold a
                         // literal `event=login` too. Union the columns, do not drop the value.
                         Err(_) => {
+                            let (col_type, epoch_digits) = first_type(parsed, key);
                             records.push(Record::Column {
                                 template_id: meta.template_id,
                                 name: key.clone(),
-                                col_type: incoming,
+                                col_type,
+                                epoch_digits,
                                 widened_from: None,
                                 at: None,
                             });
-                            changes.push((key.clone(), incoming, false));
+                            changes.push((key.clone(), col_type, epoch_digits, false));
                         }
                     }
                 }
@@ -925,6 +963,21 @@ impl Trie {
         drop(slot);
         Ok((leaf, is_new))
     }
+}
+
+/// One change to a template's columns: the name, the type, what a `Datetime` column says
+/// of its values, and whether the type widened.
+type Change = (String, Option<ColumnType>, Option<bool>, bool);
+
+/// What a line's value makes of a column that has no type yet: its type, and for a
+/// `Datetime` whether it is rule 2's digits.
+fn first_type(parsed: &ParsedLog, key: &str) -> (Option<ColumnType>, Option<bool>) {
+    widen(
+        None,
+        None,
+        parsed.column_type(key),
+        parsed.is_epoch_digits(key),
+    )
 }
 
 /// The `Datetime`-typed keys an operator could add to `time_columns`, comma-separated, or

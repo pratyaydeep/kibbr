@@ -171,22 +171,31 @@ pub fn run(
     // the time source, and every line folds its types into the column types.
     let mut sources: HashMap<u64, Source> = HashMap::new();
     let mut col_types: HashMap<(u64, String), Option<ColumnType>> = HashMap::new();
+    // The columns that have held a date written as RFC 3339 text, which no integer is.
+    let mut dated_in_text: HashSet<(u64, String)> = HashSet::new();
     for line in lines {
         sources
             .entry(line.template_id)
             .or_insert_with(|| source_of(line, time_columns));
         for key in &line.keys {
             let incoming = line.column_type(key);
-            let slot = col_types
-                .entry((line.template_id, key.clone()))
-                .or_insert(None);
+            let column = (line.template_id, key.clone());
+            let counts = is_count(line, key);
+            if incoming == Some(ColumnType::Datetime) && !counts {
+                dated_in_text.insert(column.clone());
+            }
+            let all_counts = !dated_in_text.contains(&column);
+            let slot = col_types.entry(column).or_insert(None);
             // The join, but digits read as an instant and an integer are one column of
-            // integers: either way round, the column is `Int64` and not text.
+            // integers: either way round, the column is `Int64` and not text - so long as
+            // every date the column has held was digits.
             *slot = match (*slot, incoming) {
-                (Some(ColumnType::Int64), Some(ColumnType::Datetime)) if is_count(line, key) => {
+                (Some(ColumnType::Int64), Some(ColumnType::Datetime)) if counts => {
                     Some(ColumnType::Int64)
                 }
-                (Some(ColumnType::Datetime), Some(ColumnType::Int64)) => Some(ColumnType::Int64),
+                (Some(ColumnType::Datetime), Some(ColumnType::Int64)) if all_counts => {
+                    Some(ColumnType::Int64)
+                }
                 (have, incoming) => crate::engine::model::types::join(have, incoming),
             };
         }

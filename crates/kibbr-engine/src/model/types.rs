@@ -57,26 +57,34 @@ pub fn join(a: Option<ColumnType>, b: Option<ColumnType>) -> Option<ColumnType> 
     }
 }
 
-/// What one more value makes of its column's type: `join`, except that digits rule 2 read
-/// as an instant and an integer are one column of integers, where the join alone would
-/// make them `String`.
+/// What one more value makes of its column: the type, and for a `Datetime` column whether
+/// every value so far was rule 2's digits. It is `join`, except that such digits and an
+/// integer are one column of integers, where the join alone would make them `String`.
 ///
-/// `epoch_digits` says the incoming `Datetime` is rule 2's - ten or thirteen digits, not
-/// RFC 3339 text, which no integer column holds. A column already `Datetime` does not say
-/// which rule its values came by, so an integer arriving there is taken as the sign that
-/// they are counts: each stored value keeps the digits it arrived as, and an RFC 3339
-/// value among them is still the date it was (the next one makes the column `String`).
+/// `digits` is what the column says of itself: `Some(true)` while every value has been ten
+/// or thirteen digits, `Some(false)` once one was RFC 3339 text - which no integer column
+/// holds - and `None` where it was never recorded: a column that is not `Datetime`, or one
+/// from a catalog written before this was kept. An integer arriving in a `Datetime` column
+/// makes it `Int64` unless the column is known to hold RFC 3339 dates; for a column that
+/// does not say, the integer is taken as the sign that its values are counts.
+/// `epoch_digits` says the same of the incoming value.
 pub fn widen(
     column: Option<ColumnType>,
+    digits: Option<bool>,
     incoming: Option<ColumnType>,
     epoch_digits: bool,
-) -> Option<ColumnType> {
+) -> (Option<ColumnType>, Option<bool>) {
+    use ColumnType::{Datetime, Int64};
     match (column, incoming) {
-        (Some(ColumnType::Int64), Some(ColumnType::Datetime)) if epoch_digits => {
-            Some(ColumnType::Int64)
-        }
-        (Some(ColumnType::Datetime), Some(ColumnType::Int64)) => Some(ColumnType::Int64),
-        _ => join(column, incoming),
+        // A null claims nothing about the column.
+        (_, None) => (column, digits),
+        (None, Some(Datetime)) => (incoming, Some(epoch_digits)),
+        // One RFC 3339 date settles it for good; digits leave it as it was.
+        (Some(Datetime), Some(Datetime)) if epoch_digits => (column, digits),
+        (Some(Datetime), Some(Datetime)) => (column, Some(false)),
+        (Some(Datetime), Some(Int64)) if digits != Some(false) => (Some(Int64), None),
+        (Some(Int64), Some(Datetime)) if epoch_digits => (Some(Int64), None),
+        _ => (join(column, incoming), None),
     }
 }
 

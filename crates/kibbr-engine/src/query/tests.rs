@@ -2402,6 +2402,7 @@ fn column_record(
         template_id: id,
         name: name.to_string(),
         col_type,
+        epoch_digits: None,
         widened_from: None,
         at: None,
     }

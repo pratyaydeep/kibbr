@@ -101,12 +101,18 @@ pub enum Record {
         tokens: Vec<Token>,
     },
     /// A column's type, written when the template is created and again when the type join
-    /// changes it, so the last record wins; `null` is a column that has only held nulls.
+    /// changes it - or what a `Datetime` column says of its values, `epoch_digits` - so the
+    /// last record wins; `null` is a column that has only held nulls.
     Column {
         template_id: u64,
         name: String,
         #[serde(rename = "type")]
         col_type: Option<ColumnType>,
+        /// For a `Datetime` column: `true` while every value has been ten or thirteen
+        /// epoch digits, `false` once one was RFC 3339 text. Absent on any other column,
+        /// and on every record from before it was kept - where nothing says which.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch_digits: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         widened_from: Option<ColumnType>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

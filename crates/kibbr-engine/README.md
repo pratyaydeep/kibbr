@@ -51,7 +51,9 @@ never names it (`scripts/check/no_internals.sh`).
 - **One type a column.** A column's type is the join of its values' types, and never
   narrows; two types that do not join are `String`. The one pair that is not: epoch digits
   the ladder read as a `Datetime` and an integer are `Int64` (`widen`), each value shown
-  as the digits it arrived as.
+  as the digits it arrived as. A `Datetime` column records whether its values were all
+  such digits (`epoch_digits`, in the catalog and in `trie.json`), so the answer does not
+  depend on the order the values came in.
 - **What a time column reads** beyond the ladder (`time_form_nanos`): epoch seconds with
   up to nine fraction digits, sixteen and nineteen digits, and a date and time with one of
   eleven zone names. Read only where a template's time source is chosen and a row's time

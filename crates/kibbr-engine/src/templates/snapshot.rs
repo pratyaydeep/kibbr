@@ -108,6 +108,10 @@ struct LeafMetaRecord {
 struct ColumnRecord {
     name: String,
     col_type: Option<ColumnType>,
+    /// As the catalog's `epoch_digits`: what a `Datetime` column says of its values, and
+    /// absent where nothing does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    epoch_digits: Option<bool>,
     /// Absent rather than `null` for a column that never widened, so an ordinary file
     /// reads the way the format documents it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -196,6 +200,7 @@ fn collect(node: &Arc<Node>, out: &mut Vec<NodeRecord>, depth: usize) -> Result<
                 .map(|col| ColumnRecord {
                     name: col.name.clone(),
                     col_type: col.col_type,
+                    epoch_digits: col.epoch_digits,
                     widened_at: col.widened_at,
                 })
                 .collect(),
@@ -338,6 +343,7 @@ fn build(file: TrieFile, data_dir: &str) -> Result<Trie, TrieFileError> {
                 .map(|col| ColumnDef {
                     name: col.name.clone(),
                     col_type: col.col_type,
+                    epoch_digits: col.epoch_digits,
                     widened_at: col.widened_at,
                 })
                 .collect(),

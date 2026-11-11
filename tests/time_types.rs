@@ -448,6 +448,12 @@ fn a_time_column_form_replays_from_the_log_at_the_time_it_was_filed_under() {
 // ── Through `kibbr query`, against the oracle ──────────────────────────────────────
 
 fn cli(q: &str, reference: bool) -> Value {
+    let lines: Vec<&str> = LINES.iter().chain(LATER).copied().collect();
+    cli_over(&lines, q, reference)
+}
+
+/// `kibbr query` over these lines on stdin: the engine, or with `--reference` the oracle.
+fn cli_over(lines: &[&str], q: &str, reference: bool) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
     command
         .args(["query", "-", q, "--format", "json"])
@@ -462,8 +468,7 @@ fn cli(q: &str, reference: bool) -> Value {
         .spawn()
         .expect("failed to spawn kibbr");
     let mut stdin = child.stdin.take().expect("stdin was not piped");
-    let lines: Vec<&str> = LINES.iter().chain(LATER).copied().collect();
-    let input = body(&lines);
+    let input = body(lines);
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(&input);
     });
@@ -501,5 +506,80 @@ fn the_engine_and_the_oracle_agree_on_the_preflight_values() {
             "`{q}`: {engine}"
         );
         assert_eq!(cli(q, true), engine, "the oracle and the engine: `{q}`");
+    }
+}
+
+// ── What a Datetime column remembers of its values ─────────────────────────────────
+
+/// Two columns that are `Datetime` after two lines: `counts` has held only epoch digits,
+/// `dated` an RFC 3339 date as well. Then both take an integer.
+const DIGITS_AND_DATES: &[&str] = &[
+    r#"{"ts":"2023-03-25T02:28:50Z","counts":1679711330,"dated":1679711330}"#,
+    r#"{"ts":"2023-03-25T02:28:51Z","counts":"1679711331000","dated":"2023-03-25T02:28:51Z"}"#,
+];
+const THEN_AN_INTEGER: &str = r#"{"ts":"2023-03-25T02:28:52Z","counts":5,"dated":5}"#;
+
+/// **Whether a `Datetime` column held only epoch digits is in the catalog, and decides
+/// what an integer makes of it after a restart**: digits and an integer are `Int64`; a
+/// column that has held an RFC 3339 date is `String`, as it always was. The same either
+/// side of the restart, and the same to the oracle.
+#[test]
+fn a_datetime_column_knows_after_a_restart_whether_it_held_only_digits() {
+    let db = Db::new();
+    let first = db.start();
+    first.ingest(DIGITS_AND_DATES);
+    let (_, columns) = first.template(&["counts"]);
+    assert_eq!(columns["counts"], "Datetime");
+    assert_eq!(columns["dated"], "Datetime");
+    first.shutdown();
+
+    let second = db.start();
+    second.ingest(&[THEN_AN_INTEGER]);
+    let (_, columns) = second.template(&["counts"]);
+    assert_eq!(columns["counts"], "Int64", "epoch digits and an integer");
+    assert_eq!(
+        columns["dated"], "String",
+        "an RFC 3339 date and an integer"
+    );
+
+    // Every value comes back as its line held it, and is found by what it was.
+    let rows = second.query("MATCH LOG {} ORDER BY time ASC LIMIT 10");
+    assert_eq!(rows["rows"][0]["counts"], 1679711330u64);
+    assert_eq!(rows["rows"][1]["counts"], "1679711331000");
+    assert_eq!(rows["rows"][2]["counts"], 5);
+    assert_eq!(rows["rows"][0]["dated"], 1679711330u64);
+    assert_eq!(rows["rows"][1]["dated"], "2023-03-25T02:28:51Z");
+    for (q, count) in [
+        (r#"COUNT LOG { "counts": "1679711330" }"#, 1),
+        (r#"COUNT LOG { "counts": "1679711331000" }"#, 1),
+        (r#"COUNT LOG { "counts": "5" }"#, 1),
+        // One instant as a date is not that integer; in the text column it is its text.
+        (r#"COUNT LOG { "counts": "2023-03-25T02:28:50Z" }"#, 0),
+        (r#"COUNT LOG { "dated": "1679711330" }"#, 1),
+        (r#"COUNT LOG { "dated": "2023-03-25T02:28:51Z" }"#, 1),
+        (r#"COUNT LOG { "dated": "5" }"#, 1),
+    ] {
+        assert_eq!(second.query(q)["count"], count, "`{q}`");
+        // In one process, with no restart between the lines, and by the oracle.
+        let mut lines = DIGITS_AND_DATES.to_vec();
+        lines.push(THEN_AN_INTEGER);
+        let engine = cli_over(&lines, q, false);
+        assert_eq!(engine["count"], count, "the engine, in one run: `{q}`");
+        assert_eq!(cli_over(&lines, q, true), engine, "the oracle: `{q}`");
+    }
+    for q in [
+        r#"COUNT LOG {} GROUP BY "counts""#,
+        r#"COUNT LOG {} GROUP BY "dated""#,
+        "MATCH LOG {} LIMIT 10",
+    ] {
+        let mut lines = DIGITS_AND_DATES.to_vec();
+        lines.push(THEN_AN_INTEGER);
+        let engine = cli_over(&lines, q, false);
+        assert_eq!(cli_over(&lines, q, true), engine, "the oracle: `{q}`");
+        assert_eq!(
+            second.answer(q),
+            engine,
+            "the server after its restart: `{q}`"
+        );
     }
 }

@@ -535,7 +535,7 @@ where
 /// not there, in the catalog and in the manifest.
 fn optional(kind: &str) -> &'static [&'static str] {
     match kind {
-        "column" => &["widened_from", "at"],
+        "column" => &["epoch_digits", "widened_from", "at"],
         "add" => &["source"],
         "replace" => &["source", "wal"],
         _ => &[],
@@ -1117,6 +1117,7 @@ impl Choices<'_> {
                 template_id: self.number(),
                 name: self.text(),
                 col_type: self.column_type(),
+                epoch_digits: None,
                 widened_from: self.column_type(),
                 at: self.flag().then(|| self.time()),
             }),

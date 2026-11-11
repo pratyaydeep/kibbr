@@ -14,6 +14,7 @@ fn template(columns: &[(&str, Option<ColumnType>)]) -> Arc<Template> {
             .map(|(name, col_type)| ColumnDef {
                 name: name.to_string(),
                 col_type: *col_type,
+                epoch_digits: None,
                 widened_at: None,
             })
             .collect(),
