@@ -47,6 +47,6 @@ The cases that matter, and why:
 | `" 42"` | `String` | It does not: leading whitespace is not trimmed anywhere in the ladder. |
 | `""` | `String` | An empty string is a value, not an absence. Printed as `""` so it cannot be mistaken for one. |
 | `null` | `Null` | An explicit null carries no evidence about the column's type, so the ladder is not run - otherwise it would come back `String` and pin the column to the text `"null"`. |
-| `["auth","login"]` | `String` | Arrays are never flattened; the raw JSON text is the value. |
-| `[1700000000]` | `String` | And a one-element array of a timestamp stays text - the brackets keep rule 2 away. |
+| `["auth","login"]` | `String` | Arrays are never flattened. The value is the array, held as its JSON text, and its column is a column of text. |
+| `[1700000000]` | `String` | And a one-element array of a timestamp is an array - the ladder reads strings and numbers, and is not run on one. |
 | `"u42@auth.example.com"` | `String` | Rule 5. Nothing containing `@` could reach a later rung anyway, which is why the rule is documentation as much as behaviour. |

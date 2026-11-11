@@ -46,6 +46,7 @@ A load prints one line: `loaded 2,000 rows from 2,000 lines (0 rejected) as load
 scripts/check/two_doors.sh      # 200,000 lines through each door; both must answer agree.sh's queries identically
 scripts/check/store_agree.sh    # the memory store against the disk store
 scripts/check/roundtrip.sh      # every line back out as it went in
+scripts/check/downgrade.sh      # a directory this build wrote, opened, queried and written on by an older build
 ```
 
 - Each prints how many runs of row groups its disk servers shared between threads, and

@@ -50,7 +50,17 @@ line 1
 ```
 
 - **fingerprint**: the flattened, sorted key set; nested objects become dotted paths.
-- Arrays are never flattened: the fingerprint would depend on array length.
+- Arrays are never flattened: the fingerprint would depend on array length. An array is
+  one value at its key, held as its JSON text in a column of text and marked as an array,
+  so `["en"]` and the string `"[\"en\"]"` are two values. `--json` shows the text under
+  `values` and the array under `typed_values`.
+- An object with no members is a value too: `{"a":{"b":{}}}` has the key `a.b`, whose
+  value is `{}`. So a line with an empty object is another template than the same line
+  without that key.
+- `{}`, `[]`, `null`, `""`, `"{}"`, `"[]"` and a missing key are seven different things,
+  and a query gives each back as what it was.
+- A number inside an array is read as a line's own numbers are: `[1.50]` is `[1.5]`.
+- An array or an empty object under a promoted key is not promoted.
 - A low-cardinality key can be promoted into the fingerprint as `event=login_failed`, which
   is what makes the trie branch usefully.
 - **The middle column** is the type the ladder chose; the first rule that matches wins.

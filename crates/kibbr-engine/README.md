@@ -43,8 +43,13 @@ never names it (`scripts/check/no_internals.sh`).
   Back-pressure comes out of it as values; whoever holds the handle decides what a wait or
   a refusal looks like.
 - **Flattening and the fingerprint.** Nested objects become dotted paths; nesting
-  past `MAX_DEPTH` (8) is refused; arrays are never flattened. The fingerprint is the
-  sorted key set, with a low-cardinality key promoted into it as `key=value`.
+  past `MAX_DEPTH` (8) is refused; arrays are never flattened, and an object with no
+  members is not walked into: each is a leaf, the value at its key. The fingerprint is
+  the sorted key set, with a low-cardinality key promoted into it as `key=value`.
+- **Arrays and empty objects** are `ColValue::Json`: the value's JSON text, in a `String`
+  column, and a kind of its own - `["a"]` is not the string `"[\"a\"]"`, and `{}` is not
+  `"{}"`. A query matches, counts and groups one by its text, and an answer prints the
+  array or the `{}` it is. A number inside an array is read as the JSON reader reads it.
 - **The type ladder.** First match wins, and the order matters more than the rules:
   "exactly ten digits" sits above "parses as i64". The epoch window bounds which
   integers are instants.
@@ -71,6 +76,13 @@ never names it (`scripts/check/no_internals.sh`).
 - **Format v3: one shared data file per UTC day** - frames and the schema record,
   row groups, chunks, forms, the footer and trailer, recovery of an unsealed file - and its
   encodings. The test vectors are `testdata/format/`.
+- **The JSON section** (`SECTION_JSON`, kind `0x82`): a row group section naming one
+  column, which says which of its rows are an array or an empty object - no bytes when
+  every row that is not null is one, otherwise a bitmap of the row group's rows. The
+  text itself is in the column's chunk, as any string is. A row group that holds no such
+  row has no section. The kind is optional, so a build from before it (0.3.0 and
+  earlier) steps over the section and reads those rows as strings; and a row group
+  written before it has none, so its arrays stay the strings they were stored as.
 - **Row order and the paging cursor**: a row's position among its template's rows
   of the day never moves, compaction included.
 - **The manifest**: `manifest.log` names every live data file; a load or a

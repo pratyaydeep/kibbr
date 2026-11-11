@@ -96,6 +96,29 @@ Also served: `GET /` (the [viewer](viewer.md)), `POST /load` ([load](load.md)) a
   `meta.order` says which (`newest_first` or `oldest_first`), and a cursor is only good for
   the order that gave it. Oldest first reads every day in the window: a store only says how
   new a day can be, which lets newest first skip days and bounds nothing the other way.
+- **Rows of one time come in a fixed order, which is not the order they arrived in.**
+  They are grouped by template - by a hash of its key set - and inside one template they
+  are in arrival order, oldest first or newest first alike. Arrival order across templates
+  is not stored: a row's position is its place among its own template's rows of the day.
+- **A value comes back as the JSON value that was ingested.** A string is that string, a
+  number that number, and an array is the array and an object with no members is `{}` -
+  at any depth, so `{"a":{"b":{}}}` comes back with `"a.b": {}`. `{}`, `[]`, `null`,
+  `""`, the strings `"{}"` and `"[]"`, and a key that is not there are all different, and
+  stay so. A number inside an array is read as any JSON number is: `[1.50]` is `[1.5]`.
+- **An array is matched, counted and grouped by its JSON text**, written compactly:
+  `MATCH LOG { "tags": "[\"auth\",\"login\"]" }` finds the array `["auth","login"]` -
+  and a string of those same characters, each given back as what it is. `{ "tags": * }`
+  finds an array, empty or not, and an empty object: both are present, and neither is
+  null. A `GROUP BY` label is the text. There is no query into an array's elements.
+- **Rows stored before arrays were kept stay strings.** Builds through 0.3.0 stored an
+  array as the string of its JSON text and left an empty object out of the line's keys,
+  and nothing on disk says which strings were arrays: such a row answers as it always
+  did, and a compaction rebuilds it as it is. Lines that were only in such a build's
+  write-ahead log are read by the build that puts them back, so their arrays are arrays;
+  an empty object in one is still left out, since the template the line was filed under
+  has no key for it. An older build started on a directory this one wrote reads an array
+  as its text and an empty object as `"{}"` (`scripts/check/downgrade.sh`); the row groups
+  it rebuilds in a compaction are then strings to every build.
 - **`times` sits beside `rows`**: at each index, the instant that row was ranked by - its
   time column, or when it arrived - as RFC 3339 UTC, `null` for a row with neither. Not put
   inside the row, where it could collide with a key the row already has.
