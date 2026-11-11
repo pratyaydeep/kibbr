@@ -4,8 +4,8 @@
 #
 # The rule is the data model's, not any one format's: a value returned by a query is the
 # JSON value that was ingested - a string character for character, a number as the same
-# number, true, false and null as themselves. Typed storage is allowed only where it can
-# print the original back. So this ingests a file, pages `MATCH LOG {}` to the end, and
+# number, true, false and null as themselves, an array as that array and an object with
+# no members as `{}`. Typed storage is allowed only where it can print the original back. So this ingests a file, pages `MATCH LOG {}` to the end, and
 # holds the answer to the input as JSON values, both ways: every ingested line returned
 # exactly once, and nothing returned that was not ingested.
 #
@@ -17,7 +17,8 @@
 # and mixed-case UUIDs, IPv6 in each spelling, an integer past i64, 1.50 and 1e3, the edges
 # of the nanosecond range, leap seconds, a tenth fraction digit - and the same values mixed
 # in one column, where the column widens to text and each row must still come back as
-# itself.
+# itself; and `{}`, `[]`, `null`, `""`, `"{}"`, `"[]"` and a missing key, each of which is
+# not any of the others, alone and in one column.
 #
 # Three answers, each compared: the in-memory store, the disk store while its rows are
 # still warm, and the disk store after a restart has it read everything back from files
@@ -25,18 +26,24 @@
 #
 # What "the line that was ingested" means, precisely:
 # - flattened as the store flattens it: nested objects joined with `.`, a `.` or `\`
-#   inside a member name escaped, an empty object contributing no key;
-# - an array is stored as its JSON text and returned as that string;
+#   inside a member name escaped; an object with no members is not walked into - it is
+#   the value at its key, and comes back as `{}` there;
+# - an array is never flattened: it is the value at its key, and comes back as that
+#   array, its elements in order and an object inside it with the members it had;
 # - numbers compared as the JSON reader kibbr uses reads them: an integer inside i64 or
 #   u64 exactly, anything else as the nearest double - so 123456789012345678901234567890
 #   is the double it was always read as, the same number to every reader that reads JSON
-#   numbers as doubles;
+#   numbers as doubles. A number inside an array is read the same way;
 # - `_received_at` is a system column, not ingested, and is ignored - unless the line has
 #   a key of that name, which is then compared like any other.
 #
 #   scripts/check/roundtrip.sh
 #   HOSTILE=5000 FARM=5000 scripts/check/roundtrip.sh
 #   BIN=/path/to/an/older/kibbr scripts/check/roundtrip.sh
+#
+# A build from before arrays and empty objects were kept (ca6d867 and earlier) fails this
+# on exactly those lines, which is what it is for: it returns an array as the string of
+# its JSON text, and a line that held an empty object without that key.
 #   FARM=60000 NEED_FAN_OUTS=1 KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0 \
 #     KIBBR__API__MAX_BODY_BYTES=67108864 scripts/check/roundtrip.sh
 
@@ -166,26 +173,25 @@ def escape(segment):
 def flatten(obj, prefix, out):
     for key, value in obj.items():
         path = prefix + [escape(key)]
-        if isinstance(value, dict):
+        # An object with members is walked; one with none is the value at its key.
+        if isinstance(value, dict) and value:
             flatten(value, path, out)
         else:
             out[".".join(path)] = value
     return out
 
-def text_of_array(value):
-    # serde_json's compact form: no spaces, non-ASCII as itself.
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
-
-def as_ingested(value):
-    if isinstance(value, list):
-        return text_of_array(value)
-    return value
-
 def canon(value):
     """One comparable, hashable form per JSON value: a string, a bool and null are
-    themselves; a number is its exact value as the reader holds it."""
+    themselves; a number is its exact value as the reader holds it; an array is its
+    elements in order, and an object - inside an array, or with no members - its members
+    whatever their order. No two kinds share a form: `[]`, `{}`, `"[]"` and `"{}"` are
+    four."""
     if value is None or isinstance(value, (bool, str)):
         return (type(value).__name__, value)
+    if isinstance(value, list):
+        return ("array", tuple(canon(v) for v in value))
+    if isinstance(value, dict):
+        return ("object", tuple(sorted((k, canon(v)) for k, v in value.items())))
     if isinstance(value, int) and not (-2**63 <= value < 2**64):
         value = float(value)
     return ("number", Fraction(value))
@@ -207,7 +213,7 @@ for n, line in enumerate(raw, 1):
 if len(ingested) != report["ingested"]:
     sys.exit("/ingest took %d lines and %d are accounted for; the refusals were not all "
              "listed" % (report["ingested"], len(ingested)))
-want = Counter(row_key({k: as_ingested(v) for k, v in r.items()}) for r in ingested)
+want = Counter(row_key(r) for r in ingested)
 
 status = 0
 for label, path in answers:
