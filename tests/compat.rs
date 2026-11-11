@@ -9,6 +9,10 @@
 //! that are only in its write-ahead log because the server was killed. `expected.json`
 //! is what that same build answered on it, after replaying its own log (`make.py`,
 //! beside them, wrote both). Every test starts this build on a copy.
+//!
+//! `tests/fixtures/compat-ca6d867` is the same of commit ca6d867, the last build that
+//! stored an array as the string of its JSON text and gave an empty object no key: lines
+//! that hold arrays and empty objects, stored and logged.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -21,13 +25,23 @@ use serde_json::{json, Value};
 
 // ── The fixture, and a server on a copy of it ──────────────────────────────────────
 
-fn fixture() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compat-ae7d8ca")
+/// The fixture a kibbr built from ae7d8ca wrote, and the one from ca6d867.
+const AE7D8CA: &str = "compat-ae7d8ca";
+const CA6D867: &str = "compat-ca6d867";
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
+
+fn expected_of(name: &str) -> Value {
+    let text = fs::read_to_string(fixture(name).join("expected.json")).expect("expected.json");
+    serde_json::from_str(&text).expect("expected.json is JSON")
 }
 
 fn expected() -> Value {
-    let text = fs::read_to_string(fixture().join("expected.json")).expect("expected.json");
-    serde_json::from_str(&text).expect("expected.json is JSON")
+    expected_of(AE7D8CA)
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -46,10 +60,15 @@ fn copy_dir(from: &Path, to: &Path) {
 /// A copy of the fixture's data directory, removed when the test is done.
 struct Db {
     dir: PathBuf,
+    fixture: &'static str,
 }
 
 impl Db {
     fn new() -> Self {
+        Self::of(AE7D8CA)
+    }
+
+    fn of(fixture_name: &'static str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "kibbr-compat-test-{}-{}",
@@ -57,13 +76,16 @@ impl Db {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = fs::remove_dir_all(&dir);
-        copy_dir(&fixture().join("data"), &dir);
-        Self { dir }
+        copy_dir(&fixture(fixture_name).join("data"), &dir);
+        Self {
+            dir,
+            fixture: fixture_name,
+        }
     }
 
     /// This build, on the directory, under the time columns the fixture was written with.
     fn start(&self) -> Server {
-        let time_columns = expected()["time_columns"]
+        let time_columns = expected_of(self.fixture)["time_columns"]
             .as_str()
             .expect("time_columns")
             .to_string();
@@ -376,5 +398,188 @@ fn new_lines_on_a_directory_from_ae7d8ca_widen_to_int64_and_keep_what_was_decide
     assert!(
         row["rows"][0]["_received_at"].is_string(),
         "a row of a template on arrival time carries its arrival time: {row}"
+    );
+}
+
+// ── ca6d867: arrays stored as strings, and empty objects with no key ───────────────
+
+/// The rows of an answer with every array and object in them as the string of its JSON
+/// text: how ca6d867 gave them.
+fn as_text(answer: &Value) -> Value {
+    let mut answer = answer.clone();
+    for row in answer["rows"].as_array_mut().expect("rows") {
+        for value in row.as_object_mut().expect("a row").values_mut() {
+            if value.is_array() || value.is_object() {
+                *value = Value::String(value.to_string());
+            }
+        }
+    }
+    answer
+}
+
+const STORED: &str = r#"MATCH LOG {} BETWEEN "2024-01-15T10:30:00Z" AND "2024-01-15T10:31:00Z" ORDER BY time ASC LIMIT 1000"#;
+const LOGGED: &str = r#"MATCH LOG {} BETWEEN "2024-01-15T10:31:00Z" AND "2024-01-15T10:32:00Z" ORDER BY time ASC LIMIT 1000"#;
+
+/// Every query `make.py` asked of ca6d867, held to what it said. The rows ca6d867 stored
+/// are what they were, to the byte: an array is the string it was stored as, and a line
+/// that held an empty object has no key for it. A line that was only in its log is read
+/// by this build when it is put back, so an array in it is the array - the same row,
+/// found, counted and grouped as before, and the same text once the array is printed.
+fn assert_answers_as_ca6d867(server: &Server, when: &str) {
+    let expected = expected_of(CA6D867);
+    let queries = expected["queries"].as_object().expect("queries");
+    assert!(queries.len() >= 29, "the fixture lost its queries");
+    for (q, want) in queries {
+        let got = server.answer(q);
+        assert_eq!(
+            &as_text(&got),
+            want,
+            "{when}, `{q}` is answered otherwise than ca6d867 answered it"
+        );
+    }
+    assert_eq!(
+        server.answer(STORED),
+        queries[STORED],
+        "{when}: a row ca6d867 stored is not what it was"
+    );
+    let stored = server.answer(STORED);
+    for row in stored["rows"].as_array().expect("rows") {
+        for (key, value) in row.as_object().expect("a row") {
+            assert!(
+                !value.is_array() && !value.is_object(),
+                "{when}: `{key}` of a row ca6d867 stored came back as {value}"
+            );
+        }
+    }
+    // The four arrays ca6d867 only logged, as arrays; its three stored ones are above.
+    let logged = server.answer(LOGGED);
+    let arrays: Vec<&Value> = logged["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .flat_map(|row| row.as_object().expect("a row").values())
+        .filter(|value| value.is_array())
+        .collect();
+    assert_eq!(
+        arrays,
+        [&json!(["late"]), &json!([1, 2]), &json!(["a"]), &json!([])],
+        "{when}"
+    );
+}
+
+/// **A data directory ca6d867 wrote answers every query as ca6d867 answered it.** Its
+/// stored arrays stay the strings they were stored as; nothing is rewritten and no row
+/// gains a key.
+#[test]
+fn a_data_directory_written_by_ca6d867_answers_every_query_as_ca6d867_did() {
+    let db = Db::of(CA6D867);
+    let server = db.start();
+    assert_answers_as_ca6d867(&server, "on the directory as ca6d867 left it");
+}
+
+/// **Replaying ca6d867's log gives no stored column another type, no template another
+/// key, and leaves no line behind.** A logged line that held an empty object goes back
+/// into the template ca6d867 filed it under, which has no key for one.
+#[test]
+fn replaying_the_log_ca6d867_wrote_changes_no_column_type_and_no_key_set() {
+    let db = Db::of(CA6D867);
+    let server = db.start();
+    assert_eq!(
+        server.templates(),
+        expected_of(CA6D867)["templates"],
+        "the templates after this build replayed ca6d867's log"
+    );
+    let replay = server.call("GET", "/stats", b"")["storage"]["wal"]["replay"].clone();
+    assert_eq!(replay["applied"], 7, "{replay}\n{}", server.banner);
+    assert_eq!(replay["held"], 0, "{replay}\n{}", server.banner);
+}
+
+/// **The same again once this build has stored the replayed lines itself**, and after it
+/// has compacted the day: the rows ca6d867 stored are rebuilt as the strings they were,
+/// and the arrays this build put back from the log stay arrays.
+#[test]
+fn the_lines_replayed_from_ca6d867_are_stored_compacted_and_read_back_the_same() {
+    let db = Db::of(CA6D867);
+    db.start().shutdown();
+    let server = db.start();
+    let replay = server.call("GET", "/stats", b"")["storage"]["wal"]["replay"].clone();
+    assert_eq!(replay["applied"], 0, "{replay}");
+    assert_eq!(replay["held"], 0, "{replay}");
+    assert_eq!(server.templates(), expected_of(CA6D867)["templates"]);
+    assert_answers_as_ca6d867(&server, "after this build stored the replayed lines");
+    server.shutdown();
+
+    let compacted = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+        .args(["compact", "--day", "2024-01-15", "--json"])
+        .args(["--data-dir", &db.dir.display().to_string()])
+        .output()
+        .expect("failed to run kibbr compact");
+    let report = String::from_utf8_lossy(&compacted.stdout).into_owned();
+    assert!(compacted.status.success(), "{report}");
+    assert!(report.contains(r#""compacted":true"#), "{report}");
+    let server = db.start();
+    assert_eq!(server.templates(), expected_of(CA6D867)["templates"]);
+    assert_answers_as_ca6d867(&server, "after this build compacted the day");
+}
+
+/// **What ca6d867 stored stays as it is; a new line is stored the new way.** A line with
+/// an array and an empty object, in a shape ca6d867 already holds rows of, comes back
+/// with both - under a template of its own where the empty object is a key - while the
+/// old rows beside it, and the types of their columns, are what they were.
+#[test]
+fn new_lines_on_a_directory_from_ca6d867_keep_their_arrays_and_empty_objects() {
+    let db = Db::of(CA6D867);
+    let server = db.start();
+    let before = server.templates();
+    server.ingest(&[
+        json!({"ts": "2024-01-15T10:40:00Z", "level": "info", "tags": ["new"], "attr": {"storage": {}}}),
+        // The shape of template 101, with nothing that was left out of it: one more row there.
+        json!({"ts": "2024-01-15T10:40:01Z", "level": "info", "tags": ["new", "again"]}),
+        json!({"ts": "2024-01-15T10:40:02Z", "k": {}}),
+    ]);
+    let new = server.answer(
+        r#"MATCH LOG {} BETWEEN "2024-01-15T10:40:00Z" AND "2024-01-15T10:41:00Z" ORDER BY time ASC LIMIT 10"#,
+    );
+    assert_eq!(
+        new["rows"],
+        json!([
+            {"ts": "2024-01-15T10:40:00Z", "level": "info", "tags": ["new"], "attr.storage": {}},
+            {"ts": "2024-01-15T10:40:01Z", "level": "info", "tags": ["new", "again"]},
+            {"ts": "2024-01-15T10:40:02Z", "k": {}},
+        ])
+    );
+    assert_eq!(
+        server.answer(STORED),
+        expected_of(CA6D867)["queries"][STORED],
+        "the rows ca6d867 stored, beside the new ones"
+    );
+
+    // Every template ca6d867 made has the columns and types it had; 101 and 104 have a
+    // row more, and one template is new: the line whose empty object is now a key.
+    let after = server.templates();
+    let (before, after) = (
+        before.as_array().expect("an array"),
+        after.as_array().expect("an array"),
+    );
+    assert_eq!(after.len(), before.len() + 1);
+    for old in before {
+        let now = after
+            .iter()
+            .find(|t| t["template_id"] == old["template_id"])
+            .expect("a template ca6d867 made is still there");
+        assert_eq!(now["columns"], old["columns"], "{}", old["template_id"]);
+        assert_eq!(now["time_source"], old["time_source"]);
+    }
+    let added = after
+        .iter()
+        .find(|t| {
+            !before
+                .iter()
+                .any(|old| old["template_id"] == t["template_id"])
+        })
+        .expect("a new template");
+    assert_eq!(
+        added["columns"],
+        json!({"attr.storage": "String", "level": "String", "tags": "String", "ts": "Datetime"})
     );
 }

@@ -1,0 +1,334 @@
+{
+  "next_id": 17,
+  "nodes": [
+    {
+      "id": 0,
+      "label": "__root__",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "attr.storage.bytes",
+          "child_id": 4
+        },
+        {
+          "label": "event=[\"a\"]",
+          "child_id": 11
+        },
+        {
+          "label": "event=login",
+          "child_id": 14
+        },
+        {
+          "label": "k",
+          "child_id": 9
+        },
+        {
+          "label": "level",
+          "child_id": 1
+        },
+        {
+          "label": "ts",
+          "child_id": 8
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "label": "level",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "tags",
+          "child_id": 2
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "label": "tags",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "ts",
+          "child_id": 3
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 101,
+        "columns": [
+          {
+            "name": "level",
+            "col_type": "String"
+          },
+          {
+            "name": "tags",
+            "col_type": "String"
+          },
+          {
+            "name": "ts",
+            "col_type": "Datetime",
+            "epoch_digits": false
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-61rpjqor/data/leaf_101",
+        "first_seen": "2026-11-11T19:44:08.294986Z",
+        "last_seen": "2026-11-11T19:44:08.294986Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    },
+    {
+      "id": 4,
+      "label": "attr.storage.bytes",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "level",
+          "child_id": 5
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "label": "level",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "tags",
+          "child_id": 6
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "label": "tags",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "ts",
+          "child_id": 7
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 102,
+        "columns": [
+          {
+            "name": "attr.storage.bytes",
+            "col_type": "Int64"
+          },
+          {
+            "name": "level",
+            "col_type": "String"
+          },
+          {
+            "name": "tags",
+            "col_type": "String"
+          },
+          {
+            "name": "ts",
+            "col_type": "Datetime",
+            "epoch_digits": false
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-61rpjqor/data/leaf_102",
+        "first_seen": "2026-11-11T19:44:08.294986Z",
+        "last_seen": "2026-11-11T19:44:08.294986Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    },
+    {
+      "id": 8,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 103,
+        "columns": [
+          {
+            "name": "ts",
+            "col_type": "Datetime",
+            "epoch_digits": false
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-61rpjqor/data/leaf_103",
+        "first_seen": "2026-11-11T19:44:08.294986Z",
+        "last_seen": "2026-11-11T19:44:08.294986Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    },
+    {
+      "id": 9,
+      "label": "k",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "ts",
+          "child_id": 10
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 104,
+        "columns": [
+          {
+            "name": "k",
+            "col_type": "String"
+          },
+          {
+            "name": "ts",
+            "col_type": "Datetime",
+            "epoch_digits": false
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-61rpjqor/data/leaf_104",
+        "first_seen": "2026-11-11T19:44:08.294986Z",
+        "last_seen": "2026-11-11T19:44:08.294986Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    },
+    {
+      "id": 11,
+      "label": "event=[\"a\"]",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "n",
+          "child_id": 12
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "label": "n",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "ts",
+          "child_id": 13
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 105,
+        "columns": [
+          {
+            "name": "event",
+            "col_type": "String"
+          },
+          {
+            "name": "n",
+            "col_type": "Int64"
+          },
+          {
+            "name": "ts",
+            "col_type": "Datetime",
+            "epoch_digits": false
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-61rpjqor/data/leaf_105",
+        "first_seen": "2026-11-11T19:44:08.294986Z",
+        "last_seen": "2026-11-11T19:44:08.294986Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    },
+    {
+      "id": 14,
+      "label": "event=login",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "n",
+          "child_id": 15
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "label": "n",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "ts",
+          "child_id": 16
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 106,
+        "columns": [
+          {
+            "name": "event",
+            "col_type": "String"
+          },
+          {
+            "name": "n",
+            "col_type": "Int64"
+          },
+          {
+            "name": "ts",
+            "col_type": "Datetime",
+            "epoch_digits": false
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-61rpjqor/data/leaf_106",
+        "first_seen": "2026-11-11T19:44:08.294986Z",
+        "last_seen": "2026-11-11T19:44:08.294986Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    }
+  ]
+}

@@ -1,0 +1,796 @@
+{
+ "queries": {
+  "COUNT LOG { \"k\": * }": {
+   "count": 5,
+   "exists": true,
+   "groups": [],
+   "rows": []
+  },
+  "COUNT LOG { \"level\": * } BETWEEN \"2024-01-15T10:30:00Z\" AND \"2024-01-15T10:31:00Z\" GROUP BY time(1m)": {
+   "count": 4,
+   "exists": true,
+   "groups": [
+    {
+     "bucket": "2024-01-15T10:30:00Z",
+     "count": 4,
+     "keys": {}
+    }
+   ],
+   "rows": []
+  },
+  "COUNT LOG { \"tags\": * }": {
+   "count": 6,
+   "exists": true,
+   "groups": [],
+   "rows": []
+  },
+  "COUNT LOG {}": {
+   "count": 18,
+   "exists": true,
+   "groups": [],
+   "rows": []
+  },
+  "COUNT LOG {} BETWEEN \"2024-01-15T10:30:00Z\" AND \"2024-01-15T10:31:00Z\"": {
+   "count": 11,
+   "exists": true,
+   "groups": [],
+   "rows": []
+  },
+  "COUNT LOG {} BETWEEN \"2024-01-15T10:31:00Z\" AND \"2024-01-15T10:32:00Z\"": {
+   "count": 7,
+   "exists": true,
+   "groups": [],
+   "rows": []
+  },
+  "COUNT LOG {} GROUP BY \"event\"": {
+   "count": 18,
+   "exists": true,
+   "groups": [
+    {
+     "count": 14,
+     "keys": {
+      "event": "(null)"
+     }
+    },
+    {
+     "count": 2,
+     "keys": {
+      "event": "[\"a\"]"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "event": "[]"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "event": "login"
+     }
+    }
+   ],
+   "rows": []
+  },
+  "COUNT LOG {} GROUP BY \"k\"": {
+   "count": 18,
+   "exists": true,
+   "groups": [
+    {
+     "count": 13,
+     "keys": {
+      "k": "(null)"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "k": "7"
+     }
+    },
+    {
+     "count": 2,
+     "keys": {
+      "k": "[1,2]"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "k": "[{\"a\":1.5},null,true,\"x\"]"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "k": "{}"
+     }
+    }
+   ],
+   "rows": []
+  },
+  "COUNT LOG {} GROUP BY \"level\"": {
+   "count": 18,
+   "exists": true,
+   "groups": [
+    {
+     "count": 12,
+     "keys": {
+      "level": "(null)"
+     }
+    },
+    {
+     "count": 4,
+     "keys": {
+      "level": "info"
+     }
+    },
+    {
+     "count": 2,
+     "keys": {
+      "level": "warn"
+     }
+    }
+   ],
+   "rows": []
+  },
+  "COUNT LOG {} GROUP BY \"tags\"": {
+   "count": 18,
+   "exists": true,
+   "groups": [
+    {
+     "count": 12,
+     "keys": {
+      "tags": "(null)"
+     }
+    },
+    {
+     "count": 2,
+     "keys": {
+      "tags": "[\"auth\",\"login\"]"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "tags": "[\"late\"]"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "tags": "[]"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "tags": "auth,login"
+     }
+    },
+    {
+     "count": 1,
+     "keys": {
+      "tags": "late"
+     }
+    }
+   ],
+   "rows": []
+  },
+  "MATCH LOG { \"attr.storage\": * } LIMIT 1000": {
+   "count": 0,
+   "exists": false,
+   "groups": [],
+   "rows": []
+  },
+  "MATCH LOG { \"attr.storage.bytes\": * } LIMIT 1000": {
+   "count": 1,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "attr.storage.bytes": 1,
+     "level": "warn",
+     "tags": "auth,login",
+     "ts": "2024-01-15T10:30:02Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"event\": \"[\\\"a\\\"]\" } ORDER BY time ASC LIMIT 1000": {
+   "count": 2,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "event": "[\"a\"]",
+     "n": 1,
+     "ts": "2024-01-15T10:30:09Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 3,
+     "ts": "2024-01-15T10:31:05Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"event\": \"login\" } LIMIT 1000": {
+   "count": 1,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "event": "login",
+     "n": 2,
+     "ts": "2024-01-15T10:30:10Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"event\": * } ORDER BY time ASC LIMIT 1000": {
+   "count": 4,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "event": "[\"a\"]",
+     "n": 1,
+     "ts": "2024-01-15T10:30:09Z"
+    },
+    {
+     "event": "login",
+     "n": 2,
+     "ts": "2024-01-15T10:30:10Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 3,
+     "ts": "2024-01-15T10:31:05Z"
+    },
+    {
+     "event": "[]",
+     "n": 4,
+     "ts": "2024-01-15T10:31:06Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"k\": \"7\" } LIMIT 1000": {
+   "count": 1,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "k": 7,
+     "ts": "2024-01-15T10:30:07Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"k\": \"[1,2]\" } ORDER BY time ASC LIMIT 1000": {
+   "count": 2,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:03Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:04Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"k\": \"{}\" } LIMIT 1000": {
+   "count": 1,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "k": "{}",
+     "ts": "2024-01-15T10:30:05Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"k\": * } ORDER BY time ASC LIMIT 1000": {
+   "count": 5,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "k": "{}",
+     "ts": "2024-01-15T10:30:05Z"
+    },
+    {
+     "k": "[{\"a\":1.5},null,true,\"x\"]",
+     "ts": "2024-01-15T10:30:06Z"
+    },
+    {
+     "k": 7,
+     "ts": "2024-01-15T10:30:07Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:03Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:04Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"level\": \"info\" } ORDER BY time ASC LIMIT 1000": {
+   "count": 4,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "[]",
+     "ts": "2024-01-15T10:30:01Z"
+    },
+    {
+     "level": "info",
+     "tags": "[\"late\"]",
+     "ts": "2024-01-15T10:31:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "late",
+     "ts": "2024-01-15T10:31:01Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"n\": * } ORDER BY time ASC LIMIT 1000": {
+   "count": 4,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "event": "[\"a\"]",
+     "n": 1,
+     "ts": "2024-01-15T10:30:09Z"
+    },
+    {
+     "event": "login",
+     "n": 2,
+     "ts": "2024-01-15T10:30:10Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 3,
+     "ts": "2024-01-15T10:31:05Z"
+    },
+    {
+     "event": "[]",
+     "n": 4,
+     "ts": "2024-01-15T10:31:06Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"tags\": \"[\\\"auth\\\",\\\"login\\\"]\" } ORDER BY time ASC LIMIT 1000": {
+   "count": 2,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:00Z"
+    },
+    {
+     "level": "warn",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:03Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"tags\": \"[\\\"late\\\"]\" } LIMIT 1000": {
+   "count": 1,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[\"late\"]",
+     "ts": "2024-01-15T10:31:00Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"tags\": \"[]\" } LIMIT 1000": {
+   "count": 1,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[]",
+     "ts": "2024-01-15T10:30:01Z"
+    }
+   ]
+  },
+  "MATCH LOG { \"tags\": * } ORDER BY time ASC LIMIT 1000": {
+   "count": 6,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "[]",
+     "ts": "2024-01-15T10:30:01Z"
+    },
+    {
+     "attr.storage.bytes": 1,
+     "level": "warn",
+     "tags": "auth,login",
+     "ts": "2024-01-15T10:30:02Z"
+    },
+    {
+     "level": "warn",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:03Z"
+    },
+    {
+     "level": "info",
+     "tags": "[\"late\"]",
+     "ts": "2024-01-15T10:31:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "late",
+     "ts": "2024-01-15T10:31:01Z"
+    }
+   ]
+  },
+  "MATCH LOG {} BETWEEN \"2024-01-15T10:30:00Z\" AND \"2024-01-15T10:31:00Z\" ORDER BY time ASC LIMIT 1000": {
+   "count": 11,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "[]",
+     "ts": "2024-01-15T10:30:01Z"
+    },
+    {
+     "attr.storage.bytes": 1,
+     "level": "warn",
+     "tags": "auth,login",
+     "ts": "2024-01-15T10:30:02Z"
+    },
+    {
+     "level": "warn",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:03Z"
+    },
+    {
+     "ts": "2024-01-15T10:30:04Z"
+    },
+    {
+     "k": "{}",
+     "ts": "2024-01-15T10:30:05Z"
+    },
+    {
+     "k": "[{\"a\":1.5},null,true,\"x\"]",
+     "ts": "2024-01-15T10:30:06Z"
+    },
+    {
+     "k": 7,
+     "ts": "2024-01-15T10:30:07Z"
+    },
+    {
+     "k": null,
+     "ts": "2024-01-15T10:30:08Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 1,
+     "ts": "2024-01-15T10:30:09Z"
+    },
+    {
+     "event": "login",
+     "n": 2,
+     "ts": "2024-01-15T10:30:10Z"
+    }
+   ]
+  },
+  "MATCH LOG {} BETWEEN \"2024-01-15T10:31:00Z\" AND \"2024-01-15T10:32:00Z\" ORDER BY time ASC LIMIT 1000": {
+   "count": 7,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[\"late\"]",
+     "ts": "2024-01-15T10:31:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "late",
+     "ts": "2024-01-15T10:31:01Z"
+    },
+    {
+     "ts": "2024-01-15T10:31:02Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:03Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:04Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 3,
+     "ts": "2024-01-15T10:31:05Z"
+    },
+    {
+     "event": "[]",
+     "n": 4,
+     "ts": "2024-01-15T10:31:06Z"
+    }
+   ]
+  },
+  "MATCH LOG {} LIMIT 1000": {
+   "count": 18,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "event": "[]",
+     "n": 4,
+     "ts": "2024-01-15T10:31:06Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 3,
+     "ts": "2024-01-15T10:31:05Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:04Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:03Z"
+    },
+    {
+     "ts": "2024-01-15T10:31:02Z"
+    },
+    {
+     "level": "info",
+     "tags": "late",
+     "ts": "2024-01-15T10:31:01Z"
+    },
+    {
+     "level": "info",
+     "tags": "[\"late\"]",
+     "ts": "2024-01-15T10:31:00Z"
+    },
+    {
+     "event": "login",
+     "n": 2,
+     "ts": "2024-01-15T10:30:10Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 1,
+     "ts": "2024-01-15T10:30:09Z"
+    },
+    {
+     "k": null,
+     "ts": "2024-01-15T10:30:08Z"
+    },
+    {
+     "k": 7,
+     "ts": "2024-01-15T10:30:07Z"
+    },
+    {
+     "k": "[{\"a\":1.5},null,true,\"x\"]",
+     "ts": "2024-01-15T10:30:06Z"
+    },
+    {
+     "k": "{}",
+     "ts": "2024-01-15T10:30:05Z"
+    },
+    {
+     "ts": "2024-01-15T10:30:04Z"
+    },
+    {
+     "level": "warn",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:03Z"
+    },
+    {
+     "attr.storage.bytes": 1,
+     "level": "warn",
+     "tags": "auth,login",
+     "ts": "2024-01-15T10:30:02Z"
+    },
+    {
+     "level": "info",
+     "tags": "[]",
+     "ts": "2024-01-15T10:30:01Z"
+    },
+    {
+     "level": "info",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:00Z"
+    }
+   ]
+  },
+  "MATCH LOG {} ORDER BY time ASC LIMIT 1000": {
+   "count": 18,
+   "exists": true,
+   "groups": [],
+   "rows": [
+    {
+     "level": "info",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "[]",
+     "ts": "2024-01-15T10:30:01Z"
+    },
+    {
+     "attr.storage.bytes": 1,
+     "level": "warn",
+     "tags": "auth,login",
+     "ts": "2024-01-15T10:30:02Z"
+    },
+    {
+     "level": "warn",
+     "tags": "[\"auth\",\"login\"]",
+     "ts": "2024-01-15T10:30:03Z"
+    },
+    {
+     "ts": "2024-01-15T10:30:04Z"
+    },
+    {
+     "k": "{}",
+     "ts": "2024-01-15T10:30:05Z"
+    },
+    {
+     "k": "[{\"a\":1.5},null,true,\"x\"]",
+     "ts": "2024-01-15T10:30:06Z"
+    },
+    {
+     "k": 7,
+     "ts": "2024-01-15T10:30:07Z"
+    },
+    {
+     "k": null,
+     "ts": "2024-01-15T10:30:08Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 1,
+     "ts": "2024-01-15T10:30:09Z"
+    },
+    {
+     "event": "login",
+     "n": 2,
+     "ts": "2024-01-15T10:30:10Z"
+    },
+    {
+     "level": "info",
+     "tags": "[\"late\"]",
+     "ts": "2024-01-15T10:31:00Z"
+    },
+    {
+     "level": "info",
+     "tags": "late",
+     "ts": "2024-01-15T10:31:01Z"
+    },
+    {
+     "ts": "2024-01-15T10:31:02Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:03Z"
+    },
+    {
+     "k": "[1,2]",
+     "ts": "2024-01-15T10:31:04Z"
+    },
+    {
+     "event": "[\"a\"]",
+     "n": 3,
+     "ts": "2024-01-15T10:31:05Z"
+    },
+    {
+     "event": "[]",
+     "n": 4,
+     "ts": "2024-01-15T10:31:06Z"
+    }
+   ]
+  }
+ },
+ "templates": [
+  {
+   "columns": {
+    "level": "String",
+    "tags": "String",
+    "ts": "Datetime"
+   },
+   "rows": 5,
+   "template_id": 101,
+   "time_source": "column:ts"
+  },
+  {
+   "columns": {
+    "attr.storage.bytes": "Int64",
+    "level": "String",
+    "tags": "String",
+    "ts": "Datetime"
+   },
+   "rows": 1,
+   "template_id": 102,
+   "time_source": "column:ts"
+  },
+  {
+   "columns": {
+    "ts": "Datetime"
+   },
+   "rows": 2,
+   "template_id": 103,
+   "time_source": "column:ts"
+  },
+  {
+   "columns": {
+    "k": "String",
+    "ts": "Datetime"
+   },
+   "rows": 6,
+   "template_id": 104,
+   "time_source": "column:ts"
+  },
+  {
+   "columns": {
+    "event": "String",
+    "n": "Int64",
+    "ts": "Datetime"
+   },
+   "rows": 2,
+   "template_id": 105,
+   "time_source": "column:ts"
+  },
+  {
+   "columns": {
+    "event": "String",
+    "n": "Int64",
+    "ts": "Datetime"
+   },
+   "rows": 1,
+   "template_id": 106,
+   "time_source": "column:ts"
+  },
+  {
+   "columns": {
+    "event": "String",
+    "n": "Int64",
+    "ts": "Datetime"
+   },
+   "rows": 1,
+   "template_id": 107,
+   "time_source": "column:ts"
+  }
+ ],
+ "time_columns": "ts"
+}

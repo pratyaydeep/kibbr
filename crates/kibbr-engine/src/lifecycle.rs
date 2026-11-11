@@ -4,7 +4,7 @@
 //! The database's life: a data directory opened - restored, and its log replayed - its
 //! checkpoint moved behind the flush, and the order it is closed in.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -14,6 +14,7 @@ use crate::database::{Database, Schema, Storage};
 use crate::error::{self, Error};
 use crate::templates::catalog::Catalog;
 use crate::ingest;
+use crate::model::types::ColValue;
 use crate::rows::{FlushKind, StoreError, StoreManager};
 use crate::templates::trie::Trie;
 use crate::wal::{self, Wal};
@@ -177,13 +178,19 @@ fn replay(
             ..Replayed::default()
         });
     }
-    let time_columns: HashMap<u64, String> = trie
+    // Each template's time column and its keys.
+    let templates: HashMap<u64, (String, HashSet<String>)> = trie
         .all_leaves()
         .iter()
         .filter_map(|leaf| {
             leaf.leaf_meta.read().ok().and_then(|slot| {
-                slot.as_ref()
-                    .map(|meta| (meta.template_id, meta.time_source.column().to_string()))
+                slot.as_ref().map(|meta| {
+                    let keys = meta.columns.iter().map(|c| c.name.clone()).collect();
+                    (
+                        meta.template_id,
+                        (meta.time_source.column().to_string(), keys),
+                    )
+                })
             })
         })
         .collect();
@@ -242,7 +249,7 @@ fn replay(
         }
 
         // To be put back: only now is the line read.
-        let Some(time_column) = time_columns.get(&record.template_id) else {
+        let Some((time_column, keys)) = templates.get(&record.template_id) else {
             unknown.get_or_insert((record.seq, record.template_id));
             held.hold(record.seq);
             out.held += 1;
@@ -250,7 +257,22 @@ fn replay(
         };
         let row =
             match ingest::row_from_log(record.line, time_column, record.received_at, record.time) {
-                Ok(row) => row,
+                // A line a build from before empty objects were kept filed under a
+                // template that has no key for one: the row goes back as that build
+                // stored it, its key set its template's.
+                Ok(mut row) => {
+                    let empty =
+                        |value: &ColValue| matches!(value, ColValue::Json(text) if text == "{}");
+                    let spare: Vec<String> = row
+                        .iter()
+                        .filter(|(key, value)| empty(value) && !keys.contains(*key))
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    for key in spare {
+                        row.remove(&key);
+                    }
+                    row
+                }
                 Err(e) => {
                     unreadable.get_or_insert_with(|| (record.seq, e.kind.to_string()));
                     held.set_aside(record.template_id, record.seq);
