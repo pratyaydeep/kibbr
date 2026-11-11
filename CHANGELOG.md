@@ -4,7 +4,26 @@ One entry per tag, newest first.
 
 ## 0.4.0 — 2026-11-12
 
-- TODO: what changed
+- **JSON comes back as it went in.** An array comes back as that array, and an empty object
+  `{}` as `{}` at its path; `{}`, `[]`, `null`, a missing key, `""`, `"{}"` and `"[]"` stay
+  distinct. A query matches, counts and groups an array by its JSON text, as before. Rows
+  written by an older build answer as they did (arrays as strings, no key for `{}`); an older
+  build that compacts a day written by 0.4.0 turns its arrays back into strings.
+- **Time columns read more forms:** decimal epoch seconds ("1679711330.570420890", exact to 9
+  fraction digits as a string, to about 6 as a JSON number), 16- and 19-digit epochs
+  (microseconds, nanoseconds), and "YYYY-MM-DD HH:MM:SS[.fraction] ZONE" for UTC, GMT, Z, EST,
+  EDT, CST, CDT, MST, MDT, PST and PDT. Only in time columns; a column's stored type is
+  unchanged. A template made before 0.4.0 keeps its time source until its data is loaded again.
+- **Epoch-like digits beside integers widen to Int64,** not String. The catalog records
+  whether a Datetime column's values were all epoch digits, so RFC 3339 dates beside integers
+  become String in any order.
+- **On-disk format still version 3, additions only:** an optional `epoch_digits` on
+  catalog.log's column record, and an optional row-group section (kind 0x82) marking JSON
+  values. 0.3.0 and 0.2.3 open, query and keep writing a directory 0.4.0 wrote
+  (scripts/check/downgrade.sh, new).
+- `scripts/check/roundtrip.sh` now holds arrays and empty objects to themselves.
+- Bench: `bench/compression.py` reads corpora published as many files (`urls`), with
+  `bench/sizes.py` for sizes before downloading; Bluesky 100M and HDFS logs sources.
 
 ## 0.3.0 — 2026-11-11
 
