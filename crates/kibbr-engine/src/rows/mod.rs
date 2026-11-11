@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
-use crate::model::infer::infer;
+use crate::model::infer::{epoch_digits, infer};
 use crate::model::types::ColValue;
 
 pub(crate) mod disk;
@@ -33,7 +33,9 @@ pub(crate) mod scan_threads;
 pub(crate) use disk::DiskStore;
 pub(crate) use memory::MemoryStore;
 // A row, and its place in time, are the model's: the format builds from them too.
-pub(crate) use crate::model::row::{effective_ts, instant_of, ts_of, Row};
+pub(crate) use crate::model::row::{
+    effective_ts, instant_of, own_ts, said_instant, said_ts, ts_of, Row,
+};
 
 /// One term of a pattern that the path could not settle: the key it reads and what it wants
 /// there, as data read through the ladder once so a scan only compares.
@@ -49,8 +51,34 @@ pub enum Want {
     /// `*`: the key is present and not null.
     Any,
     /// One value: the term's text, and what the ladder reads that text as - `infer(text)`,
-    /// run where the term is made and nowhere in a scan.
-    Exact { text: String, inferred: ColValue },
+    /// run where the term is made and nowhere in a scan. `count` is the integer the text
+    /// spells where rule 2 read it as an instant: what it is in a column of integers.
+    Exact {
+        text: String,
+        inferred: ColValue,
+        count: Option<i64>,
+    },
+}
+
+/// How a stored `Datetime` is shown in its column, by what the column's type is now: as
+/// stored, as the text it arrived as (`String`), or as the count it arrived as (`Int64`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Shown {
+    #[default]
+    Stored,
+    Text,
+    Count,
+}
+
+impl From<bool> for Shown {
+    /// `true` for a text column: how the question was put before a column could be `Count`.
+    fn from(text_column: bool) -> Self {
+        if text_column {
+            Shown::Text
+        } else {
+            Shown::Stored
+        }
+    }
 }
 
 impl Term {
@@ -68,6 +96,7 @@ impl Term {
             want: Want::Exact {
                 text: text.to_string(),
                 inferred: infer(text).value,
+                count: epoch_digits(text),
             },
         }
     }
@@ -80,47 +109,74 @@ impl Term {
         &self.want
     }
 
+    /// The integer the term's text is in a column of integers: what the ladder read, or the
+    /// count rule 2 read as an instant.
+    pub(crate) fn whole(&self) -> Option<i64> {
+        match &self.want {
+            Want::Exact {
+                inferred: ColValue::Int64(i),
+                ..
+            } => Some(*i),
+            Want::Exact { count, .. } => *count,
+            Want::Any => None,
+        }
+    }
+
     /// Whether a value, as a rendered row holds it, satisfies the term: the string reading
     /// first, then the ladder's, as `engine::value_matches` does.
     pub fn matches(&self, seen: &ColValue) -> bool {
         match &self.want {
             Want::Any => !matches!(seen, ColValue::Null),
-            Want::Exact { text, inferred } => {
+            Want::Exact { text, inferred, .. } => {
                 matches!(seen, ColValue::String(s) if s == text) || seen == inferred
             }
         }
     }
 
     /// `matches`, for one stored value no row was rendered for: in a column that is now `String`
-    /// a `Datetime` is compared as the text it arrived as.
+    /// a `Datetime` is compared as the text it arrived as, and in one that is now `Int64` as
+    /// the count it arrived as.
     pub fn matches_cell(
         &self,
         value: &ColValue,
         written: Option<&serde_json::Value>,
-        text_column: bool,
+        shown: impl Into<Shown>,
     ) -> bool {
-        match (value, text_column) {
-            (ColValue::Datetime(_), true) => {
+        match (value, shown.into()) {
+            (ColValue::Datetime(_), Shown::Text) => {
                 render_text(value, written).is_some_and(|seen| self.matches(&seen))
             }
+            (ColValue::Datetime(_), Shown::Count) => match render_count(value, written) {
+                Some(count) => self.matches_count(count),
+                None => self.matches(value),
+            },
             _ => self.matches(value),
         }
     }
 
+    /// Whether a `Datetime` shown as the count `count` satisfies the term: `*`, or a text
+    /// that is the same integer, whichever rule the ladder read it by.
+    fn matches_count(&self, count: i64) -> bool {
+        matches!(self.want, Want::Any) || self.whole() == Some(count)
+    }
+
     /// A row already rendered: a row without the term's key matches nothing, `*` included.
+    /// An integer the line wrote as exactly its digits, where the ladder reads those digits
+    /// as an instant, is a `Datetime` shown as a count, and is matched as one.
     pub fn matches_row(&self, row: &Row) -> bool {
-        row.get(&self.key).is_some_and(|have| self.matches(have))
+        row.get(&self.key).is_some_and(|have| {
+            self.matches(have)
+                || shown_count(have, row.written(&self.key))
+                    .is_some_and(|count| self.matches_count(count))
+        })
     }
 
     /// What `matches_row` answers for `render_row` of a stored row, with no row cloned to find
     /// out.
-    pub fn matches_in(&self, row: &Row, text_column: bool) -> bool {
+    pub fn matches_in(&self, row: &Row, shown: impl Into<Shown>) -> bool {
         match row.get(&self.key) {
             None => false,
-            Some(value @ ColValue::Datetime(_)) if text_column => {
-                render_text(value, row.written(&self.key)).is_some_and(|seen| self.matches(&seen))
-            }
-            Some(value) => self.matches(value),
+            Some(value) => self.matches_cell(value, row.written(&self.key), shown),
         }
     }
 }
@@ -151,6 +207,9 @@ pub struct ScanOptions {
     /// Columns whose type is now `String`: a `Datetime` stored in one is compared as the text
     /// it arrived as.
     pub text_columns: Vec<String>,
+    /// Columns whose type is now `Int64`: a `Datetime` stored in one as epoch digits is
+    /// compared as the integer it arrived as.
+    pub int_columns: Vec<String>,
     /// What tells the scan its answer is no longer wanted (`Stop`); the default is never told.
     pub stop: Stop,
 }
@@ -1204,6 +1263,66 @@ pub(crate) fn render_row(row: &Row, text_columns: &[String]) -> Option<Row> {
         if let Some(text) = render_text(value, row.written(column)) {
             out.get_or_insert_with(|| row.clone())
                 .set_value(column, text);
+        }
+    }
+    out
+}
+
+/// A `Datetime` that arrived as epoch digits, as the integer those digits spell: what a
+/// query compares it as in a column that is now `Int64`. `None` for any other value, and
+/// for a `Datetime` that arrived as RFC 3339 text, which is no integer.
+///
+/// Exact, because the digits are read from what the line said and never worked back from
+/// the instant: a row holds them beside the value, and a row group stores them as the
+/// instant in whole seconds or milliseconds only when that prints the same digits.
+pub(crate) fn render_count(value: &ColValue, written: Option<&serde_json::Value>) -> Option<i64> {
+    let ColValue::Datetime(_) = value else {
+        return None;
+    };
+    match written? {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(text) => plain_digits(text),
+        _ => None,
+    }
+}
+
+/// Text that is an integer in plain decimal and nothing else: no sign, no leading zero.
+fn plain_digits(text: &str) -> Option<i64> {
+    let padded = text.len() > 1 && text.starts_with('0');
+    let plain = !text.is_empty() && !padded && text.bytes().all(|b| b.is_ascii_digit());
+    if plain {
+        text.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// The count a rendered value is a `Datetime` shown as: an integer in the epoch window's
+/// ten or thirteen digits that the line wrote as exactly those digits. The ladder reads
+/// such a value as an instant, so a row holds it as an integer only by `render_count`.
+pub(crate) fn shown_count(seen: &ColValue, written: Option<&serde_json::Value>) -> Option<i64> {
+    let ColValue::Int64(have) = seen else {
+        return None;
+    };
+    let said = match written? {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(text) => plain_digits(text),
+        _ => None,
+    }?;
+    (said == *have && epoch_digits(&said.to_string()) == Some(said)).then_some(said)
+}
+
+/// `render_row` for a scan: its text columns, and then a `Datetime` in each column that is
+/// now `Int64` as the count it arrived as. `None` when nothing in the row needs rendering.
+pub(crate) fn shown_row(row: &Row, opts: &ScanOptions) -> Option<Row> {
+    let mut out = render_row(row, &opts.text_columns);
+    for column in &opts.int_columns {
+        let Some(value) = row.get(column) else {
+            continue;
+        };
+        if let Some(count) = render_count(value, row.written(column)) {
+            out.get_or_insert_with(|| row.clone())
+                .set_value(column, ColValue::Int64(count));
         }
     }
     out

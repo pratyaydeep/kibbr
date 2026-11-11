@@ -14,15 +14,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::{Stored, View};
-use crate::rows::filter::{hits, hits_by_row, instants, Instants, Sel};
+use crate::rows::filter::{hits, hits_by_row, instants, said_instants, Instants, Sel};
 use crate::rows::scan_threads::{Fan, Turn};
 use crate::format::column::{Col, Column, Memo};
 use crate::format::file::{Reader, StoredChunk};
 use crate::format::read::{Header, ALL_NULL, SOME_NULL};
 use crate::format::{day_of, Bad};
 use crate::rows::{
-    effective_ts, in_window, instant_of, nanos_of, render_row, render_text, Row, Scan, ScanOptions,
-    StoreError, Term, Visitor, Want, Wants, DEFAULT_TS_COLUMN, RECEIVED_AT_COLUMN,
+    effective_ts, in_window, instant_of, nanos_of, render_text, said_instant, said_ts, shown_row,
+    Row, Scan, ScanOptions, Shown, StoreError, Term, Visitor, Want, Wants, DEFAULT_TS_COLUMN,
+    RECEIVED_AT_COLUMN,
 };
 use crate::model::types::ColValue;
 
@@ -31,8 +32,9 @@ use crate::model::types::ColValue;
 pub(super) struct Ask<'a> {
     opts: &'a ScanOptions,
     terms: &'a [Term],
-    /// For each term, whether its key is a column whose type is now `String`.
-    term_is_text: Vec<bool>,
+    /// For each term, how its key's column shows a stored `Datetime`: as text where the
+    /// column's type is now `String`, as a count where it is now `Int64`.
+    term_shown: Vec<Shown>,
     since: Option<i64>,
     until: Option<i64>,
     /// The leaf's time column; and whether it, and the arrival time, are columns whose
@@ -50,7 +52,18 @@ impl<'a> Ask<'a> {
         Self {
             opts,
             terms,
-            term_is_text: terms.iter().map(|term| is_text(term.key())).collect(),
+            term_shown: terms
+                .iter()
+                .map(|term| {
+                    if is_text(term.key()) {
+                        Shown::Text
+                    } else if opts.int_columns.iter().any(|c| c == term.key()) {
+                        Shown::Count
+                    } else {
+                        Shown::Stored
+                    }
+                })
+                .collect(),
             since: opts.since.map(nanos_of),
             until: opts.until.map(nanos_of),
             ts,
@@ -127,8 +140,8 @@ impl<'a> Ask<'a> {
         }
         self.terms
             .iter()
-            .zip(&self.term_is_text)
-            .all(|(term, text)| term.matches_in(row, *text))
+            .zip(&self.term_shown)
+            .all(|(term, shown)| term.matches_in(row, *shown))
     }
 
     /// The effective time of a row not yet in a row group as the rendered row would show it,
@@ -138,15 +151,19 @@ impl<'a> Ask<'a> {
             (self.ts, self.ts_is_text),
             (RECEIVED_AT_COLUMN, self.received_is_text),
         ];
-        columns.into_iter().find_map(|(column, text)| {
-            let value = row.get(column)?;
-            match value {
-                ColValue::Datetime(_) if text => {
-                    instant_of(&render_text(value, row.written(column))?)
+        columns
+            .into_iter()
+            .find_map(|(column, text)| {
+                let value = row.get(column)?;
+                match value {
+                    ColValue::Datetime(_) if text => {
+                        instant_of(&render_text(value, row.written(column))?)
+                    }
+                    _ => instant_of(value),
                 }
-                _ => instant_of(value),
-            }
-        })
+            })
+            // Neither holds an instant: the time column as only a time column reads it.
+            .or_else(|| said_ts(row, self.ts))
     }
 }
 
@@ -262,10 +279,18 @@ impl<'v> Unit<'v> {
             Some(place) => instants(self.column(place)?).map_err(|bad| self.refused(bad))?,
             None => Instants::absent(self.rows),
         };
-        match self.shape.received {
+        let ts = match self.shape.received {
             Some(place) if ts.missing() && self.shape.ts != Some(place) => {
                 let received = instants(self.column(place)?).map_err(|bad| self.refused(bad))?;
-                Ok(ts.or(&received))
+                ts.or(&received)
+            }
+            _ => ts,
+        };
+        // A row with neither: its time column as only a time column reads it.
+        match self.shape.ts {
+            Some(place) if ts.missing() => {
+                let said = said_instants(self.column(place)?).map_err(|bad| self.refused(bad))?;
+                Ok(ts.or(&said))
             }
             _ => Ok(ts),
         }
@@ -296,7 +321,15 @@ impl<'v> Unit<'v> {
                 return Ok(at);
             }
         }
-        Ok(None)
+        // Neither holds an instant: the time column as only a time column reads it.
+        let Some(place) = self.shape.ts else {
+            return Ok(None);
+        };
+        let (value, written) = self
+            .column(place)?
+            .cell(r)
+            .map_err(|bad| self.refused(bad))?;
+        Ok(said_instant(&value, written.as_ref()))
     }
 }
 
@@ -344,7 +377,7 @@ impl<'u> Builder<'u> {
             let name = unit.at.schema[shape.wanted[*place]].clone();
             self.row.insert_written(name, value, written);
         }
-        let seen = match render_row(&self.row, &self.ask.opts.text_columns) {
+        let seen = match shown_row(&self.row, self.ask.opts) {
             Some(rendered) => Cow::Owned(rendered),
             None => Cow::Borrowed(&self.row),
         };
@@ -376,7 +409,7 @@ fn pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
         sel.and(&unit.times()?.window(ask.since, ask.until));
     }
     let terms = ask.terms.iter().zip(&unit.shape.terms);
-    for ((term, place), text) in terms.zip(&ask.term_is_text) {
+    for ((term, place), shown) in terms.zip(&ask.term_shown) {
         if sel.is_empty() {
             break;
         }
@@ -397,7 +430,7 @@ fn pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
                 continue;
             }
         }
-        let hits = hits(unit.column(place)?, term, *text).map_err(|bad| unit.refused(bad))?;
+        let hits = hits(unit.column(place)?, term, *shown).map_err(|bad| unit.refused(bad))?;
         sel.and(&hits);
     }
     if cfg!(debug_assertions) {
@@ -449,6 +482,16 @@ fn slow_pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
                     break;
                 }
             }
+            // And where neither holds one, the time column as only a time column reads it.
+            if at.is_none() {
+                if let Some((place, column, memo)) = columns[0].as_mut() {
+                    let cell = unit
+                        .over(column, *place)?
+                        .cell_with(row, memo)
+                        .map_err(|bad| unit.refused(bad))?;
+                    at = said_instant(&cell.0, cell.1.as_ref());
+                }
+            }
             if in_window(at, ask.since, ask.until) {
                 inside.set(row);
             }
@@ -456,13 +499,13 @@ fn slow_pick(unit: &Unit<'_>, ask: &Ask<'_>) -> Result<Sel, StoreError> {
         sel.and(&inside);
     }
     let terms = ask.terms.iter().zip(&unit.shape.terms);
-    for ((term, place), text) in terms.zip(&ask.term_is_text) {
+    for ((term, place), shown) in terms.zip(&ask.term_shown) {
         let Some(place) = *place else {
             sel = Sel::none(rows);
             continue;
         };
         let column = unit.decode(place)?;
-        let hits = hits_by_row(unit.over(&column, place)?, term, *text)
+        let hits = hits_by_row(unit.over(&column, place)?, term, *shown)
             .map_err(|bad| unit.refused(bad))?;
         sel.and(&hits);
     }
@@ -571,7 +614,7 @@ fn tail(view: &View, ask: &Ask<'_>, base: u64, v: &mut dyn Visitor, out: &mut Sc
             let asked = gated.then(|| ask.seen_ts_of(&b.row));
             if asked.is_none_or(|ts| v.wants_row(ts, seq, day_of(ts.unwrap_or(0)) == view.day)) {
                 // A whole row, whatever columns the visitor named: it is a row already.
-                let rendered = render_row(&b.row, &ask.opts.text_columns);
+                let rendered = shown_row(&b.row, ask.opts);
                 let seen = rendered.as_ref().unwrap_or(&b.row);
                 debug_assert!(
                     asked.is_none_or(|ts| ts == effective_ts(seen, ask.ts)),

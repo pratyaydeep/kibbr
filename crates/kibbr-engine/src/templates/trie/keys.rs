@@ -30,6 +30,9 @@ pub struct Template {
     /// Columns whose type is now `String`, in the leaf's column order; a `Datetime` stored
     /// in one is rendered back to its ingested text before the row is read.
     pub text_columns: Vec<String>,
+    /// Columns whose type is now `Int64`, in the leaf's column order; a `Datetime` stored in
+    /// one as epoch digits is shown as the integer it arrived as.
+    pub int_columns: Vec<String>,
     /// `(column, value)` for each column the path settles, in key order; empty or one pair
     /// for most templates, so it is searched and not hashed.
     promoted: Vec<(String, String)>,
@@ -51,6 +54,12 @@ impl Template {
                 .columns
                 .iter()
                 .filter(|c| c.col_type == Some(ColumnType::String))
+                .map(|c| c.name.clone())
+                .collect(),
+            int_columns: meta
+                .columns
+                .iter()
+                .filter(|c| c.col_type == Some(ColumnType::Int64))
                 .map(|c| c.name.clone())
                 .collect(),
             promoted,

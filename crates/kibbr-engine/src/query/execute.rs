@@ -346,6 +346,7 @@ pub(super) fn answer(
         let ts = leaf.template.time_column.as_str();
         opts.ts_column = Some(leaf.template.time_column.clone());
         opts.text_columns = leaf.template.text_columns.clone();
+        opts.int_columns = leaf.template.int_columns.clone();
 
         // Column pruning: any mode but `Fetch` reads only the residual keys, the group keys and
         // the time columns, so a store may skip the rest. Empty is every column.

@@ -397,3 +397,162 @@ fn a_term_reads_a_stored_row_as_it_reads_the_rendered_one() {
     // A row without the key matches nothing, `*` included.
     assert!(!Term::any("w").matches_in(&epoch, false) && !Term::any("w").matches_row(&epoch));
 }
+
+/// **A term reads a stored row of an integer column as it reads the rendered one**: the
+/// two unrendered readings a scan uses, held to `shown_row` and `matches_row`, over every
+/// spelling of a value and every term.
+#[test]
+fn a_term_reads_a_stored_row_of_an_integer_column_as_it_reads_the_rendered_one() {
+    let mut rows = spelled();
+    rows.extend(samples::rows());
+    // Epoch digits as a number and as a string, in seconds and in milliseconds, and
+    // integers the ladder never read as a date though they spell one.
+    for (ns, written) in [
+        (INSTANT, Some(serde_json::Value::from(1_705_314_600_i64))),
+        (INSTANT, spelling("1705314600")),
+        (
+            INSTANT,
+            Some(serde_json::Value::from(1_705_314_600_000_i64)),
+        ),
+        (INSTANT, spelling("1705314600000")),
+    ] {
+        rows.push(holding(ColValue::Datetime(ns), written));
+    }
+    rows.push(holding(
+        ColValue::Int64(1_705_314_600),
+        spelling("+1705314600"),
+    ));
+    rows.push(holding(
+        ColValue::Int64(1_705_314_600),
+        spelling("01705314600"),
+    ));
+    rows.push(holding(ColValue::Int64(999_999_999), None));
+
+    let mut terms = vec![Term::any("v"), Term::any("w")];
+    terms.extend(samples::TEXTS.iter().map(|text| Term::exact("v", text)));
+    for text in [
+        "1705314600",
+        "+1705314600",
+        "1705314600000",
+        "999999999",
+        "01705314600",
+    ] {
+        terms.push(Term::exact("v", text));
+    }
+
+    let opts = ScanOptions {
+        int_columns: vec!["v".to_string()],
+        ..ScanOptions::default()
+    };
+    let (mut matched, mut rendered_rows) = (0u32, 0u32);
+    for row in &rows {
+        let rendered = shown_row(row, &opts);
+        rendered_rows += u32::from(rendered.is_some());
+        let seen = rendered.as_ref().unwrap_or(row);
+        // What the line said is still what an answer prints.
+        assert_eq!(seen.json("v"), row.json("v"), "{row:?}");
+        for term in &terms {
+            let want = term.matches_row(seen);
+            assert_eq!(
+                term.matches_in(row, Shown::Count),
+                want,
+                "{term:?} put to {row:?}, shown as {seen:?}"
+            );
+            let by_value = row.get(term.key()).is_some_and(|value| {
+                term.matches_cell(value, row.written(term.key()), Shown::Count)
+            });
+            assert_eq!(by_value, want, "{term:?} put to the value of {row:?}");
+            matched += u32::from(want);
+        }
+    }
+    assert!(
+        matched > 100 && rendered_rows >= 5,
+        "{matched} {rendered_rows}"
+    );
+
+    // By hand. A date that arrived as ten digits is that integer: exactly, as a number.
+    let digits = Term::exact("v", "1705314600");
+    let millis = Term::exact("v", "1705314600000");
+    let zulu = Term::exact("v", "2024-01-15T10:30:00Z");
+    let epoch = holding(
+        ColValue::Datetime(INSTANT),
+        Some(serde_json::Value::from(1_705_314_600_i64)),
+    );
+    let shown = shown_row(&epoch, &opts).expect("rendered");
+    assert_eq!(shown.get("v"), Some(&ColValue::Int64(1_705_314_600)));
+    assert_eq!(shown.json("v"), Some(serde_json::json!(1_705_314_600_i64)));
+    assert!(digits.matches_in(&epoch, Shown::Count) && digits.matches_row(&shown));
+    // Neither another spelling of the instant nor another unit of it is that integer...
+    assert!(!zulu.matches_in(&epoch, Shown::Count) && !zulu.matches_row(&shown));
+    assert!(!millis.matches_in(&epoch, Shown::Count) && !millis.matches_row(&shown));
+    // ...though each finds the row while the column is still a date.
+    assert!(zulu.matches_in(&epoch, Shown::Stored) && millis.matches_in(&epoch, Shown::Stored));
+    // The time such a row shows is still the instant it was stored as.
+    assert_eq!(crate::rows::effective_ts(&shown, "v"), Some(INSTANT));
+    assert_eq!(crate::rows::effective_ts(&epoch, "v"), Some(INSTANT));
+
+    // A date that arrived as RFC 3339 is no integer: it is not rendered, and stays a date.
+    let dated = holding(ColValue::Datetime(INSTANT), None);
+    assert!(shown_row(&dated, &opts).is_none());
+    assert!(zulu.matches_in(&dated, Shown::Count) && digits.matches_in(&dated, Shown::Count));
+
+    // An integer the line signed was never a date, and the digits alone - a date to the
+    // ladder - do not find it: as before the column could be one of counts.
+    let signed = holding(ColValue::Int64(1_705_314_600), spelling("+1705314600"));
+    assert!(shown_row(&signed, &opts).is_none());
+    assert!(!digits.matches_in(&signed, Shown::Count) && !digits.matches_row(&signed));
+    assert!(Term::exact("v", "+1705314600").matches_row(&signed));
+}
+
+/// **The count a date is shown as is the digits the line wrote, exactly**: read from what
+/// the line said, never worked back from the instant, for every edge of the epoch window.
+#[test]
+fn a_date_shown_as_a_count_is_the_digits_it_arrived_as() {
+    for text in [
+        "1000000000",
+        "1220305536",
+        "1679711330",
+        "4102444799",
+        "1000000000000",
+        "1679711330570",
+        "4102444799999",
+    ] {
+        let count: i64 = text.parse().expect("digits");
+        for quoted in [false, true] {
+            let line = if quoted {
+                format!(r#"{{"v":"{text}"}}"#)
+            } else {
+                format!(r#"{{"v":{text}}}"#)
+            };
+            let row = crate::format::samples::row(&line);
+            assert!(
+                matches!(row.get("v"), Some(ColValue::Datetime(_))),
+                "{line}"
+            );
+            assert_eq!(
+                render_count(&row["v"], row.written("v")),
+                Some(count),
+                "{line}"
+            );
+            let shown = shown_row(
+                &row,
+                &ScanOptions {
+                    int_columns: vec!["v".into()],
+                    ..ScanOptions::default()
+                },
+            )
+            .expect("rendered");
+            assert_eq!(shown.get("v"), Some(&ColValue::Int64(count)));
+            // And the answer prints what the line held, a number or a string.
+            let said: serde_json::Value = serde_json::from_str(&line).expect("json");
+            assert_eq!(shown.json("v").as_ref(), Some(&said["v"]), "{line}");
+            assert_eq!(shown_count(&shown["v"], shown.written("v")), Some(count));
+        }
+    }
+    // Not a count: RFC 3339 text, and anything that is not a `Datetime`.
+    let dated = crate::format::samples::row(r#"{"v":"2024-01-15T16:00:00+05:30"}"#);
+    assert_eq!(render_count(&dated["v"], dated.written("v")), None);
+    let plain = crate::format::samples::row(r#"{"v":42}"#);
+    assert_eq!(render_count(&plain["v"], plain.written("v")), None);
+    assert_eq!(shown_count(&plain["v"], plain.written("v")), None);
+}

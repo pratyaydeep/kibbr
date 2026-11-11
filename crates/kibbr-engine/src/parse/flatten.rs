@@ -10,7 +10,7 @@ use serde_json::error::Category;
 use serde_json::Value;
 
 use crate::error::{BadByte, DetectorError, DetectorErrorKind};
-use crate::model::infer::infer;
+use crate::model::infer::{infer, time_form_nanos};
 use crate::model::tokens::{key_token, promoted_token};
 use crate::model::row::Row;
 use crate::parse::key::KeyPath;
@@ -97,6 +97,27 @@ impl ParsedLog {
             Some(typed) => typed.ty,
             None if self.promoted.iter().any(|p| p == key) => Some(ColumnType::String),
             None => None,
+        }
+    }
+
+    /// Whether this line's value for `key` is digits rule 2 read as an instant.
+    pub fn is_epoch_digits(&self, key: &str) -> bool {
+        self.typed_values
+            .get(key)
+            .is_some_and(Typed::is_epoch_digits)
+    }
+
+    /// Whether a time column reads this line's value for `key` as a time: a `Datetime`,
+    /// or one of the forms only a time column reads. Asked of the configured names alone,
+    /// where a template's time source is chosen; the column's type is not changed by it.
+    pub fn reads_as_time(&self, key: &str) -> bool {
+        match self.typed_values.get(key) {
+            Some(typed) if typed.ty == Some(ColumnType::Datetime) => true,
+            Some(typed) if typed.ty.is_some() => self
+                .values
+                .get(key)
+                .is_some_and(|raw| time_form_nanos(raw).is_some()),
+            _ => false,
         }
     }
 

@@ -197,27 +197,41 @@ pub(crate) fn arrival_nanos(now: DateTime<Utc>) -> i64 {
     crate::rows::nanos_of(crate::rows::system_time(now))
 }
 
-/// The effective time: the time column where it holds an instant, otherwise the arrival
+/// The effective time: the time column where it reads as a time, otherwise the arrival
 /// time, stored after fingerprinting so it is not a key and makes no template.
 fn stamp(row: &mut Row, time_column: &str, received_at: i64) {
-    if crate::rows::ts_of(row, time_column).is_none() {
-        row.insert(
-            RECEIVED_AT_COLUMN.to_string(),
-            ColValue::Datetime(received_at),
-        );
+    if crate::rows::own_ts(row, time_column).is_none() {
+        arrived(row, received_at);
     }
+}
+
+fn arrived(row: &mut Row, received_at: i64) {
+    row.insert(
+        RECEIVED_AT_COLUMN.to_string(),
+        ColValue::Datetime(received_at),
+    );
 }
 
 /// A line read back from the write-ahead log as the row it was first stored as, with the
 /// record's arrival time: stamped at replay it could move to another day.
+///
+/// `time` is the time the record says the row was filed under. A build from before a time
+/// column read its own forms logged such a line under its arrival time; the row takes the
+/// form's time only where that is the record's, so a log replays as the build that wrote
+/// it stored it.
 pub(crate) fn row_from_log(
     line: &[u8],
     time_column: &str,
     received_at: i64,
+    time: i64,
 ) -> Result<Row, DetectorError> {
     let parsed = parse_line(line, 0)?;
     let mut row = row_of(&parsed);
-    stamp(&mut row, time_column, received_at);
+    let own = crate::rows::ts_of(&row, time_column).is_some()
+        || crate::rows::said_ts(&row, time_column) == Some(time);
+    if !own {
+        arrived(&mut row, received_at);
+    }
     Ok(row)
 }
 
@@ -365,3 +379,6 @@ pub fn read_lines<R: BufRead>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

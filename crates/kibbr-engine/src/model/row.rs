@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::model::infer::infer;
+use crate::model::infer::{infer, time_nanos, time_nanos_of_int};
 use crate::model::types::{ColValue, RECEIVED_AT_COLUMN};
 
 /// One row: each key's value as the ladder read it and, only where printing that value would
@@ -169,8 +169,49 @@ pub fn ts_of(row: &Row, column: &str) -> Option<i64> {
     row.get(column).and_then(instant_of)
 }
 
-/// The effective time of a row: the template's time column where it holds an instant, and
-/// otherwise its arrival time; `disk::scan` spells the same rule, so change both.
-pub fn effective_ts(row: &Row, column: &str) -> Option<i64> {
-    ts_of(row, column).or_else(|| ts_of(row, RECEIVED_AT_COLUMN))
+/// What a template's time column reads a value as, from what the line said: a string's
+/// characters or a number's digits through `time_nanos`, so a decimal of seconds, sixteen
+/// digits and a zoned date are instants here though the ladder typed them otherwise.
+///
+/// The text is what the line said and not the typed value: `"0000001679711330"` is the
+/// integer 1679711330 and is not a count of seconds. A JSON number is its digits as the
+/// JSON parser holds them - a double, for one with a point.
+pub fn said_instant(value: &ColValue, written: Option<&serde_json::Value>) -> Option<i64> {
+    use serde_json::Value;
+    match (written, value) {
+        (Some(Value::String(text)), _) | (None, ColValue::String(text)) => time_nanos(text),
+        (Some(Value::Number(n)), _) => time_nanos(&n.to_string()),
+        (Some(_), _) => None,
+        (None, ColValue::Int64(i)) => time_nanos_of_int(*i),
+        (None, ColValue::Float64(f)) => time_nanos(&serde_json::Number::from_f64(*f)?.to_string()),
+        (None, ColValue::Datetime(ns)) => Some(*ns),
+        (None, ColValue::Bool(_) | ColValue::Null) => None,
+    }
 }
+
+/// `said_instant` of a row's value under `column`.
+pub fn said_ts(row: &Row, column: &str) -> Option<i64> {
+    row.get(column)
+        .and_then(|value| said_instant(value, row.written(column)))
+}
+
+/// The time a row has of its own under its template's time column, by everything a time
+/// column reads: what decides whether the row needs an arrival time.
+pub fn own_ts(row: &Row, column: &str) -> Option<i64> {
+    ts_of(row, column).or_else(|| said_ts(row, column))
+}
+
+/// The effective time of a row: the template's time column where it holds an instant,
+/// otherwise the arrival time the row was stored with, and where it has neither, the time
+/// column as only a time column reads it. A row is given an arrival time exactly when
+/// `own_ts` is `None`, so the last is every row whose own time is in a time-column form;
+/// the order keeps a row stored before those forms were read at the arrival time it was
+/// filed under. `disk::scan` spells the same rule, so change both.
+pub fn effective_ts(row: &Row, column: &str) -> Option<i64> {
+    ts_of(row, column)
+        .or_else(|| ts_of(row, RECEIVED_AT_COLUMN))
+        .or_else(|| said_ts(row, column))
+}
+
+#[cfg(test)]
+mod tests;

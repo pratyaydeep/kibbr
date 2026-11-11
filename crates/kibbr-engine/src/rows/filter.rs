@@ -13,7 +13,8 @@ use crate::format::column::{Col, Memo, PieceRef, ValuesRef};
 use crate::format::{
     epoch_of, ip_bytes, print_ip, print_uuid, uuid_bytes, Bad, Form, MAX_ROWS, RFC3339,
 };
-use super::{in_window, instant_of, Term, Want};
+use super::{in_window, instant_of, said_instant, Shown, Term, Want};
+use crate::model::infer::time_nanos_of_int;
 use crate::model::types::ColValue;
 
 /// A selection's bits, in words of sixty-four.
@@ -154,16 +155,17 @@ impl Sel {
 
 // ── A term over a column ───────────────────────────────────────────────────────────
 
-/// The rows of `column` that `term` matches, by typed compare; under `text_column` a stored
-/// `Datetime` is compared as the text it arrived as, and a null matches no term, `*` included.
-pub(crate) fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
+/// The rows of `column` that `term` matches, by typed compare; a stored `Datetime` is
+/// compared as `shown` says the column shows it, and a null matches no term, `*` included.
+pub(crate) fn hits(column: Col<'_>, term: &Term, shown: impl Into<Shown>) -> Result<Sel, Bad> {
+    let shown = shown.into();
     let rows = column.rows();
     let [a, b] = column.pieces()?;
     let Some(a) = a else {
         return Ok(Sel::none(rows));
     };
     let slots = column.slots();
-    let Want::Exact { text, inferred } = term.want() else {
+    let Want::Exact { text, inferred, .. } = term.want() else {
         return Ok(match slots {
             None => Sel::all(rows),
             Some(slots) => Sel::of(slots, |slot| slot.get().is_some()),
@@ -173,7 +175,7 @@ pub(crate) fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Se
         term,
         text,
         inferred,
-        text_column,
+        shown,
     };
     let in_a = asked.of(&a)?;
     // With no slots piece A holds every row in row order, and its answer is the column's.
@@ -193,12 +195,17 @@ pub(crate) fn hits(column: Col<'_>, term: &Term, text_column: bool) -> Result<Se
 
 /// The same rows by definition, every row's cell printed as `read::chunk` prints it and
 /// the term asked of it: what `hits` is held to.
-pub(crate) fn hits_by_row(column: Col<'_>, term: &Term, text_column: bool) -> Result<Sel, Bad> {
+pub(crate) fn hits_by_row(
+    column: Col<'_>,
+    term: &Term,
+    shown: impl Into<Shown>,
+) -> Result<Sel, Bad> {
+    let shown = shown.into();
     let mut sel = Sel::none(column.rows());
     let mut memo = Memo::default();
     for row in 0..column.rows() {
         let (value, written) = column.cell_with(row, &mut memo)?;
-        if term.matches_cell(&value, written.as_ref(), text_column) {
+        if term.matches_cell(&value, written.as_ref(), shown) {
             sel.set(row);
         }
     }
@@ -211,7 +218,7 @@ struct Asked<'t> {
     /// The term's text, and what the ladder reads that text as.
     text: &'t str,
     inferred: &'t ColValue,
-    text_column: bool,
+    shown: Shown,
 }
 
 impl Asked<'_> {
@@ -246,26 +253,38 @@ impl Asked<'_> {
                 _ => self.printed(piece)?,
             },
             // In a column that is still `Datetime` a row holds the instant, and every
-            // spelling of it the ladder reads - its epoch digits too - finds it.
-            Form::Datetime { .. } if !self.text_column => match (&piece.values, self.inferred) {
-                (ValuesRef::Times(values), ColValue::Datetime(want)) => {
-                    Sel::of(values, |ns| ns == want)
+            // spelling of it the ladder reads - its epoch digits too - finds it. So it does
+            // for an RFC 3339 date in a column that is now `Int64`: it is no integer, and
+            // stays the date it was.
+            Form::Datetime { unit, .. }
+                if self.shown == Shown::Stored
+                    || (self.shown == Shown::Count && unit == RFC3339) =>
+            {
+                match (&piece.values, self.inferred) {
+                    (ValuesRef::Times(values), ColValue::Datetime(want)) => {
+                        Sel::of(values, |ns| ns == want)
+                    }
+                    (ValuesRef::SameTime(ns), ColValue::Datetime(want)) => every(ns == want),
+                    (ValuesRef::Times(_) | ValuesRef::SameTime(_), _) => Sel::none(n),
+                    _ => self.printed(piece)?,
                 }
-                (ValuesRef::SameTime(ns), ColValue::Datetime(want)) => every(ns == want),
-                (ValuesRef::Times(_) | ValuesRef::SameTime(_), _) => Sel::none(n),
-                _ => self.printed(piece)?,
-            },
+            }
             // In a column that is now text a row holds the text the date arrived as, and only that
             // text matches; an RFC 3339 date is printed, and asked.
             Form::Datetime { unit: RFC3339, .. } => self.printed(piece)?,
             // An epoch is the whole seconds or milliseconds in decimal, the one spelling of a
             // number, so the texts are equal exactly when the term's text is that spelling too.
+            // In a column that is now `Int64` the row holds that number, and the term matches
+            // as the integer its text is, however spelled.
             Form::Datetime { unit, .. } => {
-                let whole = self
-                    .text
-                    .parse::<i64>()
-                    .ok()
-                    .filter(|units| units.to_string() == self.text);
+                let whole = match self.shown {
+                    Shown::Count => self.term.whole(),
+                    _ => self
+                        .text
+                        .parse::<i64>()
+                        .ok()
+                        .filter(|units| units.to_string() == self.text),
+                };
                 match (&piece.values, whole) {
                     (ValuesRef::Times(values), Some(want)) => {
                         Sel::of(values, |ns| epoch_of(*ns, unit) == Some(want))
@@ -369,9 +388,7 @@ impl Asked<'_> {
     /// Does a row that names `word` match? Asked of the cell such a row prints.
     fn says(&self, piece: &PieceRef<'_>, word: &[u8], lit: bool) -> Result<bool, Bad> {
         let (value, written) = piece.text_cell(word, lit)?;
-        Ok(self
-            .term
-            .matches_cell(&value, written.as_ref(), self.text_column))
+        Ok(self.term.matches_cell(&value, written.as_ref(), self.shown))
     }
 
     /// `says`, asked once and remembered in `known`.
@@ -398,10 +415,7 @@ impl Asked<'_> {
         let mut sel = Sel::none(piece.n);
         for at in 0..piece.n {
             let (value, written) = piece.cell(at)?;
-            if self
-                .term
-                .matches_cell(&value, written.as_ref(), self.text_column)
-            {
+            if self.term.matches_cell(&value, written.as_ref(), self.shown) {
                 sel.set(at);
             }
         }
@@ -496,8 +510,52 @@ fn stamps<'c>(piece: &PieceRef<'c>) -> Result<Stamps<'c>, Bad> {
     })
 }
 
+/// A piece's instants as only a template's time column reads them (`said_instant`): what
+/// the line said through `time_nanos`, so a decimal of seconds, sixteen digits and a zoned
+/// date are instants here. An integer printed in plain decimal is read as its digits with
+/// no text made; any other value is printed, and asked.
+fn said_stamps<'c>(piece: &PieceRef<'c>) -> Result<Stamps<'c>, Bad> {
+    let plain = matches!(
+        piece.form,
+        Form::Int64 {
+            plus: false,
+            width: 0,
+            ..
+        }
+    );
+    Ok(match (&piece.form, &piece.values) {
+        (Form::Datetime { .. }, ValuesRef::Times(ns)) => Stamps::Each(ns),
+        (Form::Datetime { .. }, ValuesRef::SameTime(ns)) => Stamps::Same(Some(*ns)),
+        (_, ValuesRef::Ints(values)) if plain => {
+            Stamps::Made(values.iter().map(|i| time_nanos_of_int(*i)).collect())
+        }
+        (_, ValuesRef::SameInt(i)) if plain => Stamps::Same(time_nanos_of_int(*i)),
+        _ => Stamps::Made(
+            (0..piece.n)
+                .map(|at| {
+                    let (value, written) = piece.cell(at)?;
+                    Ok(said_instant(&value, written.as_ref()))
+                })
+                .collect::<Result<_, Bad>>()?,
+        ),
+    })
+}
+
 /// Each row's instant off a decoded column.
 pub(crate) fn instants(column: Col<'_>) -> Result<Instants<'_>, Bad> {
+    instants_by(column, stamps)
+}
+
+/// Each row's instant off a decoded time column, read as only a time column reads it: the
+/// last thing a row's effective time falls back to (`effective_ts`).
+pub(crate) fn said_instants(column: Col<'_>) -> Result<Instants<'_>, Bad> {
+    instants_by(column, said_stamps)
+}
+
+fn instants_by<'c>(
+    column: Col<'c>,
+    stamps: impl Fn(&PieceRef<'c>) -> Result<Stamps<'c>, Bad>,
+) -> Result<Instants<'c>, Bad> {
     let rows = column.rows();
     let [a, b] = column.pieces()?;
     let Some(a) = a else {

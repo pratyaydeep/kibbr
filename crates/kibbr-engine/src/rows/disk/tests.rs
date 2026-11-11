@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::format::Source;
-use crate::rows::{in_window, render_row, Counted, Rows, DEFAULT_TS_COLUMN};
+use crate::rows::{in_window, shown_row, Counted, Rows, DEFAULT_TS_COLUMN};
 use crate::model::types::ColValue;
 use std::time::Duration;
 
@@ -1591,7 +1591,7 @@ pub(super) fn slow_day(
             if windowed && !in_window(effective_ts(&row, ts_name), since, until) {
                 continue;
             }
-            let rendered = render_row(&row, &opts.text_columns);
+            let rendered = shown_row(&row, opts);
             let seen = rendered.as_ref().unwrap_or(&row);
             if !terms.iter().all(|term| term.matches_row(seen)) {
                 continue;
@@ -1616,7 +1616,7 @@ pub(super) fn slow_day(
         if windowed && !in_window(effective_ts(&b.row, ts_name), since, until) {
             continue;
         }
-        let rendered = render_row(&b.row, &opts.text_columns);
+        let rendered = shown_row(&b.row, opts);
         let seen = rendered.as_ref().unwrap_or(&b.row);
         if !terms.iter().all(|term| term.matches_row(seen)) {
             continue;

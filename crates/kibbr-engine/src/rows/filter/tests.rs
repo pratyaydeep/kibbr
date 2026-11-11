@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 use crate::format::column::Column;
 use crate::format::samples::{self, Sample, Stored};
-use crate::rows::{effective_ts, samples as pool, ts_of, RECEIVED_AT_COLUMN};
+use crate::rows::{effective_ts, said_ts, samples as pool, ts_of, RECEIVED_AT_COLUMN};
 use crate::rng::Rng;
 
 fn decoded(sample: &Sample, chunk: &Stored) -> Column {
@@ -337,7 +337,7 @@ fn flipped(text: &str) -> String {
 /// sample, as its own type and as text.
 #[test]
 fn a_typed_compare_finds_the_rows_the_printed_cells_do() {
-    let mut matched: BTreeMap<&'static str, [u64; 2]> = BTreeMap::new();
+    let mut matched: BTreeMap<&'static str, [u64; 3]> = BTreeMap::new();
     let (mut present, mut compares) = (0u64, 0u64);
     for sample in samples::all() {
         for (chunk, name) in sample.chunks.iter().zip(&sample.columns) {
@@ -355,12 +355,15 @@ fn a_typed_compare_finds_the_rows_the_printed_cells_do() {
             let mut terms = vec![Term::any("v")];
             terms.extend(texts.iter().map(|text| Term::exact("v", text)));
             for term in &terms {
-                for text_column in [false, true] {
-                    let slow = hits_by_row(col, term, text_column).expect("by row");
-                    let fast = hits(col, term, text_column).expect("typed");
+                for (at, shown) in [Shown::Stored, Shown::Text, Shown::Count]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let slow = hits_by_row(col, term, shown).expect("by row");
+                    let fast = hits(col, term, shown).expect("typed");
                     assert_eq!(
                         fast, slow,
-                        "{}, `{name}`: {term:?}, text column: {text_column}",
+                        "{}, `{name}`: {term:?}, shown as {shown:?}",
                         sample.name
                     );
                     compares += 1;
@@ -370,14 +373,14 @@ fn a_typed_compare_finds_the_rows_the_printed_cells_do() {
                     }
                     for row in fast.iter() {
                         let kind = kind_of(col, row).expect("a null matched a term");
-                        matched.entry(kind).or_default()[usize::from(text_column)] += 1;
+                        matched.entry(kind).or_default()[at] += 1;
                     }
                 }
             }
         }
     }
     // Not agreement on nothing: a piece of every type matched a term, as its own
-    // type and in a column since widened to text.
+    // type, in a column since widened to text and in one since widened to integers.
     let kinds: Vec<&str> = matched.keys().copied().collect();
     assert_eq!(
         kinds,
@@ -387,10 +390,195 @@ fn a_typed_compare_finds_the_rows_the_printed_cells_do() {
     assert!(
         matched
             .values()
-            .all(|[own, text]| *own >= 10 && *text >= 10),
+            .all(|[own, text, count]| *own >= 10 && *text >= 10 && *count >= 10),
         "{matched:?}"
     );
     assert!(present > 1_000 && compares > 5_000, "{present} {compares}");
+}
+
+/// The rows of a sample's column `v` that a term finds where the column is now `Int64`,
+/// by typed compare - held to the printed cells on the way.
+fn counted(sample: &Sample, text: &str) -> Vec<usize> {
+    let at = sample.place("v").expect("a column v");
+    let chunk = &sample.chunks[at];
+    let column = decoded(sample, chunk);
+    let col = column.over(&chunk.bytes).expect("over its own bytes");
+    let term = Term::exact("v", text);
+    let fast = hits(col, &term, Shown::Count).expect("typed");
+    assert_eq!(
+        fast,
+        hits_by_row(col, &term, Shown::Count).expect("by row"),
+        "{text}"
+    );
+    fast.iter().collect()
+}
+
+/// **In a column that is now `Int64`, a date stored from epoch digits is the integer it
+/// arrived as**: found by those digits and not by another spelling of the instant, while
+/// an RFC 3339 date beside it is still the date it was.
+#[test]
+fn a_date_in_an_integer_column_is_found_as_the_integer_it_arrived_as() {
+    // MongoDB's `attr.Available` and CockroachDB's `event.GoAllocBytes`: epochs in
+    // seconds as numbers and as strings, one in milliseconds, plain integers, a date.
+    let sample = samples::of_values(
+        "epochs beside integers",
+        &[
+            "1679711330",
+            "\"1679711330\"",
+            "999999999",
+            "1220305536",
+            "1679711330000",
+            "\"2023-03-25T02:28:50Z\"",
+            "5",
+            "\"+1679711330\"",
+            "null",
+            "1679711331",
+        ],
+    );
+    // Rows 0 and 1 are that integer. Row 5 is an RFC 3339 date, no integer, and so still
+    // the date it was: any spelling of its instant finds it, these digits among them.
+    assert_eq!(counted(&sample, "1679711330"), [0, 1, 5]);
+    assert_eq!(counted(&sample, "999999999"), [2]);
+    assert_eq!(counted(&sample, "1220305536"), [3]);
+    // The same moment in milliseconds is another integer, though it is one instant.
+    assert_eq!(counted(&sample, "1679711330000"), [4, 5]);
+    // The date's own spelling finds the date, and no longer the counts of its instant.
+    assert_eq!(counted(&sample, "2023-03-25T02:28:50Z"), [5]);
+    assert_eq!(counted(&sample, "5"), [6]);
+    assert_eq!(counted(&sample, "05"), [6]);
+    // A term the ladder reads as an integer is that integer however it is spelled, and
+    // finds every row that is: the two that arrived as its digits, and the one the line
+    // signed. The digits alone are a date to the ladder, and do not find the signed row -
+    // row 7 is not among the rows of `1679711330` above - as they never did.
+    assert_eq!(counted(&sample, "+1679711330"), [0, 1, 7]);
+    assert_eq!(counted(&sample, "1679711331"), [9]);
+    assert_eq!(counted(&sample, "1679711332"), [] as [usize; 0]);
+
+    // While the column is still a date, every spelling of the instant finds the row.
+    let at = sample.place("v").expect("a column v");
+    let column = decoded(&sample, &sample.chunks[at]);
+    let col = column.over(&sample.chunks[at].bytes).expect("over");
+    let stored = |text: &str| -> Vec<usize> {
+        hits(col, &Term::exact("v", text), Shown::Stored)
+            .expect("typed")
+            .iter()
+            .collect()
+    };
+    assert_eq!(stored("1679711330"), [0, 1, 4, 5]);
+    assert_eq!(stored("2023-03-25T02:28:50Z"), [0, 1, 4, 5]);
+}
+
+/// **A time column's instants are what each row's cell says**, through `said_instant`,
+/// over every column of every sample and over one of the forms only a time column reads;
+/// and behind the ladder's instants and the arrival time they are the row's effective time.
+#[test]
+fn a_time_column_s_instants_are_what_each_row_says() {
+    let mut all = samples::all();
+    all.push(samples::of_values(
+        "time column forms",
+        &[
+            "\"1679711330.570420890\"",
+            "1732206349000167",
+            "\"1732206349000167\"",
+            "\"2023-03-27 00:26:35.719 EDT\"",
+            "1679711330.57042",
+            "1679711330570420890",
+            "\"0000001679711330\"",
+            "\"+1732206349000167\"",
+            "\"2023-03-27 00:26:35.719 IST\"",
+            "\"1679711330.5704208901\"",
+            "1679711330",
+            "\"2023-03-25T02:28:50Z\"",
+            "\"N/A\"",
+            "12",
+            "true",
+            "null",
+            "4102444800000000",
+        ],
+    ));
+    all.push(samples::of_values(
+        "microseconds",
+        &["1732206349000167", "1732206349000999", "1732206350000001"],
+    ));
+    let (mut said_only, mut plain) = (0, 0);
+    for sample in all {
+        let rows = sample.rows;
+        let built = sample.built();
+        let columns: Vec<Column> = sample
+            .chunks
+            .iter()
+            .map(|chunk| decoded(&sample, chunk))
+            .collect();
+        let cols: Vec<Col<'_>> = columns
+            .iter()
+            .zip(&sample.chunks)
+            .map(|(column, chunk)| column.over(&chunk.bytes).expect("over its own bytes"))
+            .collect();
+        let arrived = match sample.place(RECEIVED_AT_COLUMN) {
+            Some(at) => instants(cols[at]).expect("instants"),
+            None => Instants::absent(rows),
+        };
+        for (col, name) in cols.iter().zip(&sample.columns) {
+            let got = said_instants(*col).expect("said instants");
+            for (row, built) in built.iter().enumerate() {
+                let (value, written) = col.cell(row).expect("a cell");
+                let want = said_instant(&value, written.as_ref());
+                assert_eq!(got.get(row), want, "{}, `{name}`, row {row}", sample.name);
+                assert_eq!(said_ts(built, name), want, "{}, `{name}`", sample.name);
+                // Whatever the ladder reads as an instant, a time column reads as the same.
+                if let Some(ns) = instant_of(&value) {
+                    assert_eq!(want, Some(ns), "{}, `{name}`, row {row}", sample.name);
+                } else if want.is_some() {
+                    said_only += 1;
+                }
+            }
+            plain += usize::from(matches!(
+                col.pieces().expect("pieces")[0].as_ref().map(|p| p.form),
+                Some(Form::Int64 {
+                    plus: false,
+                    width: 0,
+                    ..
+                })
+            ));
+            let effective = instants(*col).expect("instants").or(&arrived).or(&got);
+            for (row, built) in built.iter().enumerate() {
+                assert_eq!(
+                    effective.get(row),
+                    effective_ts(built, name),
+                    "{}, `{name}`, row {row}",
+                    sample.name
+                );
+            }
+        }
+    }
+    // Not agreement on nothing: rows only a time column reads, and integers read with
+    // no text made.
+    assert!(said_only >= 9 && plain >= 5, "{said_only} {plain}");
+
+    // By hand, the column of forms: what each row's time is, and that the rest have none.
+    let sample = samples::of_values(
+        "forms",
+        &[
+            "\"1679711330.570420890\"",
+            "1732206349000167",
+            "\"2023-03-27 00:26:35.719 EDT\"",
+            "\"2023-03-27 00:26:35.719 IST\"",
+            "\"0000001679711330\"",
+        ],
+    );
+    let at = sample.place("v").expect("v");
+    let column = decoded(&sample, &sample.chunks[at]);
+    let got = said_instants(column.over(&sample.chunks[at].bytes).expect("over")).expect("said");
+    assert_eq!(
+        (0..5).map(|row| got.get(row)).collect::<Vec<_>>(),
+        [
+            Some(1_679_711_330_570_420_890),
+            Some(1_732_206_349_000_167_000),
+            Some(1_679_891_195_719_000_000),
+            None,
+            None,
+        ]
+    );
 }
 
 /// The rows of a sample's column `v` that a term finds, by typed compare - held to

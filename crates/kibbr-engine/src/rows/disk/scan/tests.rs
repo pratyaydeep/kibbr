@@ -275,15 +275,20 @@ fn instant(ns: i64) -> SystemTime {
 }
 
 /// Every way the tests below ask the mixed leaf: each list of terms, under each window,
-/// with `when` and the time column text and not, reading every column or the named few.
+/// with `when` and the time column text and not and `when` a column of integers, reading
+/// every column or the named few.
 fn asks() -> Vec<(ScanOptions, Vec<Term>)> {
     let mut out = Vec::new();
     for (terms, _) in term_lists() {
         for (since, until) in windows() {
-            for text_columns in [
-                vec![],
-                vec!["when".to_string()],
-                vec!["ts".into(), "when".into()],
+            // `when` as a date, as text, and as integers - which its epoch digits are and
+            // its RFC 3339 dates are not - and the time column as text beside each.
+            for (text_columns, int_columns) in [
+                (vec![], vec![]),
+                (vec!["when".to_string()], vec![]),
+                (vec!["ts".into(), "when".into()], vec![]),
+                (vec![], vec!["when".to_string(), "n".into()]),
+                (vec!["ts".into()], vec!["when".into()]),
             ] {
                 let mut named: Vec<String> =
                     terms.iter().map(|t| t.key().to_string()).collect();
@@ -298,6 +303,7 @@ fn asks() -> Vec<(ScanOptions, Vec<Term>)> {
                             until: until.map(instant),
                             ts_column: Some("ts".into()),
                             text_columns: text_columns.clone(),
+                            int_columns: int_columns.clone(),
                             ..ScanOptions::default()
                         },
                         terms.clone(),
@@ -482,7 +488,8 @@ fn held_to_the_plain_scan_whatever_is_read(threads: usize) {
                 }
                 scans += 1;
                 if limit == 0 && days && scan.matched > 0 && asking.since.is_none() {
-                    found.insert(at / (windows().len() * 3 * 2));
+                    // Five ways the columns are shown, read whole or by name: `asks`.
+                    found.insert(at / (windows().len() * 5 * 2));
                 }
             }
         }
@@ -1743,4 +1750,183 @@ fn a_scan_cut_into_batches_fails_with_the_error_and_the_rows_of_the_scan_in_turn
     // Five before it: two batches of two and the fifth alone; a batch of three and
     // one of two; and one of five.
     assert_eq!(fan.fanned(), 2 * 20 * 3 + 2 * 20 * (2 + 2 + 1));
+}
+
+// ── A time column in the forms only a time column reads ────────────────────────────
+
+/// Rows of the leaf `formed` builds.
+const FORMED: usize = 2 * UNIT + 6;
+
+/// Row `n` of a leaf whose time column, `ts`, holds `T0 + n` seconds in each form by
+/// turns: RFC 3339, decimal seconds, microseconds as a number, a zoned date - and two
+/// kinds of row that carry an arrival time: one whose `ts` is no time at all, and one
+/// stored before a time column read its own forms, whose `ts` names another day.
+fn formed_row(n: usize) -> Row {
+    let secs = 1_705_314_600 + n as i64;
+    let ts = match n % 6 {
+        0 => format!(r#""2024-01-15T10:30:{n:02}Z""#),
+        1 => format!(r#""{secs}.000000000""#),
+        2 => format!("{secs}000000"),
+        3 => format!(r#""2024-01-15 05:30:{n:02} EST""#),
+        4 => format!(r#""{}.5""#, secs + 5 * 86_400),
+        _ => r#""N/A""#.to_string(),
+    };
+    let mut row = samples::row(&format!(r#"{{"ts":{ts},"n":{n}}}"#));
+    let arrived = T0 + n as i64 * SECOND;
+    match n % 6 {
+        // As the write path stamps a row: an arrival time where it has no time of its own.
+        0..=3 | 5 => {
+            assert_eq!(
+                crate::rows::own_ts(&row, "ts").is_none(),
+                n % 6 == 5,
+                "row {n}"
+            );
+            if n % 6 == 5 {
+                row.insert(RECEIVED_AT_COLUMN.into(), ColValue::Datetime(arrived));
+            }
+        }
+        // As a build that did not read the form stamped it.
+        _ => {
+            row.insert(RECEIVED_AT_COLUMN.into(), ColValue::Datetime(arrived));
+        }
+    }
+    row
+}
+
+/// Two row groups and six rows in memory, in a store that shares its scans out on
+/// `threads` threads.
+fn formed(scratch: &Scratch, threads: usize) -> (DiskStore, Arc<DiskLeaf>) {
+    let s = store_with(scratch, shared(threads));
+    let opened = s.open(9, "ts").expect("leaf");
+    for n in 0..2 * UNIT {
+        opened.append(formed_row(n));
+    }
+    let done = s.flush(FlushKind::Tick);
+    assert!(done.failed.is_empty(), "{:?}", done.failed);
+    assert_eq!((done.rows, done.row_groups), (2 * UNIT as u64, 2));
+    let leaf = Arc::clone(&s.leaves.read().expect("leaves")[&9]);
+    for n in 2 * UNIT..FORMED {
+        leaf.append(formed_row(n));
+    }
+    (s, leaf)
+}
+
+/// **A row's time is its time column in whichever form, in every reading a scan has**:
+/// off the stored columns, a cell at a time, and off a row in memory - each held to the
+/// plain scan, and all of them to the one instant every row of the leaf names. A row
+/// stored with an arrival time keeps it, though its time column names another day.
+#[test]
+fn a_time_column_form_is_the_row_s_time_in_every_reading_of_a_scan() {
+    for threads in [0, 2] {
+        let scratch = Scratch::new(&format!("scan-forms-{threads}"));
+        let (_s, leaf) = formed(&scratch, threads);
+        let at = |second: i64| Some(T0 + second * SECOND);
+        let other_day = T0 + 5 * DAY_NS;
+        // The window, and how many of the leaf's rows are in it: row `n` is at `T0 + n`.
+        let windows = [
+            (None, None, FORMED),
+            (at(0), at(FORMED as i64), FORMED),
+            (at(0), at(1), 1),
+            (at(1), at(5), 4),
+            (at(7), at(27), 20),
+            (at(30), None, FORMED - 30),
+            (None, at(13), 13),
+            (at(FORMED as i64), None, 0),
+            // Where the rows stored before the forms were read would be, were they read.
+            (Some(other_day), Some(other_day + DAY_NS), 0),
+        ];
+        let (mut scans, mut asked) = (0, 0);
+        for (since, until, inside) in windows {
+            let frozen = leaf.freeze(since, until);
+            for text_columns in [vec![], vec!["ts".to_string()]] {
+                for int_columns in [vec![], vec!["ts".to_string()]] {
+                    for limit in [0, 3] {
+                        let opts = ScanOptions {
+                            limit,
+                            since: since.map(instant),
+                            until: until.map(instant),
+                            ts_column: Some("ts".into()),
+                            text_columns: text_columns.clone(),
+                            int_columns: int_columns.clone(),
+                            ..ScanOptions::default()
+                        };
+                        let none: fn(u64) -> bool = |_| false;
+                        let visitors = [
+                            (Wants::Nothing, none),
+                            (Wants::Columns(vec!["n".into()]), none),
+                            (Wants::Rows, none),
+                            (Wants::Newest, none),
+                            (Wants::Newest, third),
+                        ];
+                        for (wants, refuses) in visitors {
+                            let said = format!("{since:?}..{until:?} with {opts:?}, as {wants:?}");
+                            let mut plain = Keeps::new(Wants::Rows, true);
+                            let slow =
+                                slow_visit(&frozen, &opts, &[], &mut plain).expect("plain scan");
+                            let mut v = Keeps {
+                                refuses,
+                                ..Keeps::new(wants.clone(), true)
+                            };
+                            let scan = frozen.visit(&opts, &[], &mut v).expect("scan");
+                            assert_eq!(counters(&scan), counters(&slow), "{said}");
+                            let want = if limit == 0 {
+                                inside
+                            } else {
+                                inside.min(limit)
+                            };
+                            assert_eq!(scan.matched, want as u64, "{said}");
+                            // Every row the plain scan handed out is at the second its
+                            // number names, whatever form said so.
+                            for (row, _) in &plain.rows {
+                                let Some(ColValue::Int64(n)) = row.get("n") else {
+                                    panic!("a row with no number: {row:?}");
+                                };
+                                assert_eq!(
+                                    effective_ts(row, "ts"),
+                                    Some(T0 + n * SECOND),
+                                    "{said}: {row:?}"
+                                );
+                            }
+                            match &wants {
+                                Wants::Nothing => assert!(v.rows.is_empty(), "{said}"),
+                                Wants::Rows => assert_eq!(v.rows, plain.rows, "{said}"),
+                                Wants::Newest => {
+                                    held_to_plain(&v, &plain.rows, limit == 0, &said);
+                                    asked += v.asked.len();
+                                }
+                                Wants::Columns(names) => {
+                                    let narrow = |rows: &[(Row, u64)]| -> Vec<(Row, u64)> {
+                                        rows.iter()
+                                            .map(|(row, seq)| (project(row, names), *seq))
+                                            .collect()
+                                    };
+                                    assert_eq!(narrow(&v.rows), narrow(&plain.rows), "{said}");
+                                }
+                            }
+                            scans += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(scans >= 300 && asked > 500, "{scans} {asked}");
+
+        // And the rows chosen from columns are the rows chosen cell by cell.
+        let opts = ScanOptions {
+            since: at(3).map(instant),
+            until: at(29).map(instant),
+            ts_column: Some("ts".into()),
+            ..ScanOptions::default()
+        };
+        let frozen = leaf.freeze(at(3), at(29));
+        let ask = Ask::new(&opts, &[], Wants::Rows);
+        let mut units = 0;
+        each_unit(&frozen, &ask, |unit| {
+            let fast = pick(unit, &ask).expect("pick");
+            assert_eq!(fast, slow_pick(unit, &ask).expect("slow pick"));
+            assert!(fast.count() > 0);
+            units += 1;
+        });
+        assert_eq!(units, 2);
+    }
 }

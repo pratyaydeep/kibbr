@@ -311,6 +311,7 @@ impl Query {
             until: self.time.until,
             ts_column: None,
             text_columns: Vec::new(),
+            int_columns: Vec::new(),
             // Whoever executes the query says: see `execute_until`.
             stop: Stop::default(),
         }

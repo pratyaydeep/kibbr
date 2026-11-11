@@ -4,8 +4,9 @@
 //! The oracle: every line, a closure, a counter; obviously correct, never ships.
 //! It shares the contract with the engine (`value_matches`, how a `Row` is built) and
 //! none of the mechanism, or a mutation to one rule would move both answers together.
-//! The time source, the window arithmetic and the read-back of a widened date column are
-//! worked out here independently: an oracle that shares a rule shares its bugs.
+//! The time source, the forms only a time column reads, the window arithmetic and the
+//! read-back of a widened date column are worked out here independently: an oracle that
+//! shares a rule shares its bugs.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -13,7 +14,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::engine::parse::flatten::ParsedLog;
-use crate::engine::model::types::{ColValue, ColumnType};
+use crate::engine::model::infer::in_epoch_window;
+use crate::engine::model::types::{ColValue, ColumnType, DtForm};
 use crate::engine::query::{
     group_values, leaf_key, split_keys, value_matches, ExecError, Group, MatchValue, Query,
     QueryMeta, QueryMode, QueryResult,
@@ -32,34 +34,126 @@ enum Source {
 }
 
 /// The rule: on the line that creates the template, the first configured name that is
-/// one of its keys and whose value the ladder called a `Datetime`. Otherwise arrival.
+/// one of its keys and whose value is a time there - one the ladder called a `Datetime`,
+/// or one in a form only a time column reads. Otherwise arrival.
 fn source_of(line: &ParsedLog, time_columns: &[String]) -> Source {
     for name in time_columns {
-        if !line.keys.contains(name) {
-            continue;
-        }
-        let is_datetime = line
-            .typed_values
-            .get(name)
-            .is_some_and(|t| t.ty == Some(ColumnType::Datetime));
-        if is_datetime {
+        if line.keys.contains(name) && time_in(line, name).is_some() {
             return Source::Column(name.clone());
         }
     }
     Source::Arrival
 }
 
+/// The instant a line's value under a time column is: the ladder's `Datetime`, or the
+/// line's own text in one of the time-column forms. A null and a promoted key are neither.
+fn time_in(line: &ParsedLog, name: &str) -> Option<i64> {
+    let typed = line.typed_values.get(name)?;
+    match (typed.ty, &typed.value) {
+        (Some(ColumnType::Datetime), ColValue::Datetime(ns)) => Some(*ns),
+        (Some(_), _) => time_form(line.values.get(name)?),
+        (None, _) => None,
+    }
+}
+
+/// The three forms a time column reads beyond the ladder, by this file's own arithmetic:
+/// seconds with a point and up to nine digits, sixteen or nineteen digits, and a date and
+/// time with a named zone. Whole numbers throughout - a float would round the nanoseconds.
+fn time_form(text: &str) -> Option<i64> {
+    let count = |digits: &str| -> Option<i128> {
+        let plain = !digits.is_empty()
+            && !digits.starts_with('0')
+            && digits.chars().all(|c| c.is_ascii_digit());
+        if plain {
+            digits.parse().ok()
+        } else {
+            None
+        }
+    };
+    let fraction = |digits: &str| -> Option<i128> {
+        if digits.is_empty() || digits.len() > 9 || !digits.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        // Padded on the right to nine digits: `.5` is five hundred million nanoseconds.
+        format!("{digits:0<9}").parse().ok()
+    };
+    let in_window = |ns: i128| -> Option<i64> {
+        if in_epoch_window(ns) {
+            i64::try_from(ns).ok()
+        } else {
+            None
+        }
+    };
+
+    // 1679711330.570420890
+    if let Some((whole, part)) = text.split_once('.') {
+        if whole.len() == 10 {
+            if let (Some(secs), Some(sub)) = (count(whole), fraction(part)) {
+                return in_window(secs * 1_000_000_000 + sub);
+            }
+        }
+    }
+    // 1679711330570420 and 1679711330570420890
+    match text.len() {
+        16 => return in_window(count(text)? * 1_000),
+        19 => return in_window(count(text)?),
+        _ => {}
+    }
+    // 2023-03-27 00:26:35.719 EDT
+    let (stamp, zone) = text.rsplit_once(' ')?;
+    let west_hours = match zone {
+        "UTC" | "GMT" | "Z" => 0,
+        "EDT" => 4,
+        "EST" | "CDT" => 5,
+        "CST" | "MDT" => 6,
+        "MST" | "PDT" => 7,
+        "PST" => 8,
+        _ => return None,
+    };
+    let (clock, sub) = match stamp.split_once('.') {
+        Some((clock, part)) => (clock, fraction(part)?),
+        None => (stamp, 0),
+    };
+    let shaped = clock.len() == 19
+        && clock
+            .chars()
+            .zip("dddd-dd-dd dd:dd:dd".chars())
+            .all(|(c, want)| {
+                if want == 'd' {
+                    c.is_ascii_digit()
+                } else {
+                    c == want
+                }
+            });
+    if !shaped {
+        return None;
+    }
+    let local = chrono::NaiveDateTime::parse_from_str(clock, "%Y-%m-%d %H:%M:%S").ok()?;
+    if chrono::Timelike::second(&local) > 59 || chrono::Timelike::nanosecond(&local) != 0 {
+        return None;
+    }
+    let zone = chrono::FixedOffset::west_opt(west_hours * 3600)?;
+    let at = local.and_local_timezone(zone).single()?;
+    let ns = i128::from(at.timestamp()) * 1_000_000_000 + sub;
+    i64::try_from(ns).ok()
+}
+
 /// The effective time of one line, and whether the row needs the system column.
 /// Arrival is `query.now`: for the CLI every line of the file arrived at that instant.
 fn effective(line: &ParsedLog, source: &Source, arrival: i64) -> (i64, bool) {
     if let Source::Column(name) = source {
-        if let Some(t) = line.typed_values.get(name) {
-            if let (Some(ColumnType::Datetime), ColValue::Datetime(ns)) = (t.ty, &t.value) {
-                return (*ns, false);
-            }
+        if let Some(ns) = time_in(line, name) {
+            return (ns, false);
         }
     }
     (arrival, true)
+}
+
+/// Whether the ladder read a line's value as an instant from ten or thirteen digits.
+fn is_count(line: &ParsedLog, key: &str) -> bool {
+    line.typed_values
+        .get(key)
+        .is_some_and(|t| matches!(t.dt_form, Some(DtForm::EpochSecs | DtForm::EpochMillis)))
 }
 
 /// `engine::Rank`, spelled again rather than imported - see the note at the top.
@@ -86,7 +180,15 @@ pub fn run(
             let slot = col_types
                 .entry((line.template_id, key.clone()))
                 .or_insert(None);
-            *slot = crate::engine::model::types::join(*slot, incoming);
+            // The join, but digits read as an instant and an integer are one column of
+            // integers: either way round, the column is `Int64` and not text.
+            *slot = match (*slot, incoming) {
+                (Some(ColumnType::Int64), Some(ColumnType::Datetime)) if is_count(line, key) => {
+                    Some(ColumnType::Int64)
+                }
+                (Some(ColumnType::Datetime), Some(ColumnType::Int64)) => Some(ColumnType::Int64),
+                (have, incoming) => crate::engine::model::types::join(have, incoming),
+            };
         }
     }
 
@@ -149,20 +251,29 @@ pub fn run(
             row.insert(RECEIVED_AT.to_string(), ColValue::Datetime(at_ns));
         }
         // A column that has widened to text: this line's own datetime, if the ladder
-        // read one, comes back as the text it arrived as.
+        // read one, comes back as the text it arrived as. One that is now integers: a
+        // datetime read from digits comes back as the integer those digits spell.
+        let mut counted: HashSet<&str> = HashSet::new();
         for key in &line.keys {
             let joined = col_types
                 .get(&(line.template_id, key.clone()))
                 .copied()
                 .flatten();
-            if joined != Some(ColumnType::String) {
+            let Some(ColValue::Datetime(_)) = row.get(key) else {
                 continue;
-            }
+            };
             // The line's own text, read straight off the line: a string's characters, a
             // number's digits.
-            if let Some(ColValue::Datetime(_)) = row.get(key) {
-                let text = line.values.get(key).cloned().unwrap_or_default();
-                row.set_value(key, ColValue::String(text));
+            let text = line.values.get(key).cloned().unwrap_or_default();
+            match joined {
+                Some(ColumnType::String) => row.set_value(key, ColValue::String(text)),
+                Some(ColumnType::Int64) if is_count(line, key) => {
+                    if let Ok(count) = text.parse::<i64>() {
+                        row.set_value(key, ColValue::Int64(count));
+                        counted.insert(key.as_str());
+                    }
+                }
+                _ => {}
             }
         }
         let key = leaf_key(&line.walk_tokens());
@@ -172,8 +283,14 @@ pub fn run(
 
         let hit = in_window(at_ns, query)
             && query.matches.iter().all(|m| {
-                row.get(&m.key)
-                    .is_some_and(|have| value_matches(&m.value, have))
+                row.get(&m.key).is_some_and(|have| {
+                    value_matches(&m.value, have)
+                        // A date shown as the count it arrived as is found by its digits,
+                        // which the ladder reads as a date and `value_matches` as no integer.
+                        || (counted.contains(m.key.as_str())
+                            && matches!(&m.value, MatchValue::Exact(want)
+                                if line.values.get(&m.key) == Some(want)))
+                })
             });
         if !hit {
             continue;

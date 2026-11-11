@@ -248,15 +248,16 @@ fn replay(
             out.held += 1;
             return Ok(());
         };
-        let row = match ingest::row_from_log(record.line, time_column, record.received_at) {
-            Ok(row) => row,
-            Err(e) => {
-                unreadable.get_or_insert_with(|| (record.seq, e.kind.to_string()));
-                held.set_aside(record.template_id, record.seq);
-                out.held += 1;
-                return Ok(());
-            }
-        };
+        let row =
+            match ingest::row_from_log(record.line, time_column, record.received_at, record.time) {
+                Ok(row) => row,
+                Err(e) => {
+                    unreadable.get_or_insert_with(|| (record.seq, e.kind.to_string()));
+                    held.set_aside(record.template_id, record.seq);
+                    out.held += 1;
+                    return Ok(());
+                }
+            };
         let time = crate::rows::effective_ts(&row, time_column).unwrap_or(0);
         if time != record.time {
             moved.get_or_insert((record.seq, record.time, time));

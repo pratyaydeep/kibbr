@@ -33,7 +33,7 @@ use crate::format::build::{self, schema_of, Level};
 use crate::format::file::Writer;
 use crate::format::{day_of, Source};
 use crate::rows::{
-    effective_ts, ts_of, value_bytes, DiskStore, Row, RowGroupLimits, StoreError, StoreManager,
+    effective_ts, own_ts, value_bytes, DiskStore, Row, RowGroupLimits, StoreError, StoreManager,
     RECEIVED_AT_COLUMN,
 };
 use crate::templates::trie::Trie;
@@ -1006,7 +1006,7 @@ fn head_row(
             .entry(tokens)
             .or_insert_with(|| {
                 let source =
-                    TimeSource::choose(trie.time_columns(), |name| parsed.column_type(name));
+                    TimeSource::choose_by(trie.time_columns(), |name| parsed.reads_as_time(name));
                 let keys = crate::templates::trie::datetime_keys(
                     parsed
                         .keys
@@ -1017,7 +1017,7 @@ fn head_row(
             })
             .clone(),
     };
-    let fell_back = ts_of(row, source.column()).is_none();
+    let fell_back = own_ts(row, source.column()).is_none();
     tally.count(fell_back, || who);
 }
 

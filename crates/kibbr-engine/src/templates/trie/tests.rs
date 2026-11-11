@@ -480,3 +480,292 @@ fn the_last_template_id_is_given_once_and_no_id_is_given_twice() {
     ));
     assert_eq!(rebuilt.template_count(), 1);
 }
+
+// ── Epochs and integers, and what a time column reads ──────────────────────────────
+
+/// The type of one column of the template a line belongs to, and the template's time source.
+fn column_of(trie: &Trie, line: &str, name: &str) -> (Option<ColumnType>, TimeSource) {
+    let parsed = parsed(line);
+    let tokens = parsed.walk_tokens();
+    let borrowed: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let leaf = trie.walk(&borrowed).expect("the line's template").node;
+    let slot = leaf.leaf_meta.read().expect("the leaf");
+    let meta = slot.as_ref().expect("a template");
+    let ty = meta
+        .columns
+        .iter()
+        .find(|c| c.name == name)
+        .unwrap_or_else(|| panic!("no column `{name}`"))
+        .col_type;
+    (ty, meta.time_source.clone())
+}
+
+fn feed(trie: &Trie, lines: &[&str]) {
+    for line in lines {
+        trie.ingest(&parsed(line), Utc::now()).expect("a line");
+    }
+}
+
+/// **MongoDB's `attr.Available`: a column of epoch digits that takes `999999999` is
+/// `Int64`**, where it used to be `String`; the catalog records the widening.
+#[test]
+fn a_datetime_column_of_epoch_digits_that_meets_an_integer_becomes_int64() {
+    let dir = scratch("epoch-then-int");
+    let trie = Trie::new_in(&dir.display().to_string());
+    let path = crate::templates::catalog::path_in(&dir);
+    trie.attach_catalog(Catalog::open(&path, &mut |_| {}).expect("open").0);
+    let first = r#"{"attr":{"Available":1679711330},"msg":"a"}"#;
+    feed(&trie, &[first]);
+    assert_eq!(
+        column_of(&trie, first, "attr.Available").0,
+        Some(ColumnType::Datetime)
+    );
+    feed(&trie, &[r#"{"attr":{"Available":999999999},"msg":"b"}"#]);
+    assert_eq!(
+        column_of(&trie, first, "attr.Available").0,
+        Some(ColumnType::Int64)
+    );
+    // And it stays a column of integers whichever arrives next.
+    feed(
+        &trie,
+        &[
+            r#"{"attr":{"Available":1679711331},"msg":"c"}"#,
+            r#"{"attr":{"Available":"1679711332000"},"msg":"d"}"#,
+            r#"{"attr":{"Available":7},"msg":"e"}"#,
+        ],
+    );
+    assert_eq!(
+        column_of(&trie, first, "attr.Available").0,
+        Some(ColumnType::Int64)
+    );
+    assert_eq!(
+        held(&trie, FIRST_TEMPLATE_ID).int_columns,
+        ["attr.Available"]
+    );
+    assert_eq!(held(&trie, FIRST_TEMPLATE_ID).text_columns, ["msg"]);
+
+    // One widening on record, from `Datetime` to `Int64`; a restart reads it back.
+    drop(trie);
+    let (_, records) = Catalog::open(&path, &mut |_| {}).expect("reopen");
+    let widened: Vec<&Record> = records
+        .iter()
+        .filter(|r| {
+            matches!(
+                r,
+                Record::Column {
+                    widened_from: Some(_),
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert!(
+        matches!(
+            widened[..],
+            [Record::Column {
+                col_type: Some(ColumnType::Int64),
+                widened_from: Some(ColumnType::Datetime),
+                ..
+            }]
+        ),
+        "{widened:?}"
+    );
+    let again = Trie::from_catalog("data", &records, &mut |w| panic!("{w}")).expect("rebuild");
+    assert_eq!(
+        column_of(&again, first, "attr.Available").0,
+        Some(ColumnType::Int64)
+    );
+}
+
+/// **CockroachDB's `event.GoAllocBytes`: a column of integers that takes `1220305536`,
+/// ten digits inside the epoch window, stays `Int64`**, and no record is written, because
+/// nothing changed.
+#[test]
+fn an_int64_column_that_meets_epoch_digits_stays_int64() {
+    let dir = scratch("int-then-epoch");
+    let trie = Trie::new_in(&dir.display().to_string());
+    let path = crate::templates::catalog::path_in(&dir);
+    trie.attach_catalog(Catalog::open(&path, &mut |_| {}).expect("open").0);
+    let first = r#"{"GoAllocBytes":999999999,"msg":"a"}"#;
+    feed(&trie, &[first]);
+    assert_eq!(
+        column_of(&trie, first, "GoAllocBytes").0,
+        Some(ColumnType::Int64)
+    );
+    let before = std::fs::metadata(&path).expect("the catalog").len();
+    feed(
+        &trie,
+        &[
+            r#"{"GoAllocBytes":1220305536,"msg":"b"}"#,
+            r#"{"GoAllocBytes":"1220305536","msg":"c"}"#,
+            r#"{"GoAllocBytes":1679711330570,"msg":"d"}"#,
+        ],
+    );
+    assert_eq!(
+        column_of(&trie, first, "GoAllocBytes").0,
+        Some(ColumnType::Int64)
+    );
+    assert_eq!(std::fs::metadata(&path).expect("the catalog").len(), before);
+}
+
+/// **Every other widening is what it was**: an RFC 3339 date in a column of integers, a
+/// float or a word in a column of dates, and epoch digits in a column of floats are
+/// `String`, and a `String` column stays one.
+#[test]
+fn the_other_widenings_of_dates_and_integers_are_unchanged() {
+    let cases: [(&str, &str, Option<ColumnType>); 8] = [
+        ("5", r#""2024-01-15T10:30:00Z""#, Some(ColumnType::String)),
+        ("1679711330", "1.5", Some(ColumnType::String)),
+        ("1679711330", r#""N/A""#, Some(ColumnType::String)),
+        ("1.5", "1679711330", Some(ColumnType::String)),
+        (r#""N/A""#, "1679711330", Some(ColumnType::String)),
+        (r#""N/A""#, "5", Some(ColumnType::String)),
+        ("5", "1.5", Some(ColumnType::Float64)),
+        (
+            "1679711330",
+            r#""2024-01-15T10:30:00Z""#,
+            Some(ColumnType::Datetime),
+        ),
+    ];
+    for (first, second, want) in cases {
+        let trie = Trie::new();
+        let line = format!(r#"{{"v":{first}}}"#);
+        feed(&trie, &[&line, &format!(r#"{{"v":{second}}}"#)]);
+        assert_eq!(
+            column_of(&trie, &line, "v").0,
+            want,
+            "{first} then {second}"
+        );
+    }
+    // A date that was RFC 3339 all along, an integer, and then the next date: `String`.
+    let trie = Trie::new();
+    let line = r#"{"v":"2024-01-15T10:30:00Z"}"#;
+    feed(
+        &trie,
+        &[line, r#"{"v":5}"#, r#"{"v":"2024-01-15T10:30:01Z"}"#],
+    );
+    assert_eq!(column_of(&trie, line, "v").0, Some(ColumnType::String));
+}
+
+/// **A time column in a form only a time column reads is the template's time source,
+/// and its column keeps the type the ladder gave it**: CockroachDB's decimal seconds are
+/// `Float64`, Bluesky's microseconds `Int64`, PostgreSQL's zoned date `String`.
+#[test]
+fn a_time_column_form_makes_the_time_source_and_leaves_the_column_s_type() {
+    let names = vec!["timestamp".to_string(), "time_us".into()];
+    let cases = [
+        (
+            r#"{"timestamp":"1679711330.570420890","channel":"OPS"}"#,
+            "timestamp",
+            ColumnType::Float64,
+        ),
+        (
+            r#"{"timestamp":1679711330.57042,"channel":"OPS"}"#,
+            "timestamp",
+            ColumnType::Float64,
+        ),
+        (
+            r#"{"time_us":1732206349000167,"kind":"commit"}"#,
+            "time_us",
+            ColumnType::Int64,
+        ),
+        (
+            r#"{"time_us":"1679711330570420890","kind":"commit"}"#,
+            "time_us",
+            ColumnType::Int64,
+        ),
+        (
+            r#"{"timestamp":"2023-03-27 00:26:35.719 EDT","pid":27}"#,
+            "timestamp",
+            ColumnType::String,
+        ),
+    ];
+    for (line, key, ty) in cases {
+        let trie = Trie::new().with_time_columns(names.clone());
+        feed(&trie, &[line]);
+        assert_eq!(
+            column_of(&trie, line, key),
+            (Some(ty), TimeSource::Column(key.to_string())),
+            "{line}"
+        );
+    }
+}
+
+/// **Only a configured time column is read that way**: a sixteen-digit id under any
+/// other key is an `Int64` and makes no time source, and a time column whose value is in
+/// no form a time column reads - `IST`, a tenth fraction digit - leaves the template on
+/// arrival time.
+#[test]
+fn a_form_outside_a_time_column_or_one_not_read_makes_no_time_source() {
+    let names = vec!["timestamp".to_string(), "time_us".into()];
+    let cases = [
+        (
+            r#"{"order_id":1732206349000167,"kind":"commit"}"#,
+            "order_id",
+            ColumnType::Int64,
+        ),
+        (
+            r#"{"elapsed":"1679711330.570420890","kind":"commit"}"#,
+            "elapsed",
+            ColumnType::Float64,
+        ),
+        (
+            r#"{"note":"2023-03-27 00:26:35.719 EDT","kind":"commit"}"#,
+            "note",
+            ColumnType::String,
+        ),
+        (
+            r#"{"timestamp":"2023-03-27 00:26:35.719 IST","pid":27}"#,
+            "timestamp",
+            ColumnType::String,
+        ),
+        (
+            r#"{"timestamp":"1679711330.5704208901","pid":27}"#,
+            "timestamp",
+            ColumnType::Float64,
+        ),
+        (
+            r#"{"time_us":4102444800000000,"kind":"commit"}"#,
+            "time_us",
+            ColumnType::Int64,
+        ),
+        (
+            r#"{"time_us":173220634900016,"kind":"commit"}"#,
+            "time_us",
+            ColumnType::Int64,
+        ),
+    ];
+    for (line, key, ty) in cases {
+        let trie = Trie::new().with_time_columns(names.clone());
+        feed(&trie, &[line]);
+        assert_eq!(
+            column_of(&trie, line, key),
+            (Some(ty), TimeSource::Arrival),
+            "{line}"
+        );
+    }
+    // The default names do not include `time_us`: the same line, not configured.
+    let trie = Trie::new();
+    let line = r#"{"time_us":1732206349000167,"kind":"commit"}"#;
+    feed(&trie, &[line]);
+    assert_eq!(
+        column_of(&trie, line, "time_us"),
+        (Some(ColumnType::Int64), TimeSource::Arrival)
+    );
+    // The first configured name that reads as a time wins, a `Datetime` or a form alike.
+    let trie = Trie::new().with_time_columns(names.clone());
+    let line = r#"{"time_us":1732206349000167,"timestamp":"N/A"}"#;
+    feed(&trie, &[line]);
+    assert_eq!(
+        column_of(&trie, line, "time_us").1,
+        TimeSource::Column("time_us".into())
+    );
+    // A null is no time.
+    let trie = Trie::new().with_time_columns(names);
+    let line = r#"{"time_us":null,"kind":"commit"}"#;
+    feed(&trie, &[line]);
+    assert_eq!(
+        column_of(&trie, line, "time_us"),
+        (None, TimeSource::Arrival)
+    );
+}

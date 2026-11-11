@@ -57,6 +57,29 @@ pub fn join(a: Option<ColumnType>, b: Option<ColumnType>) -> Option<ColumnType> 
     }
 }
 
+/// What one more value makes of its column's type: `join`, except that digits rule 2 read
+/// as an instant and an integer are one column of integers, where the join alone would
+/// make them `String`.
+///
+/// `epoch_digits` says the incoming `Datetime` is rule 2's - ten or thirteen digits, not
+/// RFC 3339 text, which no integer column holds. A column already `Datetime` does not say
+/// which rule its values came by, so an integer arriving there is taken as the sign that
+/// they are counts: each stored value keeps the digits it arrived as, and an RFC 3339
+/// value among them is still the date it was (the next one makes the column `String`).
+pub fn widen(
+    column: Option<ColumnType>,
+    incoming: Option<ColumnType>,
+    epoch_digits: bool,
+) -> Option<ColumnType> {
+    match (column, incoming) {
+        (Some(ColumnType::Int64), Some(ColumnType::Datetime)) if epoch_digits => {
+            Some(ColumnType::Int64)
+        }
+        (Some(ColumnType::Datetime), Some(ColumnType::Int64)) => Some(ColumnType::Int64),
+        _ => join(column, incoming),
+    }
+}
+
 /// The decoded value behind a `ColumnType`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColValue {
@@ -98,7 +121,7 @@ impl ColValue {
 }
 
 /// Which rung of the ladder read a `Datetime`, so promoting the column to `String` can
-/// write back the text that arrived.
+/// write back the text that arrived, and to `Int64` the count it was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DtForm {
     /// Rows in this partition came from more than one rung. Promotion falls back to
@@ -119,6 +142,12 @@ pub struct Typed {
 }
 
 impl Typed {
+    /// Whether rule 2 read this value: ten or thirteen digits, which a column of integers
+    /// holds as the integer they spell.
+    pub fn is_epoch_digits(&self) -> bool {
+        matches!(self.dt_form, Some(DtForm::EpochSecs | DtForm::EpochMillis))
+    }
+
     pub fn label(&self) -> &'static str {
         match self.ty {
             Some(t) => t.as_str(),
@@ -158,14 +187,23 @@ impl TimeSource {
         }
     }
 
-    /// The rule, over the types a line (or a template) holds per key.
+    /// The rule, over the types a template holds per key: the first configured name that
+    /// is a `Datetime`. What a catalog with no `time_source` record is read by.
     pub fn choose<'a>(
         time_columns: &[String],
         type_of: impl Fn(&str) -> Option<ColumnType> + 'a,
     ) -> Self {
+        Self::choose_by(time_columns, |name| {
+            type_of(name) == Some(ColumnType::Datetime)
+        })
+    }
+
+    /// The rule, over the line that makes a template: the first configured name whose
+    /// value on that line `is_time` - a `Datetime`, or a form only a time column reads.
+    pub fn choose_by(time_columns: &[String], is_time: impl Fn(&str) -> bool) -> Self {
         time_columns
             .iter()
-            .find(|name| type_of(name) == Some(ColumnType::Datetime))
+            .find(|name| is_time(name))
             .map_or(TimeSource::Arrival, |name| TimeSource::Column(name.clone()))
     }
 
@@ -178,3 +216,6 @@ impl TimeSource {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

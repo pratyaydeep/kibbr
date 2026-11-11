@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use crate::templates::catalog::{Catalog, CatalogError, Record, Token};
 use crate::parse::flatten::ParsedLog;
-use crate::model::types::{join, ColumnType, TimeSource};
+use crate::model::types::{widen, ColumnType, TimeSource};
 
 mod keys;
 
@@ -169,7 +169,7 @@ pub const DEFAULT_TIME_COLUMNS: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct Schema {
     /// Ordered: a template's time source is the first of these that is one of its keys
-    /// and whose value on the creating line inferred as `Datetime`.
+    /// and whose value on the creating line reads as a time (`ParsedLog::reads_as_time`).
     pub time_columns: Vec<String>,
 }
 
@@ -825,9 +825,10 @@ impl Trie {
                     at: None,
                 }));
                 // The time source: the first configured name among this line's keys that read as a
-                // `Datetime`, chosen once in the same durable unit as the template.
+                // time - a `Datetime`, or a form only a time column reads - chosen once in the
+                // same durable unit as the template. The columns keep the types the ladder gave.
                 let time_source =
-                    TimeSource::choose(&self.time_columns, |name| parsed.column_type(name));
+                    TimeSource::choose_by(&self.time_columns, |name| parsed.reads_as_time(name));
                 records.push(Record::TimeSource {
                     template_id,
                     source: time_source.as_record(),
@@ -871,7 +872,9 @@ impl Trie {
                     {
                         Ok(at) => {
                             let col = &meta.columns[at];
-                            let joined = join(col.col_type, incoming);
+                            // `join`, but digits rule 2 read as an instant and an integer
+                            // are one column of integers, not text.
+                            let joined = widen(col.col_type, incoming, parsed.is_epoch_digits(key));
                             if joined != col.col_type {
                                 // The one place an operator can learn that a column widened.
                                 // `None ⊔ T` is a column learning its first type: no warning.

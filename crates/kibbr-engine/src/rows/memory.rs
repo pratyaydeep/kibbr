@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use super::{
-    effective_ts, in_window, render_row, value_bytes, LeafStore, Row, Scan, ScanOptions, Store,
+    effective_ts, in_window, shown_row, value_bytes, LeafStore, Row, Scan, ScanOptions, Store,
     StoreError, Term, Visitor, DEFAULT_TS_COLUMN,
 };
 
@@ -95,7 +95,7 @@ impl LeafStore for MemoryLeaf {
             out.scanned += 1;
             // A column that has widened to text since this row arrived: its `Datetime` is compared
             // as the text it was ingested as. The effective time is read first, off the instant.
-            let rendered = render_row(stored, &opts.text_columns);
+            let rendered = shown_row(stored, opts);
             let row = rendered.as_ref().unwrap_or(stored);
             if windowed && !in_window(effective_ts(stored, ts), since, until) {
                 continue;
