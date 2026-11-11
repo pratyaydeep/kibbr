@@ -53,18 +53,6 @@
       ]
     },
     {
-      "tag": "bluesky-1b",
-      "urls": {
-        "pattern": "https://clickhouse-public-datasets.s3.amazonaws.com/bluesky/file_{:04d}.json.gz",
-        "from": 1,
-        "to": 1000
-      },
-      "note": "JSONBench's full dataset: Bluesky events recorded from Jetstream by ClickHouse (github.com/ClickHouse/JSONBench), file_0001 to file_1000.json.gz, about a million lines each. time_us is 16 digits, so it types as Int64 and every row is stored at its arrival time, as in bluesky-1m",
-      "time_columns": [
-        "time_us"
-      ]
-    },
-    {
       "tag": "bluesky-100m",
       "urls": {
         "pattern": "https://clickhouse-public-datasets.s3.amazonaws.com/bluesky/file_{:04d}.json.gz",
@@ -81,7 +69,7 @@
       "urls": [
         "https://quickwit-datasets-public.s3.amazonaws.com/hdfs-logs-multitenants.json.gz"
       ],
-      "note": "Quickwit's HDFS logs with tenant ids, the dataset of its tutorial \"Index a logging dataset locally\" (quickwit.io/docs/get-started/tutorials/tutorial-hdfs-logs), from Loghub's HDFS logs (github.com/logpai/loghub): hdfs-logs-multitenants.json.gz, 470,061,890 bytes, sha256 673c1b681089fb7ce78745f520a0837fcffce64651b6c4cdc8d1fd3e82a42e08, 20,000,000 lines, 7,194,479,974 bytes decoded, over 393 UTC days from 2015-08-27 to 2016-10-22. Given as `urls`, so it is decoded as it arrives and retried",
+      "note": "Quickwit's HDFS logs with tenant ids, the dataset of its tutorial \"Index a logging dataset locally\" (quickwit.io/docs/get-started/tutorials/tutorial-hdfs-logs). Quickwit does not state where the logs come from. hdfs-logs-multitenants.json.gz: 470,061,890 bytes, sha256 673c1b681089fb7ce78745f520a0837fcffce64651b6c4cdc8d1fd3e82a42e08, 20,000,000 lines, 7,194,479,974 bytes decoded, over 393 UTC days from 2015-08-27 to 2016-10-22. Given as `urls`, so it is decoded as it arrives and retried",
       "time_columns": [
         "timestamp"
       ]
