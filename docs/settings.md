@@ -76,8 +76,13 @@ format = "text"                     # --log-format           text or json
   `Int64` like any other.
 - **Epoch digits and integers are one column of integers.** A `Datetime` column of 10- or
   13-digit values that meets an integer, and an `Int64` column that meets such digits, is
-  `Int64` and not `String`; every row keeps the digits it arrived as. An RFC 3339 date in
-  an integer column still makes it `String`, as does every other mix of types.
+  `Int64` and not `String`; every row keeps the digits it arrived as. An RFC 3339 date and
+  an integer in one column still make it `String`, in whichever order they arrive, as does
+  every other mix of types. `catalog.log` keeps what decides it: a `Datetime` column's
+  record says `"epoch_digits": true` while every value has been digits and `false` once
+  one was RFC 3339. A build from before the field reads such a catalog and ignores it. A
+  `Datetime` column made by such a build does not say; there an integer is taken as the
+  sign that its values are counts, until an RFC 3339 date says otherwise.
 - **A template keeps the time source it was made with**, and a row stored under its
   arrival time stays there: a directory written before a time column read these forms
   answers as it did.
