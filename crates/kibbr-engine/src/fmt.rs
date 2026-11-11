@@ -14,7 +14,7 @@ pub const NULL_TEXT: &str = "(null)";
 /// A value as a human reads it, not a round-trip encoding.
 pub fn col_text(value: &ColValue) -> String {
     match value {
-        ColValue::String(s) => s.clone(),
+        ColValue::String(s) | ColValue::Json(s) => s.clone(),
         ColValue::Int64(i) => i.to_string(),
         ColValue::Float64(f) => f.to_string(),
         // Nanoseconds are unreadable, and a timestamp is the one column an operator scans by eye.

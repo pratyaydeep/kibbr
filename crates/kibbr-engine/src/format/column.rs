@@ -97,6 +97,8 @@ pub(crate) struct Column {
     b: Option<Piece>,
     /// The chunk's offset in its file: the place an error names.
     base: u64,
+    /// Which rows are an array or an empty object, where the row group says any is.
+    marks: Option<read::Marks>,
 }
 
 #[derive(Debug)]
@@ -192,7 +194,15 @@ impl Column {
             a: laid.a,
             b: laid.b,
             base,
+            marks: None,
         })
+    }
+
+    /// This column with the rows its row group marks as an array or an empty object:
+    /// `cell` and `cell_with` then give those rows as that, and every other read their text.
+    pub(crate) fn marked(mut self, marks: Option<read::Marks>) -> Self {
+        self.marks = marks;
+        self
     }
 
     /// This column over the bytes it was decoded from; bytes of another length are refused,
@@ -686,16 +696,30 @@ impl<'c> Col<'c> {
             .map_err(|bad| Bad::at(base, format!("{}, at row {row} of the chunk", bad.what)))
     }
 
-    /// The cell `read::chunk` gives this row.
+    /// The cell `read::chunk` gives this row, as the column's marks have it.
     pub(crate) fn cell(&self, row: usize) -> Result<Cell, Bad> {
-        match self.place(row)? {
-            None => Ok((ColValue::Null, None)),
-            Some((_, piece, at)) => self.print(piece, at, row),
+        let cell = match self.place(row)? {
+            None => (ColValue::Null, None),
+            Some((_, piece, at)) => self.print(piece, at, row)?,
+        };
+        self.shaped(cell, row)
+    }
+
+    /// A printed cell as the column's marks have it.
+    fn shaped(&self, cell: Cell, row: usize) -> Result<Cell, Bad> {
+        match &self.column.marks {
+            Some(marks) => marks.cell(cell, row, self.column.base),
+            None => Ok(cell),
         }
     }
 
     /// `cell`, printing a word or a constant once for each way rows spell it.
     pub(crate) fn cell_with(&self, row: usize, memo: &mut Memo) -> Result<Cell, Bad> {
+        let cell = self.unmarked_with(row, memo)?;
+        self.shaped(cell, row)
+    }
+
+    fn unmarked_with(&self, row: usize, memo: &mut Memo) -> Result<Cell, Bad> {
         let Some((in_b, piece, at)) = self.place(row)? else {
             return Ok((ColValue::Null, None));
         };

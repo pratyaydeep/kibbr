@@ -43,6 +43,13 @@ pub const KIND_FOOTER: u8 = 3;
 /// A kind with this bit set is optional: a reader that does not know it steps over it.
 pub(crate) const OPTIONAL: u8 = 0x80;
 
+/// A row group section: which rows of its column are an array or an empty object, held in
+/// the column's chunk as their JSON text. No bytes: every row of the column that is not
+/// null. Otherwise a bitmap of the row group's rows. It is optional, so a build from before
+/// it steps over it and reads those rows as the strings their text is. `0x81` is kept for a
+/// column's bloom filter, which no build writes yet.
+pub(crate) const SECTION_JSON: u8 = OPTIONAL | 0x02;
+
 /// The largest chunk body a reader will allocate; no writer produces one.
 pub(crate) const MAX_BODY: u32 = 256 * 1024 * 1024;
 

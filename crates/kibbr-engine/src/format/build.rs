@@ -17,7 +17,7 @@ use super::{
     bitmap, day_of, epoch_of, float_json, index_width, ip_bytes, print_float, print_int, print_ip,
     print_rfc3339, print_uuid, put_varint, type_byte, uuid_bytes, zigzag, Form, JsonKind, Source,
     BITS, CONSTANT, DELTA, DICTIONARY, EPOCH_MILLIS, EPOCH_SECS, KIND_ROW_GROUP, MAX_BODY,
-    MAX_ROWS, NO_COMPRESSION, PER_ROW, PLAIN, RFC3339, VARINT, ZSTD,
+    MAX_ROWS, NO_COMPRESSION, PER_ROW, PLAIN, RFC3339, SECTION_JSON, VARINT, ZSTD,
 };
 use crate::model::row::Row;
 use crate::model::types::{ColValue, ColumnType};
@@ -110,6 +110,10 @@ pub(crate) struct Encoded {
     source: Source,
     directory: Vec<u8>,
     chunks: Vec<u8>,
+    /// How many sections follow the chunks, their directory entries, and their bytes.
+    section_count: u16,
+    sections: Vec<u8>,
+    marks: Vec<u8>,
 }
 
 /// The expensive half of `build`: every check, and every column encoded.
@@ -152,12 +156,28 @@ pub(crate) fn encode(
 
     let mut directory = Vec::new();
     let mut chunks = Vec::new();
-    for name in columns {
+    let mut section_count = 0u16;
+    let mut sections = Vec::new();
+    let mut marks = Vec::new();
+    for (at, name) in columns.iter().enumerate() {
         let chunk = encode_column(name, rows, level)?;
         directory.extend_from_slice(&chunk.entry);
         chunks.extend_from_slice(&chunk.body);
+        // A column that holds no array and no empty object has no section, and a row
+        // group of such columns is the bytes it always was.
+        if let Some(body) = chunk.marks {
+            let too_many = || BuildError::TooLong(name.clone());
+            section_count = section_count.checked_add(1).ok_or_else(too_many)?;
+            sections.push(SECTION_JSON);
+            sections.extend_from_slice(&u32::try_from(at).map_err(|_| too_many())?.to_le_bytes());
+            // A bitmap of at most `MAX_ROWS` bits.
+            sections.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            sections.extend_from_slice(&crate::format::frame::crc32c(&body).to_le_bytes());
+            marks.extend_from_slice(&body);
+        }
     }
-    u32::try_from(chunks.len()).map_err(|_| BuildError::TooLong(columns.join(",")))?;
+    u32::try_from(chunks.len() + marks.len())
+        .map_err(|_| BuildError::TooLong(columns.join(",")))?;
     Ok(Encoded {
         template_id,
         row_count,
@@ -166,6 +186,9 @@ pub(crate) fn encode(
         source,
         directory,
         chunks,
+        section_count,
+        sections,
+        marks,
     })
 }
 
@@ -185,16 +208,20 @@ impl Encoded {
         payload.extend_from_slice(&stream.to_le_bytes());
         payload.extend_from_slice(&first.to_le_bytes());
         payload.extend_from_slice(&last.to_le_bytes());
-        // Checked against a `u32` when it was encoded.
-        payload.extend_from_slice(&(self.chunks.len() as u32).to_le_bytes());
+        // Checked against a `u32` when it was encoded; the sections' bytes follow the
+        // chunks and are counted with them.
+        let mut chunks = self.chunks;
+        chunks.extend_from_slice(&self.marks);
+        payload.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
         payload.extend_from_slice(&self.directory);
-        // No sections: bloom filters are not built yet, and a file without them simply has
-        // none.
-        payload.extend_from_slice(&0u16.to_le_bytes());
+        // The sections: one for each column that holds an array or an empty object, and
+        // none in a row group that holds neither.
+        payload.extend_from_slice(&self.section_count.to_le_bytes());
+        payload.extend_from_slice(&self.sections);
 
         RowGroup {
             frame: crate::format::frame::frame(&payload),
-            chunks: self.chunks,
+            chunks,
             row_count: self.row_count,
             min_time: self.min_time,
             max_time: self.max_time,
@@ -207,6 +234,9 @@ impl Encoded {
 struct Chunk {
     entry: Vec<u8>,
     body: Vec<u8>,
+    /// The bytes of the column's `SECTION_JSON`, when a row of it is an array or an
+    /// empty object.
+    marks: Option<Vec<u8>>,
 }
 
 /// A typed value, in the layout plain encoding writes.
@@ -288,6 +318,8 @@ fn encode_column(name: &str, rows: &[&Row], level: Level) -> Result<Chunk, Build
     for row in rows {
         printed.push(match row.get(name) {
             None | Some(ColValue::Null) => None,
+            // Its text, whatever else the row says of it: the section marks the row.
+            Some(ColValue::Json(text)) => Some(Value::String(text.clone())),
             Some(value) => match row.written(name) {
                 Some(_) => None,
                 None => Some(value.printed()),
@@ -300,7 +332,9 @@ fn encode_column(name: &str, rows: &[&Row], level: Level) -> Result<Chunk, Build
         if matches!(value, ColValue::Null) {
             continue;
         }
-        let Some(json) = row.written(name).or(printed[i].as_ref()) else {
+        let shaped = matches!(value, ColValue::Json(_));
+        let said = if shaped { None } else { row.written(name) };
+        let Some(json) = said.or(printed[i].as_ref()) else {
             continue;
         };
         let lit = matches!(json, Value::Number(_) | Value::Bool(_));
@@ -321,8 +355,10 @@ fn encode_column(name: &str, rows: &[&Row], level: Level) -> Result<Chunk, Build
         return Ok(Chunk {
             entry,
             body: Vec::new(),
+            marks: None,
         });
     }
+    let marks = marks_of(name, rows, present.len());
 
     let groups = group(&present);
     let pieces = choose(groups, &present);
@@ -391,7 +427,19 @@ fn encode_column(name: &str, rows: &[&Row], level: Level) -> Result<Chunk, Build
     Ok(Chunk {
         entry,
         body: stored,
+        marks,
     })
+}
+
+/// A column's `SECTION_JSON` bytes: `None` when no row of it is an array or an empty
+/// object, no bytes when every row that is not null is one, and otherwise a bit a row.
+fn marks_of(name: &str, rows: &[&Row], present: usize) -> Option<Vec<u8>> {
+    let shaped = |row: &Row| matches!(row.get(name), Some(ColValue::Json(_)));
+    match rows.iter().filter(|row| shaped(row)).count() {
+        0 => None,
+        n if n == present => Some(Vec::new()),
+        _ => Some(bitmap(rows.iter().map(|row| shaped(row)))),
+    }
 }
 
 /// The one compression a chunk gets: zstd over the whole body, unless every piece is one
@@ -830,7 +878,7 @@ fn string_row(value: &ColValue, s: &str) -> Class {
             }
             Class::Text
         }
-        ColValue::Null => Class::Text,
+        ColValue::Null | ColValue::Json(_) => Class::Text,
     }
 }
 

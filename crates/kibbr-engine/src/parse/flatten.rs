@@ -131,7 +131,8 @@ impl ParsedLog {
 }
 
 /// Flatten one JSON object into sorted key paths and leaf values; arrays stay whole, or
-/// the fingerprint would depend on their length.
+/// the fingerprint would depend on their length, and an object with no members is a leaf,
+/// or it would be no key at all and could not be given back.
 pub fn flatten(root: &Value) -> Result<Vec<(KeyPath, Value)>, DetectorErrorKind> {
     let obj = match root {
         Value::Object(o) => o,
@@ -166,7 +167,13 @@ fn walk(
                         limit: MAX_DEPTH,
                     });
                 }
-                walk(inner, path, depth + 1, out)?;
+                // An object with no members has no key to walk to: it is a leaf, and
+                // its value is itself.
+                if inner.is_empty() {
+                    out.push((path.clone(), value.clone()));
+                } else {
+                    walk(inner, path, depth + 1, out)?;
+                }
             }
             other => out.push((path.clone(), other.clone())),
         }
@@ -403,22 +410,24 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
         let raw = raw_text(&leaf);
         // A JSON null is no evidence about the column's type; run through the ladder it
         // would pin the column to String.
-        let typed = if leaf.is_null() {
-            Typed {
+        let typed = match &leaf {
+            Value::Null => Typed {
                 ty: None,
                 value: ColValue::Null,
                 dt_form: None,
-            }
-        } else {
-            infer(&raw)
+            },
+            // An array, or an object with no members: held as its JSON text and marked as
+            // one, in a column of text. Never run through the ladder, which reads strings.
+            Value::Array(_) | Value::Object(_) => Typed {
+                ty: Some(ColumnType::String),
+                value: ColValue::Json(raw.clone()),
+                dt_form: None,
+            },
+            _ => infer(&raw),
         };
 
-        // What the line said, beside the value the row will hold; an array is stored as
-        // its JSON text.
-        let said = match leaf {
-            Value::Array(_) | Value::Object(_) => Value::String(raw.clone()),
-            other => other,
-        };
+        // What the line said, beside the value the row will hold.
+        let said = leaf;
         let promote = is_promotable(path.last().unwrap_or_default(), &typed, &raw);
         let held = if promote {
             ColValue::String(raw.clone())
@@ -476,6 +485,9 @@ fn parse_bytes(raw_line: &[u8]) -> Result<ParsedLog, DetectorErrorKind> {
 fn is_promotable(leaf: &str, typed: &Typed, raw: &str) -> bool {
     PROMOTED_KEYS.contains(&leaf)
         && typed.ty == Some(ColumnType::String)
+        // A string, and not an array or an empty object held as its text: a dimension
+        // is a word.
+        && matches!(typed.value, ColValue::String(_))
         && !raw.is_empty()
         && raw.len() <= MAX_PROMOTED_LEN
         // A value containing the delimiter or whitespace would make the fingerprint

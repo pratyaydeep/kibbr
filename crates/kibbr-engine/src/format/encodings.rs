@@ -72,6 +72,62 @@ pub(super) fn chunk_both(
     cells
 }
 
+/// A column's `SECTION_JSON` out of a built row group, read: the rows of it that are an
+/// array or an empty object.
+fn marks_of(rg: &RowGroup, header: &Header, column: usize) -> Result<Option<read::Marks>, Bad> {
+    let Some((at, len, crc)) = header.json_section(column) else {
+        return Ok(None);
+    };
+    let bytes = &rg.chunks[at as usize..at as usize + len as usize];
+    assert_eq!(
+        crate::format::frame::crc32c(bytes),
+        crc,
+        "the section's CRC"
+    );
+    read::Marks::read(bytes, at, header.row_count as usize).map(Some)
+}
+
+/// A column's cells as a reader gives them: its chunk read both ways, then the rows its
+/// row group marks as an array or an empty object - by `Marks::cells` over the cells, and
+/// by a marked `Column` a row at a time, which must agree.
+fn cells_of(rg: &RowGroup, header: &Header, column: usize) -> Result<Vec<read::Cell>, Bad> {
+    let dir = &header.chunks[column];
+    let at = header.chunk_offsets()[column];
+    let rows = header.row_count as usize;
+    let body = &rg.chunks[at as usize..at as usize + dir.stored_len as usize];
+    let cells = chunk_both(body, at, dir, rows)?;
+    let Some(marks) = marks_of(rg, header, column)? else {
+        return Ok(cells);
+    };
+    let marked = marks.cells(cells, at);
+    let lazy = Column::decode(body, at, dir, rows)
+        .expect("a chunk `read::chunk` decodes")
+        .marked(Some(marks));
+    let col = lazy.over(body).expect("a column over its own bytes");
+    let mut memo = Memo::default();
+    match &marked {
+        Ok(cells) => {
+            // Twice through the memo: the second pass finds every word already printed,
+            // and a word an array and a string share must still come back as each.
+            for _ in 0..2 {
+                for (row, cell) in cells.iter().enumerate() {
+                    assert_eq!(col.cell(row).as_ref(), Ok(cell), "row {row}");
+                    assert_eq!(
+                        col.cell_with(row, &mut memo).as_ref(),
+                        Ok(cell),
+                        "row {row}"
+                    );
+                }
+            }
+        }
+        Err(_) => assert!(
+            (0..rows).any(|row| col.cell(row).is_err()),
+            "the typed decoder printed every row of a column whose marks are refused"
+        ),
+    }
+    marked
+}
+
 /// Lines through the real parser into one row group, as the store would build it.
 fn group_of(lines: &[String]) -> (Vec<String>, RowGroup) {
     group_at(lines, Level::Live)
@@ -107,14 +163,8 @@ fn header_of(rg: &RowGroup, columns: usize) -> Header {
 /// Every row of the row group as the JSON object an answer prints.
 fn rows_of(columns: &[String], rg: &RowGroup) -> Vec<Value> {
     let header = header_of(rg, columns.len());
-    let cells: Vec<Vec<read::Cell>> = header
-        .chunks
-        .iter()
-        .zip(header.chunk_offsets())
-        .map(|(dir, at)| {
-            let body = &rg.chunks[at as usize..at as usize + dir.stored_len as usize];
-            chunk_both(body, at, dir, header.row_count as usize).expect("chunk")
-        })
+    let cells: Vec<Vec<read::Cell>> = (0..columns.len())
+        .map(|column| cells_of(rg, &header, column).expect("chunk"))
         .collect();
     (0..header.row_count as usize)
         .map(|r| {
@@ -856,6 +906,239 @@ fn an_unknown_encoding_is_refused() {
             err.what.contains(&format!("encoding {bad}")),
             "{}",
             err.what
+        );
+    }
+}
+
+// ── Arrays and empty objects: the JSON section ─────────────────────────────────────
+
+/// The `SECTION_JSON` entries of a built row group, as `(column name, bytes)`.
+fn json_sections(columns: &[String], rg: &RowGroup) -> Vec<(String, Vec<u8>)> {
+    let header = header_of(rg, columns.len());
+    header
+        .sections
+        .iter()
+        .filter(|s| s.kind == super::SECTION_JSON)
+        .map(|s| {
+            let (at, len, _) = header.json_section(s.column as usize).expect("its place");
+            let bytes = rg.chunks[at as usize..at as usize + len as usize].to_vec();
+            (columns[s.column as usize].clone(), bytes)
+        })
+        .collect()
+}
+
+/// What each line's `v` is, as JSON: `None` for a line that has no `v`.
+fn wanted(values: &[&str]) -> Vec<Value> {
+    values
+        .iter()
+        .map(|v| serde_json::from_str(v).expect("a JSON value"))
+        .collect()
+}
+
+/// **An array and an empty object come back as themselves beside every other kind of
+/// value in the same column, in any order**: a string, a string of the same characters, a
+/// number, a bool, a date, null. The column is two pieces at most and one bit a row says
+/// which rows are JSON.
+#[test]
+fn a_column_of_arrays_objects_and_every_other_kind_comes_back_row_for_row() {
+    let values = [
+        r#"["en"]"#,
+        r#""[\"en\"]""#,
+        "7",
+        "{}",
+        r#""{}""#,
+        "null",
+        "[]",
+        r#""[]""#,
+        r#""""#,
+        "true",
+        r#"[{"a":1.5,"b":[null,{}]},null,"x"]"#,
+        r#""plain""#,
+        "1.5",
+        r#""2024-01-15T10:30:00Z""#,
+        r#"["en"]"#,
+        "[[1,[2]],[]]",
+        "[null,null]",
+    ];
+    let want = wanted(&values);
+    // In the order written, reversed, and rotated: no kind depends on what came first.
+    for turn in 0..values.len() {
+        let mut order: Vec<usize> = (0..values.len()).collect();
+        order.rotate_left(turn);
+        if turn % 2 == 1 {
+            order.reverse();
+        }
+        let turned: Vec<&str> = order.iter().map(|i| values[*i]).collect();
+        let (columns, rg) = group_of(&lines_of(&turned));
+        let got = rows_of(&columns, &rg);
+        for (row, i) in order.iter().enumerate() {
+            assert_eq!(
+                got[row]["v"], want[*i],
+                "turn {turn}, row {row}: {}",
+                values[*i]
+            );
+        }
+        let sections = json_sections(&columns, &rg);
+        assert_eq!(sections.len(), 1, "one section, for `v`");
+        assert_eq!(sections[0].0, "v");
+        assert_eq!(sections[0].1.len(), values.len().div_ceil(8), "a bit a row");
+    }
+}
+
+/// **A column whose every value is an array has a section of no bytes**, with or without
+/// nulls among them; and a row group with no array and no empty object has no section, so
+/// it is the bytes it was before there were any.
+#[test]
+fn a_column_of_only_arrays_is_marked_in_no_bytes_and_one_of_none_not_at_all() {
+    for values in [
+        vec![r#"["a"]"#, "[]", r#"["a","b"]"#],
+        vec![r#"["a"]"#, "null", "{}", "null"],
+        vec!["{}", "{}", "{}"],
+    ] {
+        let (columns, rg) = group_of(&lines_of(&values));
+        assert_eq!(
+            json_sections(&columns, &rg),
+            [("v".to_string(), Vec::new())]
+        );
+        let got = rows_of(&columns, &rg);
+        for (row, want) in wanted(&values).iter().enumerate() {
+            assert_eq!(&got[row]["v"], want, "row {row}");
+        }
+    }
+    let plain = [r#""[1]""#, r#""{}""#, "1", "null", r#""x""#];
+    let (columns, rg) = group_of(&lines_of(&plain));
+    assert!(json_sections(&columns, &rg).is_empty());
+    assert!(header_of(&rg, columns.len()).sections.is_empty());
+}
+
+/// **A string and an array of the same characters share a word and stay two values**: the
+/// word list holds the text once, and the section says which rows it is an array in.
+#[test]
+fn an_array_and_a_string_of_its_text_share_a_word_and_not_a_kind() {
+    let values = [
+        r#"[1]"#, r#""[1]""#, r#"[1]"#, r#""[1]""#, r#""[2]""#, "[2]",
+    ];
+    let lines = lines_of(&values);
+    let (encodings, _) = pieces_of(&lines);
+    assert_eq!(encodings, [DICTIONARY]);
+    let (columns, rg) = group_of(&lines);
+    let got = rows_of(&columns, &rg);
+    for (row, want) in wanted(&values).iter().enumerate() {
+        assert_eq!(&got[row]["v"], want, "row {row}");
+    }
+}
+
+/// **Rows read back and built again make the same bytes**: what compaction does to a row
+/// group that holds arrays and empty objects, which must lose no mark.
+#[test]
+fn a_row_group_of_arrays_rebuilt_from_its_own_rows_is_the_same_bytes() {
+    let values = [
+        r#"["en"]"#,
+        r#""[\"en\"]""#,
+        "{}",
+        "null",
+        "7",
+        "[]",
+        r#""x""#,
+    ];
+    let lines = lines_of(&values);
+    let (columns, rg) = group_of(&lines);
+    let header = header_of(&rg, columns.len());
+    let cells: Vec<Vec<read::Cell>> = (0..columns.len())
+        .map(|column| cells_of(&rg, &header, column).expect("chunk"))
+        .collect();
+    let rows: Vec<Row> = (0..header.row_count as usize)
+        .map(|r| {
+            let mut row = Row::new();
+            for (at, column) in cells.iter().enumerate() {
+                let (value, written) = column[r].clone();
+                if !matches!(value, crate::model::types::ColValue::Null) || columns[at] == "v" {
+                    row.insert_written(columns[at].clone(), value, written);
+                }
+            }
+            row
+        })
+        .collect();
+    let refs: Vec<&Row> = rows.iter().collect();
+    let times: Vec<i64> = rows
+        .iter()
+        .map(|r| effective_ts(r, "ts").expect("a time"))
+        .collect();
+    let again = build(
+        7,
+        0,
+        &columns,
+        &refs,
+        &times,
+        Source::NotRecorded,
+        Level::Live,
+    )
+    .expect("build");
+    assert_eq!(again, rg);
+}
+
+/// A built row group with the bytes of column `v`'s JSON section replaced, its entry in
+/// the header made to match, and the header framed again.
+fn with_section(columns: &[String], rg: &RowGroup, bytes: &[u8]) -> RowGroup {
+    let header = header_of(rg, columns.len());
+    let column = columns.iter().position(|c| c == "v").expect("a column v") as u32;
+    let (at, len, _) = header
+        .json_section(column as usize)
+        .expect("a section for v");
+    let Next::Frame { payload, .. } = crate::format::frame::read(&rg.frame, 0, u32::MAX) else {
+        panic!("not a frame");
+    };
+    let mut payload = payload.to_vec();
+    // The one section's entry is the header's last thirteen bytes: kind, column, len, crc.
+    assert_eq!(header.sections.len(), 1);
+    let entry = payload.len() - 13;
+    assert_eq!(payload[entry], super::SECTION_JSON);
+    payload[entry + 5..entry + 9].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+    payload[entry + 9..].copy_from_slice(&crate::format::frame::crc32c(bytes).to_le_bytes());
+    let mut chunks = rg.chunks[..at as usize].to_vec();
+    chunks.extend_from_slice(bytes);
+    chunks.extend_from_slice(&rg.chunks[(at + u64::from(len)) as usize..]);
+    // `chunks_len` follows template, schema, rows, times and source: 1+8+4+4+8+8+25.
+    payload[58..62].copy_from_slice(&(chunks.len() as u32).to_le_bytes());
+    RowGroup {
+        frame: crate::format::frame::frame(&payload),
+        chunks,
+        ..rg.clone()
+    }
+}
+
+/// **A section no writer makes is refused, never guessed at**: a mark on a row that is a
+/// number, on a string that is not JSON, or on a null; a bitmap of another length, with
+/// no bit set, or with a bit past the last row.
+#[test]
+fn a_json_section_no_writer_makes_is_refused() {
+    let values = [r#"["a"]"#, "7", r#""x""#, "null", r#""[1]""#];
+    let (columns, rg) = group_of(&lines_of(&values));
+    let v = columns.iter().position(|c| c == "v").expect("a column v");
+    let read = |rg: &RowGroup| -> Result<Vec<read::Cell>, Bad> {
+        let Next::Frame { payload, .. } = crate::format::frame::read(&rg.frame, 0, u32::MAX) else {
+            panic!("not a frame");
+        };
+        let header = read::header(payload, 0, |_| Some(columns.len()))?;
+        cells_of(rg, &header, v)
+    };
+    assert!(read(&rg).is_ok());
+    // Row 4, a string whose text is an array's, may be marked: then it is one.
+    let both = read(&with_section(&columns, &rg, &[0b1_0001])).expect("a mark on JSON text");
+    assert_eq!(both[4].0, crate::model::types::ColValue::Json("[1]".into()));
+    for (bytes, why) in [
+        (&[0b0_0011][..], "a number"),
+        (&[0b0_0101][..], "a string that is not JSON"),
+        (&[0b0_1001][..], "a null"),
+        (&[0b0_0000][..], "no row"),
+        (&[0b10_0001][..], "a row past the last"),
+        (&[0b0_0001, 0][..], "a byte too many"),
+        (&[][..], "every row, and one is a number"),
+    ] {
+        let refused = read(&with_section(&columns, &rg, bytes));
+        assert!(
+            refused.is_err(),
+            "a section marking {why} was read: {refused:?}"
         );
     }
 }

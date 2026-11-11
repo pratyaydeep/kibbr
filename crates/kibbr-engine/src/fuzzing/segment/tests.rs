@@ -262,6 +262,35 @@ fn spellings() -> Vec<u8> {
     )
 }
 
+/// A file of arrays and empty objects, so its row groups carry JSON sections: a column
+/// where every row is one, a column where some are - beside strings of the same text, a
+/// number and a null - and a column with none.
+fn shapes() -> Vec<u8> {
+    let values = [
+        r#"["a",1]"#,
+        r#""[\"a\",1]""#,
+        "{}",
+        r#""{}""#,
+        "[]",
+        "7",
+        "null",
+        r#"[{"b":[null,{}]},"x"]"#,
+        r#""plain""#,
+    ];
+    let mixed: Vec<String> = values
+        .iter()
+        .enumerate()
+        .map(|(n, v)| {
+            format!(
+                r#"{{"ts":"2024-01-15T10:30:{n:02}Z","v":{v},"tags":["t{}"],"w":"w{n}"}}"#,
+                n % 2
+            )
+        })
+        .collect();
+    let mixed: Vec<&str> = mixed.iter().map(String::as_str).collect();
+    written("shapes", &[(1, "ts", &mixed)], Level::Finished)
+}
+
 /// A built row group of one column that names its own schema: `rows` rows, and the
 /// column's instruction bytes as given.
 fn one_column(rows: u32, column: &[u8]) -> Vec<u8> {
@@ -290,6 +319,7 @@ fn seeds() -> Vec<(String, Vec<u8>)> {
         ("encodings", vector("encodings.col")),
         ("written-mixed", mixed()),
         ("written-spellings", spellings()),
+        ("written-shapes", shapes()),
     ];
     // The first vector's first row group alone, sealed by a footer of its own.
     let two = vector("two_templates.col");
@@ -594,7 +624,11 @@ fn seeds() -> Vec<(String, Vec<u8>)> {
             out.push(("built-section-required".into(), feed.clone()));
             feed[at + 1] = 0x81;
             *feed.last_mut().expect("a knob") = 1;
-            out.push(("built-chunks-len-lies".into(), feed));
+            out.push(("built-chunks-len-lies".into(), feed.clone()));
+            // A JSON section, of the one byte two rows take, on a column of bools: a
+            // mark on a row that is not the text of an array or an object.
+            feed.splice(at.., [1, 0x82, 0, 1, 0b01, 0]);
+            out.push(("built-json-section-on-bools".into(), feed));
         }
     }
     out
@@ -672,6 +706,10 @@ fn the_seeds_read_clean_and_the_whole_ones_are_kept() {
         ("built-written-spellings-resealed", 359),
         ("built-footer-with-an-optional-part", 0),
         ("built-section-optional", 2),
+        ("file-written-shapes", 9),
+        ("built-written-shapes", 9),
+        ("built-written-shapes-resealed", 9),
+        ("built-json-section-on-bools", 0),
         ("built-stored-len-lies", 0),
         ("built-type-nobody-assigned", 0),
     ] {

@@ -450,7 +450,8 @@ pub fn value_matches(want: &MatchValue, stored: &ColValue) -> bool {
     match want {
         MatchValue::Any => !matches!(stored, ColValue::Null),
         MatchValue::Exact(text) => {
-            *stored == ColValue::String(text.clone()) || *stored == infer(text).value
+            matches!(stored, ColValue::String(s) | ColValue::Json(s) if s == text)
+                || *stored == infer(text).value
         }
     }
 }

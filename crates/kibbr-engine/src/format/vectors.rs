@@ -609,27 +609,11 @@ fn every_named_spelling_comes_back_as_it_was_ingested() {
     }
     let index = writer.seal().expect("seal");
 
-    // Arrays are text: stored as their JSON and returned as that string.
-    let as_stored = |v: &Value| -> Value {
-        let Value::Object(map) = v else {
-            return v.clone();
-        };
-        Value::Object(
-            map.iter()
-                .map(|(k, v)| {
-                    let v = match v {
-                        Value::Array(_) => Value::String(v.to_string()),
-                        other => other.clone(),
-                    };
-                    (k.clone(), v)
-                })
-                .collect(),
-        )
-    };
     let got = rows_of(&path, &index);
     assert_eq!(got.len(), want.len());
+    // An array among them, alone in its column and beside every other value: itself.
     for (g, w) in got.iter().zip(&want) {
-        assert_eq!(*g, as_stored(w));
+        assert_eq!(g, w);
     }
 }
 

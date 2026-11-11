@@ -128,7 +128,8 @@ impl Term {
         match &self.want {
             Want::Any => !matches!(seen, ColValue::Null),
             Want::Exact { text, inferred, .. } => {
-                matches!(seen, ColValue::String(s) if s == text) || seen == inferred
+                matches!(seen, ColValue::String(s) | ColValue::Json(s) if s == text)
+                    || seen == inferred
             }
         }
     }
@@ -1352,7 +1353,7 @@ pub(crate) fn nanos_of(t: SystemTime) -> i64 {
 /// writes.
 pub(crate) fn value_bytes(value: &ColValue) -> usize {
     match value {
-        ColValue::String(s) => s.len(),
+        ColValue::String(s) | ColValue::Json(s) => s.len(),
         ColValue::Int64(_) | ColValue::Float64(_) | ColValue::Datetime(_) => 8,
         ColValue::Bool(_) => 1,
         ColValue::Null => 0,

@@ -91,6 +91,12 @@ impl Row {
         }
     }
 
+    /// Take a key out of the row, with what the line said of it.
+    pub fn remove(&mut self, key: &str) -> Option<ColValue> {
+        self.written.remove(key);
+        self.values.remove(key)
+    }
+
     pub fn clear(&mut self) {
         self.values.clear();
         self.written.clear();
@@ -136,7 +142,7 @@ impl Row {
             .values
             .values()
             .map(|value| match value {
-                ColValue::String(text) => heap(text.len()),
+                ColValue::String(text) | ColValue::Json(text) => heap(text.len()),
                 _ => 0,
             })
             .chain(self.written.values().map(|json| match json {
@@ -185,7 +191,7 @@ pub fn said_instant(value: &ColValue, written: Option<&serde_json::Value>) -> Op
         (None, ColValue::Int64(i)) => time_nanos_of_int(*i),
         (None, ColValue::Float64(f)) => time_nanos(&serde_json::Number::from_f64(*f)?.to_string()),
         (None, ColValue::Datetime(ns)) => Some(*ns),
-        (None, ColValue::Bool(_) | ColValue::Null) => None,
+        (None, ColValue::Bool(_) | ColValue::Null | ColValue::Json(_)) => None,
     }
 }
 

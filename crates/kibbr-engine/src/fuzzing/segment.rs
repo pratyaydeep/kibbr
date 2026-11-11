@@ -316,7 +316,7 @@ fn walk(file: &[u8], id: [u8; 16]) -> Result<Option<(Index, usize)>, Declined> {
                 {
                     break;
                 }
-                for (dir, (from, to, _)) in header.chunks.iter().zip(&spans) {
+                for (column, (dir, (from, to, _))) in header.chunks.iter().zip(&spans).enumerate() {
                     weigh(header.row_count, &mut work)?;
                     let stored = &area[*from..*to];
                     let at = (end + from) as u64;
@@ -330,6 +330,12 @@ fn walk(file: &[u8], id: [u8; 16]) -> Result<Option<(Index, usize)>, Declined> {
                         Ok(cells) => {
                             hold_cells(dir, header.row_count, stored, &cells);
                             hold_column(&chunk, file.len(), Some(&cells));
+                            // The rows the row group marks as an array or an empty
+                            // object must be the text of one, as recovery holds them.
+                            if let Some(Err(bad)) = marked(file, end, &header, column, &cells, at) {
+                                refused_at(&bad, file.len());
+                                return Ok(None);
+                            }
                         }
                         Err(bad) => {
                             hold_column(&chunk, file.len(), None);
@@ -1082,7 +1088,12 @@ fn sealed(file: &[u8], kept: bool) -> Option<Index> {
             match reader.chunks(e, &header, &[at]) {
                 Ok((cells, read)) => {
                     assert_eq!(cells.len(), 1, "one column was asked for");
-                    assert_eq!(read, u64::from(dir.stored_len), "the bytes read");
+                    let section = header.json_section(at).map_or(0, |(_, len, _)| len);
+                    assert_eq!(
+                        read,
+                        u64::from(dir.stored_len) + u64::from(section),
+                        "the bytes read"
+                    );
                     let stored = &file[area + from..area + to];
                     // A sealed read: each `stored_crc` is checked before decoding.
                     assert_eq!(
@@ -1090,27 +1101,81 @@ fn sealed(file: &[u8], kept: bool) -> Option<Index> {
                         crc,
                         "a chunk whose CRC does not hold was decoded"
                     );
-                    hold_cells(dir, header.row_count, stored, &cells[0]);
+                    // The cells are the chunk's, and then what the row group's JSON
+                    // section makes of them: held apart, the chunk as it always was.
+                    let chunk_at = (area + from) as u64;
+                    let plain = read::chunk(stored, chunk_at, dir, header.row_count as usize)
+                        .expect("a chunk the reader decoded does not decode");
+                    match marked(file, area, &header, at, &plain, chunk_at) {
+                        None => assert_eq!(plain, cells[0], "cells with no section to mark them"),
+                        Some(Ok(shaped)) => assert_eq!(shaped, cells[0], "the marked cells"),
+                        Some(Err(bad)) => panic!("cells were read past their marks: {}", bad.what),
+                    }
+                    hold_cells(dir, header.row_count, stored, &plain);
                     // The two readers check the same bytes the same way before either
                     // decodes, so a chunk one of them reads the other hands over.
                     let Some(typed) = &typed else {
                         panic!("a chunk the reader decoded was not handed over undecoded");
                     };
-                    hold_column(typed, file.len(), Some(&cells[0]));
+                    hold_column(typed, file.len(), Some(&plain));
                 }
                 Err(err) => {
                     assert!(!kept, "a chunk the walk kept does not read: {err}");
                     refused(&err, file.len());
-                    // Refused for its bytes, and then neither reader hands it over; or
-                    // for what they decode to, and then the typed decoder refuses it too.
+                    // Refused for its bytes, and then neither reader hands it over; for
+                    // what they decode to, and then the typed decoder refuses it too; or
+                    // for its marks, and then the chunk alone decodes.
                     if let Some(typed) = &typed {
-                        hold_column(typed, file.len(), None);
+                        let rows = header.row_count as usize;
+                        let for_marks =
+                            read::chunk(typed.stored, typed.at, dir, rows).is_ok_and(|plain| {
+                                matches!(
+                                    marked(file, area, &header, at, &plain, typed.at),
+                                    Some(Err(_))
+                                )
+                            });
+                        if !for_marks {
+                            hold_column(typed, file.len(), None);
+                        }
                     }
                 }
             }
         }
     }
     Some(index)
+}
+
+/// What a row group's JSON section makes of column `column`'s cells, worked out here from
+/// the file's bytes as `Reader::chunks` and recovery apply it. `None` for a column with no
+/// section; `Err` for a section that is not all in the file, whose CRC does not hold, that
+/// is no bitmap of the rows, or that marks a row which is not the text of an array or an
+/// object.
+fn marked(
+    file: &[u8],
+    area: usize,
+    header: &Header,
+    column: usize,
+    plain: &[Cell],
+    chunk_at: u64,
+) -> Option<Result<Vec<Cell>, Bad>> {
+    let (from, len, crc) = header.json_section(column)?;
+    let start = (area as u64).saturating_add(from);
+    let bytes = usize::try_from(start)
+        .ok()
+        .and_then(|start| file.get(start..start.checked_add(len as usize)?));
+    let Some(bytes) = bytes else {
+        return Some(Err(Bad::at(
+            file.len() as u64,
+            "a JSON section past the end",
+        )));
+    };
+    if frame::crc32c(bytes) != crc {
+        return Some(Err(Bad::at(start, "a JSON section's CRC does not hold")));
+    }
+    Some(
+        read::Marks::read(bytes, start, header.row_count as usize)
+            .and_then(|marks| marks.cells(plain.to_vec(), chunk_at)),
+    )
 }
 
 /// A row group as `Reader::copy` gave it: the header frame with its schema renumbered and

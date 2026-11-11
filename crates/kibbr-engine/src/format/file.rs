@@ -609,10 +609,16 @@ fn check_chunks(
     _columns: usize,
 ) -> Result<(), FormatError> {
     let offsets = header.chunk_offsets();
-    for (dir, off) in header.chunks.iter().zip(offsets) {
+    let rows = header.row_count as usize;
+    for (column, (dir, off)) in header.chunks.iter().zip(offsets).enumerate() {
         let body = &area[off as usize..off as usize + dir.stored_len as usize];
-        read::chunk(body, base + off, dir, header.row_count as usize)
-            .map_err(|b| b.in_file(path))?;
+        let cells = read::chunk(body, base + off, dir, rows).map_err(|b| b.in_file(path))?;
+        if let Some((at, len, _)) = header.json_section(column) {
+            let bytes = &area[at as usize..at as usize + len as usize];
+            read::Marks::read(bytes, base + at, rows)
+                .and_then(|marks| marks.cells(cells, base + off))
+                .map_err(|b| b.in_file(path))?;
+        }
     }
     Ok(())
 }
@@ -1105,12 +1111,43 @@ impl<F: Read + Seek> Reader<F> {
                     what: "a chunk's CRC does not hold".into(),
                 });
             }
-            out.push(
-                read::chunk(&body, start, dir, header.row_count as usize)
+            let cells = read::chunk(&body, start, dir, header.row_count as usize)
+                .map_err(|b| b.in_file(&self.path))?;
+            let (marks, more) = self.marks(entry, header, *at)?;
+            read += more;
+            out.push(match marks {
+                Some(marks) => marks
+                    .cells(cells, start)
                     .map_err(|b| b.in_file(&self.path))?,
-            );
+                None => cells,
+            });
         }
         Ok((out, read))
+    }
+
+    /// Which rows of the column at `column` are an array or an empty object, CRC-checked,
+    /// and the bytes read for it: `None` and nothing read for a column with no such row.
+    pub fn marks(
+        &mut self,
+        entry: &Entry,
+        header: &Header,
+        column: usize,
+    ) -> Result<(Option<read::Marks>, u64), FormatError> {
+        let Some((at, len, crc)) = header.json_section(column) else {
+            return Ok((None, 0));
+        };
+        let start = self.area(entry)?.saturating_add(at);
+        let bytes = self.read_at(start, len as usize, "a JSON section")?;
+        if frame::crc32c(&bytes) != crc {
+            return Err(FormatError::Corrupt {
+                path: self.path.clone(),
+                offset: start,
+                what: "a JSON section's CRC does not hold".into(),
+            });
+        }
+        let marks = read::Marks::read(&bytes, start, header.row_count as usize)
+            .map_err(|b| b.in_file(&self.path))?;
+        Ok((Some(marks), bytes.len() as u64))
     }
 
     /// The chunks of the columns at `wanted` as the file stores them, CRC-checked and not

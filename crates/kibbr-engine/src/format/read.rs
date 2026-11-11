@@ -12,7 +12,7 @@ use super::{
     autosi_digits, bit, count_set, encodes, epoch_of, index_width, print_float, print_int,
     print_ip, print_rfc3339, print_uuid, read_bitmap, type_of_byte, unzigzag, Bad, Bytes, Form,
     JsonKind, Source, BITS, CONSTANT, DAY_NS, DELTA, DICTIONARY, KIND_ROW_GROUP, MAX_BODY,
-    MAX_ROWS, NO_COMPRESSION, OPTIONAL, PER_ROW, RFC3339, VARINT, ZSTD,
+    MAX_ROWS, NO_COMPRESSION, OPTIONAL, PER_ROW, RFC3339, SECTION_JSON, VARINT, ZSTD,
 };
 use crate::model::infer::infer;
 use crate::model::types::ColValue;
@@ -77,6 +77,82 @@ impl Header {
             })
             .collect()
     }
+
+    /// Where the `SECTION_JSON` of column `column` lies inside the chunk area, with its
+    /// length and CRC: the sections follow the chunks, in the order they are listed.
+    pub fn json_section(&self, column: usize) -> Option<(u64, u32, u32)> {
+        let mut at: u64 = self.chunks.iter().map(|c| u64::from(c.stored_len)).sum();
+        for section in &self.sections {
+            if section.kind == SECTION_JSON && section.column as usize == column {
+                return Some((at, section.len, section.crc));
+            }
+            at += u64::from(section.len);
+        }
+        None
+    }
+}
+
+/// Which rows of a column are an array or an empty object: a `SECTION_JSON`, read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Marks {
+    /// Every row that is not null.
+    Every,
+    /// A bit a row.
+    Rows(Vec<u8>),
+}
+
+impl Marks {
+    /// A section's bytes, already CRC-checked, for a row group of `rows` rows.
+    pub(crate) fn read(bytes: &[u8], base: u64, rows: usize) -> Result<Self, Bad> {
+        if bytes.is_empty() {
+            return Ok(Marks::Every);
+        }
+        let mut r = Bytes::new(bytes, base);
+        let map = read_bitmap(&mut r, rows, "JSON section bitmap")?;
+        r.done("a JSON section")?;
+        if count_set(map) == 0 {
+            return Err(Bad::at(base, "a JSON section that marks no row"));
+        }
+        Ok(Marks::Rows(map.to_vec()))
+    }
+
+    pub(crate) fn has(&self, row: usize) -> bool {
+        match self {
+            Marks::Every => true,
+            Marks::Rows(map) => row / 8 < map.len() && bit(map, row),
+        }
+    }
+
+    /// A row's cell as these marks have it: a marked row's text as the array or empty
+    /// object it is. A null is marked only by `Every`, which means every other row.
+    pub(crate) fn cell(&self, cell: Cell, row: usize, base: u64) -> Result<Cell, Bad> {
+        if !self.has(row) {
+            return Ok(cell);
+        }
+        match cell {
+            (ColValue::Null, None) if *self == Marks::Every => Ok((ColValue::Null, None)),
+            (ColValue::String(text), None) if is_shaped(&text) => Ok((ColValue::Json(text), None)),
+            _ => Err(Bad::at(
+                base,
+                format!("row {row} is marked as JSON and is not the text of an array or an object"),
+            )),
+        }
+    }
+
+    /// `cell` over a whole chunk's cells.
+    pub(crate) fn cells(&self, cells: Vec<Cell>, base: u64) -> Result<Vec<Cell>, Bad> {
+        cells
+            .into_iter()
+            .enumerate()
+            .map(|(row, cell)| self.cell(cell, row, base))
+            .collect()
+    }
+}
+
+/// Whether `text` is the JSON of an array or an object, and nothing else.
+fn is_shaped(text: &str) -> bool {
+    matches!(text.as_bytes().first(), Some(b'[' | b'{'))
+        && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok()
 }
 
 /// A header frame's payload; `base` is the file offset of its first byte, and `columns`
@@ -175,6 +251,21 @@ pub(crate) fn header(
                 at,
                 format!("section names column {column} of {column_count}"),
             ));
+        }
+        if kind == SECTION_JSON {
+            let again = |s: &Section| s.kind == SECTION_JSON && s.column == column;
+            if sections.iter().any(again) {
+                return Err(Bad::at(
+                    at,
+                    format!("two JSON sections for column {column}"),
+                ));
+            }
+            if len != 0 && len as usize != (row_count as usize).div_ceil(8) {
+                return Err(Bad::at(
+                    at,
+                    format!("a JSON section of {len} byte(s) for {row_count} rows"),
+                ));
+            }
         }
         sections.push(Section {
             kind,

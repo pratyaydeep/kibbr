@@ -92,6 +92,10 @@ pub fn widen(
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColValue {
     String(String),
+    /// An array, or an object with no members, as its JSON text: a value of its own kind,
+    /// so `["a"]` is not the string `"[\"a\"]"`. Its column is a `String` column, and a
+    /// query compares it as its text.
+    Json(String),
     Int64(i64),
     Float64(f64),
     /// Unix nanoseconds.
@@ -107,6 +111,11 @@ impl ColValue {
         use serde_json::Value;
         match self {
             ColValue::String(s) => Value::String(s.clone()),
+            // The text is JSON this build wrote or checked on reading; text that is not
+            // is shown as the string it is.
+            ColValue::Json(text) => {
+                serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.clone()))
+            }
             ColValue::Int64(i) => Value::from(*i),
             // Rule 7 only produces finite floats, so this cannot fall through in
             // practice; `Null` is the honest answer if it ever does.

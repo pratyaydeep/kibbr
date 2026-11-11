@@ -18,7 +18,7 @@ use crate::rows::filter::{hits, hits_by_row, instants, said_instants, Instants, 
 use crate::rows::scan_threads::{Fan, Turn};
 use crate::format::column::{Col, Column, Memo};
 use crate::format::file::{Reader, StoredChunk};
-use crate::format::read::{Header, ALL_NULL, SOME_NULL};
+use crate::format::read::{Header, Marks, ALL_NULL, SOME_NULL};
 use crate::format::{day_of, Bad};
 use crate::rows::{
     effective_ts, in_window, instant_of, nanos_of, render_text, said_instant, said_ts, shown_row,
@@ -198,6 +198,8 @@ struct Unit<'v> {
     /// One for each of `shape.wanted`, and so is `columns`.
     stored: Vec<StoredChunk>,
     columns: Vec<OnceCell<Column>>,
+    /// Which rows of each are an array or an empty object, where the row group says so.
+    marks: Vec<Option<Marks>>,
 }
 
 impl<'v> Unit<'v> {
@@ -214,6 +216,12 @@ impl<'v> Unit<'v> {
         let header = reader.header(&at.entry, at.schema.len())?;
         let (stored, read) = reader.stored(&at.entry, &header, &shape.wanted)?;
         out.bytes_read += read;
+        let mut marks = Vec::with_capacity(shape.wanted.len());
+        for column in &shape.wanted {
+            let (found, read) = reader.marks(&at.entry, &header, *column)?;
+            out.bytes_read += read;
+            marks.push(found);
+        }
         Ok(Self {
             at,
             shape,
@@ -223,6 +231,7 @@ impl<'v> Unit<'v> {
             columns: stored.iter().map(|_| OnceCell::new()).collect(),
             header,
             stored,
+            marks,
         })
     }
 
@@ -235,7 +244,9 @@ impl<'v> Unit<'v> {
     fn decode(&self, place: usize) -> Result<Column, StoreError> {
         let chunk = &self.stored[place];
         let dir = &self.header.chunks[self.shape.wanted[place]];
-        Column::decode(&chunk.bytes, chunk.at, dir, self.rows).map_err(|bad| self.refused(bad))
+        Column::decode(&chunk.bytes, chunk.at, dir, self.rows)
+            .map(|column| column.marked(self.marks[place].clone()))
+            .map_err(|bad| self.refused(bad))
     }
 
     /// A decoded column over the bytes of the chunk at `place`, which it was decoded from.

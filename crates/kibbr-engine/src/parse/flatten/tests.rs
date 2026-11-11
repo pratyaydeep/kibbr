@@ -147,3 +147,157 @@ fn a_key_with_no_equals_sign_is_its_own_token() {
     );
     assert_eq!(parsed.fingerprint, "a\\.b | c.d | e\\\\f | event=hit");
 }
+
+// ── Arrays and empty objects ───────────────────────────────────────────────────────
+
+/// The JSON a row gives back for `key` of one line.
+fn back(line: &str, key: &str) -> Option<Value> {
+    let parsed = parse_line(line.as_bytes(), 1).expect("this is JSON");
+    row_of(&parsed).json(key)
+}
+
+/// **An array is a leaf held as its JSON text and marked as an array**, whatever is in
+/// it: its column is text, its key is in the fingerprint once, and the row gives the
+/// array back.
+#[test]
+fn an_array_is_a_leaf_that_comes_back_as_the_array() {
+    for array in [
+        r#"["en"]"#,
+        "[124]",
+        "[]",
+        r#"[{"a":1.5},null,true,"x"]"#,
+        "[[1,[2,[]]],[]]",
+        "[null,null]",
+        r#"[{"b":1,"a":2},{}]"#,
+    ] {
+        let line = format!(r#"{{"k":{array}}}"#);
+        let parsed = parse_line(line.as_bytes(), 1).expect("this is JSON");
+        assert_eq!(parsed.keys, ["k"], "{array}");
+        let typed = &parsed.typed_values["k"];
+        assert_eq!(typed.ty, Some(ColumnType::String), "{array}");
+        assert_eq!(typed.value, ColValue::Json(array.to_string()), "{array}");
+        let want: Value = serde_json::from_str(array).expect("an array");
+        assert!(want.is_array());
+        assert_eq!(back(&line, "k"), Some(want), "{array}");
+    }
+}
+
+/// **An object with no members is a leaf at its path**, at the top or nested, and comes
+/// back as `{}` there. An object with members is walked, as it always was.
+#[test]
+fn an_empty_object_is_a_leaf_at_its_path() {
+    let parsed = parse_line(br#"{"a":{"b":{}},"c":{},"d":{"e":1}}"#, 1).expect("this is JSON");
+    assert_eq!(parsed.keys, ["a.b", "c", "d.e"]);
+    assert_eq!(parsed.fingerprint, "a.b | c | d.e");
+    for key in ["a.b", "c"] {
+        let typed = &parsed.typed_values[key];
+        assert_eq!(typed.ty, Some(ColumnType::String));
+        assert_eq!(typed.value, ColValue::Json("{}".to_string()));
+    }
+    let row = row_of(&parsed);
+    assert_eq!(row.json("a.b"), Some(serde_json::json!({})));
+    assert_eq!(row.json("c"), Some(serde_json::json!({})));
+    assert_eq!(row.json("d.e"), Some(serde_json::json!(1)));
+}
+
+/// **`{}`, `[]`, `null`, a missing key, `""`, `"{}"` and `"[]"` are seven things**, and a
+/// row tells every one from the others.
+#[test]
+fn an_empty_object_an_empty_array_null_absent_and_their_strings_are_told_apart() {
+    use serde_json::json;
+    let cases = [
+        (r#"{"k":{}}"#, Some(json!({}))),
+        (r#"{"k":[]}"#, Some(json!([]))),
+        (r#"{"k":null}"#, Some(Value::Null)),
+        (r#"{"other":1}"#, None),
+        (r#"{"k":""}"#, Some(json!(""))),
+        (r#"{"k":"{}"}"#, Some(json!("{}"))),
+        (r#"{"k":"[]"}"#, Some(json!("[]"))),
+    ];
+    for (line, want) in &cases {
+        assert_eq!(&back(line, "k"), want, "{line}");
+    }
+    for (i, (a, _)) in cases.iter().enumerate() {
+        for (b, _) in &cases[i + 1..] {
+            assert_ne!(back(a, "k"), back(b, "k"), "{a} and {b}");
+        }
+    }
+}
+
+/// **A string whose text is an array's stays a string**, beside an array of the same
+/// text: the two hold the same characters and are not the same value.
+#[test]
+fn a_string_that_looks_like_an_array_is_a_string() {
+    let string = parse_line(br#"{"k":"[124]"}"#, 1).expect("this is JSON");
+    let array = parse_line(br#"{"k":[124]}"#, 1).expect("this is JSON");
+    assert_eq!(
+        string.template_id, array.template_id,
+        "one key, one template"
+    );
+    assert_eq!(
+        string.typed_values["k"].value,
+        ColValue::String("[124]".into())
+    );
+    assert_eq!(
+        array.typed_values["k"].value,
+        ColValue::Json("[124]".into())
+    );
+    assert_eq!(row_of(&string).json("k"), Some(Value::from("[124]")));
+    assert_eq!(row_of(&array).json("k"), Some(serde_json::json!([124])));
+}
+
+/// **A number inside an array is the number a line's own numbers are**: read as the JSON
+/// reader reads it, so `1.50` is 1.5 there as it is outside one, and an object inside an
+/// array keeps its members in the order they were written.
+#[test]
+fn what_is_inside_an_array_is_read_as_the_reader_reads_it() {
+    let parsed = parse_line(br#"{"k":[1.50, {"b":1,"a":2}, 1e3]}"#, 1).expect("this is JSON");
+    assert_eq!(
+        parsed.values["k"], r#"[1.5,{"b":1,"a":2},1000.0]"#,
+        "the text a query compares it as"
+    );
+    assert_eq!(
+        row_of(&parsed).json("k").map(|v| v.to_string()).as_deref(),
+        Some(r#"[1.5,{"b":1,"a":2},1000.0]"#)
+    );
+}
+
+/// **An array or an empty object under a promoted key is not promoted**: a dimension is
+/// a word, and the value is given back as what it was.
+#[test]
+fn an_array_under_a_promoted_key_stays_a_value() {
+    for (line, want) in [
+        (r#"{"event":["a"],"n":1}"#, serde_json::json!(["a"])),
+        (r#"{"event":{},"n":1}"#, serde_json::json!({})),
+    ] {
+        let parsed = parse_line(line.as_bytes(), 1).expect("this is JSON");
+        assert!(parsed.promoted.is_empty(), "{line}");
+        assert_eq!(parsed.fingerprint, "event | n", "{line}");
+        assert_eq!(row_of(&parsed).json("event"), Some(want), "{line}");
+    }
+    let word = parse_line(br#"{"event":"[a]","n":1}"#, 1).expect("this is JSON");
+    assert_eq!(word.promoted, ["event"], "a string is still promoted");
+}
+
+/// **An empty object counts against the nesting limit like any other**: one at depth 8
+/// is a leaf, and one a level deeper is refused by the depth rule.
+#[test]
+fn an_empty_object_past_the_nesting_limit_is_refused() {
+    let nested = |depth: usize| {
+        let mut line = String::new();
+        for _ in 0..depth - 1 {
+            line.push_str(r#"{"a":"#);
+        }
+        line.push_str("{}");
+        line.push_str(&"}".repeat(depth - 1));
+        line
+    };
+    let deepest = parse_line(nested(MAX_DEPTH).as_bytes(), 1).expect("depth 8 is allowed");
+    assert_eq!(deepest.keys, ["a.a.a.a.a.a.a"]);
+    let e = parse_line(nested(MAX_DEPTH + 1).as_bytes(), 1).expect_err("depth 9 is not");
+    assert!(
+        matches!(e.kind, DetectorErrorKind::NestingTooDeep { .. }),
+        "{}",
+        e.kind
+    );
+}

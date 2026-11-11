@@ -667,16 +667,30 @@ fn the_same_shape_still_gets_one_template() {
     );
 }
 
-/// Two empty objects genuinely do flatten to no keys, and stay one template; the empty
-/// key is not the same claim as the empty object.
+/// The top-level object with no members has no keys, and is one template however often it
+/// comes. An empty object under a key is a value at that key - a leaf, like `null` or an
+/// array - so the line that holds one has that key and is another template.
 #[test]
-fn an_object_that_flattens_to_no_keys_is_one_template() {
-    let parsed = run_stdin(&["parse", "-", "--json"], "{}\n{\"a\":{\"b\":{}}}\n");
+fn an_empty_object_is_a_key_only_under_one() {
+    let parsed = run_stdin(
+        &["parse", "-", "--json"],
+        "{}\n{}\n{\"a\":{\"b\":{}}}\n{\"a\":{\"b\":{}}}\n",
+    );
     let records: Vec<_> = parsed.lines().map(json_record).collect();
     assert_eq!(keys(&records[0]), Vec::<String>::new());
-    assert_eq!(keys(&records[1]), Vec::<String>::new());
     assert_eq!(
         records[0]["template_id"], records[1]["template_id"],
+        "{parsed}"
+    );
+    assert_eq!(keys(&records[2]), ["a.b"]);
+    assert_eq!(records[2]["values"]["a.b"], "{}", "{parsed}");
+    assert_eq!(records[2]["types"]["a.b"], "String", "{parsed}");
+    assert_eq!(
+        records[2]["template_id"], records[3]["template_id"],
+        "{parsed}"
+    );
+    assert_ne!(
+        records[0]["template_id"], records[2]["template_id"],
         "{parsed}"
     );
 }
