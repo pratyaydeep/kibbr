@@ -48,6 +48,14 @@ never names it (`scripts/check/no_internals.sh`).
 - **The type ladder.** First match wins, and the order matters more than the rules:
   "exactly ten digits" sits above "parses as i64". The epoch window bounds which
   integers are instants.
+- **One type a column.** A column's type is the join of its values' types, and never
+  narrows; two types that do not join are `String`. The one pair that is not: epoch digits
+  the ladder read as a `Datetime` and an integer are `Int64` (`widen`), each value shown
+  as the digits it arrived as.
+- **What a time column reads** beyond the ladder (`time_form_nanos`): epoch seconds with
+  up to nine fraction digits, sixteen and nineteen digits, and a date and time with one of
+  eleven zone names. Read only where a template's time source is chosen and a row's time
+  is read; the column's type is the ladder's.
 - **What goes in comes back out.** A typed value keeps the form it arrived in
   (`DtForm`), so storage can print the original back.
 - **One line's limits.** `MAX_LINE_BYTES` is 64 MiB; a longer line is skipped to its end
@@ -56,7 +64,8 @@ never names it (`scripts/check/no_internals.sh`).
   never part of a fingerprint.
 - **The trie** and its on-disk forms: `trie.json`, a readable snapshot, and the
   template catalog, written and flushed before the line that made a template counts.
-- **A template's time source**, chosen once from the time columns and kept.
+- **A template's time source**, chosen once from the time columns - the first whose
+  value on the template's first line reads as a time - and kept.
 - **Format v3: one shared data file per UTC day** - frames and the schema record,
   row groups, chunks, forms, the footer and trailer, recovery of an unsealed file - and its
   encodings. The test vectors are `testdata/format/`.

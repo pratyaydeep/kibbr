@@ -10,7 +10,8 @@ Parses a line you wrote: `order_id` comes out `Datetime 1700000000 (= 2023-11-14
 
 - "Exactly ten digits" sits above "parses as i64": a timestamp misread as an integer turns
   every time-range query into a full scan, and an order ID called a timestamp is the price.
-- Change the value to `170000000` and it is `Int64`.
+- Change the value to `170000000` and it is `Int64`. A column that holds both is `Int64`
+  too: epoch digits beside an integer are integers, not text.
 
 ```
 kibbr gen-logs --lines 1000 --seed 42 | kibbr parse - | grep -c "(= "

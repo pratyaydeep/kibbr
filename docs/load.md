@@ -28,7 +28,9 @@ A load prints one line: `loaded 2,000 rows from 2,000 lines (0 rejected) as load
   retiring what the day held in the same record - how a day that arrived live is swapped
   for a clean copy from the archive.
 - **Rows with no time of their own** take their arrival time, which for an old file is the
-  wrong day. The load counts them before it commits and stops, loading nothing, if more
+  wrong day. A time column is read for more forms than any other key - epoch seconds with
+  a fraction, 16 and 19 digits, a date with a zone name (`settings.md`) - so a key in one
+  of those needs only to be named in the time columns. The load counts them before it commits and stops, loading nothing, if more
   than 1% (`--max-arrival-share`) would - naming the templates and their Datetime-typed
   keys, the names to add to the time columns. It checks the first 10,000 rows before it
   starts as well. `--proceed` loads anyway; the report always says how many rows took

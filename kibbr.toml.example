@@ -86,10 +86,15 @@ scan_fan_rows = 32768
 [schema]
 # The key names a new template's time column is chosen from, in order; first match wins.
 # A template holding none takes its rows' arrival time. --time-columns
+# Under these keys, and no other, a value is also read as a time when it is epoch seconds
+# with 1 to 9 fraction digits, 16 digits (microseconds) or 19 (nanoseconds), or
+# "YYYY-MM-DD HH:MM:SS[.fraction] ZONE" with ZONE one of UTC GMT Z EST EDT CST CDT MST MDT
+# PST PDT. The column's type is not changed by it.
 time_columns = ["@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix",
                 "datetime", "event_time", "created_at"]
-# A number of 10 or 13 digits is a timestamp only inside this window: two RFC 3339
-# instants, start before end. No flag; the variable spells it `start,end`.
+# A number of 10 or 13 digits is a timestamp only inside this window - and, under a time
+# column, one of 16 or 19 digits or of seconds with a fraction: two RFC 3339 instants,
+# start before end. No flag; the variable spells it `start,end`.
 epoch_window = ["2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]
 
 [log]

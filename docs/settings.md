@@ -58,6 +58,29 @@ format = "text"                     # --log-format           text or json
 
 - **A key not in that list is refused**, with its line and the keys its section does have:
   a setting read and dropped would be one its writer believes is in force.
+- **`time_columns` are read for more forms of time than any other key.** Every value is
+  typed by the same ladder - RFC 3339, then 10 or 13 digits inside `epoch_window`, are
+  `Datetime`. A key named here is also read as a time when it holds:
+  - epoch seconds with a point and 1 to 9 fraction digits, a string or a number -
+    `"1679711330.570420890"`. Read digit by digit, never through a float. A JSON number
+    is exact to the microsecond; past six fraction digits write it as a string, because a
+    JSON number is a double before kibbr sees it;
+  - 16 digits as epoch microseconds, 19 as nanoseconds, inside `epoch_window`;
+  - `YYYY-MM-DD HH:MM:SS[.fraction] ZONE`, the zone one of `UTC`, `GMT`, `Z`, `EST`,
+    `EDT`, `CST`, `CDT`, `MST`, `MDT`, `PST`, `PDT`. Nothing else: an abbreviation that
+    names more than one offset, such as `IST`, is not read.
+
+  These decide the template's time source and each row's time, and nothing else: the
+  column keeps the type the ladder gave it (`Float64`, `Int64`, `String`), the value comes
+  back as it was written, and under a key that is not a time column a 16-digit id is an
+  `Int64` like any other.
+- **Epoch digits and integers are one column of integers.** A `Datetime` column of 10- or
+  13-digit values that meets an integer, and an `Int64` column that meets such digits, is
+  `Int64` and not `String`; every row keeps the digits it arrived as. An RFC 3339 date in
+  an integer column still makes it `String`, as does every other mix of types.
+- **A template keeps the time source it was made with**, and a row stored under its
+  arrival time stays there: a directory written before a time column read these forms
+  answers as it did.
 
 ```
 $ kibbr gen-logs --lines 1 --config bad.toml
