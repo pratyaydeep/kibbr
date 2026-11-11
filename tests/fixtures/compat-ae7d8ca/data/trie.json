@@ -1,0 +1,342 @@
+{
+  "next_id": 18,
+  "nodes": [
+    {
+      "id": 0,
+      "label": "__root__",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "avail",
+          "child_id": 1
+        },
+        {
+          "label": "channel",
+          "child_id": 6
+        },
+        {
+          "label": "count",
+          "child_id": 15
+        },
+        {
+          "label": "did",
+          "child_id": 9
+        },
+        {
+          "label": "message",
+          "child_id": 12
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "label": "avail",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "bytes",
+          "child_id": 2
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "label": "bytes",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "level",
+          "child_id": 3
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "label": "level",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "msg",
+          "child_id": 4
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "label": "msg",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "ts",
+          "child_id": 5
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 101,
+        "columns": [
+          {
+            "name": "avail",
+            "col_type": "String",
+            "widened_at": "2026-11-11T16:52:33.862953Z"
+          },
+          {
+            "name": "bytes",
+            "col_type": "String",
+            "widened_at": "2026-11-11T16:52:33.862953Z"
+          },
+          {
+            "name": "level",
+            "col_type": "String"
+          },
+          {
+            "name": "msg",
+            "col_type": "String"
+          },
+          {
+            "name": "ts",
+            "col_type": "String",
+            "widened_at": "2026-11-11T16:52:33.862953Z"
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-gndy2_pe/data/leaf_101",
+        "first_seen": "2026-11-11T16:52:33.862953Z",
+        "last_seen": "2026-11-11T16:52:33.862953Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    },
+    {
+      "id": 6,
+      "label": "channel",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "goalloc",
+          "child_id": 7
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "label": "goalloc",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "timestamp",
+          "child_id": 8
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "label": "timestamp",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 102,
+        "columns": [
+          {
+            "name": "channel",
+            "col_type": "String"
+          },
+          {
+            "name": "goalloc",
+            "col_type": "String",
+            "widened_at": "2026-11-11T16:52:33.862953Z"
+          },
+          {
+            "name": "timestamp",
+            "col_type": "Float64"
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-gndy2_pe/data/leaf_102",
+        "first_seen": "2026-11-11T16:52:33.862953Z",
+        "last_seen": "2026-11-11T16:52:33.862953Z",
+        "time_source": "arrival"
+      },
+      "children": []
+    },
+    {
+      "id": 9,
+      "label": "did",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "kind",
+          "child_id": 10
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "label": "kind",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "time_us",
+          "child_id": 11
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "label": "time_us",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 103,
+        "columns": [
+          {
+            "name": "did",
+            "col_type": "String"
+          },
+          {
+            "name": "kind",
+            "col_type": "String"
+          },
+          {
+            "name": "time_us",
+            "col_type": "Int64"
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-gndy2_pe/data/leaf_103",
+        "first_seen": "2026-11-11T16:52:33.862953Z",
+        "last_seen": "2026-11-11T16:52:33.862953Z",
+        "time_source": "arrival"
+      },
+      "children": []
+    },
+    {
+      "id": 12,
+      "label": "message",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "pid",
+          "child_id": 13
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "label": "pid",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "timestamp",
+          "child_id": 14
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "label": "timestamp",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 104,
+        "columns": [
+          {
+            "name": "message",
+            "col_type": "String"
+          },
+          {
+            "name": "pid",
+            "col_type": "Int64"
+          },
+          {
+            "name": "timestamp",
+            "col_type": "String"
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-gndy2_pe/data/leaf_104",
+        "first_seen": "2026-11-11T16:52:33.862953Z",
+        "last_seen": "2026-11-11T16:52:33.862953Z",
+        "time_source": "arrival"
+      },
+      "children": []
+    },
+    {
+      "id": 15,
+      "label": "count",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "seen",
+          "child_id": 16
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "label": "seen",
+      "node_type": "Static",
+      "is_leaf": false,
+      "leaf_meta": null,
+      "children": [
+        {
+          "label": "ts",
+          "child_id": 17
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "label": "ts",
+      "node_type": "Static",
+      "is_leaf": true,
+      "leaf_meta": {
+        "template_id": 105,
+        "columns": [
+          {
+            "name": "count",
+            "col_type": "Int64"
+          },
+          {
+            "name": "seen",
+            "col_type": "Datetime"
+          },
+          {
+            "name": "ts",
+            "col_type": "Datetime"
+          }
+        ],
+        "storage_path": "/private/var/folders/pn/4981yxz52jb09pkprhjvpzcw0000gn/T/kibbr-compat-gndy2_pe/data/leaf_105",
+        "first_seen": "2026-11-11T16:52:33.862953Z",
+        "last_seen": "2026-11-11T16:52:33.862953Z",
+        "time_source": "column:ts"
+      },
+      "children": []
+    }
+  ]
+}
