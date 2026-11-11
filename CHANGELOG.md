@@ -2,6 +2,10 @@
 
 One entry per tag, newest first.
 
+## 0.4.0 — 2026-11-12
+
+- TODO: what changed
+
 ## 0.3.0 — 2026-11-11
 
 - **Three crates, from five.** `kibbr-engine` is now the whole database behind one handle,

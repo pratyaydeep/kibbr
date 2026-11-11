@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "kibbr"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "kibbr-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "crc32c",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "kibbr-server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "chrono",

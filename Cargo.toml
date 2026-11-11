@@ -7,7 +7,7 @@ exclude = ["fuzz", "lab-rs"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Pratyaydeep Ghanta <pratyaydeepghanta@gmail.com>"]
@@ -22,8 +22,8 @@ keywords = ["logs", "logging", "database", "columnar", "observability"]
 # The two library crates by path here, and by exactly this version once published: `cargo
 # publish` wants both, and `internals` promises nothing, so the binary is never built against
 # an engine newer than the one it was released with.
-kibbr-engine = { path = "crates/kibbr-engine", version = "=0.3.0" }
-kibbr-server = { path = "crates/kibbr-server", version = "=0.3.0" }
+kibbr-engine = { path = "crates/kibbr-engine", version = "=0.4.0" }
+kibbr-server = { path = "crates/kibbr-server", version = "=0.4.0" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
