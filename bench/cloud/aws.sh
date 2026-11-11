@@ -138,6 +138,14 @@ launch() {
     '') ;;
     *[!0-9]*|0*) die "launch: --zstd-threads wants a whole number, 1 or more: $zthreads" ;;
   esac
+  # Whole numbers: box.sh's watchdog is `shutdown +$((hours * 60))`, and bash's arithmetic
+  # refuses 9.5 with an error the box carries on past, with no watchdog at all.
+  case "$hours" in
+    ''|*[!0-9]*|0*) die "launch: --hours wants a whole number, 1 or more: $hours" ;;
+  esac
+  case "$disk" in
+    ''|*[!0-9]*|0*) die "launch: --disk wants a whole number of GB, 1 or more: $disk" ;;
+  esac
 
   # The box clones GitHub: what is measured has to be there.
   if [ -z "$ref" ]; then

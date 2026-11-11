@@ -27,6 +27,17 @@
 # order, and never unpacked: the disk holds one copy of the logs. A zip is unpacked, and its
 # files joined in path order.
 #
+# `urls` can stand in for `url`, for a corpus published as many NDJSON files: a list of URLs,
+# or a pattern and a range of numbers, filled in with Python's `str.format`:
+#
+#      "urls": {"pattern": "https://.../bluesky/file_{:04d}.json.gz", "from": 1, "to": 1000}
+#
+# Each URL is one NDJSON file, plain or gzip, decoded as it arrives and appended, in order, to
+# one plain NDJSON file; nothing downloaded is kept, so the disk holds one copy of the logs, as
+# for a tar. A URL that fails is tried again from its start, up to four times, and a run that
+# stops picks up after the last URL it finished. Each file's sha256 is recorded, in place of
+# `checksum` and `files`, which a `urls` source does not take.
+#
 # **The output** holds one result a tag, under `results`. A tag already in it is not run
 # again: the script says so and goes on to the next. Delete the entry to measure it again.
 # The file is rewritten after each source, so a run that stops keeps what it measured.
@@ -57,6 +68,7 @@ import datetime
 import fnmatch
 import gzip
 import hashlib
+import http.client
 import json
 import os
 import platform
@@ -66,9 +78,11 @@ import subprocess
 import sys
 import tarfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 WORK = os.path.join(ROOT, "testdata", "compression")
@@ -102,8 +116,13 @@ def load_sources(path):
         if tag in seen:
             fail(f"{path}: tag {tag} is given twice")
         seen.add(tag)
-        if ("url" in s) == ("path" in s):
-            fail(f"{path}: source {tag} needs one of `url` and `path`")
+        if sum(k in s for k in ("url", "urls", "path")) != 1:
+            fail(f"{path}: source {tag} needs one of `url`, `urls` and `path`")
+        if "urls" in s:
+            for k in ("files", "checksum", "sha256"):
+                if k in s:
+                    fail(f"{path}: source {tag} has `urls`, which records each file's sha256 and takes no `{k}`")
+            url_list(s, path)
         t = s.get("zstd_threads")
         if t is not None and (not isinstance(t, int) or isinstance(t, bool) or t < 1):
             fail(f"{path}: source {tag}'s zstd_threads must be a whole number, 1 or more: {t!r}")
@@ -172,6 +191,8 @@ def download(url, into):
                 of = f" of {total:,}" if total else ""
                 say(f"  {got:,}{of} bytes")
                 told = time.monotonic()
+        if total and got != total:
+            fail(f"{url}: the body ended at {got:,} of {total:,} bytes; {shown(part)} kept, run again")
     os.replace(part, path)
     say(f"downloaded {os.path.getsize(path):,} bytes")
     return path
@@ -301,8 +322,161 @@ def joined(files, to):
     return to
 
 
+def url_list(source, where="the sources"):
+    """A `urls` source's URLs, in order: its list, or its pattern over `from` to `to`."""
+    tag, urls = source["tag"], source["urls"]
+    if isinstance(urls, dict):
+        pattern, lo, hi = urls.get("pattern"), urls.get("from"), urls.get("to")
+        if (not isinstance(pattern, str) or any(not isinstance(n, int) or isinstance(n, bool) for n in (lo, hi))
+                or lo > hi or set(urls) - {"pattern", "from", "to"}):
+            fail(f"{where}: source {tag}'s urls must be a list, or a pattern with whole numbers from <= to")
+        try:
+            out = [pattern.format(n) for n in range(lo, hi + 1)]
+        except (IndexError, KeyError, ValueError) as e:
+            fail(f"{where}: source {tag}'s urls pattern {pattern!r} takes one number: {e}")
+    elif isinstance(urls, list) and urls and all(isinstance(u, str) and u for u in urls):
+        out = list(urls)
+    else:
+        fail(f"{where}: source {tag}'s urls must be a list of URLs, or a pattern with from and to")
+    if len(set(out)) != len(out):
+        fail(f"{where}: source {tag}'s urls name the same URL twice")
+    names = [os.path.basename(urllib.parse.urlparse(u).path) for u in out]
+    if not all(names) or len(set(names)) != len(names):
+        fail(f"{where}: source {tag}'s urls must end in file names, each different")
+    return out
+
+
+class Hashed:
+    """A response read through: its first bytes held back to be peeked at, every byte counted
+    and fed to a sha256 - of the file as it was published, not as it decodes."""
+
+    def __init__(self, r):
+        self.r, self.sha, self.bytes = r, hashlib.sha256(), 0
+        self.head = self._read(4)
+
+    def _read(self, n):
+        b = self.r.read(n)
+        self.sha.update(b)
+        self.bytes += len(b)
+        return b
+
+    def read(self, n=-1):
+        head, self.head = self.head, b""
+        if n is not None and 0 <= n <= len(head):
+            self.head = head[n:]
+            return head[:n]
+        rest = self._read(-1 if n is None or n < 0 else n - len(head))
+        return head + rest
+
+
+# What a download may fail on and be tried again for: the network, or a body cut short.
+RETRIED = (OSError, EOFError, zlib.error, http.client.HTTPException)
+TRIES = 4
+
+
+def whole(r, got):
+    """Refuse a body shorter than its Content-Length: `read(n)` returns b"" at a connection
+    that closed early, where a gzip body fails to decode but a plain one would be kept cut."""
+    want = r.headers.get("Content-Length")
+    if want is not None and want.isdigit() and got != int(want):
+        raise http.client.IncompleteRead(b"", int(want) - got)
+
+
+def fetched_urls(urls, to):
+    """`urls` decoded into one plain NDJSON file, in order, each file ending in a newline,
+    with nothing downloaded kept. Each finished URL is a line in `to.part.files`, so a run that
+    stops starts again after it; the file is cut back to where that URL ended. The records go
+    beside the file as `to.files`, once every URL is in."""
+    names_at = to + ".files"
+    if os.path.exists(to) and os.path.exists(names_at):
+        with open(names_at) as f:
+            return json.load(f)
+    os.makedirs(os.path.dirname(to), exist_ok=True)
+    part, done_at = to + ".part", to + ".part.files"
+    done = []
+    if os.path.exists(done_at) and os.path.exists(part):
+        with open(done_at) as f:
+            done = [json.loads(line) for line in f if line.strip()]
+        # A URL is a line here only once its bytes are written and flushed, so the file is at
+        # least this long; anything after is a URL that did not finish.
+        if [d["url"] for d in done] != urls[:len(done)] or os.path.getsize(part) < sum(d["decoded"] for d in done):
+            say(f"{shown(part)} is not what {shown(done_at)} says; starting over")
+            done = []
+    if not done:
+        open(part, "wb").close()
+        open(done_at, "w").close()
+    else:
+        say(f"{len(done)} of {len(urls)} files in {shown(part)} already; going on from there")
+    at = sum(d["decoded"] for d in done)
+    resumed_at = at
+    began, told = time.monotonic(), time.monotonic()
+    with open(part, "r+b") as out, open(done_at, "a") as log:
+        for i in range(len(done), len(urls)):
+            url = urls[i]
+            for attempt in range(1, TRIES + 1):
+                out.seek(at)
+                out.truncate()
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "kibbr-bench-compression"})
+                    with urllib.request.urlopen(req, timeout=120) as r:
+                        src = Hashed(r)
+                        if src.head.startswith(ZSTD_MAGIC):
+                            fail(f"{url} is zstd; a `urls` source reads plain or gzip NDJSON")
+                        body = gzip.GzipFile(fileobj=src) if src.head.startswith(GZIP_MAGIC) else src
+                        wrote, last = 0, b"\n"
+                        for block in iter(lambda: body.read(1 << 20), b""):
+                            out.write(block)
+                            wrote += len(block)
+                            last = block[-1:]
+                        whole(r, src.bytes)
+                        if last != b"\n":
+                            out.write(b"\n")
+                            wrote += 1
+                        out.flush()
+                        os.fsync(out.fileno())
+                    break
+                except urllib.error.HTTPError as e:
+                    if e.code < 500 and e.code != 429 or attempt == TRIES:
+                        fail(f"{url}: HTTP {e.code} {e.reason}")
+                    say(f"{url}: HTTP {e.code}; trying again ({attempt} of {TRIES})")
+                except RETRIED as e:
+                    if attempt == TRIES:
+                        fail(f"{url}: {e}; gave up after {TRIES} tries")
+                    say(f"{url}: {e}; trying again ({attempt} of {TRIES})")
+                time.sleep(5 * 2 ** (attempt - 1))
+            record = {"url": url, "file": os.path.basename(urllib.parse.urlparse(url).path),
+                      "bytes": src.bytes, "sha256": src.sha.hexdigest(), "decoded": wrote}
+            done.append(record)
+            log.write(json.dumps(record) + "\n")
+            log.flush()
+            at += wrote
+            if time.monotonic() - told > 30 or i + 1 == len(urls):
+                rate = (at - resumed_at) / max(time.monotonic() - began, 1e-9) / 1e6
+                say(f"  {i + 1} of {len(urls)} files, {at:,} bytes decoded ({rate:,.0f} MB/s)")
+                told = time.monotonic()
+    with open(to + ".sha256", "w") as f:
+        f.writelines(f"{d['sha256']}  {d['file']}\n" for d in done)
+    with open(names_at, "w") as f:
+        json.dump(done, f)
+    os.replace(part, to)
+    os.remove(done_at)
+    say(f"read {len(done)} files, {at:,} bytes")
+    return done
+
+
 def input_file(source, work):
     """The one file bench-storage is given for this source, and where it came from."""
+    if "urls" in source:
+        urls = url_list(source)
+        # Named for its URLs, so a source whose list changed is fetched again.
+        key = hashlib.sha256("\n".join(urls).encode()).hexdigest()[:12]
+        to = os.path.join(work, f"urls-{key}.ndjson")
+        done = fetched_urls(urls, to)
+        listing = "".join(f"{d['sha256']}  {d['file']}\n" for d in done).encode()
+        fetched = {"file": f"{len(done)} files", "files": len(done), "bytes": sum(d["bytes"] for d in done),
+                   "sha256": hashlib.sha256(listing).hexdigest(), "sha256_of": "their sha256sum listing",
+                   "listing": shown(to + ".sha256")}
+        return to, fetched, [d["file"] for d in done]
     if "path" in source:
         got = os.path.abspath(os.path.expanduser(source["path"]))
         if not os.path.isfile(got):
@@ -527,7 +701,7 @@ def measure(source, bin_path, no_zstd=False, zstd_threads=None):
     result = parse_report(r.stdout)
     result.update({
         "tag": tag,
-        "source": {k: source[k] for k in ("url", "path", "files", "time_columns", "zstd_threads", "checksum", "note") if k in source},
+        "source": {k: source[k] for k in ("url", "urls", "path", "files", "time_columns", "zstd_threads", "checksum", "note") if k in source},
         "download": fetched,
         "measured_files": members,
         "measured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -545,11 +719,19 @@ def measure(source, bin_path, no_zstd=False, zstd_threads=None):
     return result
 
 
+def urls_shown(urls):
+    """A `urls` source as one line: its pattern and range, or its first and last URLs."""
+    if isinstance(urls, dict):
+        return f"`{urls['pattern']}`, {urls['from']} to {urls['to']}"
+    return urls[0] if len(urls) == 1 else f"{len(urls):,} URLs, {urls[0]} to {urls[-1]}"
+
+
 def write_markdown(result, into):
     """The result as <tag>.md: the headline numbers, then bench-storage's own table."""
     os.makedirs(into, exist_ok=True)
     path = os.path.join(into, f"{result['tag']}.md")
     sm, src, k, m = result["summary"], result["source"], result["kibbr"], result["machine"]
+    dl = result["download"]
     num = lambda v: "-" if v is None else f"{v:,}"
     get = sm.get
     rows = [
@@ -582,10 +764,11 @@ def write_markdown(result, into):
         f"# kibbr storage on {result['tag']}, {result['measured_at'][:10]}",
         "",
         *([src["note"], ""] if src.get("note") else []),
-        f"- **Source:** {src.get('url') or src.get('path')}"
+        f"- **Source:** {src.get('url') or src.get('path') or urls_shown(src['urls'])}"
         + (f", files matching `{src['files']}`" if src.get("files") else ""),
-        f"- **Download:** `{result['download']['file']}`, {num(result['download']['bytes'])} bytes, "
-        f"sha256 `{result['download']['sha256']}`",
+        (f"- **Download:** {num(dl['files'])} files, {num(dl['bytes'])} bytes, decoded as they arrived and "
+         f"not kept; sha256 of their `sha256sum` listing `{dl['sha256']}`" if dl.get("files") else
+         f"- **Download:** `{dl['file']}`, {num(dl['bytes'])} bytes, sha256 `{dl['sha256']}`"),
         f"- **Measured:** {listed}: "
         f"{num(bulk['lines'])} lines, {num(bulk['rows'])} rows",
         "",

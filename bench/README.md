@@ -85,8 +85,11 @@ results side by side without measuring anything.
 `bench/compression.py` runs `kibbr bench-storage` on log corpora it downloads, and keeps
 one result a source in `bench/results/compression.json`, keyed by the source's `tag`, with
 each also written as `bench/results/compression/<tag>.md`. The sources are in
-`bench/compression.json`: a `tag`, a `url` (or a local `path`), and optionally `files` (a
-glob over an archive), `time_columns`, `sha256` and `note`.
+`bench/compression.json`: a `tag`, a `url` (or a local `path`, or `urls` for a corpus
+published as many NDJSON files), and optionally `files` (a glob over an archive),
+`time_columns`, `sha256` and `note`. `urls` takes a list, or a pattern and a range -
+`{"pattern": ".../file_{:04d}.json.gz", "from": 1, "to": 1000}` - and streams each file
+into one, keeping no download; a run that stops picks up after the last file it finished.
 
 ```
 bench/compression.py                      # every source not measured yet

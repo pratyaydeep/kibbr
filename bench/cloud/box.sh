@@ -28,7 +28,8 @@
 #   log.txt          this script's output, every 5 minutes and at the end
 #   status           running, done, or failed and the step that failed
 #   results.tgz      at the end, done or failed: bench/results/ and each source's
-#                    bench-storage output, and box.txt - what the box was
+#                    bench-storage output, a `urls` source's sha256 of each file it
+#                    fetched, and box.txt - what the box was
 #
 # The box is the one place the numbers come from, so it is described once, in box.txt,
 # and named in each result: `KIBBR_MACHINE` is the instance type and region, and
@@ -72,9 +73,10 @@ finish() {
   if [ "$code" = 0 ]; then status "done"; say "done"; else status "failed at $STEP (exit $code)"; say "failed at $STEP (exit $code)"; fi
   if [ -d "$SRC" ]; then
     cp "$OUT/box.txt" "$SRC/bench/results/box.txt" 2>/dev/null
-    # The results and each run's own output; not the downloads, nor the logs read out of them.
+    # The results and each run's own output, with a `urls` source's sha256 of each file it
+    # fetched; not the downloads, nor the logs read out of them.
     (cd "$SRC" && shopt -s nullglob && tar czf "$OUT/results.tgz" --ignore-failed-read bench/results \
-      testdata/compression/*/bench-storage-*) && put "$OUT/results.tgz" results.tgz
+      testdata/compression/*/bench-storage-* testdata/compression/*/*.sha256) && put "$OUT/results.tgz" results.tgz
   fi
   sleep 1 # the last lines through tee
   put "$LOG" log.txt
