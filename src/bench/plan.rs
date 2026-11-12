@@ -26,7 +26,7 @@ use crate::engine::{Database, Options, Schema};
 
 use super::phases::percentile;
 use super::report::{PlanRun, PlanShape, QueryText, Shapes};
-use super::server::scrub;
+use super::child::scrub;
 use super::{plan_warmup, tail, SpeedError, RECEIVED_AT, TIME_COLUMNS};
 
 /// `gen::generate`'s arguments for the trie - lines, families and seed - which give exactly
@@ -63,7 +63,7 @@ pub fn queries() -> Shapes<QueryText> {
 }
 
 /// The command the child is, as an error names it.
-const CHILD: &str = "kibbr bench --plan-only";
+const CHILD: &str = "kibbr-bench --plan-only";
 
 /// Lines of its standard error an error quotes: the last of them is what stopped it, under
 /// hundreds of warnings from the building of the trie.
@@ -254,7 +254,7 @@ pub fn read_line(stdout: &[u8], samples: usize) -> Result<PlanRun, String> {
     Ok(run)
 }
 
-/// Run `exe bench --plan-only --samples <samples>` as a child with a scrubbed environment,
+/// Run `kibbr-bench --plan-only --samples <samples>` as a child with a scrubbed environment,
 /// its standard error in a file under `work`, and read the one line it prints.
 pub fn child(exe: &Path, samples: usize, work: &Path) -> Result<PlanRun, SpeedError> {
     let log = work.join(format!(
@@ -267,7 +267,7 @@ pub fn child(exe: &Path, samples: usize, work: &Path) -> Result<PlanRun, SpeedEr
     })?;
     let mut command = Command::new(exe);
     command
-        .args(["bench", "--plan-only", "--samples"])
+        .args(["--plan-only", "--samples"])
         .arg(samples.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -485,7 +485,7 @@ mod tests {
         let SpeedError::Child { what, code, stderr } = &echoed else {
             panic!("{echoed:?}");
         };
-        assert_eq!((*what, *code), ("kibbr bench --plan-only", Some(0)));
+        assert_eq!((*what, *code), ("kibbr-bench --plan-only", Some(0)));
         assert!(
             stderr.starts_with("its line is not the plan step's JSON ("),
             "{stderr}"

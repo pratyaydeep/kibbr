@@ -24,7 +24,7 @@ use super::report::{
     AtEnd, Beside, BesideKeyed, BesideRate, Expect, Four, Health, IdleBlock, IdleRun, IngestRun,
     Laps, LoadedBlock, LoadedRun, Refused, ScanBlock, ScanRun, SenderFacts, Seven,
 };
-use super::server::{Server, Stats};
+use super::child::{Server, Stats};
 use super::wire::{self, Conn, QueryAnswer};
 use super::{
     place_lines, scan_asks, warmup, SpeedError, MAX_ROWS, REFUSAL_PAUSE, SCAN_TAIL, SENDERS,
@@ -48,8 +48,10 @@ const STALL_TICK: Duration = Duration::from_secs(1);
 /// What every unit starts from, all made before the first run: a unit that needed
 /// something built would build it inside its window.
 pub struct Work<'a> {
-    /// This binary: the server measured is the binary measuring.
+    /// The `kibbr` measured: every server is it.
     pub exe: &'a Path,
+    /// This binary, which the plan step is run as.
+    pub bench: &'a Path,
     pub loaded: &'a Corpus,
     /// Where copies and each child's standard error go.
     pub work: &'a Path,
@@ -2065,6 +2067,7 @@ mod tests {
         expect.s4.count = 2_000;
         let work = Work {
             exe: Path::new("kibbr"),
+            bench: Path::new("kibbr-bench"),
             loaded: &loaded,
             work: Path::new("work"),
             cores: 8,

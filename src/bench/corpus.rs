@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::display::commas;
 
-use super::server::scrub;
+use super::child::scrub;
 use super::{
     crc_hex, host, tail, wire, SpeedError, FREE_BYTES_PER_LINE, LIVE_SEED, LOADED_SEED, PROFILE,
     RECEIVED_AT, SEGMENT_MAX_BYTES, TIME_COLUMNS,

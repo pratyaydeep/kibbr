@@ -138,6 +138,7 @@ pub enum CliError {
     Load(#[from] crate::cli::load::LoadError),
     #[error(transparent)]
     Compact(#[from] crate::cli::compact::CompactError),
+    #[cfg(feature = "bench")]
     #[error(transparent)]
     Speed(#[from] crate::bench::SpeedError),
     #[error(transparent)]

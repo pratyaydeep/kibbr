@@ -5,7 +5,7 @@
 //! every input parses or is refused with an error whose byte position lies inside the input
 //! and points at what the error says it found. Ill-formed UTF-8 is decoded lossily, not
 //! skipped, so byte-level mutations stay queries. `now` is fixed, so a crasher replays to
-//! the same answer in `tests/fuzz_regressions.rs`.
+//! the same answer in `fuzzing::tests`.
 
 use chrono::{DateTime, Utc};
 

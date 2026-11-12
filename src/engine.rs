@@ -23,7 +23,7 @@ pub(crate) mod wal;
 pub mod load;
 pub mod query;
 pub mod database;
-#[cfg(feature = "fuzzing")]
+#[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzzing;
 #[cfg(test)]
 mod testkit;

@@ -21,12 +21,11 @@ pub mod status;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use crate::bench;
 use crate::engine::model::infer;
 use error::CliError;
 use gen_logs::{self as gen, Profile};
@@ -312,93 +311,6 @@ enum Command {
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
     },
-    /// Measure how fast this build is on one farm day: ingest lines a second, the four
-    /// standard queries idle and under ingest, scan rows per CPU-second, and the plan step.
-    Bench {
-        /// Lines in the farm day that is loaded (seed 42), and in the live stream sent to
-        /// the servers (seed 43). The measurement is `--lines 1000000`.
-        #[arg(
-            long,
-            value_parser = clap::value_parser!(u64).range(1..),
-            required_unless_present_any = ["table", "plan_only"]
-        )]
-        lines: Option<u64>,
-        /// Only `farm` is measured: the queries and their expected answers are the
-        /// farm's. `hostile` is refused.
-        #[arg(long, value_enum, required_unless_present_any = ["table", "plan_only"])]
-        profile: Option<Profile>,
-        /// Where the result is saved, the raw log beside it as `.log`; a file that exists is
-        /// refused. [default: <dir>/results/<UTC time>-<commit>.json]
-        #[arg(long, value_name = "FILE")]
-        out: Option<PathBuf>,
-        /// A saved result to compare with, held to be the same work before anything is measured;
-        /// each number is printed with its speed-up on it.
-        #[arg(long, value_name = "FILE")]
-        baseline: Option<PathBuf>,
-        /// The heading of this result's column, saved in the file.
-        /// [default: baseline, or `this run` with --baseline]
-        #[arg(long, value_name = "TEXT")]
-        label: Option<String>,
-        /// Holds the loaded directory, each server's copy of it, and the default results.
-        #[arg(long, value_name = "PATH", default_value = bench::DEFAULT_DIR)]
-        dir: PathBuf,
-        /// How many times the whole sequence is run; each printed number is the middle
-        /// one. Odd. Two results compare only at the same value.
-        #[arg(long, value_name = "R", default_value_t = bench::DEFAULT_RUNS, value_parser = odd)]
-        runs: usize,
-        /// Timed asks of each query, and timed plans of each shape. Two results compare only at
-        /// the same value.
-        #[arg(
-            long,
-            value_name = "K",
-            default_value_t = bench::DEFAULT_SAMPLES,
-            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-        )]
-        samples: usize,
-        /// Lines in one `/ingest` body. Two results compare only at the same value.
-        #[arg(
-            long,
-            value_name = "L",
-            default_value_t = bench::DEFAULT_BODY_LINES,
-            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-        )]
-        body_lines: usize,
-        /// Scan threads of every server measured: each is started with `--scan-threads T`.
-        /// Two results compare only at the same value.
-        #[arg(
-            long,
-            value_name = "T",
-            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-        )]
-        threads: Option<usize>,
-        /// Skip the checks that make a run a measurement, and allow a debug build; the result is
-        /// marked `UNCHECKED - not a measurement`. For tests.
-        #[arg(long)]
-        unchecked: bool,
-        /// Measure nothing: print the table from saved results, the first as the baseline
-        /// and one column a file, headed by its label.
-        #[arg(
-            long,
-            value_name = "FILE",
-            num_args = 2..,
-            conflicts_with_all = [
-                "lines", "profile", "out", "baseline", "label", "dir", "runs", "samples",
-                "body_lines", "unchecked", "plan_only"
-            ]
-        )]
-        table: Vec<PathBuf>,
-        // What a run starts as a child, once a run. Hidden, because its one JSON line is read
-        // by the bench and not by a person.
-        #[arg(
-            long,
-            hide = true,
-            conflicts_with_all = [
-                "lines", "profile", "out", "baseline", "label", "dir", "runs", "body_lines",
-                "unchecked"
-            ]
-        )]
-        plan_only: bool,
-    },
     /// List every template a running server holds: its id, its rows, where its time
     /// comes from, and its path. What `GET /templates` answers, asked for you.
     Templates {
@@ -556,17 +468,28 @@ pub fn run() -> ExitCode {
     }
 }
 
-fn dispatch(cli: Cli) -> Result<ExitCode, CliError> {
+/// What every command does first, `kibbr-bench` too: the settings file read, the log
+/// installed, and the epoch window set; the file and the log are handed back.
+pub(crate) fn settle(
+    config: Option<&Path>,
+    log_level: Option<config::LogLevel>,
+    log_format: Option<config::LogFormat>,
+) -> Result<(config::File, config::Log), CliError> {
     // The file first, and for every command alike: a bad one stops the process before
     // anything is done under settings its writer did not ask for.
-    let file = config::File::read(cli.config.as_deref())?;
-    let file = &file;
+    let file = config::File::read(config)?;
     // Then the log, so that everything after this line is said the way it was asked for.
-    let log = config::log(file, cli.log_level, cli.log_format)?;
+    let log = config::log(&file, log_level, log_format)?;
     logs::install(log);
     // Before any command types a value, and for every command alike: a bad window stops
     // the process here rather than after it has typed lines under the default.
-    infer::set_epoch_window(config::epoch_window(file)?);
+    infer::set_epoch_window(config::epoch_window(&file)?);
+    Ok((file, log))
+}
+
+fn dispatch(cli: Cli) -> Result<ExitCode, CliError> {
+    let (file, log) = settle(cli.config.as_deref(), cli.log_level, cli.log_format)?;
+    let file = &file;
 
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
@@ -714,36 +637,6 @@ fn dispatch(cli: Cli) -> Result<ExitCode, CliError> {
             config::schema(file, time_columns),
             &mut out,
         ),
-        Command::Bench {
-            lines,
-            profile,
-            out: save,
-            baseline,
-            label,
-            dir,
-            runs,
-            samples,
-            body_lines,
-            threads,
-            unchecked,
-            table,
-            plan_only,
-        } => bench::cli(
-            &mut out,
-            lines,
-            profile,
-            save,
-            baseline,
-            label,
-            dir,
-            runs,
-            samples,
-            body_lines,
-            threads,
-            unchecked,
-            table,
-            plan_only,
-        ),
         Command::Explain {
             query,
             max_rows,
@@ -812,27 +705,20 @@ fn dispatch(cli: Cli) -> Result<ExitCode, CliError> {
         ),
     };
 
-    // A closed downstream pipe (`| head`) is how the command ends, not a failure.
+    finish(result, out).map(|()| code)
+}
+
+/// A command's result once its output is flushed: a closed downstream pipe (`| head`) is
+/// how the command ends, not a failure.
+pub(crate) fn finish(result: Result<(), CliError>, mut out: impl Write) -> Result<(), CliError> {
     match result {
-        Err(e) if is_broken_pipe(&e) => return Ok(code),
+        Err(e) if is_broken_pipe(&e) => return Ok(()),
         other => other?,
     }
     match out.flush() {
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(code),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         Err(e) => Err(CliError::Write(e)),
-        Ok(()) => Ok(code),
-    }
-}
-
-/// `bench --runs`: an odd count, so that the median of the runs is one of them and not a
-/// number between two.
-fn odd(text: &str) -> Result<usize, String> {
-    match text.parse::<usize>() {
-        Ok(runs) if runs % 2 == 1 => Ok(runs),
-        Ok(runs) => Err(format!(
-            "{runs} is not odd; each printed number is the middle one of the runs"
-        )),
-        Err(e) => Err(e.to_string()),
+        Ok(()) => Ok(()),
     }
 }
 

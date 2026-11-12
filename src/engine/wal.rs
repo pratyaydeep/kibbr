@@ -816,8 +816,8 @@ impl Wal {
 
     /// What the last flush that could not write failed with: the reason the log is
     /// refusing for now, or the one kept from before it wrote again.
-    // Called by the tests and the fuzz harnesses, not by the library.
-    #[cfg_attr(not(any(test, feature = "fuzzing")), allow(dead_code))]
+    // Called by the tests, not by the library.
+    #[cfg(test)]
     pub fn last_error(&self) -> Option<String> {
         self.shared.health().report().1
     }

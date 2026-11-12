@@ -136,8 +136,11 @@
 pub mod engine;
 pub mod server;
 pub mod cli;
+#[cfg(feature = "bench")]
 pub mod bench;
-#[cfg(feature = "fuzzing")]
+#[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzzing;
 
 pub use cli::run;
+#[cfg(feature = "bench")]
+pub use bench::main as bench_main;

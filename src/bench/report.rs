@@ -29,7 +29,7 @@ pub const SCHEMA: &str = "kibbr-bench/1";
 pub const SOURCES: [(&str, &str); 8] = [
     ("bench.rs", include_str!("../bench.rs")),
     ("corpus.rs", include_str!("corpus.rs")),
-    ("server.rs", include_str!("server.rs")),
+    ("child.rs", include_str!("child.rs")),
     ("wire.rs", include_str!("wire.rs")),
     ("host.rs", include_str!("host.rs")),
     ("phases.rs", include_str!("phases.rs")),
@@ -3816,6 +3816,7 @@ mod tests {
 
     fn the_args() -> Args {
         Args {
+            kibbr: None,
             lines: 1_000_000,
             out: None,
             baseline: None,
@@ -4164,7 +4165,7 @@ mod tests {
             [
                 "bench.rs",
                 "corpus.rs",
-                "server.rs",
+                "child.rs",
                 "wire.rs",
                 "host.rs",
                 "phases.rs",

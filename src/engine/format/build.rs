@@ -85,8 +85,8 @@ pub(crate) fn schema_of<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Vec<Stri
 
 /// Encode `rows` - every one of template `template_id`, all on one UTC day by `times` -
 /// as one row group over `columns`, the schema numbered `schema_id` in its file.
-// Called by the tests and the fuzz harnesses, not by the library.
-#[cfg_attr(not(any(test, feature = "fuzzing")), allow(dead_code))]
+// Called by the tests, not by the library: the fuzz harnesses build their own.
+#[cfg(test)]
 pub(crate) fn build(
     template_id: u64,
     schema_id: u32,

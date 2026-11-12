@@ -12,19 +12,20 @@ pub mod host;
 pub mod phases;
 pub mod plan;
 pub mod report;
-pub mod server;
+pub mod child;
 pub mod wire;
 
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitCode};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
 use thiserror::Error;
 
+use crate::cli::error::CliError;
 use crate::engine::display::commas;
 
 use corpus::{BuiltBy, Corpus};
@@ -131,6 +132,8 @@ pub const SCANKEY: &str = r#"COUNT LOG {"status": *}"#;
 /// What `kibbr bench --lines N --profile farm` was asked for; the profile is refused by
 /// the command line before this is built.
 pub struct Args {
+    /// The `kibbr` that is measured; `None` is the one beside this binary.
+    pub kibbr: Option<PathBuf>,
     pub lines: u64,
     pub out: Option<PathBuf>,
     pub baseline: Option<PathBuf>,
@@ -393,8 +396,10 @@ fn pids(pids: &[u32]) -> String {
 /// What is known before anything is made on disk: where the result will go, the baseline
 /// if there is one, and the commit, binary, machine and server arguments a result records.
 struct Start {
-    /// This binary. Every child is it, run again.
+    /// The `kibbr` measured: every server, load and generator is it.
     exe: PathBuf,
+    /// This binary, which the plan step is run as.
+    bench: PathBuf,
     out: PathBuf,
     baseline: Option<Saved>,
     commit: Commit,
@@ -402,6 +407,24 @@ struct Start {
     machine: Machine,
     server: ServerFacts,
     flags: Flags,
+}
+
+/// The `kibbr` that is measured: the one `--kibbr` names, or the one beside this binary, as
+/// cargo builds the two; refused when there is no file there.
+fn kibbr_beside(bench: &Path, named: Option<&Path>) -> Result<PathBuf, SpeedError> {
+    let exe = match named {
+        Some(named) => named.to_path_buf(),
+        None => bench
+            .with_file_name(format!("kibbr{}", std::env::consts::EXE_SUFFIX)),
+    };
+    if !exe.is_file() {
+        return Err(SpeedError::Host(format!(
+            "there is no kibbr binary at {}: build it beside this one (`cargo build --release \
+             --features bench`) or name one with --kibbr. Nothing was started",
+            exe.display()
+        )));
+    }
+    Ok(exe)
 }
 
 /// Where a result goes when `--out` names no file: under the directory the loaded bytes
@@ -436,7 +459,8 @@ fn start(args: &Args) -> Result<Start, SpeedError> {
         return Err(SpeedError::DebugBuild);
     }
 
-    let exe = std::env::current_exe().map_err(io_at(Path::new("this binary's own path")))?;
+    let bench = std::env::current_exe().map_err(io_at(Path::new("this binary's own path")))?;
+    let exe = kibbr_beside(&bench, args.kibbr.as_deref())?;
     let binary = host::binary(&exe, &commit)?;
     let mut machine = host::machine();
     // Now, and by the bench: `serve` refuses it too, but as a server that did not start.
@@ -453,10 +477,10 @@ fn start(args: &Args) -> Result<Start, SpeedError> {
     machine.disk_free_bytes = corpus::free_space(&args.dir, args.lines)?;
     machine.cpu_clock_check = host::cpu_clock_check()?;
     let server = ServerFacts {
-        argv: server::argv(server::COPY, machine.cores_logical, args.threads),
+        argv: child::argv(child::COPY, machine.cores_logical, args.threads),
         // What every child's command has taken out of it, read off one that is not run.
-        env_removed: server::scrub(&mut Command::new(&exe)),
-        env_noted: server::env_noted(),
+        env_removed: child::scrub(&mut Command::new(&exe)),
+        env_noted: child::env_noted(),
     };
     let flags = flags(args);
     if let Some(baseline) = &baseline {
@@ -467,6 +491,7 @@ fn start(args: &Args) -> Result<Start, SpeedError> {
     report::writable(&out)?;
     Ok(Start {
         exe,
+        bench,
         out,
         baseline,
         commit,
@@ -674,7 +699,7 @@ fn one_run(
     report::log_checks(log, run, &checks, flags)?;
 
     let plan = watch.unit(log, "plan", || {
-        plan::child(work.exe, work.samples, work.work)
+        plan::child(work.bench, work.samples, work.work)
     })?;
     // One trie for every run of every result: the first run's is the result's, and a run
     // that planned on another has timed something else.
@@ -918,6 +943,7 @@ fn measure(
 
     let unit = Work {
         exe: &start.exe,
+        bench: &start.bench,
         loaded: &loaded,
         work,
         cores,
@@ -1042,42 +1068,27 @@ pub fn plan_only(samples: usize, out: &mut dyn Write) -> Result<(), SpeedError> 
     writeln!(out, "{}", serde_json::to_string(&line)?).map_err(on_stdout)
 }
 
-/// The `bench` arm of `cli.rs`: `--plan-only`, `--table`, or the measurement.
-#[allow(clippy::too_many_arguments)]
-pub fn cli(
-    out: &mut dyn Write,
-    lines: Option<u64>,
-    profile: Option<crate::cli::gen_logs::Profile>,
-    save: Option<PathBuf>,
-    baseline: Option<PathBuf>,
-    label: Option<String>,
-    dir: PathBuf,
-    runs: usize,
-    samples: usize,
-    body_lines: usize,
-    threads: Option<usize>,
-    unchecked: bool,
-    table: Vec<PathBuf>,
-    plan_only: bool,
-) -> Result<(), crate::cli::error::CliError> {
-    let result = if plan_only {
-        self::plan_only(samples, out)
-    } else if !table.is_empty() {
-        self::table(&table, out)
+/// `--plan-only`, `--table`, or the measurement.
+fn command(cli: Cli, out: &mut dyn Write) -> Result<(), SpeedError> {
+    if cli.plan_only {
+        plan_only(cli.samples, out)
+    } else if !cli.table.is_empty() {
+        table(&cli.table, out)
     } else {
-        match (lines, profile) {
+        match (cli.lines, cli.profile) {
             (Some(lines), Some(crate::cli::gen_logs::Profile::Farm)) => run(
                 &Args {
+                    kibbr: cli.kibbr,
                     lines,
-                    out: save,
-                    baseline,
-                    label,
-                    dir,
-                    runs,
-                    samples,
-                    body_lines,
-                    threads,
-                    unchecked,
+                    out: cli.out,
+                    baseline: cli.baseline,
+                    label: cli.label,
+                    dir: cli.dir,
+                    runs: cli.runs,
+                    samples: cli.samples,
+                    body_lines: cli.body_lines,
+                    threads: cli.threads,
+                    unchecked: cli.unchecked,
                 },
                 out,
             ),
@@ -1085,8 +1096,149 @@ pub fn cli(
             // the other profile, refused before anything is made under `--dir`.
             _ => Err(SpeedError::Profile),
         }
-    };
-    result.map_err(crate::cli::error::CliError::from)
+    }
+}
+
+// ── The command line ───────────────────────────────────────────────────────────────
+
+/// Measure how fast a build is on one farm day: ingest lines a second, the four standard
+/// queries idle and under ingest, scan rows per CPU-second, and the plan step.
+///
+/// A binary of its own, built with the `bench` feature, and not a `kibbr` subcommand: the
+/// bench is a quarter of the source, and the build that is edited and tested leaves it
+/// out. It measures the `kibbr` beside it, or the one `--kibbr` names, which it runs as
+/// every server, load and generator; the plan step is this binary, run again.
+#[derive(clap::Parser)]
+#[command(name = "kibbr-bench", version, long_about = None)]
+struct Cli {
+    /// The `kibbr` binary that is measured. [default: `kibbr` in this binary's directory]
+    #[arg(long, value_name = "PATH")]
+    kibbr: Option<PathBuf>,
+    /// As `kibbr --config`: the settings file this process reads; the children it starts
+    /// are measured with none.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
+    /// As `kibbr --log-level`.
+    #[arg(long, value_enum, value_name = "LEVEL")]
+    log_level: Option<crate::cli::config::LogLevel>,
+    /// As `kibbr --log-format`.
+    #[arg(long, value_enum, value_name = "FORMAT")]
+    log_format: Option<crate::cli::config::LogFormat>,
+    /// Lines in the farm day that is loaded (seed 42), and in the live stream sent to
+    /// the servers (seed 43). The measurement is `--lines 1000000`.
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u64).range(1..),
+        required_unless_present_any = ["table", "plan_only"]
+    )]
+    lines: Option<u64>,
+    /// Only `farm` is measured: the queries and their expected answers are the
+    /// farm's. `hostile` is refused.
+    #[arg(long, value_enum, required_unless_present_any = ["table", "plan_only"])]
+    profile: Option<crate::cli::gen_logs::Profile>,
+    /// Where the result is saved, the raw log beside it as `.log`; a file that exists is
+    /// refused. [default: <dir>/results/<UTC time>-<commit>.json]
+    #[arg(long, value_name = "FILE")]
+    out: Option<PathBuf>,
+    /// A saved result to compare with, held to be the same work before anything is measured;
+    /// each number is printed with its speed-up on it.
+    #[arg(long, value_name = "FILE")]
+    baseline: Option<PathBuf>,
+    /// The heading of this result's column, saved in the file.
+    /// [default: baseline, or `this run` with --baseline]
+    #[arg(long, value_name = "TEXT")]
+    label: Option<String>,
+    /// Holds the loaded directory, each server's copy of it, and the default results.
+    #[arg(long, value_name = "PATH", default_value = DEFAULT_DIR)]
+    dir: PathBuf,
+    /// How many times the whole sequence is run; each printed number is the middle
+    /// one. Odd. Two results compare only at the same value.
+    #[arg(long, value_name = "R", default_value_t = DEFAULT_RUNS, value_parser = odd)]
+    runs: usize,
+    /// Timed asks of each query, and timed plans of each shape. Two results compare only at
+    /// the same value.
+    #[arg(
+        long,
+        value_name = "K",
+        default_value_t = DEFAULT_SAMPLES,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+    )]
+    samples: usize,
+    /// Lines in one `/ingest` body. Two results compare only at the same value.
+    #[arg(
+        long,
+        value_name = "L",
+        default_value_t = DEFAULT_BODY_LINES,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+    )]
+    body_lines: usize,
+    /// Scan threads of every server measured: each is started with `--scan-threads T`.
+    /// Two results compare only at the same value.
+    #[arg(
+        long,
+        value_name = "T",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+    )]
+    threads: Option<usize>,
+    /// Skip the checks that make a run a measurement, and allow a debug build; the result is
+    /// marked `UNCHECKED - not a measurement`. For tests.
+    #[arg(long)]
+    unchecked: bool,
+    /// Measure nothing: print the table from saved results, the first as the baseline
+    /// and one column a file, headed by its label.
+    #[arg(
+        long,
+        value_name = "FILE",
+        num_args = 2..,
+        conflicts_with_all = [
+            "lines", "profile", "out", "baseline", "label", "dir", "runs", "samples",
+            "body_lines", "unchecked", "plan_only"
+        ]
+    )]
+    table: Vec<PathBuf>,
+    // What a run starts as a child, once a run. Hidden, because its one JSON line is read
+    // by the bench and not by a person.
+    #[arg(
+        long,
+        hide = true,
+        conflicts_with_all = [
+            "lines", "profile", "out", "baseline", "label", "dir", "runs", "body_lines",
+            "unchecked"
+        ]
+    )]
+    plan_only: bool,
+}
+
+/// `bench --runs`: an odd count, so that the median of the runs is one of them and not a
+/// number between two.
+fn odd(text: &str) -> Result<usize, String> {
+    match text.parse::<usize>() {
+        Ok(runs) if runs % 2 == 1 => Ok(runs),
+        Ok(runs) => Err(format!(
+            "{runs} is not odd; each printed number is the middle one of the runs"
+        )),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `kibbr-bench`, the binary: its flags read, the settings and the log as every `kibbr`
+/// command has them, then `--plan-only`, `--table` or the measurement.
+pub fn main() -> ExitCode {
+    let cli = <Cli as clap::Parser>::parse();
+    let result = crate::cli::settle(cli.config.as_deref(), cli.log_level, cli.log_format)
+        .and_then(|_| {
+            let stdout = io::stdout();
+            let mut out = io::BufWriter::new(stdout.lock());
+            let result = command(cli, &mut out).map_err(CliError::from);
+            crate::cli::finish(result, out)
+        });
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            crate::cli::logging::failed(&e);
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1359,6 +1511,7 @@ mod tests {
     #[test]
     fn a_label_is_the_one_given_or_says_which_side_of_a_comparison_this_is() {
         let mut args = Args {
+            kibbr: None,
             lines: 1,
             out: None,
             baseline: None,

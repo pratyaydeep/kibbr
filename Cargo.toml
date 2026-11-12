@@ -64,3 +64,12 @@ debug = "line-tables-only"
 [package.metadata.docs.rs]
 # The crate's surface is the binary; its documentation is the private modules.
 rustdoc-args = ["--document-private-items"]
+
+[[bin]]
+name = "kibbr"
+path = "src/main.rs"
+
+[[bin]]
+name = "kibbr-bench"
+path = "src/bin/kibbr-bench.rs"
+required-features = ["bench"]

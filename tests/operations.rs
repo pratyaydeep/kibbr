@@ -253,7 +253,6 @@ fn every_command_takes_config_and_a_file_it_cannot_use_stops_it() {
         vec!["load", &input, "--data-dir", &data],
         vec!["compact", "--data-dir", &data],
         vec!["bench-storage", &input],
-        vec!["bench", "--plan-only", "--samples", "1"],
         vec!["templates", "--addr", "127.0.0.1:1"],
         vec!["stats", "--addr", "127.0.0.1:1"],
         vec!["health", "--addr", "127.0.0.1:1"],
