@@ -20,7 +20,7 @@ use crate::engine::parse::flatten;
 use crate::engine::model::types::ColValue;
 use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
 use crate::engine::query::trieql::Kind;
-use crate::engine::internals::{self as db, Db};
+use crate::engine::internals::{self as db, MemoryDb};
 
 /// 2024-01-16T00:00:00Z: the instant every query is built against, and the arrival time of
 /// every fixture line - the day after their timestamps, so `SINCE 1d` has rows both sides.
@@ -255,7 +255,7 @@ fn nanos(rfc3339: &str) -> i64 {
 // ── The fixture ────────────────────────────────────────────────────────────────────
 
 struct Fixture {
-    db: Db,
+    db: MemoryDb,
     now: DateTime<Utc>,
     /// One built query per pattern, for `Cursor::check` to be asked about.
     queries: Vec<Query>,
@@ -288,7 +288,7 @@ impl Fixture {
     fn build() -> Self {
         let now = DateTime::from_timestamp(NOW_SECS, 0).expect("a representable instant");
         let lines: Vec<String> = LINES.iter().enumerate().map(|(n, l)| l.json(n)).collect();
-        let db = db::load(lines.join("\n").as_bytes(), true, now, &Schema::default())
+        let db = db::into_memory(lines.join("\n").as_bytes(), true, now, &Schema::default())
             .expect("the fixture loads");
         assert_eq!(
             db.stats.ingested,

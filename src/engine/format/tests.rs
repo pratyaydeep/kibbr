@@ -3,6 +3,9 @@
 
 use super::*;
 
+pub(super) mod encodings;
+mod vectors;
+
 #[test]
 fn the_forms_print_the_spellings_the_format_names() {
     assert_eq!(print_int(45_000_012, false, 10), "0045000012");

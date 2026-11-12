@@ -28,11 +28,11 @@ use crate::engine::parse::lines::{
 };
 use crate::engine::model::types::TimeSource;
 use crate::engine::ingest::{self, Prepared, SinkError};
-use crate::engine::rows::disk::{day_name, Committed, LoadCommit, StagedFile};
+use crate::engine::store::disk::{day_name, Committed, LoadCommit, StagedFile};
 use crate::engine::format::build::{self, schema_of, Level};
 use crate::engine::format::file::Writer;
 use crate::engine::format::{day_of, Source};
-use crate::engine::rows::{
+use crate::engine::store::{
     effective_ts, own_ts, value_bytes, DiskStore, Row, RowGroupLimits, StoreError, StoreManager,
     RECEIVED_AT_COLUMN,
 };
@@ -213,7 +213,7 @@ const MAX_REPORTED_ERRORS: usize = 1_000;
 impl Report {
     /// One line for a terminal.
     pub fn summary(&self) -> String {
-        use crate::engine::fmt::commas;
+        use crate::engine::display::commas;
         let mut out = format!(
             "loaded {} rows from {} lines ({} rejected) as load {}: {} row groups in {} \
              file(s) over {} day(s), {:.1}s",
@@ -1506,8 +1506,8 @@ fn run_inner(
         return Err(StoreError::LoadRepeated { load_id }.into());
     }
     let limit = opts.max_arrival_share;
-    let day = day_name(day_of(crate::engine::rows::nanos_of(
-        crate::engine::rows::system_time(opts.received_at),
+    let day = day_name(day_of(crate::engine::store::nanos_of(
+        crate::engine::store::system_time(opts.received_at),
     )));
     let head = arrival_head(trie, &inputs, &unpaced, &Rounds::of(opts))?;
     if !opts.proceed && head.share() > limit {

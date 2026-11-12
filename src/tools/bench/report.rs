@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::fmt::commas;
+use crate::engine::display::commas;
 
 use super::corpus::{BuiltBy, Corpus, FileDigest, InputDigest, LoadFacts};
 use super::phases::{median, percentile};

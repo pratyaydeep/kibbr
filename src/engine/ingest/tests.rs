@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use super::*;
-use crate::engine::rows::{effective_ts, ScanOptions, Visitor, Wants};
+use crate::engine::store::{effective_ts, ScanOptions, Visitor, Wants};
 use crate::engine::templates::trie::Schema;
 
 const ARRIVED: i64 = 1_800_000_000_000_000_000;
@@ -36,7 +36,7 @@ fn a_line_with_a_time_column_form_is_stored_under_its_own_time() {
         time_columns: vec!["timestamp".into(), "time_us".into()],
     };
     let now = chrono::DateTime::from_timestamp_nanos(ARRIVED);
-    let db = load(lines.as_bytes(), true, now, &schema).expect("load");
+    let db = into_memory(lines.as_bytes(), true, now, &schema).expect("load");
     assert_eq!(db.stats.ingested, 6);
 
     let mut seen: Vec<(String, Option<i64>, bool)> = Vec::new();

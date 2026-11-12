@@ -9,7 +9,7 @@ use crate::engine::ingest::row_of;
 use crate::engine::format::build::{build as build_group, schema_of, Level};
 use crate::engine::format::file::Writer;
 use crate::engine::format::{put_varint, zigzag};
-use crate::engine::rows::{effective_ts, Row};
+use crate::engine::store::{effective_ts, Row};
 
 fn vector(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -728,7 +728,7 @@ fn every_cut_of_a_vector_reads_clean() {
     }
 }
 
-/// Writes the seed corpus: `cargo test -p kibbr-engine --features fuzzing --lib fuzzing::segment -- --ignored`.
+/// Writes the seed corpus: `cargo test --features fuzzing --lib engine::fuzzing::segment -- --ignored`.
 #[test]
 #[ignore = "writes fuzz/corpus/segment"]
 fn write_the_seed_corpus() {

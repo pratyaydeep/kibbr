@@ -3,15 +3,15 @@
 
 use std::collections::BTreeSet;
 
-use super::super::encodings::chunk_both;
+use super::super::tests::encodings::chunk_both;
 use super::super::file::{open_sealed, walk, Reader};
 use super::super::read::{ALL_NULL, TWO_PIECES};
-use super::super::samples::{self, Sample};
+use crate::engine::testkit::row_groups::{self, Sample};
 use super::super::{type_byte, NO_COMPRESSION, PER_ROW, PLAIN};
 use super::*;
 
 fn sample(name: &str) -> Sample {
-    samples::layouts()
+    row_groups::layouts()
         .into_iter()
         .find(|s| s.name == name)
         .unwrap_or_else(|| panic!("no sample named `{name}`"))
@@ -28,7 +28,7 @@ fn decoded(sample: &Sample) -> Column {
 #[test]
 fn the_vectors_read_the_same_through_both_readers() {
     let (mut row_groups, mut cells_held) = (0, 0);
-    for path in samples::vector_files() {
+    for path in row_groups::vector_files() {
         let bytes = std::fs::read(&path).expect("read");
         let index = match open_sealed(&path).expect("a vector opens") {
             Some(index) => index,
@@ -75,7 +75,7 @@ fn every_layout_decodes_to_the_cells_the_reader_prints() {
     let mut layouts = BTreeSet::new();
     let mut shapes = BTreeSet::new();
     let (mut mixed, mut per_row, mut slotted, mut bare) = (0, 0, 0, 0);
-    for sample in samples::all() {
+    for sample in row_groups::all() {
         for (chunk, name) in sample.chunks.iter().zip(&sample.columns) {
             let cells = chunk_both(&chunk.bytes, chunk.at, &chunk.dir, sample.rows)
                 .unwrap_or_else(|bad| panic!("{}, `{name}`: {}", sample.name, bad.what));
@@ -242,7 +242,7 @@ fn a_column_holds_what_its_chunk_lays_out() {
 /// bytes give an error or other text, never a panic.
 #[test]
 fn a_column_is_read_over_its_own_bytes() {
-    for sample in samples::all() {
+    for sample in row_groups::all() {
         for chunk in &sample.chunks {
             let column = Column::decode(&chunk.bytes, chunk.at, &chunk.dir, sample.rows)
                 .expect("decodes");
@@ -607,7 +607,7 @@ fn every_edit_of_a_body_is_taken_or_refused_by_both_readers() {
             let _ = chunk_both(&frame, 40, &dir, rows);
         }
     };
-    for sample in samples::all() {
+    for sample in row_groups::all() {
         for chunk in &sample.chunks {
             let body = match chunk.dir.compression {
                 ZSTD => zstd::bulk::decompress(&chunk.bytes, chunk.dir.body_len as usize)

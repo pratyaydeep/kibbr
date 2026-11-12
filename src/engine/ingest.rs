@@ -19,7 +19,7 @@ use crate::engine::parse::lines::{
 };
 use crate::engine::model::types::ColValue;
 
-use crate::engine::rows::{Row, StoreManager, RECEIVED_AT_COLUMN};
+use crate::engine::store::{Row, StoreManager, RECEIVED_AT_COLUMN};
 // A parsed line as a row is the parser's to say; here under the name the write path uses.
 pub use crate::engine::parse::flatten::row_of;
 use crate::engine::templates::trie::{Schema, Trie, TrieError};
@@ -89,7 +89,7 @@ pub struct LoadStats {
     pub rejected: u64,
 }
 
-pub struct Db {
+pub struct MemoryDb {
     pub trie: Trie,
     pub stores: StoreManager,
     pub stats: LoadStats,
@@ -194,13 +194,13 @@ pub(crate) fn place_in(
 
 /// An arrival time as a row stores it, and as the write-ahead log records it.
 pub(crate) fn arrival_nanos(now: DateTime<Utc>) -> i64 {
-    crate::engine::rows::nanos_of(crate::engine::rows::system_time(now))
+    crate::engine::store::nanos_of(crate::engine::store::system_time(now))
 }
 
 /// The effective time: the time column where it reads as a time, otherwise the arrival
 /// time, stored after fingerprinting so it is not a key and makes no template.
 fn stamp(row: &mut Row, time_column: &str, received_at: i64) {
-    if crate::engine::rows::own_ts(row, time_column).is_none() {
+    if crate::engine::store::own_ts(row, time_column).is_none() {
         arrived(row, received_at);
     }
 }
@@ -227,8 +227,8 @@ pub(crate) fn row_from_log(
 ) -> Result<Row, DetectorError> {
     let parsed = parse_line(line, 0)?;
     let mut row = row_of(&parsed);
-    let own = crate::engine::rows::ts_of(&row, time_column).is_some()
-        || crate::engine::rows::said_ts(&row, time_column) == Some(time);
+    let own = crate::engine::store::ts_of(&row, time_column).is_some()
+        || crate::engine::store::said_ts(&row, time_column) == Some(time);
     if !own {
         arrived(&mut row, received_at);
     }
@@ -237,12 +237,12 @@ pub(crate) fn row_from_log(
 
 /// Build the trie, and the stores unless `with_rows` is false, always in memory: the CLI
 /// rebuilds the database from its input per invocation, `now` being every line's arrival.
-pub fn load<R: BufRead>(
+pub fn into_memory<R: BufRead>(
     input: R,
     with_rows: bool,
     now: DateTime<Utc>,
     schema: &Schema,
-) -> Result<Db, ReadError> {
+) -> Result<MemoryDb, ReadError> {
     let trie = Trie::new().with_time_columns(schema.time_columns.clone());
     let stores = StoreManager::memory();
     let stats = read_lines(
@@ -250,7 +250,7 @@ pub fn load<R: BufRead>(
         &mut |_, parsed| ingest_line(&trie, with_rows.then_some(&stores), &parsed, now),
         &mut report_rejected,
     )?;
-    Ok(Db {
+    Ok(MemoryDb {
         trie,
         stores,
         stats,

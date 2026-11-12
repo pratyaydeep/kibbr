@@ -30,7 +30,7 @@ use crate::engine::query::limits::Limits;
 use crate::engine::rng::Rng;
 use crate::engine::model::types::ColumnType;
 use crate::engine::ingest;
-use crate::engine::rows::nanos_of;
+use crate::engine::store::nanos_of;
 use std::collections::BTreeMap;
 use std::time::UNIX_EPOCH;
 
@@ -81,8 +81,8 @@ fn corpus() -> String {
     out
 }
 
-fn db() -> ingest::Db {
-    ingest::load(
+fn db() -> ingest::MemoryDb {
+    ingest::into_memory(
         corpus().as_bytes(),
         true,
         chrono::Utc::now(),
@@ -141,7 +141,7 @@ fn a_query_told_to_stop_ends_with_no_answer() {
 /// template the plan never saw; the query sees the generation move and plans again.
 #[test]
 fn a_publish_between_the_plan_and_the_snapshot_plans_again() {
-    use crate::engine::rows::{
+    use crate::engine::store::{
         LeafStore, MemoryStore, Scan, ScanOptions, Snapshot, Store, StoreError, Term, Visitor,
     };
     use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -681,7 +681,7 @@ fn a_page_that_stops_between_two_leaves_of_one_instant_resumes_on_the_other() {
         "{\"ts\":\"2024-01-15T10:00:00Z\",\"a\\u0000b\":1}\n",
         "{\"ts\":\"2024-01-15T10:00:00Z\",\"a\":1,\"b\":1}\n",
     );
-    let db = ingest::load(
+    let db = ingest::into_memory(
         lines.as_bytes(),
         true,
         chrono::Utc::now(),
@@ -716,7 +716,7 @@ fn a_window_edge_lands_in_the_bucket_that_holds_it() {
 /// can be put to: this is what says the scan's side asks the oracle's question.
 #[test]
 fn a_term_read_once_matches_what_value_matches_does() {
-    use crate::engine::rows::samples as pool;
+    use crate::engine::testkit::values as pool;
 
     let mut values = vec![ColValue::Null];
     for row in pool::rows() {
@@ -764,10 +764,12 @@ fn a_term_read_once_matches_what_value_matches_does() {
 /// `value_matches` selects from rendered rows, over generated columns of every type.
 #[test]
 fn a_term_put_to_a_column_selects_the_rows_value_matches_does() {
-    use crate::engine::rows::filter::{hits, hits_by_row, Sel};
+    use crate::engine::store::filter::{hits, hits_by_row, Sel};
     use crate::engine::format::column::{Column, ValuesRef};
-    use crate::engine::format::{read, samples};
-    use crate::engine::rows::{samples as pool, render_row};
+    use crate::engine::format::read;
+    use crate::engine::testkit::row_groups;
+    use crate::engine::store::visit::render_row;
+    use crate::engine::testkit::values as pool;
 
     let mut wants = vec![MatchValue::Any];
     wants.extend(pool::terms().into_iter().map(MatchValue::Exact));
@@ -814,8 +816,8 @@ fn a_term_put_to_a_column_selects_the_rows_value_matches_does() {
                 *rng.pick(kind)
             })
             .collect();
-        let lines = samples::lines_of(&values);
-        let sample = samples::of_lines("generated", &lines);
+        let lines = row_groups::lines_of(&values);
+        let sample = row_groups::of_lines("generated", &lines);
         let chunk = &sample.chunks[sample.place("v").expect("a column v")];
 
         let cells = read::chunk(&chunk.bytes, chunk.at, &chunk.dir, rows)
@@ -996,7 +998,7 @@ fn two_templates(count: i64, tied: i64) -> Vec<String> {
 
 /// The lines through `ingest::ingest_line` into a trie and a store of their own, with a tick
 /// after `flush_after` lines so that a disk store holds row groups and rows in memory.
-fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) -> ingest::Db {
+fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) -> ingest::MemoryDb {
     let schema = crate::engine::templates::trie::Schema::default();
     let trie = Trie::new().with_time_columns(schema.time_columns.clone());
     let now = chrono::DateTime::from_timestamp(EPOCH + DAY / 2, 0).expect("an instant");
@@ -1004,11 +1006,11 @@ fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) ->
         let parsed = crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
         ingest::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
         if flush_after == Some(at + 1) {
-            let done = stores.flush_all(crate::engine::rows::FlushKind::Tick);
+            let done = stores.flush_all(crate::engine::store::FlushKind::Tick);
             assert_eq!(done.failed, 0);
         }
     }
-    ingest::Db {
+    ingest::MemoryDb {
         trie,
         stores,
         stats: ingest::LoadStats::default(),
@@ -1019,7 +1021,7 @@ fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) ->
 /// mode is asked of the memory store and of a part-flushed disk store, and must agree.
 #[test]
 fn a_count_a_grouping_and_a_fetch_answer_from_columns_what_they_answer_from_rows() {
-    use crate::engine::rows::{DiskOptions, RowGroupLimits};
+    use crate::engine::store::{DiskOptions, RowGroupLimits};
 
     let dir = Scratch::new("two-stores");
     let lines = two_store_lines();
@@ -1538,7 +1540,7 @@ impl Drop for Scratch {
 fn shown(rows: &[Row]) -> Vec<BTreeMap<String, Option<serde_json::Value>>> {
     rows.iter()
         .map(|row| {
-            crate::engine::rows::present(row)
+            crate::engine::store::present(row)
                 .into_iter()
                 .map(|(name, key)| (name, row.json(key)))
                 .collect()
@@ -1549,11 +1551,11 @@ fn shown(rows: &[Row]) -> Vec<BTreeMap<String, Option<serde_json::Value>>> {
 /// Every page of a fetch, first to last, each asked with the cursor the one before ended
 /// on. `limit` is the caller's and `max_rows` the server's backstop.
 fn pages(
-    db: &ingest::Db,
+    db: &ingest::MemoryDb,
     pattern: &[Match],
     (since, until): (Option<i64>, Option<i64>),
     (limit, max_rows): (Option<usize>, usize),
-    run: &dyn Fn(&ingest::Db, &Query) -> QueryResult,
+    run: &dyn Fn(&ingest::MemoryDb, &Query) -> QueryResult,
 ) -> Vec<QueryResult> {
     let mut out = Vec::new();
     let mut cursor = None;
@@ -1611,7 +1613,7 @@ fn assert_same_pages(one: &[QueryResult], other: &[QueryResult], said: &str) {
     }
 }
 
-fn executed(db: &ingest::Db, q: &Query) -> QueryResult {
+fn executed(db: &ingest::MemoryDb, q: &Query) -> QueryResult {
     execute(&db.trie, &db.stores, q).expect("the query answers")
 }
 
@@ -1619,7 +1621,7 @@ fn executed(db: &ingest::Db, q: &Query) -> QueryResult {
 /// by position alone, so a position counted wrong across a row group's end shows up.
 #[test]
 fn a_fetch_pages_through_columns_as_it_pages_through_rows() {
-    use crate::engine::rows::{DiskOptions, RowGroupLimits};
+    use crate::engine::store::{DiskOptions, RowGroupLimits};
 
     let dir = Scratch::new("pages");
     let lines = two_templates(300, 4);
@@ -1715,7 +1717,7 @@ impl Visitor for Watched<'_> {
 /// row out of its day turns the asking off for the rest of the query.
 #[test]
 fn rows_that_tie_across_two_days_page_as_they_did_before_a_store_could_ask() {
-    use crate::engine::rows::{DiskOptions, FlushKind};
+    use crate::engine::store::{DiskOptions, FlushKind};
 
     let dir = Scratch::new("tied");
     let mut lines = vec![
@@ -1798,7 +1800,7 @@ fn rows_that_tie_across_two_days_page_as_they_did_before_a_store_could_ask() {
         }
     }
 
-    let every_row = |db: &ingest::Db, q: &Query| {
+    let every_row = |db: &ingest::MemoryDb, q: &Query| {
         answer(
             &db.trie,
             &db.stores,
@@ -2004,10 +2006,10 @@ fn asking(
 /// leaf opened on the row groups it holds, and `in_memory` ingested and left unwritten.
 fn reopened(
     dir: &Scratch,
-    options: crate::engine::rows::DiskOptions,
+    options: crate::engine::store::DiskOptions,
     known: &[String],
     in_memory: &[String],
-) -> ingest::Db {
+) -> ingest::MemoryDb {
     let stores = StoreManager::disk(dir.0.clone(), options).expect("a disk store");
     let schema = crate::engine::templates::trie::Schema::default();
     let trie = Trie::new().with_time_columns(schema.time_columns.clone());
@@ -2025,7 +2027,7 @@ fn reopened(
         let parsed = crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
         ingest::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
     }
-    ingest::Db {
+    ingest::MemoryDb {
         trie,
         stores,
         stats: ingest::LoadStats::default(),
@@ -2055,7 +2057,7 @@ fn whole(r: &QueryResult) -> impl PartialEq + std::fmt::Debug + '_ {
 /// answer and one set of counters, whichever thread chose a row group's rows.
 #[test]
 fn the_same_questions_answer_the_same_every_time_with_their_scans_shared_out() {
-    use crate::engine::rows::{DiskOptions, FlushKind, RowGroupLimits};
+    use crate::engine::store::{DiskOptions, FlushKind, RowGroupLimits};
 
     const TIMES: u64 = 200;
     /// Every row: the two timed templates' seventeen lines a day each, the third's
@@ -2122,12 +2124,12 @@ fn the_same_questions_answer_the_same_every_time_with_their_scans_shared_out() {
     // that day the first three are before it, and pruned, and four are read.
     let later = (Some(EPOCH + DAY + 2 * 3_600), Some(EPOCH + 2 * DAY));
     let one = |pattern: Vec<Match>, mode: QueryMode, window| {
-        move |db: &ingest::Db| vec![executed(db, &asking(&pattern, mode.clone(), window))]
+        move |db: &ingest::MemoryDb| vec![executed(db, &asking(&pattern, mode.clone(), window))]
     };
     let paged = |pattern: Vec<Match>, window, limit: (Option<usize>, usize)| {
-        move |db: &ingest::Db| pages(db, &pattern, window, limit, &executed)
+        move |db: &ingest::MemoryDb| pages(db, &pattern, window, limit, &executed)
     };
-    type Asked<'a> = Box<dyn Fn(&ingest::Db) -> Vec<QueryResult> + 'a>;
+    type Asked<'a> = Box<dyn Fn(&ingest::MemoryDb) -> Vec<QueryResult> + 'a>;
     let questions: Vec<(&str, Asked<'_>)> = vec![
         (
             "a count",

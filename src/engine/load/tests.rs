@@ -117,7 +117,7 @@ impl Store {
             ..crate::engine::Storage::default()
         };
         let lock = crate::engine::lock::DataLock::acquire(&base).expect("lock");
-        let (trie, stores) = crate::engine::lifecycle::open_durable(&storage, &crate::engine::Schema::default())
+        let (trie, stores) = crate::engine::database::lifecycle::open_durable(&storage, &crate::engine::Schema::default())
             .expect("open the data directory");
         Self {
             trie,
@@ -153,7 +153,7 @@ impl Store {
                 continue;
             };
             let scan = store
-                .scan(&crate::engine::rows::ScanOptions::default(), &[])
+                .scan(&crate::engine::store::ScanOptions::default(), &[])
                 .expect("scan");
             out.extend(scan.rows.into_iter().map(|row| (id, row)));
         }
@@ -418,7 +418,7 @@ fn the_whole_input_check_names_ten_templates_most_rows_first() {
     let staging = scratch
         .0
         .join("store")
-        .join(crate::engine::rows::disk::STAGING_DIR);
+        .join(crate::engine::store::disk::STAGING_DIR);
     let left: Vec<_> = fs::read_dir(&staging)
         .map(|d| d.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();

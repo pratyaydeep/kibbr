@@ -8,6 +8,9 @@
 //! `Database`, and what they do to the data goes through it. Back-pressure comes out of
 //! it as values; whoever holds the handle decides what a wait or a refusal looks like.
 
+pub mod compaction;
+pub(crate) mod lifecycle;
+
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,28 +19,28 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
-use crate::engine::compact;
 use crate::engine::error::DetectorError;
 use crate::engine::parse::flatten::ParsedLog;
 use crate::engine::model::types::ColumnType;
 use crate::engine::query::{self, ExecError, Plan, Query, QueryResult};
 use crate::engine::error::{self, DetectorErrorKind, Error, IngestError};
-use crate::engine::lifecycle::{self, log, log_warn, Held, Replayed};
+use lifecycle::{log, log_warn, Held, Replayed};
 use crate::engine::load;
 use crate::engine::templates::catalog::CatalogError;
 use crate::engine::ingest;
 use crate::engine::lock::{DataLock, Holder};
-use crate::engine::rows::disk::{self, CompactOptions};
-use crate::engine::rows::scan_threads::{self, Fan};
-use crate::engine::rows::{FlushSummary, Stop, StoreError, StoreManager, WriteHealth};
+use crate::engine::store::disk::{self, CompactOptions};
+use crate::engine::store::fan::{self, Fan};
+use crate::engine::stop::Stop;
+use crate::engine::store::{FlushSummary, StoreError, StoreManager, WriteHealth};
 use crate::engine::templates::trie::{Trie, TrieError};
 use crate::engine::wal::{self, Wal};
 
 pub use crate::engine::templates::trie::{Schema, DEFAULT_TIME_COLUMNS};
 
 /// The defaults of `Storage`'s fields that the stores and the log decide.
-pub use crate::engine::rows::disk::DEFAULT_SEGMENT_MAX_BYTES;
-pub use crate::engine::rows::{DEFAULT_FAN_ROWS, DEFAULT_MAX_BUFFER_BYTES, DEFAULT_MAX_OPEN_SEGMENTS};
+pub use crate::engine::store::disk::DEFAULT_SEGMENT_MAX_BYTES;
+pub use crate::engine::store::{DEFAULT_FAN_ROWS, DEFAULT_MAX_BUFFER_BYTES, DEFAULT_MAX_OPEN_SEGMENTS};
 pub use crate::engine::wal::{
     DEFAULT_BATCH_LINES as DEFAULT_WAL_BATCH_LINES, DEFAULT_QUEUE_BYTES as DEFAULT_WAL_QUEUE_BYTES,
     DEFAULT_SEGMENT_BYTES as DEFAULT_WAL_SEGMENT_BYTES,
@@ -99,15 +102,15 @@ impl Default for Storage {
             trie_file: None,
             flush_interval: Duration::from_millis(DEFAULT_FLUSH_INTERVAL_MS as u64),
             row_group_timeout: Duration::from_millis(DEFAULT_ROW_GROUP_TIMEOUT_MS as u64),
-            max_open_segments: crate::engine::rows::DEFAULT_MAX_OPEN_SEGMENTS,
-            segment_max_bytes: crate::engine::rows::disk::DEFAULT_SEGMENT_MAX_BYTES,
-            max_buffer_bytes: crate::engine::rows::DEFAULT_MAX_BUFFER_BYTES,
+            max_open_segments: crate::engine::store::DEFAULT_MAX_OPEN_SEGMENTS,
+            segment_max_bytes: crate::engine::store::disk::DEFAULT_SEGMENT_MAX_BYTES,
+            max_buffer_bytes: crate::engine::store::DEFAULT_MAX_BUFFER_BYTES,
             compact_interval: Duration::from_millis(DEFAULT_COMPACT_INTERVAL_MS as u64),
             wal_segment_bytes: crate::engine::wal::DEFAULT_SEGMENT_BYTES,
             wal_batch_lines: crate::engine::wal::DEFAULT_BATCH_LINES,
             wal_queue_bytes: crate::engine::wal::DEFAULT_QUEUE_BYTES,
             scan_threads: 0,
-            scan_fan_rows: crate::engine::rows::DEFAULT_FAN_ROWS,
+            scan_fan_rows: crate::engine::store::DEFAULT_FAN_ROWS,
         }
     }
 }
@@ -127,16 +130,16 @@ impl Storage {
     }
 
     /// The row group thresholds these settings imply; only the timeout is worth a knob.
-    pub fn row_group_limits(&self) -> crate::engine::rows::RowGroupLimits {
-        crate::engine::rows::RowGroupLimits {
+    pub fn row_group_limits(&self) -> crate::engine::store::RowGroupLimits {
+        crate::engine::store::RowGroupLimits {
             age: self.row_group_timeout,
-            ..crate::engine::rows::RowGroupLimits::default()
+            ..crate::engine::store::RowGroupLimits::default()
         }
     }
 
     /// What the disk store is held to.
-    pub fn disk_options(&self) -> crate::engine::rows::DiskOptions {
-        crate::engine::rows::DiskOptions {
+    pub fn disk_options(&self) -> crate::engine::store::DiskOptions {
+        crate::engine::store::DiskOptions {
             row_groups: self.row_group_limits(),
             max_open_files: self.max_open_segments,
             segment_max_bytes: self.segment_max_bytes,
@@ -194,7 +197,7 @@ pub struct Database {
     write_health: Arc<WriteHealth>,
     /// The compactions this database has been asked to run or found due: at most one at a
     /// time, in a slot apart from a load's, so the two run side by side.
-    compactions: Mutex<compact::Jobs>,
+    compactions: Mutex<compaction::Jobs>,
     /// Set once, when shutdown begins, and the one switch every compaction here is run
     /// with: whichever is running then stops before its record and removes what it wrote.
     compact_cancel: Arc<AtomicBool>,
@@ -418,7 +421,7 @@ impl Database {
             checkpoint_failing: AtomicBool::new(false),
             storage,
             write_health,
-            compactions: Mutex::new(compact::Jobs::default()),
+            compactions: Mutex::new(compaction::Jobs::default()),
             compact_cancel: Arc::new(AtomicBool::new(false)),
             fan,
             lock: Mutex::new(lock),
@@ -443,7 +446,7 @@ impl Database {
     /// `lock.rs`.
     pub fn new_token() -> Result<String, Error> {
         crate::engine::format::file::new_file_id()
-            .map(|id| crate::engine::rows::manifest::hex(&id))
+            .map(|id| crate::engine::store::manifest::hex(&id))
             .map_err(|e| Error::Storage {
                 detail: format!("drawing the load token: {e}"),
             })
@@ -538,7 +541,7 @@ impl Database {
                         raw: parsed.raw_line,
                         // The time the row is filed under, as the store reads it: what the
                         // log writes down beside the line, for replay to hold it to.
-                        time: crate::engine::rows::effective_ts(&placed.row, &placed.time_column)
+                        time: crate::engine::store::effective_ts(&placed.row, &placed.time_column)
                             .unwrap_or(0),
                         placed,
                     });
@@ -689,11 +692,11 @@ impl Database {
 
     /// Held for as long as an ingested body is in its task: a query meanwhile scans on its
     /// own thread, so the scan takes no core from the parse. `None` with no scan threads.
-    pub fn ingest_body(&self) -> Option<scan_threads::Body<'_>> {
+    pub fn ingest_body(&self) -> Option<fan::Body<'_>> {
         self.fan.as_deref().map(Fan::body)
     }
 
-    /// The scan threads, for whoever must let them go last: see `rows::scan_threads`.
+    /// The scan threads, for whoever must let them go last: see `store::fan`.
     pub fn fan(&self) -> Option<Arc<Fan>> {
         self.fan.clone()
     }
@@ -779,7 +782,7 @@ impl Database {
     /// One flush tick: every row group that is due is closed and written, and the
     /// checkpoint moved up behind it.
     pub fn flush_due(&self) -> FlushSummary {
-        let summary = self.stores.flush_all(crate::engine::rows::FlushKind::Tick);
+        let summary = self.stores.flush_all(crate::engine::store::FlushKind::Tick);
         // Behind the flush, never ahead of it: the checkpoint moves past a row only
         // once the row group holding it has been flushed and published.
         lifecycle::move_checkpoint(self);
@@ -815,7 +818,7 @@ impl Database {
                 "{} line(s) are in the write-ahead log and not in the store - the store \
                  refused their rows, or the start could not read them back. The log keeps \
                  them, and the next start tries again",
-                crate::engine::fmt::commas(rows)
+                crate::engine::display::commas(rows)
             )),
         }
     }
@@ -944,20 +947,20 @@ impl Database {
         &self,
         day: Option<i64>,
         threads: usize,
-        each: &mut dyn FnMut(compact::Planned, &Result<disk::Compacted, StoreError>),
-    ) -> Option<(Vec<compact::Planned>, compact::Ran)> {
+        each: &mut dyn FnMut(compaction::Planned, &Result<disk::Compacted, StoreError>),
+    ) -> Option<(Vec<compaction::Planned>, compaction::Ran)> {
         let store = self.stores.disk_store()?;
         let opts = CompactOptions {
             threads,
             cancel: Arc::default(),
         };
-        let days = compact::plan(store, day);
-        let ran = compact::run(store, &days, &opts, each);
+        let days = compaction::plan(store, day);
+        let ran = compaction::run(store, &days, &opts, each);
         Some((days, ran))
     }
 
     /// How compaction job `id` stands, while it is one of the recent ones.
-    pub fn compaction_state(&self, id: u64) -> Option<compact::State> {
+    pub fn compaction_state(&self, id: u64) -> Option<compaction::State> {
         self.compactions
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -1029,17 +1032,17 @@ impl Database {
         let scheduled = job.is_none();
         // Held from the moment there is a job, so that nothing which ends this thread - the
         // panic caught below, or one that is not - leaves the job `running`.
-        let ending = |id| compact::Ending::of(&self.compactions, id);
+        let ending = |id| compaction::Ending::of(&self.compactions, id);
         let asked = job.map(ending);
         let Some(store) = self.stores.disk_store() else {
             if let Some(asked) = asked {
-                let why = compact::NO_DISK.to_string();
-                let state = compact::State::Failed(why, compact::Report::default());
+                let why = compaction::NO_DISK.to_string();
+                let state = compaction::State::Failed(why, compaction::Report::default());
                 asked.finish(state, false);
             }
             return;
         };
-        let mut days = compact::plan(store, day);
+        let mut days = compaction::plan(store, day);
         let (id, ending) = match job.zip(asked) {
             Some(asked) => asked,
             None => {
@@ -1062,7 +1065,7 @@ impl Database {
         log(&format!(
             "compaction job {id} - {}",
             match day {
-                Some(day) => crate::engine::rows::disk::day_name(day),
+                Some(day) => crate::engine::store::disk::day_name(day),
                 None => format!("{} day(s) due", days.len()),
             }
         ));
@@ -1074,7 +1077,7 @@ impl Database {
         // A panic is a failed job and not a job running for ever, as for a load. Whatever it
         // had written is unnamed, and the next start removes it.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            compact::run(store, &days, &opts, &mut |planned, result| {
+            compaction::run(store, &days, &opts, &mut |planned, result| {
                 noted += 1;
                 let wait = {
                     let mut jobs = jobs();
@@ -1082,7 +1085,7 @@ impl Database {
                     jobs.wait(planned, every).filter(|_| scheduled)
                 };
                 match result {
-                    Ok(done) => log(&format!("compaction job {id} - {}", compact::line(done))),
+                    Ok(done) => log(&format!("compaction job {id} - {}", compaction::line(done))),
                     Err(e @ (StoreError::Cancelled { .. } | StoreError::InputsChanged { .. })) => {
                         log(&format!("compaction job {id} - {}", error::chain(e)))
                     }
@@ -1099,7 +1102,7 @@ impl Database {
         }));
         let state = match result {
             Ok(ran) => match ran.failed.first() {
-                None => compact::State::Done(ran.report),
+                None => compaction::State::Done(ran.report),
                 Some(first) => {
                     let mut why = error::chain(first);
                     if ran.failed.len() > 1 {
@@ -1108,7 +1111,7 @@ impl Database {
                             ran.failed.len() - 1
                         ));
                     }
-                    compact::State::Failed(why, ran.report)
+                    compaction::State::Failed(why, ran.report)
                 }
             },
             Err(_) => {
@@ -1119,7 +1122,7 @@ impl Database {
                 // otherwise walk into the same panic every interval.
                 if let Some(planned) = days.get(noted) {
                     let failed = Err(StoreError::CompactFailed {
-                        day: crate::engine::rows::disk::day_name(planned.0),
+                        day: crate::engine::store::disk::day_name(planned.0),
                         source: Box::new(StoreError::Io {
                             template_id: 0,
                             source: std::io::Error::other(why),
@@ -1127,7 +1130,7 @@ impl Database {
                     });
                     jobs().note(*planned, &failed);
                 }
-                compact::State::Failed(why.to_string(), compact::Report::default())
+                compaction::State::Failed(why.to_string(), compaction::Report::default())
             }
         };
         ending.finish(state, !days.is_empty());
@@ -1158,7 +1161,7 @@ impl Database {
         self.wal.as_ref()
     }
 
-    pub fn compaction_jobs(&self) -> &Mutex<compact::Jobs> {
+    pub fn compaction_jobs(&self) -> &Mutex<compaction::Jobs> {
         &self.compactions
     }
 }

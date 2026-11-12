@@ -30,7 +30,7 @@ use serde_json::{Map, Value};
 use crate::engine::model::types::{ColumnType, TimeSource};
 use crate::engine::templates::catalog::{self, Token};
 use crate::engine::format::frame::{self, Next, Opened, HEADER};
-use crate::engine::rows::manifest::{self, Decoded, FileRecord, WalMark};
+use crate::engine::store::manifest::{self, Decoded, FileRecord, WalMark};
 use crate::engine::templates::trie::Trie;
 
 /// The kinds the catalog has, written out here and not borrowed from the reader: a

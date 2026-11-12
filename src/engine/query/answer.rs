@@ -9,13 +9,14 @@
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
-use crate::engine::fmt::rfc3339;
+use crate::engine::display::rfc3339;
 use crate::engine::query::{
     self, Cursor, Group, GroupKey, Query, QueryMode, QueryResult, BUCKET_COLUMN,
 };
 use crate::engine::query::limits::Limits;
 use crate::engine::query::trieql;
-use crate::engine::rows::{system_time, Stop, STOP_EVERY_ROWS};
+use crate::engine::stop::{Stop, STOP_EVERY_ROWS};
+use crate::engine::store::system_time;
 
 use crate::engine::error::{Error, Result};
 
@@ -133,9 +134,9 @@ fn shaped(query: &Query, result: &QueryResult, rows: Vec<Value>) -> Value {
 
 /// One row as one JSON object, each value the JSON value that was ingested;
 /// shared with `ndjson`, so a row serialises the same on every surface.
-pub fn row_json(row: &crate::engine::rows::Row) -> Value {
+pub fn row_json(row: &crate::engine::store::Row) -> Value {
     let mut obj = Map::new();
-    for (name, key) in crate::engine::rows::present(row) {
+    for (name, key) in crate::engine::store::present(row) {
         obj.insert(name, row.json(key).unwrap_or(Value::Null));
     }
     Value::Object(obj)
@@ -143,7 +144,7 @@ pub fn row_json(row: &crate::engine::rows::Row) -> Value {
 
 /// The rows, in the order the answer already has them: `engine::Rank` promises newest
 /// first, and re-sorting would break the ordering the limit depends on.
-pub fn canonical(result: &QueryResult) -> Vec<&crate::engine::rows::Row> {
+pub fn canonical(result: &QueryResult) -> Vec<&crate::engine::store::Row> {
     result.rows.iter().collect()
 }
 

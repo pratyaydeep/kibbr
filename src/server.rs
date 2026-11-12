@@ -42,9 +42,9 @@ use tokio_util::sync::CancellationToken;
 use std::path::Path;
 
 use crate::server::error::IngestError;
-use engine::fmt::{commas, rfc3339_at};
+use engine::display::{commas, rfc3339_at};
 use engine::query::answer;
-use engine::{compact, load, CompactRefused, Database, Fan, Stop, StoreError};
+use engine::{compaction, load, CompactRefused, Database, Fan, Stop, StoreError};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
@@ -338,11 +338,11 @@ impl Drop for InFlight {
     }
 }
 
-mod compaction;
+mod compactor;
 mod error;
 mod handlers;
-mod ingest;
-mod lifecycle;
+mod body;
+mod runtime;
 mod routes;
 pub mod settings;
 #[cfg(test)]
@@ -351,11 +351,11 @@ mod tests;
 use engine::database::MAX_REPORTED_ERRORS;
 
 pub use error::{Error, Result};
-pub use lifecycle::{run, Report};
+pub use runtime::{run, Report};
 pub use settings::{ApiLimits, Banner, Limits, Schema, Settings, Storage, BANNER};
 
-use compaction::*;
+use compactor::*;
 use handlers::*;
-use ingest::*;
-use lifecycle::*;
+use body::*;
+use runtime::*;
 use routes::*;

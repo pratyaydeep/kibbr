@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! `kibbr compact` - the command: who runs it and what it prints. The rebuild is the
-//! store's (`rows::disk::compact`) and the run the engine's
-//! (`crate::engine::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
+//! store's (`store::disk::rebuild`) and the run the engine's
+//! (`crate::engine::database::compaction`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
 //! one process writes the manifest, so a server holding the directory is asked
 //! (`POST /compact`), and with none the command takes the lock and compacts alone.
 
@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::config::LoadStorage as _;
 
-use crate::engine::compact::{line, Report, NO_DISK};
+use crate::engine::database::compaction::{line, Report, NO_DISK};
 use crate::engine::StoreError;
 
 #[derive(Debug, Error)]

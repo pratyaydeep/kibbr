@@ -9,7 +9,7 @@ use std::io::{BufRead, Write};
 
 use crate::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::engine::parse::flatten::parse_line;
-use crate::engine::fmt::rfc3339;
+use crate::engine::display::rfc3339;
 use crate::engine::parse::lines::{
     read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
 };

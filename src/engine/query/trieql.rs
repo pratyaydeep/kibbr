@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::engine::query::{Cursor, GroupKey, Match, MatchValue, Order, QueryMode, TimeRange};
-use crate::engine::rows::system_time;
+use crate::engine::store::system_time;
 
 /// What a query said, before the output flags - which are not in the grammar - are folded
 /// in.

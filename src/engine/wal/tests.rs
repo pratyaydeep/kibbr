@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use super::*;
-use crate::engine::rows::Row;
+use crate::engine::store::Row;
 
 /// A directory of this test's own, removed when it goes.
 struct Scratch(PathBuf);
