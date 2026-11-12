@@ -23,7 +23,6 @@ FROM rust:1.96-alpine AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
-COPY crates crates
 COPY src src
 # The registry and the target directory are cache mounts: they outlive the layer, so a
 # change to src/ compiles what changed and not every dependency again. The binary is

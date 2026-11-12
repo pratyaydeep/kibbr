@@ -18,10 +18,6 @@ libfuzzer-sys = "0.4"
 path = ".."
 features = ["fuzzing"]
 
-[dependencies.kibbr-engine]
-path = "../crates/kibbr-engine"
-features = ["fuzzing"]
-
 # Not a member of any workspace: `cargo build` at the root never builds the fuzzers.
 [workspace]
 

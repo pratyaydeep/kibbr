@@ -516,55 +516,23 @@ dependencies = [
 name = "kibbr"
 version = "0.4.0"
 dependencies = [
+ "axum",
  "chrono",
  "clap",
  "crc32c",
  "flate2",
- "kibbr-engine",
- "kibbr-server",
+ "http-body",
  "libc",
  "mimalloc",
  "rayon",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tokio-util",
  "toml",
  "tracing",
  "zstd",
-]
-
-[[package]]
-name = "kibbr-engine"
-version = "0.4.0"
-dependencies = [
- "chrono",
- "crc32c",
- "flate2",
- "libc",
- "rayon",
- "serde",
- "serde_json",
- "thiserror",
- "tracing",
- "zstd",
-]
-
-[[package]]
-name = "kibbr-server"
-version = "0.4.0"
-dependencies = [
- "axum",
- "chrono",
- "flate2",
- "http-body",
- "kibbr-engine",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]

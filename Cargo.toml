@@ -1,29 +1,24 @@
-[workspace]
-# Three crates: kibbr-engine, the whole database, and the two layers over it that name it,
-# kibbr-server (HTTP) and kibbr (the command line), which names both.
-# fuzz/ is a workspace of its own, so `cargo build` here never builds a fuzzer.
-members = ["crates/kibbr-engine", "crates/kibbr-server"]
-exclude = ["fuzz", "lab-rs"]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "kibbr"
+description = "A database for structured JSON logs: each line's shape stored once in a trie, its values as typed columns, a fraction of the raw size and still queryable."
 version = "0.4.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Pratyaydeep Ghanta <pratyaydeepghanta@gmail.com>"]
 repository = "https://github.com/pratyaydeep/kibbr"
 homepage = "https://pratyaydeep.github.io/kibbr/"
+documentation = "https://docs.rs/kibbr"
 rust-version = "1.96.1"
+readme = "README.md"
 keywords = ["logs", "logging", "database", "columnar", "observability"]
+categories = ["database-implementations", "command-line-utilities"]
+exclude = ["/testdata/", "/bench/", "/deploy/", "/docs/", "/scripts/", "/fuzz/", "/.github/", "/lab/", "/lab-rs/", "/web/"]
 
-# One version of each dependency for the whole workspace, and one place that says why it
-# is here; a crate takes what it calls with `workspace = true`.
-[workspace.dependencies]
-# The two library crates by path here, and by exactly this version once published: `cargo
-# publish` wants both, and `internals` promises nothing, so the binary is never built against
-# an engine newer than the one it was released with.
-kibbr-engine = { path = "crates/kibbr-engine", version = "=0.4.0" }
-kibbr-server = { path = "crates/kibbr-server", version = "=0.4.0" }
+# One crate: the engine (src/engine/), the HTTP server over it (src/server/) and the
+# command line over both (src/cli/). fuzz/ is a package of its own, so `cargo build` here
+# never builds a fuzzer.
+
+[dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -53,47 +48,19 @@ tokio-util = "0.7.19"
 # encoder uses them.
 zstd = { version = "0.13", default-features = false, features = ["zstdmt"] }
 
-[package]
-name = "kibbr"
-description = "A database for structured JSON logs: each line's shape stored once in a trie, its values as typed columns, a fraction of the raw size and still queryable."
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-authors.workspace = true
-repository.workspace = true
-homepage.workspace = true
-documentation = "https://docs.rs/kibbr"
-rust-version.workspace = true
-readme = "README.md"
-keywords.workspace = true
-categories = ["database-implementations", "command-line-utilities"]
-exclude = ["/testdata/", "/bench/", "/deploy/", "/docs/", "/scripts/", "/fuzz/", "/.github/", "/lab/", "/lab-rs/", "/web/"]
-
-[dependencies]
-kibbr-engine.workspace = true
-kibbr-server.workspace = true
-chrono.workspace = true
-clap.workspace = true
-crc32c.workspace = true
-flate2.workspace = true
-mimalloc.workspace = true
-libc.workspace = true
-rayon.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-toml.workspace = true
-tracing.workspace = true
-tokio-util.workspace = true
-zstd.workspace = true
-
 [features]
-# The fuzz targets' harnesses, here and in the engine, for fuzz/ and for
-# tests/fuzz_regressions.rs; off by default, so the binary carries none of them.
-fuzzing = ["kibbr-engine/fuzzing"]
+# The fuzz targets' harnesses, for fuzz/; off by default, so the binary carries none of
+# them. A plain `cargo test` builds them anyway and replays fuzz/regressions/.
+fuzzing = []
+# `kibbr bench`, the end-to-end speed measurement. Off by default: it is a quarter of the
+# source, and leaving it out keeps the build that is edited and tested fast.
+bench = []
 
-[dev-dependencies]
-# The engine's samples and failure hooks, for the tests here that hold a server to them.
-kibbr-engine = { workspace = true, features = ["test-support"] }
-# The `/ingest` tests build their own gzip bodies, the bomb included, not the machine's `gzip(1)`.
-flate2.workspace = true
+[profile.dev]
+# Line tables only: backtraces keep their file and line, and the target directory and a
+# clean build both shrink by a third.
+debug = "line-tables-only"
+
+[package.metadata.docs.rs]
+# The crate's surface is the binary; its documentation is the private modules.
+rustdoc-args = ["--document-private-items"]

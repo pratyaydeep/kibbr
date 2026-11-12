@@ -133,8 +133,8 @@
 //!
 //! Licensed AGPL-3.0-only; contributions under MIT.
 
-pub use kibbr_engine as engine;
-pub use kibbr_server as server;
+pub mod engine;
+pub mod server;
 
 pub mod client;
 pub mod cmd;

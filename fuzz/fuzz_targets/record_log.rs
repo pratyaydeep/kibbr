@@ -4,4 +4,4 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-fuzz_target!(|data: &[u8]| kibbr_engine::fuzzing::record_log::run(data));
+fuzz_target!(|data: &[u8]| kibbr::engine::fuzzing::record_log::run(data));
