@@ -55,7 +55,7 @@ zstd = { version = "0.13", default-features = false, features = ["zstdmt"] }
 
 [package]
 name = "kibbr"
-description = "A database for structured JSON logs: each line's shape stored once in a trie, its values as typed columns, queryable in milliseconds."
+description = "A database for structured JSON logs: each line's shape stored once in a trie, its values as typed columns, a fraction of the raw size and still queryable."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
