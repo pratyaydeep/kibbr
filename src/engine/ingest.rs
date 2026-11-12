@@ -22,7 +22,9 @@ use crate::engine::model::types::ColValue;
 use crate::engine::store::{Row, StoreManager, RECEIVED_AT_COLUMN};
 // A parsed line as a row is the parser's to say; here under the name the write path uses.
 pub use crate::engine::parse::flatten::row_of;
-use crate::engine::templates::trie::{Schema, Trie, TrieError};
+#[cfg(any(test, feature = "fuzzing"))]
+use crate::engine::templates::trie::Schema;
+use crate::engine::templates::trie::{Trie, TrieError};
 
 /// What ends a read of lines, where a rejected line does not: the input could not be
 /// read, it is not lines at all, or the trie failed in a way that fails every line after.
@@ -89,6 +91,8 @@ pub struct LoadStats {
     pub rejected: u64,
 }
 
+/// A database held in memory only, as `into_memory` builds it.
+#[cfg(any(test, feature = "fuzzing"))]
 pub struct MemoryDb {
     pub trie: Trie,
     pub stores: StoreManager,
@@ -235,8 +239,9 @@ pub(crate) fn row_from_log(
     Ok(row)
 }
 
-/// Build the trie, and the stores unless `with_rows` is false, always in memory: the CLI
-/// rebuilds the database from its input per invocation, `now` being every line's arrival.
+/// Build the trie, and the stores unless `with_rows` is false, always in memory, `now`
+/// being every line's arrival: what the tests and the `cursor` fuzz harness query.
+#[cfg(any(test, feature = "fuzzing"))]
 pub fn into_memory<R: BufRead>(
     input: R,
     with_rows: bool,

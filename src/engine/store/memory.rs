@@ -30,8 +30,8 @@ impl Default for MemoryStore {
 }
 
 impl Store for MemoryStore {
-    fn open(&self, template_id: u64, _time_column: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
-        Ok(Arc::new(MemoryLeaf::new(template_id)))
+    fn open(&self, _template_id: u64, _time_column: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
+        Ok(Arc::new(MemoryLeaf::new()))
     }
 
     fn kind(&self) -> &'static str {
@@ -44,14 +44,12 @@ impl Store for MemoryStore {
 }
 
 pub(crate) struct MemoryLeaf {
-    template_id: u64,
     rows: RwLock<Vec<Row>>,
 }
 
 impl MemoryLeaf {
-    pub(crate) fn new(template_id: u64) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            template_id,
             rows: RwLock::new(Vec::new()),
         }
     }
@@ -62,9 +60,6 @@ impl MemoryLeaf {
 }
 
 impl LeafStore for MemoryLeaf {
-    fn template_id(&self) -> u64 {
-        self.template_id
-    }
 
     /// The ordinal is the `Vec` index, the order the row arrived in; nothing deletes, so it
     /// is stable for the life of the process.

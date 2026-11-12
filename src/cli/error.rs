@@ -5,7 +5,7 @@ use thiserror::Error;
 
 // What is wrong with one line is the flattener's to say, and it is two crates down; here
 // under the names every command already uses.
-pub use crate::engine::error::{chain, report, BadByte, DetectorError, DetectorErrorKind};
+pub use crate::engine::error::{chain, report, DetectorError, DetectorErrorKind};
 
 /// Errors from the log generator.
 #[derive(Debug, Error)]

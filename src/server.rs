@@ -316,7 +316,7 @@ impl Server {
         schema: Schema,
         load_token: Option<String>,
     ) -> Result<Self, Error> {
-        let db = engine::Claim::unlocked(engine::Options { storage, schema }).open()?;
+        let db = engine::database::Claim::unlocked(engine::Options { storage, schema }).open()?;
         Ok(Self::with(db, now, limits, api, load_token))
     }
 }
@@ -352,7 +352,9 @@ use engine::database::MAX_REPORTED_ERRORS;
 
 pub use error::{Error, Result};
 pub use runtime::{run, Report};
-pub use settings::{ApiLimits, Banner, Limits, Schema, Settings, Storage, BANNER};
+pub use settings::{ApiLimits, Banner, Limits, Settings, BANNER};
+#[cfg(test)]
+use settings::{Schema, Storage};
 
 use compactor::*;
 use handlers::*;

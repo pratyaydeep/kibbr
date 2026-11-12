@@ -20,7 +20,6 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::engine::error::DetectorError;
-use crate::engine::parse::flatten::ParsedLog;
 use crate::engine::model::types::ColumnType;
 use crate::engine::query::{self, ExecError, Plan, Query, QueryResult};
 use crate::engine::error::{self, DetectorErrorKind, Error, IngestError};
@@ -36,7 +35,7 @@ use crate::engine::store::{FlushSummary, StoreError, StoreManager, WriteHealth};
 use crate::engine::templates::trie::{Trie, TrieError};
 use crate::engine::wal::{self, Wal};
 
-pub use crate::engine::templates::trie::{Schema, DEFAULT_TIME_COLUMNS};
+pub use crate::engine::templates::trie::Schema;
 
 /// The defaults of `Storage`'s fields that the stores and the log decide.
 pub use crate::engine::store::disk::DEFAULT_SEGMENT_MAX_BYTES;
@@ -252,12 +251,6 @@ pub enum Opener {
 }
 
 impl Database {
-    /// Open a data directory to serve it: `claim` and then `Claim::open`. Options with no
-    /// directory open a database in memory.
-    pub fn open(options: Options) -> Result<Self, Error> {
-        Self::claim(options)?.open()
-    }
-
     /// Refuse a directory that holds another format version and take its `LOCK`, before
     /// anything is written; nothing is read back yet.
     pub fn claim(options: Options) -> Result<Claim, Error> {
@@ -719,11 +712,6 @@ impl Database {
         query::execute(&self.trie, &self.stores, query)
     }
 
-    /// `execute`, for a caller that may stop wanting the answer.
-    pub fn execute_until(&self, query: &Query, stop: &Stop) -> Result<QueryResult, ExecError> {
-        query::execute_until(&self.trie, &self.stores, query, stop)
-    }
-
     /// The answer as the one JSON every surface gives (`answer::result_json`): the scan and
     /// then the answer put into JSON both ask `stop` as they go.
     pub fn answer_until(&self, query: &Query, stop: &Stop) -> Result<serde_json::Value, ExecError> {
@@ -772,8 +760,10 @@ impl Database {
         )
     }
 
-    /// One parsed line's template, and no row: a trie to plan on.
-    pub fn learn(&self, parsed: &ParsedLog, now: DateTime<Utc>) -> Result<(), TrieError> {
+    /// One parsed line's template, and no row: a trie to plan on, for `kibbr-bench`'s plan
+    /// step.
+    #[cfg(feature = "bench")]
+    pub fn learn(&self, parsed: &crate::engine::parse::flatten::ParsedLog, now: DateTime<Utc>) -> Result<(), TrieError> {
         self.trie.ingest(parsed, now).map(drop)
     }
 
@@ -791,6 +781,7 @@ impl Database {
 
     /// After a flush: ask a log that cannot write to try again, and move its checkpoint up
     /// behind the oldest row still only in memory.
+    #[cfg(test)]
     pub fn checkpoint(&self) -> Option<wal::Advanced> {
         lifecycle::move_checkpoint(self)
     }

@@ -7,10 +7,6 @@
 //! holds no lock an append or a query waits on while it touches the disk
 //! (`disk::DiskLeaf::state`).
 
-// Part of this interface still has no caller (`scan`, `NotOpen`, `template_id`, `iter`); kept
-// because it is the contract both implementations were written against.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,8 +28,10 @@ pub(crate) use disk::DiskStore;
 pub(crate) use memory::MemoryStore;
 pub use visit::{present, Scan, ScanOptions, Shown, Term, Visitor, Want, Wants};
 pub(crate) use visit::{
-    in_window, project, render_text, shown_row, Counted, Rows, DEFAULT_TS_COLUMN, RECEIVED_AT_COLUMN,
+    in_window, render_text, shown_row, Counted, DEFAULT_TS_COLUMN, RECEIVED_AT_COLUMN,
 };
+#[cfg(test)]
+pub(crate) use visit::{project, Rows};
 // A row, and its place in time, are the model's: the format builds from them too.
 pub(crate) use crate::engine::model::row::{
     effective_ts, instant_of, own_ts, said_instant, said_ts, ts_of, Row,
@@ -327,6 +325,7 @@ pub struct Flushed {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FlushSummary {
     pub rows: u64,
+    #[cfg(test)]
     pub partitions: usize,
     pub row_groups: usize,
     pub bytes: u64,
@@ -341,8 +340,6 @@ pub struct FlushSummary {
 /// One leaf's rows, append-only; every method takes `&self` because a leaf locks itself
 /// and none of its callers waits on a lock over any other leaf.
 pub trait LeafStore: Send + Sync {
-    fn template_id(&self) -> u64;
-
     /// Buffer one row and return its ordinal, with no I/O and no clock: it runs once per
     /// ingested line.
     fn append(&self, row: Row) -> u64;
@@ -373,12 +370,9 @@ pub trait LeafStore: Send + Sync {
     /// Roughly what this leaf weighs in bytes.
     fn approx_bytes(&self) -> u64;
 
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Every surviving row, projected through `opts.columns`; defaulted so the projection
     /// rule lives in one place.
+    #[cfg(test)]
     fn scan(&self, opts: &ScanOptions, terms: &[Term]) -> Result<Scan, StoreError> {
         let mut rows = Vec::new();
         let mut scan = {
@@ -662,19 +656,6 @@ impl StoreManager {
         }
     }
 
-    /// The batch entry point of the ingest path, which stops at the first row the store refuses.
-    pub fn append_batch_to(
-        &self,
-        template_id: u64,
-        time_column: &str,
-        rows: impl IntoIterator<Item = Row>,
-    ) -> Result<(), StoreError> {
-        for row in rows {
-            self.append(template_id, time_column, row)?;
-        }
-        Ok(())
-    }
-
     /// Open a leaf the trie already knows about, without writing to it: the restart path, where
     /// a template with no stored rows opens empty and is not an error.
     pub fn open_existing(&self, template_id: u64, time_column: &str) -> Result<(), StoreError> {
@@ -711,6 +692,7 @@ impl StoreManager {
         self.backend.snapshot(leaves, opts)
     }
 
+    #[cfg(test)]
     pub fn get(&self, template_id: u64) -> Result<Arc<dyn LeafStore>, StoreError> {
         self.lookup(template_id)
             .ok_or(StoreError::NotOpen { template_id })
@@ -753,6 +735,7 @@ impl StoreManager {
         self.health.tick(failed.len() + seal_failures + unopened);
         FlushSummary {
             rows: done.rows,
+            #[cfg(test)]
             partitions: done.partitions,
             row_groups: done.row_groups,
             bytes: done.bytes,
@@ -840,11 +823,6 @@ impl StoreManager {
         limit > 0 && held > limit.saturating_mul(2)
     }
 
-    /// Open stores in template order, for `/templates` and `/stats`.
-    pub fn iter(&self) -> impl Iterator<Item = (u64, Arc<dyn LeafStore>)> {
-        self.leaves().into_iter()
-    }
-
     pub fn kind(&self) -> &'static str {
         self.backend.kind()
     }
@@ -858,6 +836,7 @@ impl StoreManager {
     }
 
     /// Rows `append` refused over the life of this manager, never cleared.
+    #[cfg(test)]
     pub fn rows_dropped(&self) -> u64 {
         self.rows_dropped.load(Ordering::Relaxed)
     }

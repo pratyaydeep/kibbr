@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use kibbr::cli::config::{self, ServeFlags};
+use kibbr::testing::config::{self, ServeFlags};
 use tokio_util::sync::CancellationToken;
 
 /// Lines in the ingest body, and the three that are broken.
@@ -191,7 +191,7 @@ impl Drop for Server {
 
 // ── A running server: the library, in this process ─────────────────────────────────
 
-/// A server run by `kibbr::server::run` on a thread of this process, with the settings the
+/// A server run by `kibbr::testing::server::run` on a thread of this process, with the settings the
 /// command line resolves, and stopped as a signal stops one: a stop that fails fails the test.
 struct Served {
     port: u16,
@@ -199,7 +199,7 @@ struct Served {
     /// Everything the server said before it listened: what a start found, and the banner.
     banner: String,
     cancel: CancellationToken,
-    run: Option<std::thread::JoinHandle<kibbr::server::Result<kibbr::server::Report>>>,
+    run: Option<std::thread::JoinHandle<kibbr::testing::server::Result<kibbr::testing::server::Report>>>,
 }
 
 /// What one thread's events say, each as its message: the banner is one of those events,
@@ -264,7 +264,7 @@ impl Served {
             let cancel = cancel.clone();
             std::thread::spawn(move || {
                 let _hearing = tracing::subscriber::set_default(Hear(std::sync::Mutex::new(said)));
-                kibbr::server::run(settings, cancel)
+                kibbr::testing::server::run(settings, cancel)
             })
         };
 

@@ -64,6 +64,7 @@ impl<T> Four<T> {
         [&self.s1, &self.s2, &self.s3, &self.s4]
     }
 
+    #[cfg(test)]
     pub fn each_mut(&mut self) -> [&mut T; 4] {
         [&mut self.s1, &mut self.s2, &mut self.s3, &mut self.s4]
     }

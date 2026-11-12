@@ -7,19 +7,19 @@
 //! Everything needed to store and answer: a line parsed and its template found, its row
 //! logged and placed, the day files, loads and compactions, and TrieQL answered over them.
 //! The server and the command line each hold one `Database`; the machinery is private to
-//! this crate, and `internals` holds what the command line's diagnostics read past it.
+//! this module, and `inspect` holds what the command line's diagnostics read past it.
 
 pub mod model;
 pub mod parse;
 pub mod display;
 pub mod rng;
 pub mod error;
-pub(crate) mod lock;
-pub(crate) mod format;
-pub(crate) mod templates;
-pub(crate) mod store;
-pub(crate) mod ingest;
-pub(crate) mod wal;
+mod lock;
+mod format;
+mod templates;
+mod store;
+mod ingest;
+mod wal;
 pub mod load;
 pub mod query;
 pub mod database;
@@ -29,13 +29,9 @@ pub mod fuzzing;
 mod testkit;
 pub mod stop;
 
-pub use database::{
-    Claim, CompactRefused, Database, Ingested, LineError, Opener, Options, Refused, Schema,
-    Stats, Storage, Template, TemplateColumn,
-};
-pub use error::{Error, IngestError, Result};
 pub use database::compaction;
-pub use database::lifecycle::Replayed;
+pub use database::{CompactRefused, Database, LineError, Opener, Options, Stats, Storage};
+pub use error::Error;
 
 // The values the handle takes and hands back that are not its own: a query's stop and
 // what it fails with, a flush's summary, the log's numbers, the scan threads a server lets
@@ -51,48 +47,45 @@ pub use store::manifest::path_in as manifest_path;
 pub use store::fan::Fan;
 pub use stop::Stop;
 pub use store::{FlushSummary, StoreError};
-pub use wal::{Advanced, Stats as WalStats};
+pub use wal::Stats as WalStats;
 
 /// What the command line's diagnostic commands reach past the handle for: `demo` draws the
 /// trie, `bench-storage` writes a live day without a log and walks the frames of the files
-/// it measures, and the `cursor` fuzz harness builds a database from its lines in memory. No stability promise, and `kibbr-server` never names it
-/// (`scripts/check/no_internals.sh`).
-#[doc(hidden)]
-pub mod internals {
-    pub use crate::engine::templates::catalog::path_in as catalog_path;
-    pub use crate::engine::ingest::{ingest_line, into_memory, read_lines, MemoryDb, SinkError};
-    pub use crate::engine::format::frame::{read as read_frame, Next};
-    pub use crate::engine::lock::DataLock;
-    pub use crate::engine::store::disk::{data_files, CompactOptions};
+/// it measures, and the `cursor` fuzz harness builds a database from its lines in memory;
+/// and, in a test, what the server's tests reach into a database with. The server itself
+/// never names it (`tests/layers.rs`).
+pub(crate) mod inspect {
     pub use crate::engine::format::file::{open_sealed, Reader};
+    pub use crate::engine::format::frame::{read as read_frame, Next};
     pub use crate::engine::format::FormatError;
     pub use crate::engine::format::{
         HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP, KIND_SCHEMA, TRAILER_LEN,
     };
+    pub use crate::engine::ingest::{ingest_line, read_lines, SinkError};
+    pub use crate::engine::store::disk::{data_files, CompactOptions};
     pub use crate::engine::store::{FlushKind, StoreManager};
+    pub use crate::engine::templates::catalog::path_in as catalog_path;
     pub use crate::engine::templates::trie::{Node, Trie, ROOT_LABEL};
 
     /// A database's trie and stores, as they are.
-    pub fn parts(db: &crate::engine::Database) -> (&Trie, &StoreManager) {
+    pub(crate) fn parts(db: &crate::engine::Database) -> (&Trie, &StoreManager) {
         db.parts()
     }
-}
 
-/// What the tests of the crates above reach the database's parts with: not for anything
-/// but a test, and no promise of any kind.
-#[cfg(test)]
-#[doc(hidden)]
-pub mod testing {
-    pub use crate::engine::templates::catalog::Catalog;
-    pub use crate::engine::ingest::{ingest_line, read_lines};
-    pub use crate::engine::store::disk::DATA_DIR;
-    pub use crate::engine::store::{FlushKind, StoreManager, DEFAULT_FAN_ROWS};
-    pub use crate::engine::templates::trie::Trie;
-    pub use crate::engine::wal::Wal;
+    /// A database built from its lines in memory, for the `cursor` fuzz harness.
+    #[cfg(any(test, feature = "fuzzing"))]
+    pub use crate::engine::ingest::{into_memory, MemoryDb};
+
+    /// What the server's and the commands' tests reach a database's parts with.
+    #[cfg(test)]
+    pub(crate) use crate::engine::{
+        lock::DataLock,
+        store::disk::DATA_DIR, store::DEFAULT_FAN_ROWS, templates::catalog::Catalog, wal::Wal,
+    };
 
     /// The log's numbers, and the size a body's lines come to in it.
-    pub mod wal {
-        pub use crate::engine::wal::{counted, Stats};
+    #[cfg(test)]
+    pub(crate) mod wal {
+        pub(crate) use crate::engine::wal::{counted, Stats};
     }
 }
-

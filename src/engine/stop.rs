@@ -35,6 +35,7 @@ pub(crate) const STOP_EVERY_ROWS: usize = 4096;
 
 impl Stop {
     /// A stop that can be set.
+    #[cfg(test)]
     pub fn new() -> Self {
         Self(Some(Arc::new(Told {
             set: AtomicBool::new(false),

@@ -241,6 +241,7 @@ pub(crate) fn decode(payload: &[u8]) -> Decoded {
 
 /// Every intact frame of `bytes` as `(offset, what it is)` and the offset of the first
 /// torn byte: what `Manifest::open` does, without the file, for the `record_log` fuzz target.
+#[cfg(any(test, feature = "fuzzing"))]
 pub(crate) fn parse(bytes: &[u8]) -> (Vec<(u64, Decoded)>, Option<u64>) {
     let (frames, torn_at) = frame::read_all(bytes, MAX_PAYLOAD);
     let decoded = frames
@@ -337,12 +338,9 @@ impl Manifest {
         Ok(self.log.append(&payloads)?)
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> u64 {
         self.log.len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.log.is_empty()
     }
 
     /// Whether a failed append could not be cut back, so no record is written until a restart.

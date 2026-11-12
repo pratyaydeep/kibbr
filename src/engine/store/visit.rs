@@ -4,10 +4,6 @@
 //! The scan side of a store: the terms a pattern leaves for the rows to settle, the
 //! options a scan is run with, the visitor its surviving rows go to, and how a row is shown.
 
-// Part of this interface still has no caller; kept because it is the contract both
-// implementations were written against.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
@@ -199,6 +195,7 @@ pub struct ScanOptions {
 /// what `QueryMeta` reports.
 #[derive(Debug, Default)]
 pub struct Scan {
+    #[cfg(test)]
     pub rows: Vec<Row>,
     /// Row groups whose chunks were read, on every answer's `meta` so a prune that stops is
     /// noticed.
@@ -274,8 +271,10 @@ impl Visitor for Counted {
 
 /// A closure as a `Visitor`; not a blanket impl over `FnMut`, which coherence would then
 /// hold against every hand-written `Visitor`.
+#[cfg(test)]
 pub(crate) struct Rows<F>(pub F);
 
+#[cfg(test)]
 impl<F: FnMut(&Row, u64)> Visitor for Rows<F> {
     fn row(&mut self, row: &Row, seq: u64) {
         (self.0)(row, seq)
@@ -397,6 +396,7 @@ pub(crate) fn shown_row(row: &Row, opts: &ScanOptions) -> Option<Row> {
     out
 }
 
+#[cfg(test)]
 pub(crate) fn project(row: &Row, columns: &[String]) -> Row {
     if columns.is_empty() {
         return row.clone();

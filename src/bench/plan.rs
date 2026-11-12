@@ -22,7 +22,8 @@ use crate::cli::{error, gen_logs as gen};
 use crate::engine::parse::flatten;
 use crate::engine::display::commas;
 use crate::engine::query::Query;
-use crate::engine::{Database, Options, Schema};
+use crate::engine::database::Schema;
+use crate::engine::{Database, Options};
 
 use super::phases::percentile;
 use super::report::{PlanRun, PlanShape, QueryText, Shapes};

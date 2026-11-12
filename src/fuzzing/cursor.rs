@@ -20,7 +20,7 @@ use crate::engine::parse::flatten;
 use crate::engine::model::types::ColValue;
 use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
 use crate::engine::query::trieql::Kind;
-use crate::engine::internals::{self as db, MemoryDb};
+use crate::engine::inspect::{self as db, MemoryDb};
 
 /// 2024-01-16T00:00:00Z: the instant every query is built against, and the arrival time of
 /// every fixture line - the day after their timestamps, so `SINCE 1d` has rows both sides.

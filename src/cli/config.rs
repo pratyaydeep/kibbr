@@ -18,12 +18,12 @@ use crate::engine::model::infer::EpochWindow;
 // The two groups of settings the crates below this one read, declared where they are
 // read; this module is where they are loaded and what the commands name them by.
 pub use crate::engine::query::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
-pub use crate::engine::database::{Options, Schema, DEFAULT_TIME_COLUMNS};
+pub use crate::engine::database::{Options, Schema};
 
 // What a server runs on is declared in the server crate, where it is read; this module
 // is where each is loaded and what the commands name them by.
 pub use crate::server::settings::{
-    default_ingest_concurrency, duration_words, ApiLimits, Banner, Settings, Storage,
+    default_ingest_concurrency, ApiLimits, Banner, Settings, Storage,
     DEFAULT_COMPACT_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS, DEFAULT_HOST,
     DEFAULT_INGEST_WAIT_MS, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_DECOMPRESSED_BYTES,
     DEFAULT_REQUEST_TIMEOUT, DEFAULT_ROW_GROUP_TIMEOUT_MS, DEFAULT_SHUTDOWN_DEADLINE,

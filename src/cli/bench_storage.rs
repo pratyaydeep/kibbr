@@ -18,7 +18,7 @@ use crate::cli::config::{LoadStorage as _, Schema, Storage};
 use crate::cli::error::{CliError, DetectorErrorKind};
 use crate::cli::load::{self, Asked, LoadError};
 use crate::engine::display::commas;
-use crate::engine::internals::{
+use crate::engine::inspect::{
     self as raw, CompactOptions, FlushKind, SinkError, HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP,
     KIND_SCHEMA, TRAILER_LEN,
 };

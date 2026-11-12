@@ -1076,11 +1076,6 @@ impl DiskStore {
         self.segment_max_bytes
     }
 
-    /// The memory a load's batches may hold before the largest close early.
-    pub fn max_buffer_bytes(&self) -> u64 {
-        self.max_buffer_bytes
-    }
-
     /// Whether the manifest names this load as the source of a commit.
     pub fn was_loaded(&self, load_id: u64) -> bool {
         lock(&self.files).loads.contains(&load_id)
@@ -2336,9 +2331,6 @@ impl Frozen {
 }
 
 impl LeafStore for DiskLeaf {
-    fn template_id(&self) -> u64 {
-        self.template_id
-    }
 
     /// The ordinal is the row's position within its template's UTC day, counted from the
     /// index so it survives a restart.

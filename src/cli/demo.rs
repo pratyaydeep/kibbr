@@ -20,7 +20,7 @@ use crate::engine::parse::lines::{
     read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
 };
 use crate::engine::model::types::ColumnType;
-use crate::engine::internals::{Node, Trie, ROOT_LABEL};
+use crate::engine::inspect::{Node, Trie, ROOT_LABEL};
 use crate::engine::TrieError;
 
 const BRANCH_MID: &str = "├── ";

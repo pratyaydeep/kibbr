@@ -7,10 +7,6 @@
 //! starts with an empty trie, never a hard failure: an operator cannot repair it by hand,
 //! and an empty trie relearns its templates from the next lines.
 
-// `load` has no caller. Kept because the signature is the policy: a function that returns
-// a `Trie` and not a `Result<Trie>` is one no caller can make fatal by accident.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Write;
@@ -225,12 +221,8 @@ fn collect(node: &Arc<Node>, out: &mut Vec<NodeRecord>, depth: usize) -> Result<
 
 // ── Loading ────────────────────────────────────────────────────────────────────────
 
-/// The trie in `path`, or an empty one: there is no `Result`, so no caller can make a
-/// bad snapshot fatal by accident.
-pub(crate) fn load(path: &Path, data_dir: &str) -> Trie {
-    load_reporting(path, data_dir).0
-}
-
+/// The trie in `path`, or an empty one and what was wrong with the file: there is no
+/// `Result`, so no caller can make a bad snapshot fatal by accident.
 pub(crate) fn load_reporting(path: &Path, data_dir: &str) -> (Trie, Option<TrieFileError>) {
     match read(path, data_dir) {
         Ok(trie) => (trie, None),

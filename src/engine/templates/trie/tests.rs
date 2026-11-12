@@ -73,8 +73,11 @@ fn a_failed_append_creates_no_template() {
     let tokens = second.walk_tokens();
     let borrowed: Vec<&str> = tokens.iter().map(String::as_str).collect();
     let walked = trie.walk(&borrowed).expect("the interior nodes may exist");
-    assert!(!walked.is_leaf, "the refused template is a leaf");
-    assert_eq!(walked.template_id, None);
+    assert!(
+        !walked.node.is_leaf.load(Ordering::Acquire),
+        "the refused template is a leaf"
+    );
+    assert!(walked.node.leaf_meta.read().expect("unpoisoned").is_none());
     // Nor is it anywhere a plan looks: the index holds the one template, untouched.
     assert_eq!(trie.keys_agree(), Ok(()));
     assert_eq!(all_ids(&trie), [FIRST_TEMPLATE_ID]);

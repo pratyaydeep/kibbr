@@ -136,7 +136,7 @@ impl<'a> Bytes<'a> {
     }
 
     // Called by the tests and the fuzz harnesses, not by the library.
-    #[cfg_attr(not(any(test, feature = "fuzzing")), allow(dead_code))]
+    #[cfg(any(test, feature = "fuzzing"))]
     pub fn is_empty(&self) -> bool {
         self.remaining() == 0
     }

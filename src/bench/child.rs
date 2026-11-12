@@ -53,7 +53,6 @@ pub struct Server {
     pub start_s: f64,
     /// Copying the loaded directory and reading the copy back against the marker.
     pub copy_ms: f64,
-    pub copy_files: u64,
     pub copy_bytes: u64,
     /// The server's standard error, a file and never a pipe: the farm widens columns on
     /// every start, and a pipe nobody drains blocks the server.
@@ -95,7 +94,6 @@ struct Made {
     copy: PathBuf,
     log: PathBuf,
     copy_ms: f64,
-    copy_files: u64,
     copy_bytes: u64,
 }
 
@@ -114,7 +112,7 @@ impl Server {
         let log = work.join(format!("server-{number}.log"));
 
         let began = Instant::now();
-        let (copy_files, copy_bytes) = match copied(loaded, &copy) {
+        let (_, copy_bytes) = match copied(loaded, &copy) {
             Ok(counts) => counts,
             Err(error) => {
                 let _ = fs::remove_dir_all(&copy);
@@ -123,7 +121,6 @@ impl Server {
         };
         let made = Made {
             copy_ms: began.elapsed().as_secs_f64() * 1e3,
-            copy_files,
             copy_bytes,
             log,
             copy,
@@ -419,7 +416,6 @@ fn launch(mut command: Command, made: Made, limit: Duration) -> Result<Server, S
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         start_s: 0.0,
         copy_ms: made.copy_ms,
-        copy_files: made.copy_files,
         copy_bytes: made.copy_bytes,
         log: made.log,
         child,
@@ -906,7 +902,6 @@ mod tests {
             log: dir.join("server-1.log"),
             copy,
             copy_ms: 4.0,
-            copy_files: 1,
             copy_bytes: 1,
         };
         (dir, made)
@@ -1141,7 +1136,6 @@ mod tests {
             log: dir.join("server-1.log"),
             copy: copy.clone(),
             copy_ms: 0.0,
-            copy_files: 0,
             copy_bytes: 0,
         };
         let missing = dir.join("no-such-kibbr");

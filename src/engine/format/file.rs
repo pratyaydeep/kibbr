@@ -773,12 +773,6 @@ impl Writer {
         self.len
     }
 
-    // Beside `len`, as clippy asked of it while it was public; nothing calls it.
-    #[allow(dead_code)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     /// Bytes are written whole or the file is cut back to where they began.
     fn write(&mut self, bytes: &[u8]) -> Result<(), FormatError> {
         if self.torn {

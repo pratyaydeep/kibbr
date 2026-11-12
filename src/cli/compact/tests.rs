@@ -64,7 +64,7 @@ fn a_compaction_alone_says_so_in_lock_and_a_second_command_is_refused_at_once() 
     );
 
     // Those words under a lock that is held are a compaction still running.
-    let _held = crate::engine::internals::DataLock::acquire(&dir).expect("the lock");
+    let _held = crate::engine::inspect::DataLock::acquire(&dir).expect("the lock");
     let asked = Instant::now();
     match command(args(), None, storage, schema, &mut out) {
         Err(CompactError::Input(why)) => {

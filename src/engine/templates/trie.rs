@@ -120,8 +120,6 @@ pub struct ColumnDef {
 /// stay distinct from "template found, zero rows".
 pub struct WalkResult {
     pub node: Arc<Node>,
-    pub is_leaf: bool,
-    pub template_id: Option<u64>,
 }
 
 impl Node {
@@ -298,6 +296,7 @@ impl Trie {
 
     /// A trie rebuilt from catalog records, in record order: the last column record wins,
     /// and of two template records with one id or one path the first is kept, with a warning.
+    #[cfg(test)]
     pub fn from_catalog(
         data_dir: &str,
         records: &[Record],
@@ -527,10 +526,6 @@ impl Trie {
         records
     }
 
-    pub fn data_dir(&self) -> &str {
-        &self.data_dir
-    }
-
     pub fn root(&self) -> Arc<Node> {
         Arc::clone(&self.root)
     }
@@ -731,37 +726,9 @@ impl Trie {
             };
             node = next;
         }
-        let is_leaf = node.is_leaf.load(Ordering::Acquire);
-        let template_id = node
-            .leaf_meta
-            .read()
-            .ok()?
-            .as_ref()
-            .map(|meta| meta.template_id);
-        Some(WalkResult {
-            node,
-            is_leaf,
-            template_id,
-        })
-    }
-
-    /// Every leaf under `prefix`, since omitted keys in a pattern act as wildcards; an
-    /// unmatched prefix is an empty result, not an error.
-    pub fn walk_prefix(&self, prefix: &[&str]) -> Result<Vec<Arc<Node>>, TrieError> {
-        let mut node = Arc::clone(&self.root);
-        for token in prefix {
-            let next = {
-                let children = read(&node.children)?;
-                find_child(&children, token)
-            };
-            match next {
-                Some(child) => node = child,
-                None => return Ok(Vec::new()),
-            }
-        }
-        let mut leaves = Vec::new();
-        collect_leaves(&node, &mut leaves)?;
-        Ok(leaves)
+        // A leaf whose lock is poisoned is no such path, as a poisoned edge is.
+        drop(node.leaf_meta.read().ok()?);
+        Some(WalkResult { node })
     }
 
     /// Every leaf in the trie, in path order, so independent of the order lines arrived in;
