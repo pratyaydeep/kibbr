@@ -654,7 +654,7 @@ mod tests {
 
         // Only the copy and the cores differ between two servers, and the copy's path
         // reaches the child as one argument whatever it holds.
-        let copy = Path::new("testdata/bench/work-1.noindex/copy 7");
+        let copy = Path::new("target/scratch/bench/work-1.noindex/copy 7");
         let command = command(Path::new("/bin/kibbr"), copy, 4, None);
         let passed: Vec<&OsStr> = command.get_args().collect();
         assert_eq!(passed.len(), argv.len());

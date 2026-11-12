@@ -154,7 +154,8 @@ fn try_group(lines: &[String], level: Level) -> Result<(Vec<String>, RowGroup), 
 }
 
 fn header_of(rg: &RowGroup, columns: usize) -> Header {
-    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX) else {
+    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX)
+    else {
         panic!("not a frame");
     };
     read::header(payload, 0, |_| Some(columns)).expect("header")
@@ -587,7 +588,8 @@ fn header_with(lines: &[String], edit: impl Fn(&[u8]) -> Vec<u8>) -> Result<Head
     let (columns, rg) = group_of(lines);
     let header = header_of(&rg, columns.len());
     let v = columns.iter().position(|c| c == "v").expect("v");
-    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX) else {
+    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX)
+    else {
         panic!("not a frame");
     };
     let fixed = 1 + 8 + 4 + 4 + 8 + 8 + 1 + 8 + 8 + 8 + 4;
@@ -694,7 +696,8 @@ fn a_row_group_past_the_row_cap_is_neither_written_nor_read() {
     );
 
     // The full row group's own header, claiming more rows than it has.
-    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX) else {
+    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX)
+    else {
         panic!("not a frame");
     };
     for rows in [MAX_ROWS + 1, 6_000_000, u32::MAX] {
@@ -898,7 +901,8 @@ fn an_unknown_encoding_is_refused() {
         frame[at] = bad;
         let crc = crate::engine::format::frame::crc32c(&frame[8..8 + len]);
         frame[4..8].copy_from_slice(&crc.to_le_bytes());
-        let Next::Frame { payload, .. } = crate::engine::format::frame::read(&frame, 0, u32::MAX) else {
+        let Next::Frame { payload, .. } = crate::engine::format::frame::read(&frame, 0, u32::MAX)
+        else {
             panic!("not a frame");
         };
         let err = read::header(payload, 0, |_| Some(columns.len())).expect_err("refused");
@@ -1052,7 +1056,9 @@ fn a_row_group_of_arrays_rebuilt_from_its_own_rows_is_the_same_bytes() {
             let mut row = Row::new();
             for (at, column) in cells.iter().enumerate() {
                 let (value, written) = column[r].clone();
-                if !matches!(value, crate::engine::model::types::ColValue::Null) || columns[at] == "v" {
+                if !matches!(value, crate::engine::model::types::ColValue::Null)
+                    || columns[at] == "v"
+                {
                     row.insert_written(columns[at].clone(), value, written);
                 }
             }
@@ -1085,7 +1091,8 @@ fn with_section(columns: &[String], rg: &RowGroup, bytes: &[u8]) -> RowGroup {
     let (at, len, _) = header
         .json_section(column as usize)
         .expect("a section for v");
-    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX) else {
+    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX)
+    else {
         panic!("not a frame");
     };
     let mut payload = payload.to_vec();
@@ -1094,7 +1101,8 @@ fn with_section(columns: &[String], rg: &RowGroup, bytes: &[u8]) -> RowGroup {
     let entry = payload.len() - 13;
     assert_eq!(payload[entry], crate::engine::format::SECTION_JSON);
     payload[entry + 5..entry + 9].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
-    payload[entry + 9..].copy_from_slice(&crate::engine::format::frame::crc32c(bytes).to_le_bytes());
+    payload[entry + 9..]
+        .copy_from_slice(&crate::engine::format::frame::crc32c(bytes).to_le_bytes());
     let mut chunks = rg.chunks[..at as usize].to_vec();
     chunks.extend_from_slice(bytes);
     chunks.extend_from_slice(&rg.chunks[(at + u64::from(len)) as usize..]);
@@ -1116,7 +1124,9 @@ fn a_json_section_no_writer_makes_is_refused() {
     let (columns, rg) = group_of(&lines_of(&values));
     let v = columns.iter().position(|c| c == "v").expect("a column v");
     let read = |rg: &RowGroup| -> Result<Vec<read::Cell>, Bad> {
-        let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX) else {
+        let Next::Frame { payload, .. } =
+            crate::engine::format::frame::read(&rg.frame, 0, u32::MAX)
+        else {
             panic!("not a frame");
         };
         let header = read::header(payload, 0, |_| Some(columns.len()))?;

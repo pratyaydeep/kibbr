@@ -39,7 +39,9 @@ pub use crate::engine::templates::trie::Schema;
 
 /// The defaults of `Storage`'s fields that the stores and the log decide.
 pub use crate::engine::store::disk::DEFAULT_SEGMENT_MAX_BYTES;
-pub use crate::engine::store::{DEFAULT_FAN_ROWS, DEFAULT_MAX_BUFFER_BYTES, DEFAULT_MAX_OPEN_SEGMENTS};
+pub use crate::engine::store::{
+    DEFAULT_FAN_ROWS, DEFAULT_MAX_BUFFER_BYTES, DEFAULT_MAX_OPEN_SEGMENTS,
+};
 pub use crate::engine::wal::{
     DEFAULT_BATCH_LINES as DEFAULT_WAL_BATCH_LINES, DEFAULT_QUEUE_BYTES as DEFAULT_WAL_QUEUE_BYTES,
     DEFAULT_SEGMENT_BYTES as DEFAULT_WAL_SEGMENT_BYTES,
@@ -1133,7 +1135,7 @@ impl Database {
 }
 
 /// The parts a diagnostic command of the command line reads past the handle: see
-/// `internals`.
+/// `inspect`.
 impl Database {
     pub(crate) fn parts(&self) -> (&Trie, &StoreManager) {
         (&self.trie, &self.stores)

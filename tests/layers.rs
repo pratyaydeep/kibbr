@@ -38,7 +38,11 @@ const RULES: &[(&str, &[&str], &[&str])] = &[
         ],
         &[],
     ),
-    ("src/engine.rs", &["crate::server", "crate::cli", "crate::bench"], &[]),
+    (
+        "src/engine.rs",
+        &["crate::server", "crate::cli", "crate::bench"],
+        &[],
+    ),
     (
         "src/server",
         &["clap::", "crate::cli", "crate::bench", "engine::inspect"],
@@ -100,7 +104,9 @@ fn each_layer_names_only_the_layers_under_it() {
     let mut files = Vec::new();
     rust_files(&root().join("src"), &mut files);
     assert!(files.len() > 100, "{} source files", files.len());
-    assert!(files.iter().any(|(name, _)| name == "src/server/handlers.rs"));
+    assert!(files
+        .iter()
+        .any(|(name, _)| name == "src/server/handlers.rs"));
     let mut broken = Vec::new();
     for (name, path) in &files {
         let code = code_of(&fs::read_to_string(path).expect("a source file"));

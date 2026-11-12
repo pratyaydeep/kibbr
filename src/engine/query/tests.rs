@@ -1003,7 +1003,8 @@ fn stored(stores: StoreManager, lines: &[String], flush_after: Option<usize>) ->
     let trie = Trie::new().with_time_columns(schema.time_columns.clone());
     let now = chrono::DateTime::from_timestamp(EPOCH + DAY / 2, 0).expect("an instant");
     for (at, line) in lines.iter().enumerate() {
-        let parsed = crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+        let parsed =
+            crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
         ingest::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
         if flush_after == Some(at + 1) {
             let done = stores.flush_all(crate::engine::store::FlushKind::Tick);
@@ -1520,7 +1521,7 @@ struct Scratch(std::path::PathBuf);
 impl Scratch {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "kibbr-engine-{name}-{}-{:?}",
+            "kibbr-query-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -2015,7 +2016,8 @@ fn reopened(
     let trie = Trie::new().with_time_columns(schema.time_columns.clone());
     let now = chrono::DateTime::from_timestamp(EPOCH + DAY / 2, 0).expect("an instant");
     for (at, line) in known.iter().enumerate() {
-        let parsed = crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+        let parsed =
+            crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
         ingest::ingest_line(&trie, None, &parsed, now).expect("learnt");
     }
     for leaf in plan(&trie, &asking(&[], QueryMode::Count, (None, None))).leaves {
@@ -2024,7 +2026,8 @@ fn reopened(
             .expect("opened");
     }
     for (at, line) in in_memory.iter().enumerate() {
-        let parsed = crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
+        let parsed =
+            crate::engine::parse::flatten::parse_line(line.as_bytes(), at + 1).expect("a line");
         ingest::ingest_line(&trie, Some(&stores), &parsed, now).expect("ingested");
     }
     ingest::MemoryDb {
@@ -2355,8 +2358,12 @@ fn ids_of(plan: &Plan) -> Vec<u64> {
 }
 
 /// One line into a trie: the id of the template it went to, and whether it made it.
-fn taken(trie: &Trie, text: &str) -> Result<(u64, bool), crate::engine::templates::trie::TrieError> {
-    let parsed = crate::engine::parse::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
+fn taken(
+    trie: &Trie,
+    text: &str,
+) -> Result<(u64, bool), crate::engine::templates::trie::TrieError> {
+    let parsed =
+        crate::engine::parse::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
     let (leaf, is_new) = trie.ingest(&parsed, chrono::Utc::now())?;
     let id = leaf
         .leaf_meta
@@ -2853,7 +2860,7 @@ fn generated_pattern(rng: &mut Rng, held: &[String], seen: &[String]) -> Vec<Mat
 fn over_generated_tries(name: &str, seeds: u64, mut ask: impl FnMut(&Trie, &Query)) {
     let now = chrono::Utc::now();
     let dir =
-        std::env::temp_dir().join(format!("kibbr-engine-plans-{}-{name}", std::process::id()));
+        std::env::temp_dir().join(format!("kibbr-query-plans-{}-{name}", std::process::id()));
     let mut put = |trie: &Trie, rng: &mut Rng, seen: &[String]| {
         let mut held: Vec<String> = Vec::new();
         for leaf in trie.all_leaves() {
@@ -2992,8 +2999,8 @@ fn plans_made_beside_inserts_are_the_walks_plans() {
                     ""
                 };
                 let text = format!(r#"{{"event":"e{event}","f{field}":1,"n":{number}{lvl}}}"#);
-                let parsed =
-                    crate::engine::parse::flatten::parse_line(text.as_bytes(), 1).expect("a valid line");
+                let parsed = crate::engine::parse::flatten::parse_line(text.as_bytes(), 1)
+                    .expect("a valid line");
                 let (leaf, is_new) = trie
                     .ingest(&parsed, chrono::Utc::now())
                     .expect("the line is taken");
@@ -3111,13 +3118,14 @@ fn a_plan_holds_nothing_the_catalog_refused() {
     use crate::engine::templates::catalog::{self, Catalog};
     use crate::engine::templates::trie::TrieError;
     let dir = std::env::temp_dir().join(format!(
-        "kibbr-engine-plans-{}-failed-append",
+        "kibbr-query-plans-{}-failed-append",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
-    let parsed =
-        |line: &str| crate::engine::parse::flatten::parse_line(line.as_bytes(), 1).expect("a valid line");
+    let parsed = |line: &str| {
+        crate::engine::parse::flatten::parse_line(line.as_bytes(), 1).expect("a valid line")
+    };
     let trie = Trie::new_in(&dir.display().to_string());
     let good = Catalog::open(&catalog::path_in(&dir), &mut |_| {}).expect("open");
     trie.attach_catalog(good.0);
@@ -3149,8 +3157,9 @@ fn a_plan_holds_nothing_the_catalog_refused() {
 /// is planned, and a widening of it shows in the next plan.
 #[test]
 fn a_plan_reads_through_a_poisoned_key_index() {
-    let parsed =
-        |line: &str| crate::engine::parse::flatten::parse_line(line.as_bytes(), 1).expect("a valid line");
+    let parsed = |line: &str| {
+        crate::engine::parse::flatten::parse_line(line.as_bytes(), 1).expect("a valid line")
+    };
     let trie = Trie::new();
     let now = chrono::Utc::now();
     trie.ingest(&parsed(r#"{"user":7}"#), now)

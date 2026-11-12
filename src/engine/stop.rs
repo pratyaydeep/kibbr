@@ -68,7 +68,11 @@ impl Stop {
 
     /// `Err(StoreError::Stopped)` once set: what a scan asks between two pieces of work.
     pub fn check(&self) -> Result<(), StoreError> {
-        let Some(told) = self.0.as_ref().filter(|told| told.set.load(Ordering::Relaxed)) else {
+        let Some(told) = self
+            .0
+            .as_ref()
+            .filter(|told| told.set.load(Ordering::Relaxed))
+        else {
             return Ok(());
         };
         if let Some(seen) = &told.seen {

@@ -42,17 +42,19 @@
 # again: the script says so and goes on to the next. Delete the entry to measure it again.
 # The file is rewritten after each source, so a run that stops keeps what it measured.
 # Each result is also written as <tag>.md, in a directory named for the output without its
-# `.json`: scripts/bench/results/compression/postgresql.md beside scripts/bench/results/compression.json.
+# `.json`: scripts/bench/results/compression/postgresql.md beside
+# scripts/bench/results/compression.json.
 #
-# Downloads, the logs read out of them and each run's raw output go under target/scratch/compression/<tag>/,
-# which is git-ignored scratch. A download that is there already is used, not fetched again.
+# Downloads, the logs read out of them and each run's raw output go under
+# target/scratch/compression/<tag>/, which is git-ignored scratch. A download that is there
+# already is used, not fetched again.
 #
-#   scripts/bench/compression.py                                   # every source in scripts/bench/compression.json
-#   scripts/bench/compression.py --tag postgresql                  # that one only
+#   scripts/bench/compression.py                    # every source in the --input file
+#   scripts/bench/compression.py --tag postgresql   # that one only
 #   scripts/bench/compression.py --input mine.json --output out.json --no-build
 #
-#   --input FILE    the sources                                 [scripts/bench/compression.json]
-#   --output FILE   the results                                 [scripts/bench/results/compression.json]
+#   --input FILE    the sources                         [scripts/bench/compression.json]
+#   --output FILE   the results                         [scripts/bench/results/compression.json]
 #   --tag TAG       measure only this source; given more than once, these sources
 #   --bin PATH      the kibbr to run; nothing is built          [target/release/kibbr, built]
 #   --no-build      use target/release/kibbr as it is
@@ -660,7 +662,8 @@ def machine():
                         break
         except OSError:
             pass
-    # What the box is, as whoever started it says: scripts/bench/cloud/ sets it to the instance type.
+    # What the box is, as whoever started it says: scripts/bench/cloud/ sets it to the
+    # instance type.
     if os.environ.get("KIBBR_MACHINE"):
         m["host"] = os.environ["KIBBR_MACHINE"]
     return m

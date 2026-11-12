@@ -128,10 +128,13 @@ impl ColValue {
         }
     }
 
-    /// The value as a query prints it: `to_json`, except a `Datetime` is RFC 3339 through `display`.
+    /// The value as a query prints it: `to_json`, except a `Datetime` is RFC 3339 through
+    /// `display`.
     pub fn printed(&self) -> serde_json::Value {
         match self {
-            ColValue::Datetime(ns) => serde_json::Value::String(crate::engine::display::rfc3339(*ns)),
+            ColValue::Datetime(ns) => {
+                serde_json::Value::String(crate::engine::display::rfc3339(*ns))
+            }
             other => other.to_json(),
         }
     }

@@ -14,10 +14,11 @@ cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Use `--all-features`: without it the fuzz regressions are not replayed and the bench
-tests do not run. The integration tests are one binary, `e2e`, a module a topic; to run
-one topic give its module path, `cargo test --all-features --test e2e -- load::`, and to
-run one area's unit tests its path in the crate, `cargo test --lib store::`.
+Use `--all-features`: without it `kibbr-bench` (the `bench` feature) is not built and its
+tests, `bench::speed`, do not run; the fuzz regressions are replayed either way. The
+integration tests are one binary, `e2e`, a module a topic; to run one topic give its
+module path, `cargo test --all-features --test e2e -- load::`, and to run one area's unit
+tests its path in the crate, `cargo test --lib store::`.
 
 Try the binary in one minute: see "Try it in a minute" in [README.md](README.md).
 
@@ -43,6 +44,7 @@ From the repository root:
 cargo build --release
 cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets -- -D warnings
 scripts/check/agree.sh
 ROUNDS=3 scripts/fault/crash_test.sh
 ```
@@ -64,7 +66,7 @@ a killed process, two builds or a differential run is a script in `scripts/fault
   line and `// SPDX-License-Identifier: AGPL-3.0-only`. `tests/layers.rs` checks it.
 - The engine names no async runtime, no HTTP and no command line, and the server names no
   command line: `tests/layers.rs`, which reads the source.
-- clippy with `-D warnings`, on all targets and all features.
+- clippy with `-D warnings`, on all targets, with every feature and with none.
 
 ## The web console
 

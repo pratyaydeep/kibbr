@@ -1,18 +1,18 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `kibbr bench --lines N --profile farm`: this build's speed on one farm day, measured the
+//! `kibbr-bench --lines N --profile farm`: this build's speed on one farm day, measured the
 //! same way every time, so that the number a change is held to is one command's.
 //! A unit is one server's work on its own copy of the loaded bytes; no server is shared,
 //! and a unit disturbed by swap or another kibbr process is done again. Frozen once a
 //! result is saved as a baseline: the module's files are digested into every result.
 
+pub mod child;
 pub mod corpus;
 pub mod host;
 pub mod phases;
 pub mod plan;
 pub mod report;
-pub mod child;
 pub mod wire;
 
 use std::fs;
@@ -129,7 +129,7 @@ pub const KEY: &str = r#"COUNT LOG {"level": *}"#;
 pub const SCAN: &str = r#"COUNT LOG {"status":"200"}"#;
 pub const SCANKEY: &str = r#"COUNT LOG {"status": *}"#;
 
-/// What `kibbr bench --lines N --profile farm` was asked for; the profile is refused by
+/// What `kibbr-bench --lines N --profile farm` was asked for; the profile is refused by
 /// the command line before this is built.
 pub struct Args {
     /// The `kibbr` that is measured; `None` is the one beside this binary.
@@ -148,7 +148,7 @@ pub struct Args {
     pub unchecked: bool,
 }
 
-/// What stops `kibbr bench`, each sentence saying what was met and what to do about it:
+/// What stops `kibbr-bench`, each sentence saying what was met and what to do about it:
 /// the command is run rarely and by hand.
 #[derive(Debug, Error)]
 pub enum SpeedError {
@@ -414,8 +414,7 @@ struct Start {
 fn kibbr_beside(bench: &Path, named: Option<&Path>) -> Result<PathBuf, SpeedError> {
     let exe = match named {
         Some(named) => named.to_path_buf(),
-        None => bench
-            .with_file_name(format!("kibbr{}", std::env::consts::EXE_SUFFIX)),
+        None => bench.with_file_name(format!("kibbr{}", std::env::consts::EXE_SUFFIX)),
     };
     if !exe.is_file() {
         return Err(SpeedError::Host(format!(
@@ -1225,8 +1224,8 @@ fn odd(text: &str) -> Result<usize, String> {
 /// command has them, then `--plan-only`, `--table` or the measurement.
 pub fn main() -> ExitCode {
     let cli = <Cli as clap::Parser>::parse();
-    let result = crate::cli::settle(cli.config.as_deref(), cli.log_level, cli.log_format)
-        .and_then(|_| {
+    let result =
+        crate::cli::settle(cli.config.as_deref(), cli.log_level, cli.log_format).and_then(|_| {
             let stdout = io::stdout();
             let mut out = io::BufWriter::new(stdout.lock());
             let result = command(cli, &mut out).map_err(CliError::from);
@@ -1299,8 +1298,8 @@ mod tests {
             "kibbr bench measures the farm profile only"
         );
         assert_eq!(
-            SpeedError::OutExists(PathBuf::from("testdata/bench/baseline.json")).to_string(),
-            "testdata/bench/baseline.json exists; a saved result is not written over"
+            SpeedError::OutExists(PathBuf::from("target/scratch/bench/baseline.json")).to_string(),
+            "target/scratch/bench/baseline.json exists; a saved result is not written over"
         );
         // True of a run, which saved its result, and of `--table`, which saves none.
         assert_eq!(

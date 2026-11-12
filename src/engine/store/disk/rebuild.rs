@@ -607,9 +607,11 @@ impl DiskStore {
             Ok(()) => {}
             // Refused before a byte was written: nothing is committed.
             Err(e @ manifest::ManifestError::Serialize { .. })
-            | Err(e @ manifest::ManifestError::Log(crate::engine::format::frame::LogError::Torn { .. })) => {
-                return Err(failed(job.day, e.into()))
-            }
+            | Err(
+                e @ manifest::ManifestError::Log(crate::engine::format::frame::LogError::Torn {
+                    ..
+                }),
+            ) => return Err(failed(job.day, e.into())),
             Err(source) => {
                 // A write or flush failed partway. Unless the log's cut of the record is itself
                 // flushed, the record may be on disk whole, and then it is the commit.

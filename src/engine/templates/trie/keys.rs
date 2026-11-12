@@ -226,8 +226,8 @@ fn ascending(name: &str, list: &[Posting]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::templates::trie::ColumnDef;
     use crate::engine::model::types::TimeSource;
+    use crate::engine::templates::trie::ColumnDef;
 
     fn template(columns: &[(&str, Option<ColumnType>)]) -> Arc<Template> {
         let at = chrono::DateTime::from_timestamp(1_705_314_600, 0).expect("a valid timestamp");

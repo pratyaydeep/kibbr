@@ -9,25 +9,25 @@
 //! The server and the command line each hold one `Database`; the machinery is private to
 //! this module, and `inspect` holds what the command line's diagnostics read past it.
 
-pub mod model;
-pub mod parse;
-pub mod display;
-pub mod rng;
-pub mod error;
-mod lock;
-mod format;
-mod templates;
-mod store;
-mod ingest;
-mod wal;
-pub mod load;
-pub mod query;
 pub mod database;
+pub mod display;
+pub mod error;
+mod format;
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzzing;
+mod ingest;
+pub mod load;
+mod lock;
+pub mod model;
+pub mod parse;
+pub mod query;
+pub mod rng;
+pub mod stop;
+mod store;
+mod templates;
 #[cfg(test)]
 mod testkit;
-pub mod stop;
+mod wal;
 
 pub use database::compaction;
 pub use database::{CompactRefused, Database, LineError, Opener, Options, Stats, Storage};
@@ -36,17 +36,17 @@ pub use error::Error;
 // The values the handle takes and hands back that are not its own: a query's stop and
 // what it fails with, a flush's summary, the log's numbers, the scan threads a server lets
 // go last, and how a UTC day and a line's limit are said.
-pub use parse::lines::MAX_LINE_BYTES;
 pub use ingest::{load_lines, row_of, LoadStats, ReadError};
 pub use lock::{holder, Holder, LockError, LOCK_FILE};
 pub use model::row::Row;
-pub use store::{present, system_time};
-pub use templates::trie::TrieError;
-pub use store::disk::{day_name, day_of_name, refuse_other_versions, STAGING_DIR};
-pub use store::manifest::path_in as manifest_path;
-pub use store::fan::Fan;
+pub use parse::lines::MAX_LINE_BYTES;
 pub use stop::Stop;
+pub use store::disk::{day_name, day_of_name, refuse_other_versions, STAGING_DIR};
+pub use store::fan::Fan;
+pub use store::manifest::path_in as manifest_path;
+pub use store::{present, system_time};
 pub use store::{FlushSummary, StoreError};
+pub use templates::trie::TrieError;
 pub use wal::Stats as WalStats;
 
 /// What the command line's diagnostic commands reach past the handle for: `demo` draws the
@@ -79,8 +79,8 @@ pub(crate) mod inspect {
     /// What the server's and the commands' tests reach a database's parts with.
     #[cfg(test)]
     pub(crate) use crate::engine::{
-        lock::DataLock,
-        store::disk::DATA_DIR, store::DEFAULT_FAN_ROWS, templates::catalog::Catalog, wal::Wal,
+        lock::DataLock, store::disk::DATA_DIR, store::DEFAULT_FAN_ROWS,
+        templates::catalog::Catalog, wal::Wal,
     };
 
     /// The log's numbers, and the size a body's lines come to in it.

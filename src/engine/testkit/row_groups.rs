@@ -6,9 +6,6 @@
 //! Three sources: every file under `tests/data/format/`, row groups the builder makes, and
 //! pieces laid out plain by hand, which a file from before the encodings still holds.
 
-// What this crate's tests build from; with `test-support` alone nothing in the library
-// calls it.
-
 use std::path::{Path, PathBuf};
 
 use crate::engine::format::build::{build, schema_of, Level};
@@ -86,7 +83,8 @@ pub(crate) fn of_rows(name: &str, rows: &[Row]) -> Sample {
         Level::Live,
     )
     .expect("rows the builder takes");
-    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX) else {
+    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX)
+    else {
         panic!("the builder's header is not a frame");
     };
     let header = read::header(payload, 0, |_| Some(columns.len())).expect("header");

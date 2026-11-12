@@ -217,8 +217,8 @@ impl TimeRange {
     }
 }
 
-/// A query, already built: the flags and `crate::engine::query::trieql` build the same struct, so the
-/// engine has one input whichever surface asked.
+/// A query, already built: the flags and `crate::engine::query::trieql` build the same
+/// struct, so the engine has one input whichever surface asked.
 #[derive(Debug)]
 pub struct Query {
     pub matches: Vec<Match>,

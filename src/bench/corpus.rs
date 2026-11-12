@@ -1617,7 +1617,7 @@ mod tests {
 
     #[test]
     fn a_volume_must_have_room_for_every_line_before_anything_is_built() {
-        let dir = Path::new("testdata/bench");
+        let dir = Path::new("target/scratch/bench");
         // 2,000 bytes a line: 2 GB at the measurement's size.
         assert!(enough(dir, 2_000_000_000, 1_000_000).is_ok());
         let told = enough(dir, 1_999_999_999, 1_000_000)
@@ -1625,7 +1625,7 @@ mod tests {
             .to_string();
         assert_eq!(
             told,
-            "the volume that holds testdata/bench has 1,999,999,999 bytes free, and kibbr \
+            "the volume that holds target/scratch/bench has 1,999,999,999 bytes free, and kibbr \
              bench --lines 1,000,000 needs 2,000,000,000 (2,000 a line) before it builds \
              anything. Make room on it, or name a directory on another volume with --dir"
         );

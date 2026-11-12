@@ -9,16 +9,25 @@ One entry per tag, newest first.
   no longer published; their last versions on crates.io stay as they are. The library
   promises no API: what it exports is for the binary, the fuzzers and the tests.
   [ARCHITECTURE.md](ARCHITECTURE.md) is the map.
-- **Log target.** The server's own log lines are under `kibbr::server::*`, not
-  `kibbr_server::*`: a `RUST_LOG`-style filter or a log pipeline that matched the old
-  target needs the new one. Nothing else a user sees changes.
+- **Log targets.** The `target` of each line kibbr logs (`--log-format json`) is the module
+  that logged it, and the modules moved: `kibbr_server::*` is `kibbr::server::*` (the
+  server's `lifecycle` is `runtime`, its `compaction` is `compactor`), `kibbr_engine::*` is
+  `kibbr::engine::*` (`rows::*` is `store::*`, `rows::scan_threads` is `store::fan`,
+  `lifecycle` is `database::lifecycle`), and the commands' `kibbr::cmd::*` and
+  `kibbr::tools::*` are `kibbr::cli::*`. A log pipeline that matched an old target needs the
+  new one. The messages, levels and fields are unchanged; nothing else a user sees changes.
+- **`kibbr bench` is `kibbr-bench`**, a binary of its own built with `--features bench`
+  (`cargo build --release --features bench`). It measures the `kibbr` beside it, or the one
+  `--kibbr PATH` names; its flags are the old subcommand's, and `--plan-only` prints the
+  plan. The image's `bench` target runs it. `kibbr bench-storage` is unchanged.
 - The integration tests are one binary, `cargo test --test e2e`, over a shared harness;
-  `kibbr bench`'s tests need `--features bench`. Test data is `tests/data/`
-  (`testdata/fixture.ndjson` is `tests/data/type_ladder.ndjson`); every file of
-  `tests/data/hostile/` is now loaded by a test. Six scripts under `scripts/check/` and
-  `scripts/fault/` became tests.
+  `kibbr-bench`'s tests need `--features bench`, and the fuzz regressions are replayed by a
+  plain `cargo test`. Test data is `tests/data/` (`testdata/fixture.ndjson` is
+  `tests/data/type_ladder.ndjson`); every file of `tests/data/hostile/` is now loaded by a
+  test. Six scripts under `scripts/check/` and `scripts/fault/` became tests, and three
+  (`no_internals.sh`, `cmd_no_tools.sh`, `spdx.sh`) became `tests/layers.rs`.
 - `bench/` is `scripts/bench/`; saved native results are in `scripts/bench/results/native/`.
-  What the scripts and `kibbr bench` generate goes under `target/scratch/`, not `testdata/`.
+  What the scripts and `kibbr-bench` generate goes under `target/scratch/`, not `testdata/`.
 - `fuzz/corpus/` is no longer in git; `fuzz/regressions/` still is.
 
 ## 0.4.0 — 2026-11-12

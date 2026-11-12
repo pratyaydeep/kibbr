@@ -56,7 +56,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 # The settings file, `--config` (src/cli/config.rs): the parser and serde only, nothing writes TOML.
 toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"] }
-# The process's own log, written by one subscriber (src/cli/logging.rs); no attribute macro, so no syn.
+# The process's own log, written by one subscriber (src/cli/logging.rs); no attribute macro,
+# so no syn.
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 tokio-util = "0.7.19"

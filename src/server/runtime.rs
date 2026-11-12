@@ -171,7 +171,9 @@ async fn serve(
         log_warn(&format!(
             "shutdown deadline - {left} request(s) still in flight after {}; each is \
              answered 503 and let go",
-            crate::server::settings::duration_words(server.api.shutdown_deadline.unwrap_or_default())
+            crate::server::settings::duration_words(
+                server.api.shutdown_deadline.unwrap_or_default()
+            )
         ));
         server.cut_off.cancel();
         match tokio::time::timeout(CUT_OFF_GRACE, &mut serving).await {

@@ -45,7 +45,11 @@ fn held(trie: &Trie, id: u64) -> Arc<Template> {
 fn a_failed_append_creates_no_template() {
     let dir = scratch("failed-append");
     let trie = Trie::new_in(&dir.display().to_string());
-    let good = Catalog::open(&crate::engine::templates::catalog::path_in(&dir), &mut |_| {}).expect("open");
+    let good = Catalog::open(
+        &crate::engine::templates::catalog::path_in(&dir),
+        &mut |_| {},
+    )
+    .expect("open");
     trie.attach_catalog(good.0);
     let now = Utc::now();
 

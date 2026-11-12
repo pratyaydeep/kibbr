@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use super::*;
 use super::visit::{render_count, render_row, shown_count};
+use super::*;
 use crate::engine::testkit::values;
 
 /// A backend whose leaves fail to open until `shut` is cleared: what a `chmod 000`
@@ -490,8 +490,14 @@ fn a_term_reads_a_stored_row_of_an_integer_column_as_it_reads_the_rendered_one()
     // ...though each finds the row while the column is still a date.
     assert!(zulu.matches_in(&epoch, Shown::Stored) && millis.matches_in(&epoch, Shown::Stored));
     // The time such a row shows is still the instant it was stored as.
-    assert_eq!(crate::engine::store::effective_ts(&shown, "v"), Some(INSTANT));
-    assert_eq!(crate::engine::store::effective_ts(&epoch, "v"), Some(INSTANT));
+    assert_eq!(
+        crate::engine::store::effective_ts(&shown, "v"),
+        Some(INSTANT)
+    );
+    assert_eq!(
+        crate::engine::store::effective_ts(&epoch, "v"),
+        Some(INSTANT)
+    );
 
     // A date that arrived as RFC 3339 is no integer: it is not rendered, and stays a date.
     let dated = holding(ColValue::Datetime(INSTANT), None);

@@ -24,8 +24,11 @@ One Cargo package, `kibbr`, in three layers, each naming only the ones under it:
 - `src/cli.rs` and `src/cli/`: the command line, one file a subcommand. `src/main.rs` sets
   the allocator (mimalloc; why is at `#[global_allocator]`) and calls `kibbr::run()`.
 
-Beside them, behind features: `src/bench.rs` and `src/bench/` (`kibbr bench`, feature
-`bench`), and `src/fuzzing.rs` and `src/fuzzing/` (the fuzz harnesses, feature `fuzzing`).
+Beside them, behind features: `src/bench.rs` and `src/bench/` (the `kibbr-bench` binary,
+`src/bin/kibbr-bench.rs`, feature `bench`), and `src/fuzzing.rs` and `src/fuzzing/` (the
+fuzz harnesses, feature `fuzzing`, and always in the crate's own tests). `src/lib.rs` keeps
+all of it private; its few `#[doc(hidden)]` exports are for the two binaries, `fuzz/` and
+`tests/` (`kibbr::testing`).
 Every command holds one `Database`, and opens a data directory no other way.
 
 Write path (engine paths are under `src/engine/`):
@@ -90,7 +93,8 @@ Query path:
 | `src/server.rs`, `src/server/` | router, handlers, the body of a request, flush clock and shutdown (`runtime.rs`), `/compact` (`compactor.rs`), the console `viewer.html` |
 | `src/cli.rs` | the clap definitions and the dispatch |
 | `src/cli/` | one file a subcommand (`serve.rs`, `load.rs`, `query.rs` with `query/oracle.rs`, `gen_logs.rs`, ...), and `config.rs` (settings), `logging.rs` (kibbr's own log), `http.rs` (the small client) |
-| `src/bench.rs`, `src/bench/` | `kibbr bench`, built only with `--features bench` (`src/bin/kibbr-bench.rs`) |
+| `src/bench.rs`, `src/bench/` | `kibbr-bench` (`src/bin/kibbr-bench.rs`), built only with `--features bench`; it measures the `kibbr` beside it |
+| `src/fuzzing.rs`, `src/fuzzing/` | the fuzz harnesses `fuzz/` calls as `kibbr::fuzzing::<target>::run`, and the replay of `fuzz/regressions/` (a unit test) |
 | `tests/main.rs` | the one integration-test binary, `e2e`: a module a topic, `harness.rs` shared, `layers.rs` the layer rules |
 | `tests/data/` | `type_ladder.ndjson` (labelled types), `format/` (format vectors), `hostile/`, `compat/<sha>/` (data directories older builds wrote); its `README.md` says why each is there |
 | `scripts/check/`, `scripts/fault/`, `scripts/measure/`, `scripts/bench/` | differential checks; kill and fault tests; measurements; benchmarks (all on the release binary) |
@@ -146,5 +150,6 @@ killed process, two builds or a differential run is a script in `scripts/fault/`
 `scripts/check/` ([scripts/README.md](scripts/README.md)).
 
 ```
-cargo test --all-features   # also replays the fuzz regressions and runs the bench tests
+cargo test                  # unit tests (the fuzz regressions among them) and e2e
+cargo test --all-features   # also bench::speed, which runs kibbr-bench
 ```

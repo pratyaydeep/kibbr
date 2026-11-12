@@ -1189,9 +1189,11 @@ impl DiskStore {
             Ok(()) => {}
             // Refused before a byte was written: nothing is committed.
             Err(e @ manifest::ManifestError::Serialize { .. })
-            | Err(e @ manifest::ManifestError::Log(crate::engine::format::frame::LogError::Torn { .. })) => {
-                return Err(e.into())
-            }
+            | Err(
+                e @ manifest::ManifestError::Log(crate::engine::format::frame::LogError::Torn {
+                    ..
+                }),
+            ) => return Err(e.into()),
             // A write or a flush failed partway: the record may be on disk whole, and then
             // it is the commit. Only the next start can tell, so the staged files stay.
             Err(source) => {

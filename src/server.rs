@@ -338,12 +338,12 @@ impl Drop for InFlight {
     }
 }
 
+mod body;
 mod compactor;
 mod error;
 mod handlers;
-mod body;
-mod runtime;
 mod routes;
+mod runtime;
 pub mod settings;
 #[cfg(test)]
 mod tests;
@@ -356,8 +356,8 @@ pub use settings::{ApiLimits, Banner, Limits, Settings, BANNER};
 #[cfg(test)]
 use settings::{Schema, Storage};
 
+use body::*;
 use compactor::*;
 use handlers::*;
-use body::*;
-use runtime::*;
 use routes::*;
+use runtime::*;

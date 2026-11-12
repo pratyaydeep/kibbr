@@ -3,7 +3,7 @@
 
 //! kibbr's own log: every lifecycle line, warning and error is a `tracing` event, and the
 //! one subscriber here writes each to stderr as a line of text or of JSON. As text a line
-//! stays byte for byte what scripts, tests and `kibbr bench` read off a server's stderr.
+//! stays byte for byte what scripts, tests and `kibbr-bench` read off a server's stderr.
 //! A command's data on stdout is not a log line. A subscriber of our own rather than
 //! `tracing-subscriber`: a write that fails has to be dropped and not panic - see `write`.
 

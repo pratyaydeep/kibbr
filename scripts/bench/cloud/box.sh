@@ -88,9 +88,9 @@ finish() {
 trap finish EXIT
 
 # A box that hangs bills until someone notices; this one stops at the hour it was given.
-[ "$KEEP" = 1 ] || shutdown -h "+$((MAX_HOURS * 60))" "kibbr bench: past KIBBR_MAX_HOURS"
+[ "$KEEP" = 1 ] || shutdown -h "+$((MAX_HOURS * 60))" "kibbr benchmark box: past KIBBR_MAX_HOURS"
 
-say "kibbr bench box: job $JOB, run $RUN, $REPO at $REF, results to $BUCKET"
+say "kibbr benchmark box: job $JOB, run $RUN, $REPO at $REF, results to $BUCKET"
 
 # ── Set up ──
 STEP=setup

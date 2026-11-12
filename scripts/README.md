@@ -27,9 +27,9 @@ seed of the generated lines.
 `NEED_FAN_OUTS=1` fail at none.
 
 The layering rules (what the engine and the server may name) and the SPDX header on every
-`.rs` file are not scripts: they are `tests/layers.rs`, run by `cargo test`. Nor are what
-`order_ids.sh`, `date_forms.sh`, `received_at.sh` and `time_columns.sh` held, and
-`fault/lost_trie.sh` and `fault/bad_version.sh`: they are `tests/values.rs` and
+`.rs` file are not scripts: they are `tests/layers.rs`, run by `cargo test`. Nor are the
+checks of order ids, date forms, the `received_at` column, time columns, a lost
+`trie.json` and a data directory of another version: they are in `tests/values.rs` and
 `tests/storage.rs`.
 
 ## fault/ - something is taken away

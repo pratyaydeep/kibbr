@@ -117,8 +117,11 @@ impl Store {
             ..crate::engine::Storage::default()
         };
         let lock = crate::engine::lock::DataLock::acquire(&base).expect("lock");
-        let (trie, stores) = crate::engine::database::lifecycle::open_durable(&storage, &crate::engine::database::Schema::default())
-            .expect("open the data directory");
+        let (trie, stores) = crate::engine::database::lifecycle::open_durable(
+            &storage,
+            &crate::engine::database::Schema::default(),
+        )
+        .expect("open the data directory");
         Self {
             trie,
             stores,

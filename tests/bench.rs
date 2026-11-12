@@ -311,8 +311,8 @@ mod storage {
             let stdout = String::from_utf8(ran.stdout).expect("stdout was not utf-8");
             let lines: Vec<&str> = stdout.lines().collect();
 
-            // The line scripts/bench/compression.py's TIMES reads: gzip's seconds, zstd's threads and
-            // seconds. Not a table row: it does not start with a compressor's name.
+            // The line scripts/bench/compression.py's TIMES reads: gzip's seconds, zstd's
+            // threads and seconds. Not a table row: it does not start with a compressor's name.
             let times = lines
                 .iter()
                 .find(|line| line.starts_with("  gzip -9 ran on "))

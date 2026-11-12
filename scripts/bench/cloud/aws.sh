@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A kibbr bench on a fresh EC2 box, from the laptop: the box builds kibbr, runs one job,
+# A kibbr benchmark on a fresh EC2 box, from the laptop: the box builds kibbr, runs one job,
 # uploads what it measured to S3 and terminates itself. No SSH, no open port, nothing to
 # remember to switch off. What the box runs is scripts/bench/cloud/box.sh; this is everything
 # around it.
@@ -84,7 +84,7 @@ setup() {
   if aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
     echo "role: there"
   else
-    aws iam create-role --role-name "$ROLE" --description "kibbr bench box: write its results, nothing else" \
+    aws iam create-role --role-name "$ROLE" --description "kibbr benchmark box: write its results, nothing else" \
       --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
       >/dev/null || die "could not make the role"
     echo "role: made"

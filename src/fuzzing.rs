@@ -40,7 +40,11 @@ mod tests {
                 }
                 let data = fs::read(&path).unwrap();
                 let caught = std::panic::catch_unwind(|| run(&data));
-                assert!(caught.is_ok(), "{} breaks the {target} target", path.display());
+                assert!(
+                    caught.is_ok(),
+                    "{} breaks the {target} target",
+                    path.display()
+                );
             }
         }
     }

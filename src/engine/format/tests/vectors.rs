@@ -134,7 +134,8 @@ fn the_builder_makes_the_vectors_row_groups_into_the_same_pieces() {
     let stream = u64::from_le_bytes(*b"WAL12345");
     // A row group's header frame, read: the schema has as many columns as its directory.
     let header = |frame: &[u8], columns: usize| {
-        let Next::Frame { payload, .. } = crate::engine::format::frame::read(frame, 0, u32::MAX) else {
+        let Next::Frame { payload, .. } = crate::engine::format::frame::read(frame, 0, u32::MAX)
+        else {
             panic!("not a frame");
         };
         read::header(payload, 0, |_| Some(columns)).expect("header")
@@ -277,7 +278,8 @@ fn the_builder_makes_the_encodings_vector_body_for_body() {
         Level::Finished,
     )
     .expect("build");
-    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX) else {
+    let Next::Frame { payload, .. } = crate::engine::format::frame::read(&rg.frame, 0, u32::MAX)
+    else {
         panic!("not a frame");
     };
     let got = read::header(payload, 0, |_| Some(columns.len())).expect("header");
@@ -286,7 +288,9 @@ fn the_builder_makes_the_encodings_vector_body_for_body() {
         (want.row_count, want.min_time, want.max_time, want.source)
     );
     let body = |dir: &read::ChunkDir, stored: &[u8]| match dir.compression {
-        crate::engine::format::ZSTD => zstd::bulk::decompress(stored, dir.body_len as usize).expect("zstd"),
+        crate::engine::format::ZSTD => {
+            zstd::bulk::decompress(stored, dir.body_len as usize).expect("zstd")
+        }
         _ => stored.to_vec(),
     };
     let area = (entry.offset + u64::from(entry.frame_len)) as usize;

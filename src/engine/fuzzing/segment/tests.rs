@@ -728,7 +728,8 @@ fn every_cut_of_a_vector_reads_clean() {
     }
 }
 
-/// Writes the seed corpus: `cargo test --features fuzzing --lib engine::fuzzing::segment -- --ignored`.
+/// Writes the seed corpus:
+/// `cargo test --features fuzzing --lib engine::fuzzing::segment -- --ignored`.
 #[test]
 #[ignore = "writes fuzz/corpus/segment"]
 fn write_the_seed_corpus() {

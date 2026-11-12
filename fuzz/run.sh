@@ -11,7 +11,8 @@
 # 512MB in one malloc is the subject's.
 #
 # A crasher is fixed, then committed under fuzz/regressions/<target>/ with a name that
-# says what it broke; tests/fuzz_regressions.rs replays those, and a local corpus, on stable.
+# says what it broke; `cargo test` replays those, and a local corpus, on stable
+# (src/fuzzing.rs).
 set -u
 cd "$(dirname "$0")"
 secs=${1:-1800}

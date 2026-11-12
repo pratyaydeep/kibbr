@@ -357,7 +357,6 @@ impl Catalog {
     pub fn len(&self) -> u64 {
         self.log.len()
     }
-
 }
 
 /// The path of the catalog inside `data_dir`.

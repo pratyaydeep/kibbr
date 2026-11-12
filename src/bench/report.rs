@@ -3822,7 +3822,7 @@ mod tests {
             out: None,
             baseline: None,
             label: None,
-            dir: PathBuf::from("testdata/bench"),
+            dir: PathBuf::from("target/scratch/bench"),
             runs: 3,
             samples: 100,
             body_lines: 2_000,
@@ -3928,14 +3928,14 @@ mod tests {
 
     fn baseline() -> Saved {
         Saved {
-            path: PathBuf::from("testdata/bench/baseline.json"),
+            path: PathBuf::from("target/scratch/bench/baseline.json"),
             file: result("baseline", BASELINE_SHA, &baseline_numbers()),
         }
     }
 
     fn columns() -> Saved {
         Saved {
-            path: PathBuf::from("testdata/bench/after-1.json"),
+            path: PathBuf::from("target/scratch/bench/after-1.json"),
             file: result(
                 "after 1 (columns)",
                 "77aa3e12ab77000000000000000000000000beef",
@@ -3946,7 +3946,7 @@ mod tests {
 
     fn parallel() -> Saved {
         Saved {
-            path: PathBuf::from("testdata/bench/after-2.json"),
+            path: PathBuf::from("target/scratch/bench/after-2.json"),
             file: result(
                 "after 2 (parallel)",
                 "9d0c3e12ab77000000000000000000000000beef",
@@ -4476,7 +4476,7 @@ mod tests {
         let refused = before(&flags, &machine, &server).expect_err("other work");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: flags.lines: \
+            "target/scratch/bench/baseline.json cannot be the baseline of this run: flags.lines: \
              1000000 in the baseline, 2000 in this run; flags.samples: 100 in the baseline, \
              2 in this run; server.argv: \"\" in the baseline, \"serve --scan-threads 4\" \
              in this run; machine.cpu: null in the baseline, \"Apple M3\" in this run; \
@@ -4556,7 +4556,7 @@ mod tests {
             comparable_data(&baseline, &data, &queries, &expect).expect_err("other bytes");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: data.files: \
+            "target/scratch/bench/baseline.json cannot be the baseline of this run: data.files: \
              data/2024-01-15/seg_0_000001.col is 36,212,480 bytes, crc32c b40d91f3 in the \
              baseline and 36,212,481 bytes, crc32c 00000000 in this run, manifest.log is in \
              the baseline and not in this run, manifest.log.bak is in this run and not in \
@@ -4603,7 +4603,7 @@ mod tests {
             .expect_err("a wrong answer");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: FAIL S2 counts \
+            "target/scratch/bench/baseline.json cannot be the baseline of this run: FAIL S2 counts \
              28,115 where the baseline counted 28,907: the same query over the same bytes \
              has another answer"
         );
@@ -4682,7 +4682,7 @@ S4 under ingest: the buffer limit was reached in 291 of 300 baseline laps and 0 
 
     #[test]
     fn two_saved_files_print_the_table_their_results_did() {
-        // What `kibbr bench --table a.json b.json` does: the numbers go through JSON and
+        // What `kibbr-bench --table a.json b.json` does: the numbers go through JSON and
         // come back, and the table is the same to the character.
         let scratch = Scratch::new("table");
         let paths = [
@@ -4996,7 +4996,7 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
     fn a_server_environment_that_is_not_the_baseline_s_is_said_and_stops_nothing() {
         let base = baseline();
         let mut other = baseline();
-        other.path = PathBuf::from("testdata/bench/after-1.json");
+        other.path = PathBuf::from("target/scratch/bench/after-1.json");
         other.file.label = "four threads".to_string();
         // Two results that differ in nothing: no such line, and no other.
         assert_eq!(against_lines(&base.file, &other.file), Vec::<String>::new());
@@ -5256,7 +5256,7 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
     fn a_power_state_that_is_not_the_baseline_s_is_said_with_both() {
         let mains = powered(baseline(), "AC Power", false);
         let mut other = powered(baseline(), "AC Power", false);
-        other.path = PathBuf::from("testdata/bench/after-1.json");
+        other.path = PathBuf::from("target/scratch/bench/after-1.json");
         // The same state in both: no line.
         assert_eq!(
             against_lines(&mains.file, &other.file),
@@ -5455,9 +5455,9 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
         let refused = table(&[baseline(), other]).expect_err("other work");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: \
-             flags.samples: 100 in the baseline, 2 in testdata/bench/after-1.json; \
-             machine.cores_logical: 0 in the baseline, 10 in testdata/bench/after-1.json"
+            "target/scratch/bench/baseline.json cannot be the baseline of this run: \
+             flags.samples: 100 in the baseline, 2 in target/scratch/bench/after-1.json; \
+             machine.cores_logical: 0 in the baseline, 10 in target/scratch/bench/after-1.json"
         );
         let mut wrong = columns();
         wrong.file.expect.s1.count = 7;
@@ -5736,7 +5736,7 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
             .map(String::from)
             .collect();
         file.data = Data {
-            dir: "testdata/bench/farm-1000000-seed42".to_string(),
+            dir: "target/scratch/bench/farm-1000000-seed42".to_string(),
             lines: 1_000_000,
             seed: 42,
             input: InputDigest {
@@ -5785,8 +5785,8 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
             scan_key: answer(433_520, 0, "unlimited"),
         };
         let loaded = Corpus {
-            dir: PathBuf::from("testdata/bench/farm-1000000-seed42"),
-            marker_path: PathBuf::from("testdata/bench/farm-1000000-seed42.json"),
+            dir: PathBuf::from("target/scratch/bench/farm-1000000-seed42"),
+            marker_path: PathBuf::from("target/scratch/bench/farm-1000000-seed42.json"),
             reused: true,
             ..Corpus::default()
         };
@@ -5807,7 +5807,7 @@ cpu clock    proc_pid_rusage, mach timebase 125/3: this process over a spin by t
 swap         swap-outs are read from vm_stat
 server       kibbr serve --host 127.0.0.1 --port 0 --data-dir <copy> --storage disk --max-rows 10000 --compact-interval-ms 0
              no KIBBR__ variable was set; noted: none. A new process on a new copy for every unit below, killed when the unit ends
-loaded       testdata/bench/farm-1000000-seed42  reused: 3 files, 36,423,735 bytes, each file's crc32c as recorded when it was loaded
+loaded       target/scratch/bench/farm-1000000-seed42  reused: 3 files, 36,423,735 bytes, each file's crc32c as recorded when it was loaded
              loaded once, 2026-10-07T15:58:40Z, by `kibbr load` from gen-logs --profile farm --lines 1000000 --seed 42 (489,036,605 bytes, crc32c 0c77ab10): 1,000,000 rows, 231 row groups
 live stream  gen-logs --profile farm --lines 1000000 --seed 43: 489,486,504 bytes, crc32c 41d2f09e; 500 bodies of 2,000 lines, built before any server starts
 queries      S1 promoted value   COUNT LOG {"event":"login_ok"}                                 count 11,915
@@ -5839,7 +5839,7 @@ what is ms   a query's ms: this process's clock from the request's first byte wr
             .insert("RAYON_NUM_THREADS".to_string(), "4".to_string());
         file.expect.s3.truncated = Some(true);
         file.baseline = Some(BaselineRef {
-            file: "testdata/bench/baseline.json".to_string(),
+            file: "target/scratch/bench/baseline.json".to_string(),
             sha: Some(BASELINE_SHA.to_string()),
             label: "baseline".to_string(),
             same_bench: false,
@@ -5857,10 +5857,10 @@ what is ms   a query's ms: this process's clock from the request's first byte wr
         has("cpu clock    n/a: this system has no source of a child's CPU time that this build reads, so scan rows/s/core is n/a");
         has("swap         this system has no swap counter that this build reads: swap is not a gate");
         has("             taken out of every child's environment: KIBBR__LIMITS__MAX_ROWS; noted: RAYON_NUM_THREADS=4. A new process on a new copy for every unit below, killed when the unit ends");
-        has("loaded       testdata/bench/farm-1000000-seed42  built by this invocation: 3 files, 36,423,735 bytes, each file's crc32c recorded in testdata/bench/farm-1000000-seed42.json");
+        has("loaded       target/scratch/bench/farm-1000000-seed42  built by this invocation: 3 files, 36,423,735 bytes, each file's crc32c recorded in target/scratch/bench/farm-1000000-seed42.json");
         has("             not part of the loaded bytes, and not copied: LOCK");
         has("             not part of the loaded bytes, and not copied: data/.DS_Store");
-        has("baseline     testdata/bench/baseline.json  label: baseline; commit 1bfe096e45ef; NOT THE SAME BENCH: its bench code has another digest. The same flags, bytes, texts, answers, server arguments and machine");
+        has("baseline     target/scratch/bench/baseline.json  label: baseline; commit 1bfe096e45ef; NOT THE SAME BENCH: its bench code has another digest. The same flags, bytes, texts, answers, server arguments and machine");
         has("             p99 of 1 samples: p50, p99 are the 1st and 1st smallest of 1 (nearest rank)");
         assert!(lines
             .iter()
@@ -6128,12 +6128,12 @@ run 1  end       0 units thrown away; spin 102.0 ms; flush 54.1 ms; on AC Power 
         assert_eq!(log.text(), "");
         log_stale(
             &mut log,
-            &[PathBuf::from("testdata/bench/work-501.noindex")],
+            &[PathBuf::from("target/scratch/bench/work-501.noindex")],
         )
         .expect("a line");
         assert_eq!(
             log.text(),
-            "left behind  testdata/bench/work-501.noindex: the work directory of a bench that \
+            "left behind  target/scratch/bench/work-501.noindex: the work directory of a bench that \
              did not finish; not removed, and nothing in it is used\n"
         );
     }
@@ -6220,7 +6220,7 @@ flush ms, before the run (not a row)            53.6         54.9         53.2  
         assert_eq!(
             same,
             BaselineRef {
-                file: "testdata/bench/baseline.json".to_string(),
+                file: "target/scratch/bench/baseline.json".to_string(),
                 sha: Some(BASELINE_SHA.to_string()),
                 label: "baseline".to_string(),
                 same_bench: true,

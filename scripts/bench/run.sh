@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# `kibbr bench`, run inside the image, on a farm day of seed 42.
+# `kibbr-bench`, run inside the image, on a farm day of seed 42.
 #
-# The bench is the one in the binary (src/bench/): it makes the day with `gen-logs
-# --profile farm --seed 42`, loads it once, and measures servers that are children of the
-# same binary. This script is what is around it: it builds the image, runs the bench in a
-# container, brings the result out, and writes it as a table with a `shed` column.
+# The bench is `kibbr-bench` (src/bench/, built with `--features bench`): it makes the day
+# with `kibbr gen-logs --profile farm --seed 42`, loads it once, and measures servers that
+# are children of the `kibbr` binary beside it. This script is what is around it: it builds
+# the image, runs the bench in a container, brings the result out, and writes it as a table
+# with a `shed` column.
 #
-# **Two images, one binary.** `kibbr` is the image that is deployed: distroless, and
-# with no `ps` and no `df`, which the bench runs and will not start without. `kibbr:bench`
-# is the Dockerfile's `bench` target - Debian's slim base with procps - holding the same
-# file: both copy /out/kibbr out of one build stage, and this script checks that the two
-# are the same bytes before it measures one and reports the size of the other.
+# **Two images, one binary.** `kibbr` is the image that is deployed: distroless, and with no
+# `ps` and no `df`, which the bench runs and will not start without. `kibbr:bench` is the
+# Dockerfile's `bench` target - Debian's slim base with procps, `kibbr-bench` its entrypoint
+# - holding the same `kibbr` file: both copy /out/kibbr out of one build stage, and this
+# script checks that the two are the same bytes before it measures one and reports the size
+# of the other.
 #
 #   scripts/bench/run.sh                               # this laptop: 200,000 lines
 #   scripts/bench/run.sh --lines 1000000 --threads 8   # the cloud box
@@ -29,17 +31,17 @@
 #
 # **The numbers are this image's on this machine's Docker**, which on a laptop is a
 # Linux VM with some of the cores and memory. They are not comparable with
-# scripts/bench/results/native/*.json, which were measured on macOS without one, and the bench says so
-# if asked to compare them.
+# scripts/bench/results/native/*.json, which were measured on macOS without one, and the
+# bench says so if asked to compare them.
 #
 #   --lines N       lines in the loaded day and in the live stream     [200000]
-#   --threads T     `kibbr bench --threads T`: the scan threads of every server measured.
+#   --threads T     `kibbr-bench --threads T`: the scan threads of every server measured.
 #                   Refused if the bench in the image has no such flag (an image built
 #                   before it had one, under --no-build) - it is not dropped, since a
 #                   result headed "8 threads" that used 4 is worse than none.
-#   --runs R        as `kibbr bench --runs`                            [3]
-#   --samples K     as `kibbr bench --samples`                         [100]
-#   --unchecked     as `kibbr bench --unchecked`: not a measurement. For trying the script.
+#   --runs R        as `kibbr-bench --runs`                            [3]
+#   --samples K     as `kibbr-bench --samples`                         [100]
+#   --unchecked     as `kibbr-bench --unchecked`: not a measurement. For trying the script.
 #   --image NAME    the deployed image's tag; the bench's is NAME-bench [kibbr]
 #   --no-build      use the two images as they are
 #   --volume NAME   the Docker volume                                   [kibbr-bench]
@@ -117,10 +119,10 @@ same_binary || {
 }
 
 # Asked of the image and not assumed: see --threads above.
-ARGS=(bench --profile farm --lines "$LINES" --dir /var/lib/kibbr/bench)
+ARGS=(--profile farm --lines "$LINES" --dir /var/lib/kibbr/bench)
 if [ -n "$THREADS" ]; then
-  docker run --rm "$BENCH_IMAGE" bench --help 2>/dev/null | grep -q -- '--threads' || {
-    echo "scripts/bench/run.sh: the kibbr bench in $BENCH_IMAGE has no --threads: the servers it measures" >&2
+  docker run --rm "$BENCH_IMAGE" --help 2>/dev/null | grep -q -- '--threads' || {
+    echo "scripts/bench/run.sh: the kibbr-bench in $BENCH_IMAGE has no --threads: the servers it measures" >&2
     echo "  take the build's own scan threads (half the cores, at most 4), and no flag of" >&2
     echo "  this script reaches them. Run without --threads, or on a build whose bench has it." >&2
     exit 2
@@ -155,7 +157,7 @@ docker start -a "$CONTAINER"
 CODE=$?
 BENCH_S=$(elapsed "$T")
 if [ "$CODE" != 0 ]; then
-  echo "scripts/bench/run.sh: kibbr bench exited $CODE after ${BENCH_S}s; nothing was written" >&2
+  echo "scripts/bench/run.sh: kibbr-bench exited $CODE after ${BENCH_S}s; nothing was written" >&2
   exit 1
 fi
 docker cp "$CONTAINER:$INSIDE.json" "scripts/bench/results/$NAME.json" >/dev/null || exit 1
@@ -239,7 +241,7 @@ seconds = [x.get("seconds") for x in runs]
 argv = " ".join((r.get("server") or {}).get("argv") or [])
 with open(out, "w") as f:
     w = lambda line="": f.write(line + "\n")
-    w(f"# kibbr bench in Docker, {env['NAME']}")
+    w(f"# kibbr-bench in Docker, {env['NAME']}")
     w()
     if not flags.get("checked", False):
         w("**UNCHECKED - not a measurement.** The bench's gates were off.")
@@ -258,7 +260,7 @@ with open(out, "w") as f:
     w()
     w("## What was measured")
     w()
-    w(f"- `kibbr bench --profile farm --lines {flags.get('lines')}` - the farm day of seed "
+    w(f"- `kibbr-bench --profile farm --lines {flags.get('lines')}` - the farm day of seed "
       f"{flags.get('loaded_seed')} loaded once, the live stream of seed {flags.get('live_seed')}; "
       f"{flags.get('runs')} runs of {flags.get('samples')} samples, {flags.get('body_lines')} lines a body, "
       f"{flags.get('senders')} senders.")

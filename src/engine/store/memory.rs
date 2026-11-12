@@ -30,7 +30,11 @@ impl Default for MemoryStore {
 }
 
 impl Store for MemoryStore {
-    fn open(&self, _template_id: u64, _time_column: &str) -> Result<Arc<dyn LeafStore>, StoreError> {
+    fn open(
+        &self,
+        _template_id: u64,
+        _time_column: &str,
+    ) -> Result<Arc<dyn LeafStore>, StoreError> {
         Ok(Arc::new(MemoryLeaf::new()))
     }
 
@@ -60,7 +64,6 @@ impl MemoryLeaf {
 }
 
 impl LeafStore for MemoryLeaf {
-
     /// The ordinal is the `Vec` index, the order the row arrived in; nothing deletes, so it
     /// is stable for the life of the process.
     fn append(&self, row: Row) -> u64 {

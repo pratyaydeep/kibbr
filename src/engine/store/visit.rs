@@ -281,7 +281,6 @@ impl<F: FnMut(&Row, u64)> Visitor for Rows<F> {
     }
 }
 
-
 /// Whether an instant falls in `[since, until)`; a row with no effective time is outside
 /// every window.
 pub(crate) fn in_window(ts: Option<i64>, since: Option<i64>, until: Option<i64>) -> bool {
@@ -309,7 +308,10 @@ pub fn present(row: &Row) -> BTreeMap<String, &str> {
 
 /// A `Datetime` stored in a column that is now text, as the text a query compares it
 /// against: the JSON the line said; `None` for any other value.
-pub(crate) fn render_text(value: &ColValue, written: Option<&serde_json::Value>) -> Option<ColValue> {
+pub(crate) fn render_text(
+    value: &ColValue,
+    written: Option<&serde_json::Value>,
+) -> Option<ColValue> {
     let ColValue::Datetime(ns) = value else {
         return None;
     };

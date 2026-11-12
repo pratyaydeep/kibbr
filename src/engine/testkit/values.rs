@@ -115,7 +115,8 @@ pub(crate) fn written() -> Vec<String> {
 /// and `parse::flatten::row_of`.
 pub(crate) fn row_of(json: &str) -> Row {
     let line = format!("{{\"v\":{json}}}");
-    let parsed = crate::engine::parse::flatten::parse_line(line.as_bytes(), 1).expect("a line of one key");
+    let parsed =
+        crate::engine::parse::flatten::parse_line(line.as_bytes(), 1).expect("a line of one key");
     crate::engine::ingest::row_of(&parsed)
 }
 

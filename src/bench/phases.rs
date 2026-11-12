@@ -18,13 +18,13 @@ use std::time::{Duration, Instant};
 
 use crate::engine::display::commas;
 
+use super::child::{Server, Stats};
 use super::corpus::{self, Corpus, LiveStream};
 use super::host::{self, Cpu};
 use super::report::{
     AtEnd, Beside, BesideKeyed, BesideRate, Expect, Four, Health, IdleBlock, IdleRun, IngestRun,
     Laps, LoadedBlock, LoadedRun, Refused, ScanBlock, ScanRun, SenderFacts, Seven,
 };
-use super::child::{Server, Stats};
 use super::wire::{self, Conn, QueryAnswer};
 use super::{
     place_lines, scan_asks, warmup, SpeedError, MAX_ROWS, REFUSAL_PAUSE, SCAN_TAIL, SENDERS,
