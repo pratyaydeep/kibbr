@@ -44,7 +44,7 @@ NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
 PRINT_QUERIES=${PRINT_QUERIES:-}
 
-# The generator's clock: 2024-01-15T10:30:00Z, plus up to 30 days (src/tools/gen/). A caller
+# The generator's clock: 2024-01-15T10:30:00Z, plus up to 30 days (src/cli/gen_logs.rs). A caller
 # drawing from other lines names theirs - a farm day is BASE=1705276800 SPAN=86400 - so the
 # windows and the boundary draws stay inside the data.
 BASE=${BASE:-1705314600}

@@ -12,7 +12,21 @@ rust-version = "1.96.1"
 readme = "README.md"
 keywords = ["logs", "logging", "database", "columnar", "observability"]
 categories = ["database-implementations", "command-line-utilities"]
-exclude = ["/testdata/", "/bench/", "/deploy/", "/docs/", "/scripts/", "/fuzz/", "/.github/", "/lab/", "/lab-rs/", "/web/"]
+# What `cargo publish` ships: the source and what it is published under. An allow-list, so a
+# new folder at the root stays out until it is named here.
+include = [
+    "/src/",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/LICENSE-CONTRIBUTOR",
+    "/NOTICE",
+    "/COMMERCIAL.md",
+    "/TRADEMARK.md",
+    "/kibbr.toml.example",
+]
 
 # One crate: the engine (src/engine/), the HTTP server over it (src/server/) and the
 # command line over both (src/cli/). fuzz/ is a package of its own, so `cargo build` here

@@ -39,11 +39,24 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && file /out/kibbr | tee /dev/stderr | grep -Eq 'statically linked|static-pie linked' \
  && /out/kibbr --version
 
+# ── bench-build ────────────────────────────────────────────────────────────────────
+# `kibbr-bench`, the bench, is a binary of its own behind the `bench` feature. Built after
+# the deployed binary and beside it: /out/kibbr is not built again, so the bench below
+# measures the very binary the image ships. Built only for `--target bench`.
+FROM build AS bench-build
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked --features bench --bin kibbr-bench \
+ && cp target/release/kibbr-bench /out/kibbr-bench \
+ && file /out/kibbr-bench | tee /dev/stderr | grep -Eq 'statically linked|static-pie linked' \
+ && /out/kibbr-bench --version
+
 # ── bench ──────────────────────────────────────────────────────────────────────────
-# `docker build --target bench`: what bench/run.sh runs `kibbr bench` in. Not the image
-# that is deployed, and the same binary, byte for byte.
+# `docker build --target bench`: what bench/run.sh runs `kibbr-bench` in. Not the image
+# that is deployed, and the same `kibbr` binary, byte for byte, beside the bench, which
+# runs it as every server, load and generator.
 #
-# `kibbr bench` asks the system two things through programs - `ps -axo pid=,ppid=,comm=`
+# `kibbr-bench` asks the system two things through programs - `ps -axo pid=,ppid=,comm=`
 # for another kibbr process, `df -Pk` for the room its work needs - and stops if either
 # cannot be run. The image below has neither, and BusyBox's `ps` does not take those
 # flags; these are procps' and coreutils'. There is no git here, so the bench records no
@@ -53,12 +66,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends procps \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/kibbr /usr/local/bin/kibbr
+COPY --from=bench-build /out/kibbr-bench /usr/local/bin/kibbr-bench
 COPY --from=build --chown=65532:65532 /out/var/lib/kibbr /var/lib/kibbr
 USER 65532:65532
 WORKDIR /var/lib/kibbr
 VOLUME /var/lib/kibbr
-ENTRYPOINT ["/usr/local/bin/kibbr"]
-CMD ["bench", "--help"]
+ENTRYPOINT ["/usr/local/bin/kibbr-bench"]
+CMD ["--help"]
 
 # ── run ────────────────────────────────────────────────────────────────────────────
 # The last stage, so `docker build .` with no --target is this one.
@@ -74,6 +88,9 @@ LABEL org.opencontainers.image.title="kibbr" \
       org.opencontainers.image.revision="${KIBBR_COMMIT}"
 
 COPY --from=build /out/kibbr /usr/local/bin/kibbr
+# The licence and the notices of what the binary bundles, beside it as a distribution
+# carries them.
+COPY LICENSE NOTICE /usr/share/doc/kibbr/
 # The volume's directory, made in the image and owned by the user the server runs as: a
 # new named volume takes its owner from here. A bind mount or a Kubernetes volume does
 # not - there the owner is the host directory's, or `fsGroup: 65532`.

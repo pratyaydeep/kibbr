@@ -18,7 +18,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The same check as the web job in ci.yml: the crates carry the committed viewer.html,
+  # The same check as the web job in ci.yml: the crate carries the committed viewer.html,
   # so a release must not ship one that web/ no longer builds.
   web:
     runs-on: ubuntu-latest
@@ -80,9 +80,9 @@ jobs:
             exit 1
           }
 
-      # The tag is the workspace version, CHANGELOG.md has its section, the three-crate dry
-      # run passes; then the three publishes in dependency order, 30 s apart. All of it is
-      # scripts/publish.sh, which a release from a laptop runs too.
+      # The tag is the package version, CHANGELOG.md has its section, the dry run passes;
+      # then the publish. All of it is scripts/publish.sh, which a release from a laptop
+      # runs too.
       - name: scripts/publish.sh
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -48,7 +48,7 @@ SEED=${KIBBR_SEED:-${SEED:-7}}
 NLINES=${NLINES:-2000}
 GEN_SEED=${GEN_SEED:-1}
 
-# The generator's clock: 2024-01-15T10:30:00Z, plus up to 30 days (src/tools/gen/).
+# The generator's clock: 2024-01-15T10:30:00Z, plus up to 30 days (src/cli/gen_logs.rs).
 BASE=1705314600
 SPAN=2592000
 
