@@ -4,47 +4,12 @@
 //! `gen-logs`: the hostile profile's bytes are frozen, and the farm has the properties
 //! the storage measurements are going to lean on. Everything runs the real binary.
 
+use crate::harness::*;
 use std::collections::HashSet;
-use std::process::{Command, Stdio};
-
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
-
-fn run(args: &[&str]) -> String {
-    let out = kibbr().args(args).output().expect("failed to run kibbr");
-    assert!(
-        out.status.success(),
-        "kibbr {args:?} exited {:?}\nstderr: {}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("stdout was not utf-8")
-}
-
-fn refused(args: &[&str]) -> String {
-    let out = kibbr().args(args).output().expect("failed to run kibbr");
-    assert!(!out.status.success(), "kibbr {args:?} was accepted");
-    String::from_utf8_lossy(&out.stderr).into_owned()
-}
 
 /// `parse --json` over `input`; stderr must be empty, so a rejected line fails the test.
 fn parse_json(input: &str) -> Vec<serde_json::Value> {
-    let mut child = kibbr()
-        .args(["parse", "-", "--json"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to run kibbr parse");
-    let mut stdin = child.stdin.take().expect("stdin was piped");
-    let input = input.as_bytes().to_vec();
-    let writer = std::thread::spawn(move || {
-        use std::io::Write;
-        stdin.write_all(&input).expect("write to parse");
-    });
-    let out = child.wait_with_output().expect("parse did not finish");
-    writer.join().expect("writer thread");
+    let out = run_piped(&["parse", "-", "--json"], input.as_bytes(), &[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success() && stderr.is_empty(), "parse: {stderr}");
     String::from_utf8(out.stdout)
@@ -59,12 +24,6 @@ fn farm(lines: usize, extra: &[&str]) -> String {
     let mut args = vec!["gen-logs", "--profile", "farm", "--lines", &n];
     args.extend_from_slice(extra);
     run(&args)
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 
 /// The instant a farm line was stamped with, in milliseconds, whichever service wrote it.

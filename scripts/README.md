@@ -21,17 +21,16 @@ seed of the generated lines.
 | `two_doors.sh` | `PASS two doors agree on N queries x 2 rounds`: `/ingest` and `kibbr load` cannot be told apart |
 | `compact_agree.sh` | `PASS a live day of N rows answers the same compacted three ways as it did before` |
 | `roundtrip.sh` | `N lines ingested, N rows returned, 0 differences`: every value back as it went in |
-| `order_ids.sh` | `N strings in, the same N out`, twice: ten-digit ids and one `AX-99213` come back as ingested |
-| `date_forms.sh` | `one seal, then text; every value back as it arrived`: at most 2 segment files |
-| `received_at.sh` | `the system column is not a key`: 823 templates, as before the column existed |
-| `time_columns.sh` | `every row has a time`: the count equals the windowed count, no `undated` directory |
 | `strip_comments.py` | not a check of the binary: prints Rust source without comments, to show a diff changed comments only |
 
 `store_agree.sh`, `two_doors.sh` and `roundtrip.sh` print `scan fan-outs ...`, and with
 `NEED_FAN_OUTS=1` fail at none.
 
 The layering rules (what the engine and the server may name) and the SPDX header on every
-`.rs` file are not scripts: they are `tests/layers.rs`, run by `cargo test`.
+`.rs` file are not scripts: they are `tests/layers.rs`, run by `cargo test`. Nor are what
+`order_ids.sh`, `date_forms.sh`, `received_at.sh` and `time_columns.sh` held, and
+`fault/lost_trie.sh` and `fault/bad_version.sh`: they are `tests/values.rs` and
+`tests/storage.rs`.
 
 ## fault/ - something is taken away
 
@@ -41,8 +40,6 @@ The layering rules (what the engine and the server may name) and the SPDX header
 | `crash_templates.sh` | `N rounds: every closed row group survived kill -9, no orphans` |
 | `load_kill.sh` | `PASS K of N kills landed mid-load ..., none partial` |
 | `compact_kill.sh` | `PASS N/N rounds: every row exactly once` |
-| `lost_trie.sh` | `identical: deleting trie.json changed no answer` |
-| `bad_version.sh` | `PASS a version 2 segment stopped the start before the listener, by path, and version 3 starts clean` |
 | `start_unreadable_day.sh` | `PASS an unreadable day directory stopped serve, load and compact by name with the system's error` |
 | `open_files.sh` | `PASS N lines ingested under ulimit -n M, drained, and all N came back` |
 | `leaf_unwritable.sh` | `PASS a store that could not write refused nothing, and all N lines are stored once` |
@@ -70,9 +67,8 @@ A release is usually a GitHub release; CONTRIBUTING.md has the steps. Publishing
 `viewer.html` and then runs `scripts/publish.sh` with the version from the tag.
 
 `scripts/bump.sh 0.1.0` sets the version: in Cargo.toml, in Cargo.lock, in the `/health`
-example of docs/serve.md and
-docs/container.md, and as a new CHANGELOG.md section holding `- TODO: what changed`, which
-`scripts/publish.sh` refuses. It commits nothing.
+example of docs/serve.md and deploy/README.md, and as a new CHANGELOG.md section holding
+`- TODO: what changed`, which `scripts/publish.sh` refuses. It commits nothing.
 
 `scripts/publish.sh 0.1.0` checks the version against Cargo.toml and that CHANGELOG.md has a
 `## 0.1.0 ` section, dry-runs the crate, and publishes it. `--dry-run` stops after the dry run;

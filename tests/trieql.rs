@@ -6,15 +6,11 @@
 //! That a query and the flags it translates answer alike is
 //! `scripts/check/parser_equivalence.sh`; pinned below is one case per grammar clause.
 
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
 use serde_json::Value;
 
-const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
-
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
+use crate::harness::*;
 
 /// `kibbr explain`, which parses and executes nothing - the parser on its own.
 fn explain(query: &str) -> Output {
@@ -24,29 +20,9 @@ fn explain(query: &str) -> Output {
         .expect("failed to run kibbr")
 }
 
-/// Runs a query over the fixture. Fed from a thread for the reason `tests/query.rs`
-/// gives: writing inline deadlocks once the input outgrows a pipe buffer.
+/// Runs a query over the worked example, `SAMPLE_LOGS`.
 fn query(args: &[&str]) -> String {
-    use std::io::Write;
-
-    let mut child = kibbr()
-        .arg("query")
-        .arg("-")
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn kibbr");
-    let mut stdin = child.stdin.take().expect("stdin was not piped");
-    std::thread::spawn(move || stdin.write_all(FIXTURE.as_bytes()));
-    let out = child.wait_with_output().expect("failed to run kibbr");
-    assert!(
-        out.status.success(),
-        "kibbr query {args:?} exited {:?}\nstderr: {}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
+    query_over(SAMPLE_LOGS, args)
 }
 
 /// The `--format json` body, minus the one field two runs of the same engine never share.

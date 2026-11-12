@@ -6,201 +6,21 @@
 //! outside the binary. Where a setting comes from is `src/config.rs`'s; this file holds
 //! that the commands are wired to it.
 
-use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::Write;
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
+use std::process::Output;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-fn kibbr() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
-    // The variables are settings too, and would answer for the file under test.
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("KIBBR__") {
-            command.env_remove(name);
-        }
-    }
-    command
-}
-
-/// A directory of this test's own, removed when the test ends.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(name: &str) -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "kibbr-operations-{}-{}-{name}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("mkdir");
-        Self(dir)
-    }
-
-    /// A settings file of `text` in the directory, by its path.
-    fn file(&self, name: &str, text: &str) -> String {
-        let path = self.0.join(name);
-        fs::write(&path, text).expect("a file");
-        path.display().to_string()
-    }
-
-    fn path(&self, name: &str) -> String {
-        self.0.join(name).display().to_string()
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
-fn json(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
-}
-
-/// A running `kibbr serve`, killed when dropped.
-struct Server {
-    child: Child,
-    port: u16,
-    stderr: BufReader<ChildStderr>,
-}
+use crate::harness::*;
 
 impl Server {
     /// `kibbr <before> serve --port 0 <after>`, once its banner has said where it listens.
-    fn start(before: &[&str], after: &[&str], env: &[(&str, &str)]) -> Self {
-        let mut command = kibbr();
-        command
-            .args(before)
-            .args(["serve", "--port", "0"])
-            .args(after);
-        for (name, value) in env {
-            command.env(name, value);
-        }
-        let mut child = command
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn kibbr serve");
-        let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
-        let mut port = None;
-        let mut said = String::new();
-        for _ in 0..80 {
-            let mut line = String::new();
-            if stderr.read_line(&mut line).unwrap_or(0) == 0 {
-                break;
-            }
-            said.push_str(&line);
-            if let Some(at) = line.find("http://127.0.0.1:") {
-                let rest = &line[at + "http://127.0.0.1:".len()..];
-                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-                port = digits.parse().ok();
-            }
-            // The banner's last line as text, and its only line as JSON.
-            if line.contains("shutdown ") || line.starts_with('{') {
-                break;
-            }
-        }
-        let port = port.unwrap_or_else(|| panic!("no listening line:\n{said}"));
-        Self {
-            child,
-            port,
-            stderr,
-        }
+    fn cli(before: &[&str], after: &[&str], env: &[(&str, &str)]) -> Self {
+        Self::spawn(before, None, after, env)
     }
-
-    fn address(&self) -> String {
-        format!("127.0.0.1:{}", self.port)
-    }
-
-    fn get(&self, path: &str) -> (u16, String) {
-        request(self.port, "GET", path, b"")
-    }
-
-    fn post(&self, path: &str, body: &[u8]) -> (u16, String) {
-        request(self.port, "POST", path, body)
-    }
-
-    fn stats(&self) -> Value {
-        let (status, body) = self.get("/stats");
-        assert_eq!(status, 200, "{body}");
-        json(&body)
-    }
-
-    fn signal(&self) {
-        let ok = Command::new("kill")
-            .args(["-TERM", &self.child.id().to_string()])
-            .status()
-            .expect("kill")
-            .success();
-        assert!(ok, "kill -TERM failed");
-    }
-
-    /// SIGTERM, then the exit code and everything stderr said after the banner. Fails if
-    /// the process is still there after `within`.
-    fn stop(mut self, within: Duration) -> (Option<i32>, String) {
-        self.signal();
-        let asked = Instant::now();
-        let code = loop {
-            match self.child.try_wait().expect("try_wait") {
-                Some(status) => break status.code(),
-                None if asked.elapsed() > within => {
-                    let _ = self.child.kill();
-                    panic!("still running {within:?} after SIGTERM");
-                }
-                None => std::thread::sleep(Duration::from_millis(10)),
-            }
-        };
-        let mut said = String::new();
-        let _ = self.stderr.read_to_string(&mut said);
-        (code, said)
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn request(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String) {
-    let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
-    let head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    socket.write_all(head.as_bytes()).expect("failed to write");
-    let _ = socket.write_all(body);
-    let _ = socket.flush();
-    answer(&mut socket)
-}
-
-/// The status and the body of whatever the server wrote before it closed the connection.
-fn answer(socket: &mut TcpStream) -> (u16, String) {
-    let mut response = Vec::new();
-    let _ = socket.read_to_end(&mut response);
-    let split = response
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .unwrap_or_else(|| panic!("no answer: {:?}", text(&response)));
-    let status = text(&response[..split])
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .expect("a status line");
-    (status, text(&response[split + 4..]))
 }
 
 fn run(args: &[&str]) -> Output {
@@ -332,7 +152,7 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
         )
     };
 
-    let server = Server::start(&[], &["--config", &config], &[]);
+    let server = Server::cli(&[], &["--config", &config], &[]);
     assert_eq!(waits(&server), (Some(250), Some(3000)));
     assert_eq!(server.stats()["ingest"]["request_timeout_ms"], 40_000);
     assert!(Path::new(&data).join("catalog.log").is_file());
@@ -350,7 +170,7 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
     assert_eq!(code, Some(0), "{said}");
 
     // A variable over the file, key by key: the deadline is still the file's.
-    let server = Server::start(
+    let server = Server::cli(
         &["--config", &config],
         &[],
         &[("KIBBR__API__INGEST_WAIT_MS", "300")],
@@ -359,7 +179,7 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
     let (code, said) = server.stop(Duration::from_secs(20));
     assert_eq!(code, Some(0), "{said}");
 
-    let server = Server::start(
+    let server = Server::cli(
         &["--config", &config],
         &["--ingest-wait-ms", "400", "--shutdown-deadline", "0s"],
         &[
@@ -372,7 +192,7 @@ fn a_server_takes_the_file_and_a_variable_and_a_flag_each_win_over_it() {
     assert_eq!(code, Some(0), "{said}");
 
     // With no file, no variable and no flag: 100ms and 25s.
-    let server = Server::start(&[], &["--storage", "memory"], &[]);
+    let server = Server::cli(&[], &["--storage", "memory"], &[]);
     assert_eq!(waits(&server), (Some(100), Some(25_000)));
 }
 
@@ -419,7 +239,7 @@ fn query_takes_its_limits_and_time_columns_from_the_file() {
 fn templates_and_stats_ask_the_running_server() {
     let scratch = Scratch::new("ask");
     let data = scratch.path("data");
-    let server = Server::start(&[], &["--data-dir", &data], &[]);
+    let server = Server::cli(&[], &["--data-dir", &data], &[]);
     let lines = "{\"ts\":\"2024-01-15T10:00:00Z\",\"event\":\"login\",\"user\":7}\n\
                  {\"ts\":\"2024-01-15T10:00:01Z\",\"event\":\"login\",\"user\":8}\n\
                  {\"level\":\"info\",\"msg\":\"up\"}\n";
@@ -523,7 +343,7 @@ fn templates_and_stats_ask_the_running_server() {
 /// from the line that says where it listens to `exit 0`; as text the lines are unchanged.
 #[test]
 fn a_server_logs_an_object_a_line_as_json_and_its_old_lines_as_text() {
-    let server = Server::start(
+    let server = Server::cli(
         &["--log-format", "json", "--log-level", "debug"],
         &["--storage", "memory"],
         &[],
@@ -570,7 +390,7 @@ fn a_server_logs_an_object_a_line_as_json_and_its_old_lines_as_text() {
     // quieter than it: at `warn` a clean stop says nothing at all.
     let scratch = Scratch::new("log");
     let config = scratch.file("kibbr.toml", "[log]\nformat = \"json\"\nlevel = \"warn\"\n");
-    let server = Server::start(
+    let server = Server::cli(
         &["--config", &config, "--log-level", "info"],
         &["--storage", "memory"],
         &[],
@@ -581,7 +401,7 @@ fn a_server_logs_an_object_a_line_as_json_and_its_old_lines_as_text() {
     assert!(said.contains("\"msg\":\"exit 0\""), "{said}");
 
     // As text: the banner, and `kibbr: ` before each sentence.
-    let server = Server::start(&[], &["--storage", "memory"], &[]);
+    let server = Server::cli(&[], &["--storage", "memory"], &[]);
     let (code, said) = server.stop(Duration::from_secs(20));
     assert_eq!(code, Some(0));
     let logged: Vec<&str> = said.lines().filter(|l| l.starts_with("kibbr: ")).collect();
@@ -593,7 +413,7 @@ fn a_server_logs_an_object_a_line_as_json_and_its_old_lines_as_text() {
     assert!(!said.contains('{'), "{said}");
 
     // As text at `error`: the banner still, and not one line of log.
-    let server = Server::start(
+    let server = Server::cli(
         &[],
         &["--storage", "memory"],
         &[("KIBBR__LOG__LEVEL", "error")],
@@ -683,7 +503,7 @@ fn stalled_body(port: u16) -> TcpStream {
 fn a_stop_cuts_off_what_is_still_in_flight_at_the_deadline() {
     let scratch = Scratch::new("deadline");
     let data = scratch.path("data");
-    let server = Server::start(
+    let server = Server::cli(
         &[],
         &["--data-dir", &data, "--shutdown-deadline", "400ms"],
         &[],
@@ -738,12 +558,12 @@ fn a_stop_cuts_off_what_is_still_in_flight_at_the_deadline() {
     assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{said}");
 
     // The sender that stalled was answered, and told why.
-    let (status, body) = answer(&mut stalled);
+    let (status, body) = read_answer(&mut stalled);
     assert_eq!(status, 503, "{body}");
     assert!(body.contains("shutdown deadline"), "{body}");
 
     // And what was acknowledged before the stop is there after it, with nothing to replay.
-    let server = Server::start(&[], &["--data-dir", &data], &[]);
+    let server = Server::cli(&[], &["--data-dir", &data], &[]);
     assert_eq!(server.stats()["ingest"]["lines_ingested"], 0);
     let (status, body) = server.post("/query", br#"{"q":"COUNT LOG {\"a\": *}"}"#);
     assert_eq!(status, 200, "{body}");
@@ -754,7 +574,7 @@ fn a_stop_cuts_off_what_is_still_in_flight_at_the_deadline() {
 /// deadline is never reached.
 #[test]
 fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
-    let server = Server::start(
+    let server = Server::cli(
         &[],
         &["--storage", "memory", "--shutdown-deadline", "0s"],
         &[],
@@ -768,7 +588,7 @@ fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    server.signal();
+    server.signal("-TERM");
     std::thread::sleep(Duration::from_millis(1500));
     let mut server = server;
     assert!(
@@ -777,7 +597,7 @@ fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
     );
     // The sender finishes its body, and the stop goes on.
     stalled.write_all(&vec![b'\n'; 990]).expect("the rest");
-    let (status, body) = answer(&mut stalled);
+    let (status, body) = read_answer(&mut stalled);
     assert!(status == 200 || status == 503, "{status}: {body}");
     let asked = Instant::now();
     let code = loop {
@@ -790,7 +610,7 @@ fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
     assert_eq!(code, Some(0));
 
     // Nothing in flight: a long deadline costs a stop nothing.
-    let server = Server::start(
+    let server = Server::cli(
         &[],
         &["--storage", "memory", "--shutdown-deadline", "1h"],
         &[],
@@ -815,14 +635,14 @@ fn a_stop_with_no_deadline_waits_and_one_with_nothing_in_flight_does_not() {
 /// the binary as it is run: the flag, and a sender that stops halfway through a body.
 #[test]
 fn a_body_that_does_not_arrive_is_answered_408_at_the_request_timeout() {
-    let server = Server::start(
+    let server = Server::cli(
         &[],
         &["--storage", "memory", "--request-timeout", "300ms"],
         &[],
     );
     let asked = Instant::now();
     let mut stalled = stalled_body(server.port);
-    let (status, body) = answer(&mut stalled);
+    let (status, body) = read_answer(&mut stalled);
     assert_eq!(status, 408, "{body}");
     assert!(asked.elapsed() >= Duration::from_millis(300));
     assert!(body.contains("--request-timeout"), "{body}");
@@ -846,7 +666,7 @@ fn a_query_past_the_request_timeout_is_answered_504_and_its_scan_stops() {
     let scratch = Scratch::new("timeout-query");
     let data = scratch.path("data");
     // The rows, through a server whose requests have the time they always had.
-    let server = Server::start(&[], &["--data-dir", &data], &[]);
+    let server = Server::cli(&[], &["--data-dir", &data], &[]);
     let mut lines = String::new();
     for n in 0..ROWS {
         lines.push_str(&format!(
@@ -861,7 +681,7 @@ fn a_query_past_the_request_timeout_is_answered_504_and_its_scan_stops() {
     let (code, said) = server.stop(Duration::from_secs(60));
     assert_eq!(code, Some(0), "{said}");
 
-    let server = Server::start(
+    let server = Server::cli(
         &[],
         &[
             "--data-dir",

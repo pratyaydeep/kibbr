@@ -12,6 +12,9 @@ rust-version = "1.96.1"
 readme = "README.md"
 keywords = ["logs", "logging", "database", "columnar", "observability"]
 categories = ["database-implementations", "command-line-utilities"]
+# One integration-test binary, tests/main.rs, whose modules are the topics: one link step
+# instead of one a file.
+autotests = false
 # What `cargo publish` ships: the source and what it is published under. An allow-list, so a
 # new folder at the root stays out until it is named here.
 include = [
@@ -42,7 +45,7 @@ crc32c = "0.6.8"
 flate2 = "1.1"
 # The global allocator - why is at `#[global_allocator]` in src/main.rs.
 mimalloc = "0.1.52"
-# `statvfs` before a compaction writes, and a child's CPU time for `kibbr bench`: std has neither.
+# `statvfs` before a compaction writes, and a child's CPU time for `kibbr-bench`: std has neither.
 libc = "0.2"
 # `Frame` and `SizeHint`, for the body the server wraps a request's in to know it was read whole.
 http-body = "1"
@@ -66,8 +69,9 @@ zstd = { version = "0.13", default-features = false, features = ["zstdmt"] }
 # The fuzz targets' harnesses, for fuzz/; off by default, so the binary carries none of
 # them. A plain `cargo test` builds them anyway and replays fuzz/regressions/.
 fuzzing = []
-# `kibbr bench`, the end-to-end speed measurement. Off by default: it is a quarter of the
-# source, and leaving it out keeps the build that is edited and tested fast.
+# `kibbr-bench`, the end-to-end speed measurement, and its tests (tests/bench.rs, `speed`).
+# Off by default: it is a quarter of the source, and leaving it out keeps the build that is
+# edited and tested fast.
 bench = []
 
 [profile.dev]
@@ -87,3 +91,7 @@ path = "src/main.rs"
 name = "kibbr-bench"
 path = "src/bin/kibbr-bench.rs"
 required-features = ["bench"]
+
+[[test]]
+name = "e2e"
+path = "tests/main.rs"

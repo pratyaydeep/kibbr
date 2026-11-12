@@ -5,38 +5,7 @@
 //! `the_tree_is_stable_across_input_orderings`: re-running the same file passes without the
 //! type join, and feeding the same lines in a different order is what makes it observable.
 
-use std::process::{Command, Stdio};
-
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
-
-/// Feeds stdin from a separate thread. Writing inline deadlocks as soon as the input
-/// outgrows a pipe buffer: the child blocks writing stdout while we block writing stdin.
-fn run_stdin(args: &[&str], input: &str) -> String {
-    use std::io::Write;
-
-    let mut child = kibbr()
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn kibbr");
-    let mut stdin = child.stdin.take().expect("stdin was not piped");
-    let owned = input.as_bytes().to_vec();
-    let writer = std::thread::spawn(move || {
-        let _ = stdin.write_all(&owned);
-    });
-    let out = child.wait_with_output().expect("failed to wait on kibbr");
-    writer.join().expect("stdin writer thread panicked");
-    assert!(
-        out.status.success(),
-        "kibbr {args:?} exited {:?}\nstderr: {}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("stdout was not utf-8")
-}
+use crate::harness::*;
 
 fn gen(lines: u64, templates: u64, seed: u64) -> String {
     let out = kibbr()

@@ -7,17 +7,17 @@
 //! finished is the fact itself. Every command runs against a deadline, so a hang fails
 //! the suite rather than stalling it.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::Command;
+use std::sync::atomic::Ordering;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+
+use crate::harness::*;
 
 /// Hostile lines for most tests: thirty days and a few hundred templates, so a load spans
 /// many day files and a partial commit has somewhere to show.
@@ -31,79 +31,9 @@ const DAY: &str = "2024-01-15";
 const ALL: &str = "COUNT LOG {}";
 const DAY_COUNT: &str = r#"COUNT LOG {} BETWEEN "2024-01-15T00:00:00Z" AND "2024-01-16T00:00:00Z""#;
 
-/// Long enough for a debug build to load a few thousand lines several times over.
-const DEADLINE: Duration = Duration::from_secs(60);
-
-/// A command that should exit at once - a refusal - and is failed rather than waited on.
-const REFUSAL_DEADLINE: Duration = Duration::from_secs(15);
-
-// ── A scratch root: inputs, a data directory, and captured output ──────────────────
-
-/// `in/` holds the inputs, `store/` is the data directory, `runs/` each command's output:
-/// inputs sit outside the store so a directory load cannot pick up the store's own files.
-struct Db {
-    root: PathBuf,
-}
+// ── The loader's own view of a data directory ──────────────────────────────────────
 
 impl Db {
-    fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "kibbr-load-test-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("in")).expect("create the input directory");
-        fs::create_dir_all(root.join("runs")).expect("create the output directory");
-        Self { root }
-    }
-
-    fn base(&self) -> PathBuf {
-        self.root.join("store")
-    }
-
-    fn base_arg(&self) -> String {
-        self.base().display().to_string()
-    }
-
-    /// `bytes` at `in/<rel>`, parent directories created.
-    fn input(&self, rel: &str, bytes: &[u8]) -> PathBuf {
-        let path = self.root.join("in").join(rel);
-        fs::create_dir_all(path.parent().expect("an input has a parent"))
-            .expect("create the input's directory");
-        fs::write(&path, bytes).expect("write the input");
-        path
-    }
-
-    // ── Processes ──
-
-    /// `kibbr <args>`, stdout and stderr to files: a pipe nobody reads until the exit
-    /// can fill and stall the child, and a stalled child looks like a slow one.
-    fn spawn(&self, args: &[String], stdin: Option<&Path>) -> Running {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let out = self.root.join("runs").join(format!("{n}.out"));
-        let err = self.root.join("runs").join(format!("{n}.err"));
-        let stdin = match stdin {
-            Some(path) => Stdio::from(File::open(path).expect("open the stdin input")),
-            None => Stdio::null(),
-        };
-        let child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
-            .args(args)
-            .stdin(stdin)
-            .stdout(File::create(&out).expect("create the stdout file"))
-            .stderr(File::create(&err).expect("create the stderr file"))
-            .spawn()
-            .expect("failed to spawn kibbr");
-        Running {
-            child,
-            out,
-            err,
-            what: format!("kibbr {}", args.join(" ")),
-        }
-    }
-
     fn load_args(&self, args: &[&str], inputs: &[&Path]) -> Vec<String> {
         let mut all = vec!["load".to_string(), "--data-dir".into(), self.base_arg()];
         all.extend(args.iter().map(|a| a.to_string()));
@@ -112,134 +42,24 @@ impl Db {
     }
 
     fn load(&self, args: &[&str], inputs: &[&Path]) -> Ran {
-        self.spawn(&self.load_args(args, inputs), None)
-            .finish(DEADLINE)
+        self.spawn(&self.load_args(args, inputs)).finish(DEADLINE)
     }
 
     /// `kibbr load <args> -`, with `stdin` as the input.
     fn load_stdin(&self, args: &[&str], stdin: &Path) -> Ran {
         let mut all = self.load_args(args, &[]);
         all.push("-".into());
-        self.spawn(&all, Some(stdin)).finish(DEADLINE)
-    }
-
-    fn start(&self) -> Server {
-        self.start_with(&[])
-    }
-
-    fn start_with(&self, flags: &[&str]) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
-            .args(["serve", "--port", "0"])
-            .args(["--data-dir", &self.base_arg()])
-            .args(flags)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn kibbr serve");
-
-        let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
-        let mut port = None;
-        let mut banner = String::new();
-        for _ in 0..40 {
-            let mut line = String::new();
-            if stderr.read_line(&mut line).unwrap_or(0) == 0 {
-                break;
-            }
-            banner.push_str(&line);
-            if let Some(at) = line.find("http://127.0.0.1:") {
-                port = line[at + "http://127.0.0.1:".len()..].trim().parse().ok();
-            }
-            if line.contains("shutdown ") {
-                break;
-            }
-        }
-        let port = port.unwrap_or_else(|| panic!("no listening line in banner:\n{banner}"));
-        Server {
-            child,
-            port,
-            stderr,
-        }
-    }
-
-    /// One count from a server started for it and then killed - fine for a process that
-    /// ingested nothing, and the point where the question is what the *next* process sees.
-    fn count(&self, q: &str) -> u64 {
-        self.start().count(q)
-    }
-
-    // ── The directory's own files ──
-
-    /// Whatever is under `staging/`. Empty or absent after any load has exited: a leftover
-    /// is a move the loader never finished, or bytes nothing will ever delete.
-    fn staging(&self) -> Vec<PathBuf> {
-        fs::read_dir(self.base().join("staging"))
-            .map(|entries| entries.flatten().map(|e| e.path()).collect())
-            .unwrap_or_default()
-    }
-
-    /// Every record in `manifest.log`, in order. The CRC is not rechecked: a payload
-    /// that is not whole JSON ends the walk, as a torn tail would.
-    fn manifest(&self) -> Vec<Value> {
-        let bytes = fs::read(self.base().join("manifest.log")).unwrap_or_default();
-        let mut out = Vec::new();
-        let mut at = 0;
-        while let Some(head) = bytes.get(at..at + 8) {
-            let len = u32::from_le_bytes([head[0], head[1], head[2], head[3]]) as usize;
-            let Some(payload) = bytes.get(at + 8..at + 8 + len).filter(|p| !p.is_empty()) else {
-                break;
-            };
-            let Ok(record) = serde_json::from_slice::<Value>(payload) else {
-                break;
-            };
-            out.push(record);
-            at += 8 + len;
-        }
-        out
-    }
-
-    /// The live files by path, after every record is applied: the last word on a path
-    /// wins, a removed path is gone, and a replace removes before it adds.
-    fn live(&self) -> BTreeMap<String, Value> {
-        let mut files = BTreeMap::new();
-        for record in self.manifest() {
-            let (added, removed) = match record["kind"].as_str() {
-                Some("add") | Some("seal") => (record["files"].clone(), Value::Null),
-                Some("remove") => (Value::Null, record["files"].clone()),
-                Some("replace") => (record["add"].clone(), record["remove"].clone()),
-                _ => continue,
-            };
-            for path in strings(&removed) {
-                files.remove(&path);
-            }
-            for file in added.as_array().into_iter().flatten() {
-                let path = file["path"].as_str().expect("a file record has a path");
-                files.insert(path.to_string(), file.clone());
-            }
-        }
-        files
+        self.spawn_with(&all, Some(stdin), &[], None)
+            .finish(DEADLINE)
     }
 
     /// The live paths of one day, as the manifest names them (`2024-01-15/seg_…`).
     fn live_on(&self, day: &str) -> BTreeSet<String> {
         let prefix = format!("{day}/");
-        self.live()
+        self.live_files()
             .into_keys()
             .filter(|p| p.starts_with(&prefix))
             .collect()
-    }
-
-    /// The `.col` files under `data/<day>/`, spelled the way the manifest spells them.
-    fn on_disk(&self, day: &str) -> BTreeSet<String> {
-        fs::read_dir(self.base().join("data").join(day))
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .filter(|name| name.ends_with(".col"))
-                    .map(|name| format!("{day}/{name}"))
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     /// `day` is exactly `files`: on disk, in the manifest, and every one flagged finished.
@@ -255,7 +75,7 @@ impl Db {
             files,
             "the manifest's live files for {day} are not exactly the load's"
         );
-        for (path, file) in self.live() {
+        for (path, file) in self.live_files() {
             if files.contains(&path) {
                 assert_eq!(file["finished"], true, "{path} is not flagged finished");
             }
@@ -263,258 +83,7 @@ impl Db {
     }
 }
 
-impl Drop for Db {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-/// A command still running, its output going to two files.
-struct Running {
-    child: Child,
-    out: PathBuf,
-    err: PathBuf,
-    what: String,
-}
-
-impl Running {
-    fn is_running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
-
-    /// Waits for the exit, killing the command at `limit`.
-    fn finish(mut self, limit: Duration) -> Ran {
-        let deadline = Instant::now() + limit;
-        let mut timed_out = false;
-        let status = loop {
-            match self.child.try_wait().expect("failed to poll kibbr") {
-                Some(status) => break status,
-                None if Instant::now() >= deadline => {
-                    timed_out = true;
-                    let _ = self.child.kill();
-                    break self.child.wait().expect("failed to wait for kibbr");
-                }
-                None => sleep(Duration::from_millis(20)),
-            }
-        };
-        Ran {
-            what: self.what.clone(),
-            code: status.code(),
-            timed_out,
-            stdout: fs::read_to_string(&self.out).unwrap_or_default(),
-            stderr: fs::read_to_string(&self.err).unwrap_or_default(),
-        }
-    }
-}
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        // Only a child not yet reaped: once `try_wait` has seen the exit, the pid may
-        // already belong to another process.
-        if self.is_running() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
-/// An exited command.
-struct Ran {
-    what: String,
-    code: Option<i32>,
-    timed_out: bool,
-    stdout: String,
-    stderr: String,
-}
-
-impl Ran {
-    /// Exit 0 and the `--json` report, which must say `ok`.
-    fn report(&self) -> Value {
-        assert!(
-            !self.timed_out,
-            "`{}` did not finish in time:\n{}",
-            self.what, self.stderr
-        );
-        assert_eq!(
-            self.code,
-            Some(0),
-            "`{}` did not commit:\n{}",
-            self.what,
-            self.stderr
-        );
-        let report = json(self.stdout.trim());
-        assert_eq!(report["ok"], true, "{report}");
-        report
-    }
-
-    /// Exit 1, with every one of `phrases` in stderr.
-    fn refused(&self, phrases: &[&str]) {
-        assert!(
-            !self.timed_out,
-            "`{}` ran on instead of being refused:\n{}",
-            self.what, self.stderr
-        );
-        assert_eq!(
-            self.code,
-            Some(1),
-            "`{}` was not refused\nstdout: {}\nstderr: {}",
-            self.what,
-            self.stdout,
-            self.stderr
-        );
-        for phrase in phrases {
-            assert!(
-                self.stderr.contains(phrase),
-                "`{}` was refused without saying `{phrase}`:\n{}",
-                self.what,
-                self.stderr
-            );
-        }
-    }
-}
-
-// ── A server ───────────────────────────────────────────────────────────────────────
-
-struct Server {
-    child: Child,
-    port: u16,
-    stderr: BufReader<ChildStderr>,
-}
-
-impl Server {
-    fn query(&self, q: &str) -> Value {
-        let body = serde_json::json!({ "q": q }).to_string();
-        let (status, text) = request(self.port, "POST", "/query", body.as_bytes());
-        assert_eq!(status, 200, "query `{q}` answered {status}: {text}");
-        json(&text)
-    }
-
-    fn count(&self, q: &str) -> u64 {
-        let answer = self.query(q);
-        answer["count"]
-            .as_u64()
-            .unwrap_or_else(|| panic!("`{q}` answered no count: {answer}"))
-    }
-
-    fn ingest(&self, body: &[u8]) -> Value {
-        let (status, text) = request(self.port, "POST", "/ingest", body);
-        assert_eq!(status, 200, "ingest answered {status}: {text}");
-        json(&text)
-    }
-
-    /// SIGTERM, then wait for the exit - the graceful path, which closes every row group
-    /// and seals every file.
-    fn shutdown(mut self) -> String {
-        let ok = Command::new("kill")
-            .args(["-TERM", &self.child.id().to_string()])
-            .status()
-            .expect("failed to run kill")
-            .success();
-        assert!(ok, "kill -TERM failed");
-        let status = self.child.wait().expect("failed to wait for kibbr serve");
-        let mut log = String::new();
-        let _ = self.stderr.read_to_string(&mut log);
-        assert_eq!(
-            status.code(),
-            Some(0),
-            "a graceful shutdown did not exit 0:\n{log}"
-        );
-        // Already reaped; stop `Drop` from killing a pid that may have been reused.
-        self.child = Command::new("true").spawn().expect("failed to spawn true");
-        let _ = self.child.wait();
-        log
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn request(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String) {
-    request_with(port, method, path, "", body)
-}
-
-/// `request`, with extra header lines - each ending in CRLF.
-fn request_with(port: u16, method: &str, path: &str, extra: &str, body: &[u8]) -> (u16, String) {
-    let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
-    let head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Content-Type: application/json\r\n{extra}\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    socket.write_all(head.as_bytes()).expect("failed to write");
-    let _ = socket.write_all(body);
-    let _ = socket.flush();
-
-    let mut response = Vec::new();
-    socket
-        .read_to_end(&mut response)
-        .expect("failed to read the response");
-    let split = response
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .expect("no header/body split in the response");
-    let headers = String::from_utf8_lossy(&response[..split]).into_owned();
-    let status = headers
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .unwrap_or_else(|| panic!("no status line in response:\n{headers}"));
-    (
-        status,
-        String::from_utf8_lossy(&response[split + 4..]).into_owned(),
-    )
-}
-
-fn json(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
-}
-
-/// A JSON array of strings as a set; anything else is the empty set.
-fn strings(v: &Value) -> BTreeSet<String> {
-    v.as_array()
-        .into_iter()
-        .flatten()
-        .map(|s| s.as_str().expect("an array of strings").to_string())
-        .collect()
-}
-
 // ── Inputs ─────────────────────────────────────────────────────────────────────────
-
-fn gen(args: &[&str]) -> Vec<u8> {
-    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
-        .arg("gen-logs")
-        .args(args)
-        .output()
-        .expect("failed to run gen-logs");
-    assert!(out.status.success(), "gen-logs {args:?} failed");
-    out.stdout
-}
-
-fn hostile(lines: usize, seed: u64) -> Vec<u8> {
-    gen(&["--lines", &lines.to_string(), "--seed", &seed.to_string()])
-}
-
-fn farm(lines: usize, seed: u64) -> Vec<u8> {
-    gen(&[
-        "--profile",
-        "farm",
-        "--lines",
-        &lines.to_string(),
-        "--seed",
-        &seed.to_string(),
-    ])
-}
-
-fn gzip(bytes: &[u8]) -> Vec<u8> {
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(bytes).expect("gzip");
-    encoder.finish().expect("gzip")
-}
 
 /// Through the crate the binary reads zstd with, so the input does not depend on which
 /// `zstd` is on the machine, or on there being one.
@@ -610,7 +179,7 @@ fn a_load_alone_commits_and_the_next_server_answers_every_row() {
 
     // Every file live and finished: its row groups are already full, so compaction must
     // skip it rather than spend the IO rewriting it into the same thing.
-    let live = db.live();
+    let live = db.live_files();
     assert_eq!(
         live.keys().cloned().collect::<BTreeSet<_>>(),
         files,
@@ -769,7 +338,7 @@ fn a_query_in_flight_across_a_commit_counts_all_of_the_load_or_none() {
         })
         .collect();
     let report = db
-        .spawn(&db.load_args(&["--json"], &[&second]), None)
+        .spawn(&db.load_args(&["--json"], &[&second]))
         .finish(DEADLINE)
         .report();
     stop.store(true, Ordering::Relaxed);
@@ -877,7 +446,7 @@ fn a_kill_after_a_replace_does_not_bring_the_replaced_day_back() {
     let bytes = farm(FARM_LINES, 1);
     let input = db.input("farm.ndjson", &bytes);
 
-    let server = db.start_with(&NO_TICK);
+    let server = db.serve(&NO_TICK);
     assert_eq!(server.ingest(&bytes)["ingested"], FARM_LINES as u64);
     let report = db
         .load(&["--replace-day", DAY, "--json"], &[&input])
@@ -892,7 +461,7 @@ fn a_kill_after_a_replace_does_not_bring_the_replaced_day_back() {
     assert_eq!(server.ingest(late)["ingested"], 1);
     drop(server);
 
-    let after = db.start_with(&NO_TICK);
+    let after = db.serve(&NO_TICK);
     assert_eq!(
         after.count(DAY_COUNT),
         FARM_LINES as u64 + 1,
@@ -909,7 +478,7 @@ fn a_replace_run_alone_after_a_kill_replaces_what_the_log_held_of_the_day() {
     let bytes = farm(FARM_LINES, 1);
     let input = db.input("farm.ndjson", &bytes);
 
-    let server = db.start_with(&NO_TICK);
+    let server = db.serve(&NO_TICK);
     assert_eq!(server.ingest(&bytes)["ingested"], FARM_LINES as u64);
     // Another day's line, which the replace has no say over.
     let other = br#"{"time":"2024-01-16T00:00:01Z","msg":"the day after"}"#;
@@ -918,7 +487,7 @@ fn a_replace_run_alone_after_a_kill_replaces_what_the_log_held_of_the_day() {
 
     db.load(&["--replace-day", DAY, "--json"], &[&input])
         .report();
-    let after = db.start_with(&NO_TICK);
+    let after = db.serve(&NO_TICK);
     assert_eq!(
         after.count(DAY_COUNT),
         FARM_LINES as u64,
@@ -1105,9 +674,9 @@ fn replace_day_with_a_row_outside_the_day_is_refused_and_loads_nothing() {
         .refused(&["outside --replace-day"]);
     assert!(db.staging().is_empty(), "left: {:?}", db.staging());
     assert!(
-        db.live().is_empty(),
+        db.live_files().is_empty(),
         "the refusal named files: {:?}",
-        db.live()
+        db.live_files()
     );
     assert_eq!(db.count(ALL), 0);
 
@@ -1130,9 +699,9 @@ fn a_head_of_rows_without_a_time_is_refused_unless_told_to_proceed() {
     db.load(&[], &[&input])
         .refused(&["arrival time", "--proceed"]);
     assert!(
-        db.live().is_empty(),
+        db.live_files().is_empty(),
         "the refusal named files: {:?}",
-        db.live()
+        db.live_files()
     );
 
     let server = db.start();
@@ -1215,7 +784,7 @@ fn an_untimed_tail_after_a_clean_head_stops_the_load() {
     let server = db.start();
     db.load(&["--json"], &[&input]).refused(&stopped);
     assert_eq!(server.count(ALL), 0);
-    assert!(db.live().is_empty(), "{:?}", db.live());
+    assert!(db.live_files().is_empty(), "{:?}", db.live_files());
     assert!(db.staging().is_empty(), "left: {:?}", db.staging());
 }
 
@@ -1358,7 +927,7 @@ fn a_second_server_on_a_held_directory_exits_naming_lock() {
     );
 
     let args = ["serve", "--port", "0", "--data-dir", &db.base_arg()].map(String::from);
-    let second = db.spawn(&args, None).finish(REFUSAL_DEADLINE);
+    let second = db.spawn(&args).finish(REFUSAL_DEADLINE);
     assert!(
         !second.timed_out,
         "a second server started on a directory the first holds:\n{}",
@@ -1381,10 +950,8 @@ fn a_load_running_alone_holds_the_directory_against_a_server_and_another_load() 
 
     let rate = bytes.len() as f64 / 5.0 / 1e6;
     let rate_arg = format!("{rate:.3}");
-    let mut running = db.spawn(
-        &db.load_args(&["--json", "--max-mb-per-sec", &rate_arg], &[&input]),
-        None,
-    );
+    let mut running =
+        db.spawn(&db.load_args(&["--json", "--max-mb-per-sec", &rate_arg], &[&input]));
 
     // Taken when the file says so, not when the process exists.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -1406,7 +973,7 @@ fn a_load_running_alone_holds_the_directory_against_a_server_and_another_load() 
     }
 
     let args = ["serve", "--port", "0", "--data-dir", &db.base_arg()].map(String::from);
-    let serve = db.spawn(&args, None).finish(REFUSAL_DEADLINE);
+    let serve = db.spawn(&args).finish(REFUSAL_DEADLINE);
     let second = db.load(&[], &[&other]);
     // Read after both: a command that waited for the lock instead of refusing outlives the
     // first load, and then this is what tells a wait from a throttle that never held.
@@ -1499,4 +1066,52 @@ fn rejected_lines_are_counted_and_do_not_fail_the_load() {
     }
 
     assert_eq!(db.count(ALL), 998);
+}
+
+// ── Hostile files ──────────────────────────────────────────────────────────────────
+
+/// **No file under `tests/data/hostile/` crashes the bulk door**: each is loaded into a
+/// directory of its own and is either loaded or refused with exit 1 - never a panic, a
+/// signal or a hang. `--proceed`, so a file of lines with no time is loaded rather than
+/// stopped at the head, and the lines reach the parser and the store.
+#[test]
+fn every_hostile_file_is_loaded_or_refused_and_nothing_panics() {
+    let mut files: Vec<PathBuf> = fs::read_dir(data("hostile"))
+        .expect("tests/data/hostile")
+        .map(|entry| entry.expect("an entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "ndjson"))
+        .collect();
+    files.sort();
+    assert!(
+        files.len() >= 50,
+        "tests/data/hostile lost its files: {files:?}"
+    );
+    let mut loaded = 0;
+    for file in &files {
+        let db = Db::new();
+        let ran = db.load(&["--json", "--proceed"], &[file]);
+        let name = file.file_name().expect("a name").to_string_lossy();
+        assert!(
+            !ran.timed_out,
+            "{name}: the load never ended:\n{}",
+            ran.stderr
+        );
+        assert!(
+            matches!(ran.code, Some(0) | Some(1)),
+            "{name}: exit {:?}\nstdout: {}\nstderr: {}",
+            ran.code,
+            ran.stdout,
+            ran.stderr
+        );
+        assert!(!ran.stderr.contains("panicked"), "{name}:\n{}", ran.stderr);
+        assert!(db.staging().is_empty(), "{name}: left {:?}", db.staging());
+        if ran.code == Some(0) {
+            loaded += 1;
+        }
+    }
+    assert!(
+        loaded > files.len() / 2,
+        "only {loaded} of {} loaded",
+        files.len()
+    );
 }

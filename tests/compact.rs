@@ -10,15 +10,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::net::TcpStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
+use std::process::Stdio;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use kibbr::testing::{open_sealed, FormatError, Reader};
 use serde_json::Value;
+
+use crate::harness::*;
 
 /// Farm lines for most tests: one day, every line carrying its own time.
 const LINES: usize = 3_000;
@@ -36,12 +35,6 @@ const OLDER: &str = "2024-01-14";
 
 const ALL: &str = "COUNT LOG {}";
 const BY_HOUR: &str = "COUNT LOG {} GROUP BY time(1h)";
-
-/// Long enough for a debug build to rebuild the larger day several times over.
-const DEADLINE: Duration = Duration::from_secs(60);
-
-/// A command that should exit at once - a refusal - and is failed rather than waited on.
-const REFUSAL_DEADLINE: Duration = Duration::from_secs(15);
 
 /// How the live door is run to leave a day worth compacting: a row group closed every
 /// 50 ms, and a file sealed every 64 KiB.
@@ -63,25 +56,9 @@ const NO_SCHEDULE: &[&str] = &["--compact-interval-ms", "0"];
 /// volume has room for the day again beside the buffer limit, and none has beside this.
 const NO_ROOM: &[(&str, &str)] = &[("KIBBR__STORAGE__MAX_BUFFER_BYTES", "900000000000000")];
 
-// ── A scratch root: a data directory, and captured output ──────────────────────────
-
-struct Db {
-    root: PathBuf,
-}
+// ── A data directory as compaction finds it ────────────────────────────────────────
 
 impl Db {
-    fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "kibbr-compact-test-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("runs")).expect("create the output directory");
-        Self { root }
-    }
-
     /// A data directory holding `lines` farm lines as the live door leaves them: many short
     /// row groups over several files, sealed and unfinished - a row group a body per template.
     fn with_live_day(lines: usize) -> Self {
@@ -92,7 +69,7 @@ impl Db {
     /// lines.
     fn with_live(inputs: &[Vec<u8>]) -> Self {
         let db = Self::new();
-        let server = db.start(LIVE);
+        let server = db.serve(LIVE);
         let mut sent = 0;
         for input in inputs {
             let lines = input.split_inclusive(|b| *b == b'\n').count();
@@ -113,52 +90,6 @@ impl Db {
         db
     }
 
-    fn base(&self) -> PathBuf {
-        self.root.join("store")
-    }
-
-    fn base_arg(&self) -> String {
-        self.base().display().to_string()
-    }
-
-    // ── Processes ──
-
-    /// `kibbr <args>`, stdout and stderr to files: a pipe nobody reads until the exit
-    /// can fill and stall the child, and a stalled child looks like a slow one.
-    fn spawn(&self, args: &[String]) -> Running {
-        self.spawn_with(args, &[], None)
-    }
-
-    /// As `spawn`, with these variables set and, if one is given, from this directory.
-    fn spawn_with(&self, args: &[String], env: &[(&str, &str)], cwd: Option<&Path>) -> Running {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let out = self.root.join("runs").join(format!("{n}.out"));
-        let err = self.root.join("runs").join(format!("{n}.err"));
-        let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
-        if let Some(cwd) = cwd {
-            command.current_dir(cwd);
-        }
-        let child = command
-            .args(args)
-            // The schedule, the size cap and the directory are each test's own to set.
-            .env_remove("KIBBR__STORAGE__COMPACT_INTERVAL_MS")
-            .env_remove("KIBBR__STORAGE__SEGMENT_MAX_BYTES")
-            .env_remove("KIBBR__STORAGE__BASE_PATH")
-            .envs(env.iter().copied())
-            .stdin(Stdio::null())
-            .stdout(File::create(&out).expect("create the stdout file"))
-            .stderr(File::create(&err).expect("create the stderr file"))
-            .spawn()
-            .expect("failed to spawn kibbr");
-        Running {
-            child,
-            out,
-            err,
-            what: format!("kibbr {}", args.join(" ")),
-        }
-    }
-
     /// `kibbr compact --data-dir <store> <args>`, to its exit.
     fn compact(&self, args: &[&str]) -> Ran {
         self.compact_with(args, &[])
@@ -167,124 +98,7 @@ impl Db {
     fn compact_with(&self, args: &[&str], env: &[(&str, &str)]) -> Ran {
         let mut all = vec!["compact".to_string(), "--data-dir".into(), self.base_arg()];
         all.extend(args.iter().map(|a| a.to_string()));
-        self.spawn_with(&all, env, None).finish(DEADLINE)
-    }
-
-    fn start(&self, flags: &[&str]) -> Server {
-        self.start_with(flags, &[])
-    }
-
-    fn start_with(&self, flags: &[&str], env: &[(&str, &str)]) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
-            .args(["serve", "--port", "0"])
-            .args(["--data-dir", &self.base_arg()])
-            .args(flags)
-            .env_remove("KIBBR__STORAGE__COMPACT_INTERVAL_MS")
-            .env_remove("KIBBR__STORAGE__SEGMENT_MAX_BYTES")
-            .envs(env.iter().copied())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn kibbr serve");
-
-        let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
-        let mut port = None;
-        let mut banner = String::new();
-        for _ in 0..60 {
-            let mut line = String::new();
-            if stderr.read_line(&mut line).unwrap_or(0) == 0 {
-                break;
-            }
-            banner.push_str(&line);
-            if let Some(at) = line.find("http://127.0.0.1:") {
-                port = line[at + "http://127.0.0.1:".len()..].trim().parse().ok();
-            }
-            if line.contains("shutdown ") {
-                break;
-            }
-        }
-        let port = port.unwrap_or_else(|| panic!("no listening line in banner:\n{banner}"));
-        let token = json(&fs::read_to_string(self.base().join("LOCK")).expect("LOCK"))["token"]
-            .as_str()
-            .expect("a running server wrote no token to LOCK")
-            .to_string();
-        Server {
-            child,
-            port,
-            stderr: Some(stderr),
-            banner,
-            token,
-        }
-    }
-
-    // ── The directory's own files ──
-
-    fn manifest_bytes(&self) -> Vec<u8> {
-        fs::read(self.base().join("manifest.log")).unwrap_or_default()
-    }
-
-    /// Every record in `manifest.log`, in order, as `load.rs` walks them.
-    fn manifest(&self) -> Vec<Value> {
-        let bytes = self.manifest_bytes();
-        let mut out = Vec::new();
-        let mut at = 0;
-        while let Some(head) = bytes.get(at..at + 8) {
-            let len = u32::from_le_bytes([head[0], head[1], head[2], head[3]]) as usize;
-            let Some(payload) = bytes.get(at + 8..at + 8 + len).filter(|p| !p.is_empty()) else {
-                break;
-            };
-            let Ok(record) = serde_json::from_slice::<Value>(payload) else {
-                break;
-            };
-            out.push(record);
-            at += 8 + len;
-        }
-        out
-    }
-
-    /// The day's live files by path, after every record is applied: the last word on a
-    /// path wins, a removed path is gone, and a replace removes before it adds.
-    fn live(&self) -> BTreeMap<String, Value> {
-        self.live_of(DAY)
-    }
-
-    fn live_of(&self, day: &str) -> BTreeMap<String, Value> {
-        let mut files = BTreeMap::new();
-        for record in self.manifest() {
-            let (added, removed) = match record["kind"].as_str() {
-                Some("add") | Some("seal") => (record["files"].clone(), Value::Null),
-                Some("remove") => (Value::Null, record["files"].clone()),
-                Some("replace") => (record["add"].clone(), record["remove"].clone()),
-                _ => continue,
-            };
-            for path in strings(&removed) {
-                files.remove(&path);
-            }
-            for file in added.as_array().into_iter().flatten() {
-                let path = file["path"].as_str().expect("a file record has a path");
-                files.insert(path.to_string(), file.clone());
-            }
-        }
-        files.retain(|path, _| path.starts_with(&format!("{day}/")));
-        files
-    }
-
-    /// The `.col` files under `data/<day>/`, spelled the way the manifest spells them.
-    fn on_disk(&self) -> BTreeSet<String> {
-        self.on_disk_of(DAY)
-    }
-
-    fn on_disk_of(&self, day: &str) -> BTreeSet<String> {
-        fs::read_dir(self.base().join("data").join(day))
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .filter(|name| name.ends_with(".col"))
-                    .map(|name| format!("{day}/{name}"))
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.spawn_with(&all, None, env, None).finish(DEADLINE)
     }
 
     /// A day as the live door left it, for a test with more than one: its files, which
@@ -297,7 +111,7 @@ impl Db {
             assert_ne!(file["finished"], true, "{path} is finished already");
         }
         let paths: BTreeSet<String> = live.into_keys().collect();
-        assert_eq!(self.on_disk_of(day), paths);
+        assert_eq!(self.on_disk(day), paths);
         paths
     }
 
@@ -316,14 +130,14 @@ impl Db {
     /// The day as the live door left it: its files, and the sum of their sizes. Asserts
     /// it is a day compaction has something to do to.
     fn live_day(&self) -> (BTreeSet<String>, u64) {
-        let live = self.live();
+        let live = self.live_of(DAY);
         assert!(live.len() >= 2, "the live day is {} file(s)", live.len());
         for (path, file) in &live {
             assert_eq!(file["sealed"], true, "{path} was left unsealed");
             assert_ne!(file["finished"], true, "{path} is finished already");
         }
         let paths: BTreeSet<String> = live.into_keys().collect();
-        assert_eq!(self.on_disk(), paths);
+        assert_eq!(self.on_disk(DAY), paths);
         let bytes = self.bytes_of(&paths);
         (paths, bytes)
     }
@@ -346,7 +160,7 @@ impl Db {
         assert_eq!(replace["kind"], "replace", "{replace}");
         assert_eq!(replace["source"], "compact", "{replace}");
         assert_eq!(&strings(&replace["remove"]), before, "{replace}");
-        let live = self.live();
+        let live = self.live_of(DAY);
         let added: BTreeSet<String> = replace["add"]
             .as_array()
             .expect("a replace adds a list")
@@ -364,7 +178,7 @@ impl Db {
             assert_eq!(file["finished"], true, "{path} is not flagged finished");
         }
         assert_eq!(
-            self.on_disk(),
+            self.on_disk(DAY),
             added,
             "data/{DAY} is not the manifest's live files"
         );
@@ -380,7 +194,7 @@ impl Db {
     /// day, which is what a start reads "the last live row" from.
     fn backdate(&self) {
         let ended = UNIX_EPOCH + Duration::from_secs(DAY_ENDED);
-        for path in self.on_disk_of(OLDER).into_iter().chain(self.on_disk()) {
+        for path in self.on_disk(OLDER).into_iter().chain(self.on_disk(DAY)) {
             let path = self.base().join("data").join(path);
             File::options()
                 .write(true)
@@ -391,149 +205,9 @@ impl Db {
     }
 }
 
-impl Drop for Db {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-/// A command still running, its output going to two files.
-struct Running {
-    child: Child,
-    out: PathBuf,
-    err: PathBuf,
-    what: String,
-}
-
-impl Running {
-    fn is_running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
-
-    /// Waits for the exit, killing the command at `limit`.
-    fn finish(mut self, limit: Duration) -> Ran {
-        let deadline = Instant::now() + limit;
-        let mut timed_out = false;
-        let status = loop {
-            match self.child.try_wait().expect("failed to poll kibbr") {
-                Some(status) => break status,
-                None if Instant::now() >= deadline => {
-                    timed_out = true;
-                    let _ = self.child.kill();
-                    break self.child.wait().expect("failed to wait for kibbr");
-                }
-                None => sleep(Duration::from_millis(20)),
-            }
-        };
-        Ran {
-            what: self.what.clone(),
-            code: status.code(),
-            timed_out,
-            stdout: fs::read_to_string(&self.out).unwrap_or_default(),
-            stderr: fs::read_to_string(&self.err).unwrap_or_default(),
-        }
-    }
-}
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        // Only a child not yet reaped: once `try_wait` has seen the exit, the pid may
-        // already belong to another process.
-        if self.is_running() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
-/// An exited command.
-struct Ran {
-    what: String,
-    code: Option<i32>,
-    timed_out: bool,
-    stdout: String,
-    stderr: String,
-}
-
-impl Ran {
-    /// Exit 0, and what it printed.
-    fn ok(&self) -> &str {
-        assert!(
-            !self.timed_out,
-            "`{}` did not finish in time:\n{}",
-            self.what, self.stderr
-        );
-        assert_eq!(
-            self.code,
-            Some(0),
-            "`{}` failed:\n{}",
-            self.what,
-            self.stderr
-        );
-        &self.stdout
-    }
-
-    /// Exit 0 and the `--json` report, which must say `ok`.
-    fn report(&self) -> Value {
-        let report = json(self.ok().trim());
-        assert_eq!(report["ok"], true, "{report}");
-        report
-    }
-
-    /// Exit 1, nothing on stdout, and every one of `phrases` in stderr.
-    fn refused(&self, phrases: &[&str]) {
-        assert!(
-            !self.timed_out,
-            "`{}` ran on instead of being refused:\n{}",
-            self.what, self.stderr
-        );
-        assert_eq!(
-            self.code,
-            Some(1),
-            "`{}` was not refused\nstdout: {}\nstderr: {}",
-            self.what,
-            self.stdout,
-            self.stderr
-        );
-        assert_eq!(self.stdout, "", "`{}` was refused and printed", self.what);
-        for phrase in phrases {
-            assert!(
-                self.stderr.contains(phrase),
-                "`{}` was refused without saying `{phrase}`:\n{}",
-                self.what,
-                self.stderr
-            );
-        }
-    }
-}
-
-// ── A server ───────────────────────────────────────────────────────────────────────
-
-struct Server {
-    child: Child,
-    port: u16,
-    /// `None` once the test has closed its end of the pipe.
-    stderr: Option<BufReader<ChildStderr>>,
-    banner: String,
-    /// What `LOCK` says a `/compact` is asked with.
-    token: String,
-}
+// ── A server, as compaction is asked of it ─────────────────────────────────────────
 
 impl Server {
-    fn query(&self, q: &str) -> Value {
-        let body = serde_json::json!({ "q": q }).to_string();
-        let (status, text) = request(self.port, "POST", "/query", "", body.as_bytes());
-        assert_eq!(status, 200, "query `{q}` answered {status}: {text}");
-        json(&text)
-    }
-
-    fn count(&self, q: &str) -> u64 {
-        let answer = self.query(q);
-        answer["count"]
-            .as_u64()
-            .unwrap_or_else(|| panic!("`{q}` answered no count: {answer}"))
-    }
-
     /// How many row groups the store holds: every one is read or pruned by a count of
     /// everything. Never compared as an answer - changing it is what compaction is for.
     fn row_groups(&self) -> u64 {
@@ -547,7 +221,7 @@ impl Server {
     /// What a query can see of the day, in a form two servers' answers compare by: the
     /// count, the count by the hour, and every template's row count.
     fn answers(&self) -> Value {
-        let (status, text) = request(self.port, "GET", "/templates", "", b"");
+        let (status, text) = request_with(self.port, "GET", "/templates", "", b"");
         assert_eq!(status, 200, "{text}");
         let templates: BTreeMap<String, Value> = json(&text)["templates"]
             .as_array()
@@ -562,16 +236,13 @@ impl Server {
         })
     }
 
-    fn ingest(&self, body: &[u8]) -> Value {
-        let (status, text) = request(self.port, "POST", "/ingest", "", body);
-        assert_eq!(status, 200, "ingest answered {status}: {text}");
-        json(&text)
-    }
-
-    fn stats(&self) -> Value {
-        let (status, text) = request(self.port, "GET", "/stats", "", b"");
-        assert_eq!(status, 200, "{text}");
-        json(&text)
+    /// What `LOCK` says a `/compact` is asked with.
+    fn token(&self) -> String {
+        let lock = fs::read_to_string(self.data_dir().join("LOCK")).expect("LOCK");
+        json(&lock)["token"]
+            .as_str()
+            .expect("a running server wrote no token to LOCK")
+            .to_string()
     }
 
     /// `/stats`'s `storage.compaction`.
@@ -590,8 +261,8 @@ impl Server {
 
     /// A request showing the token.
     fn asked(&self, method: &str, path: &str, body: &str) -> (u16, Value) {
-        let shown = format!("x-kibbr-load-token: {}\r\n", self.token);
-        let (status, text) = request(self.port, method, path, &shown, body.as_bytes());
+        let shown = format!("x-kibbr-load-token: {}\r\n", self.token());
+        let (status, text) = request_with(self.port, method, path, &shown, body.as_bytes());
         (status, json(&text))
     }
 
@@ -611,107 +282,11 @@ impl Server {
             sleep(Duration::from_millis(20));
         }
     }
-
-    /// Close this end of the server's stderr, as a log collector that went away would:
-    /// whatever the server writes there from now on fails.
-    fn close_stderr(&mut self) {
-        self.stderr = None;
-    }
-
-    /// SIGTERM, then wait for the exit - the graceful path, which closes every row group
-    /// and seals every file. Returns the server's stderr after its banner.
-    fn shutdown(mut self) -> String {
-        let ok = Command::new("kill")
-            .args(["-TERM", &self.child.id().to_string()])
-            .status()
-            .expect("failed to run kill")
-            .success();
-        assert!(ok, "kill -TERM failed");
-        let status = self.child.wait().expect("failed to wait for kibbr serve");
-        let mut log = String::new();
-        if let Some(stderr) = self.stderr.as_mut() {
-            let _ = stderr.read_to_string(&mut log);
-        }
-        assert_eq!(
-            status.code(),
-            Some(0),
-            "a graceful shutdown did not exit 0:\n{log}"
-        );
-        // Already reaped; stop `Drop` from killing a pid that may have been reused.
-        self.child = Command::new("true").spawn().expect("failed to spawn true");
-        let _ = self.child.wait();
-        log
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// One request, with extra header lines - each ending in CRLF.
-fn request(port: u16, method: &str, path: &str, extra: &str, body: &[u8]) -> (u16, String) {
-    let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
-    // A server that never answers fails the test at the deadline; with no timeout the read
-    // below waits on it for good, and nothing between two requests ever looks at a clock.
-    socket
-        .set_read_timeout(Some(DEADLINE))
-        .expect("set the read timeout");
-    socket
-        .set_write_timeout(Some(DEADLINE))
-        .expect("set the write timeout");
-    let head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Content-Type: application/json\r\n{extra}\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    socket.write_all(head.as_bytes()).expect("failed to write");
-    let _ = socket.write_all(body);
-    let _ = socket.flush();
-
-    let mut response = Vec::new();
-    socket
-        .read_to_end(&mut response)
-        .expect("failed to read the response");
-    let split = response
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .expect("no header/body split in the response");
-    let headers = String::from_utf8_lossy(&response[..split]).into_owned();
-    let status = headers
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .unwrap_or_else(|| panic!("no status line in response:\n{headers}"));
-    (
-        status,
-        String::from_utf8_lossy(&response[split + 4..]).into_owned(),
-    )
-}
-
-fn json(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
-}
-
-/// A JSON array of strings as a set; anything else is the empty set.
-fn strings(v: &Value) -> BTreeSet<String> {
-    v.as_array()
-        .into_iter()
-        .flatten()
-        .map(|s| s.as_str().expect("an array of strings").to_string())
-        .collect()
-}
-
-fn farm(lines: usize, seed: u64) -> Vec<u8> {
-    farm_on(DAY, lines, seed)
 }
 
 /// Farm lines of `day`, YYYY-MM-DD.
 fn farm_on(day: &str, lines: usize, seed: u64) -> Vec<u8> {
-    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+    let out = kibbr()
         .args(["gen-logs", "--profile", "farm", "--day", day])
         .args(["--lines", &lines.to_string(), "--seed", &seed.to_string()])
         .output()
@@ -770,7 +345,7 @@ fn a_compaction_alone_rebuilds_a_live_day_and_a_second_one_changes_nothing() {
     let (before, bytes_before) = db.live_day();
     let records = db.manifest().len();
     let (answers, groups_before) = {
-        let server = db.start(NO_SCHEDULE);
+        let server = db.serve(NO_SCHEDULE);
         let seen = (server.answers(), server.row_groups());
         server.shutdown();
         seen
@@ -803,7 +378,7 @@ fn a_compaction_alone_rebuilds_a_live_day_and_a_second_one_changes_nothing() {
         "{groups_out} row groups from {groups_in}"
     );
     let live_rows: u64 = db
-        .live()
+        .live_of(DAY)
         .values()
         .map(|f| f["rows"].as_u64().unwrap_or(0))
         .sum();
@@ -836,7 +411,7 @@ fn a_compaction_alone_rebuilds_a_live_day_and_a_second_one_changes_nothing() {
     );
 
     // A different process, reading only what the compaction left.
-    let server = db.start(NO_SCHEDULE);
+    let server = db.serve(NO_SCHEDULE);
     assert_eq!(
         server.answers(),
         answers,
@@ -897,7 +472,7 @@ fn a_day_that_is_not_a_date_is_refused_before_anything_is_touched() {
         "a refused command made the directory it was pointed at"
     );
 
-    let _server = db.start(NO_SCHEDULE);
+    let _server = db.serve(NO_SCHEDULE);
     let ran = db.compact(&["--day", "2024-13-45"]);
     ran.refused(&["--day 2024-13-45: not a YYYY-MM-DD day"]);
     // A server refuses the same day in words of its own, which the command would have
@@ -933,7 +508,7 @@ fn a_path_that_is_not_a_data_directory_is_refused_and_nothing_is_made_or_deleted
     // run beside a server that keeps its rows in memory finds itself.
     let elsewhere = db.root.join("elsewhere");
     fs::create_dir_all(&elsewhere).expect("create a working directory");
-    db.spawn_with(&["compact".to_string()], &[], Some(&elsewhere))
+    db.spawn_with(&["compact".to_string()], None, &[], Some(&elsewhere))
         .finish(REFUSAL_DEADLINE)
         .refused(&["kibbr-data", not_one]);
     assert_eq!(names(&elsewhere), BTreeSet::new(), "it made something");
@@ -969,7 +544,7 @@ fn a_path_that_is_not_a_data_directory_is_refused_and_nothing_is_made_or_deleted
 
     // And inside a real one: its `data/` is not a data directory either, and nothing is
     // planted there for the next start to find.
-    db.start(NO_SCHEDULE).shutdown();
+    db.serve(NO_SCHEDULE).shutdown();
     let inside = db.base().join("data");
     let was = names(&inside);
     let dir = inside.display().to_string();
@@ -1013,10 +588,8 @@ fn damage(path: &Path) {
         .find(|(chunk, _)| chunk.stored_len >= 8)
         .expect("a chunk of 8 bytes");
     // 16 bytes into the chunk, or as far in as a shorter one has room for.
-    let at = entry.offset
-        + u64::from(entry.frame_len)
-        + start
-        + u64::from(chunk.stored_len - 8).min(16);
+    let at =
+        entry.offset + u64::from(entry.frame_len) + start + u64::from(chunk.stored_len - 8).min(16);
     let mut file = File::options()
         .read(true)
         .write(true)
@@ -1056,7 +629,7 @@ fn compact_with_no_day_takes_every_day_that_is_due() {
         assert!(live.values().all(|file| file["finished"] == true));
         let live: BTreeSet<String> = live.into_keys().collect();
         assert_eq!(strings(&days[n]["added"]), live, "{report}");
-        assert_eq!(db.on_disk_of(day), live, "data/{day} is not its live files");
+        assert_eq!(db.on_disk(day), live, "data/{day} is not its live files");
     }
 
     assert_eq!(db.compact(&[]).ok(), "", "a compacted day is due again");
@@ -1101,7 +674,7 @@ fn a_day_that_fails_does_not_stop_the_days_after_it() {
     db.assert_compacted(records, &before[1]);
     let older: BTreeSet<String> = db.live_of(OLDER).into_keys().collect();
     assert_eq!(older, before[0], "the day that failed is not as it was");
-    assert_eq!(db.on_disk_of(OLDER), before[0], "a failed day left a file");
+    assert_eq!(db.on_disk(OLDER), before[0], "a failed day left a file");
 
     // Again: the one day still due still fails, and is now the whole of the count.
     let manifest = db.manifest_bytes();
@@ -1124,9 +697,9 @@ fn a_day_that_cannot_be_compacted_is_exit_1_alone_and_through_a_server() {
             .refused(&[&said, "Nothing was compacted"]);
     }
     assert_eq!(db.manifest_bytes(), manifest);
-    assert_eq!(db.on_disk(), before);
+    assert_eq!(db.on_disk(DAY), before);
 
-    let server = db.start_with(NO_SCHEDULE, NO_ROOM);
+    let server = db.serve_env(NO_SCHEDULE, NO_ROOM);
     for args in [&["--day", DAY][..], &["--day", DAY, "--json"]] {
         db.compact(args).refused(&[&said, "Nothing was compacted"]);
     }
@@ -1160,7 +733,7 @@ fn a_day_that_cannot_be_compacted_is_exit_1_alone_and_through_a_server() {
     assert_eq!(server.count(ALL), LINES as u64);
     server.shutdown();
     assert_eq!(db.manifest_bytes(), manifest);
-    assert_eq!(db.on_disk(), before);
+    assert_eq!(db.on_disk(DAY), before);
 }
 
 // ── Through a server ───────────────────────────────────────────────────────────────
@@ -1172,7 +745,7 @@ fn a_compaction_through_a_server_reports_what_the_manifest_and_stats_say() {
     let db = Db::with_live_day(LINES);
     let (before, bytes_before) = db.live_day();
     let records = db.manifest().len();
-    let server = db.start(NO_SCHEDULE);
+    let server = db.serve(NO_SCHEDULE);
     let answers = server.answers();
     let groups_before = server.row_groups();
     assert_eq!(
@@ -1244,7 +817,7 @@ fn a_compaction_through_a_server_reports_what_the_manifest_and_stats_say() {
     );
 
     server.shutdown();
-    let server = db.start(NO_SCHEDULE);
+    let server = db.serve(NO_SCHEDULE);
     assert_eq!(
         server.answers(),
         answers,
@@ -1259,14 +832,14 @@ fn a_compaction_through_a_server_reports_what_the_manifest_and_stats_say() {
 fn a_compact_request_needs_the_lock_token_and_the_servers_own_directory() {
     let db = Db::with_live_day(LINES);
     let records = db.manifest().len();
-    let server = db.start(NO_SCHEDULE);
+    let server = db.serve(NO_SCHEDULE);
     assert!(server.banner.contains("POST /compact"), "{}", server.banner);
     let ours = fs::canonicalize(db.base()).expect("canonicalize");
     let body = |dir: &std::path::Path, day: &str| {
         serde_json::json!({"day": day, "data_dir": dir, "threads": null}).to_string()
     };
 
-    let (status, text) = request(
+    let (status, text) = request_with(
         server.port,
         "POST",
         "/compact",
@@ -1275,7 +848,7 @@ fn a_compact_request_needs_the_lock_token_and_the_servers_own_directory() {
     );
     assert_eq!(status, 403, "{text}");
     let wrong = "x-kibbr-load-token: 00000000000000000000000000000000\r\n";
-    let (status, text) = request(
+    let (status, text) = request_with(
         server.port,
         "POST",
         "/compact",
@@ -1283,7 +856,7 @@ fn a_compact_request_needs_the_lock_token_and_the_servers_own_directory() {
         body(&ours, DAY).as_bytes(),
     );
     assert_eq!(status, 403, "{text}");
-    let (status, text) = request(server.port, "GET", "/compact/1", "", b"");
+    let (status, text) = request_with(server.port, "GET", "/compact/1", "", b"");
     assert_eq!(status, 403, "{text}");
 
     let (status, answer) = server.asked("POST", "/compact", &body(&db.root, DAY));
@@ -1320,7 +893,7 @@ fn a_compact_request_needs_the_lock_token_and_the_servers_own_directory() {
 /// that finds nothing.
 #[test]
 fn a_server_with_no_data_directory_refuses_a_compaction() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+    let mut child = kibbr()
         .args(["serve", "--port", "0", "--storage", "memory"])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -1341,7 +914,7 @@ fn a_server_with_no_data_directory_refuses_a_compaction() {
             break;
         }
     }
-    let answer = port.map(|port| request(port, "POST", "/compact", "", b"{}"));
+    let answer = port.map(|port| request_with(port, "POST", "/compact", "", b"{}"));
     let _ = child.kill();
     let _ = child.wait();
     let (status, text) = answer.expect("no listening line in the banner");
@@ -1356,7 +929,7 @@ fn a_second_compaction_is_refused_while_one_is_running() {
     let db = Db::with_live_day(MANY_LINES);
     let (before, _) = db.live_day();
     let records = db.manifest().len();
-    let server = db.start(NO_SCHEDULE);
+    let server = db.serve(NO_SCHEDULE);
     let body = serde_json::json!({ "day": DAY }).to_string();
 
     let (status, answer) = server.asked("POST", "/compact", &body);
@@ -1400,7 +973,7 @@ fn a_compaction_job_ends_when_the_servers_stderr_is_closed() {
     let db = Db::with_live_day(LINES);
     let (before, _) = db.live_day();
     let records = db.manifest().len();
-    let mut server = db.start(NO_SCHEDULE);
+    let mut server = db.serve(NO_SCHEDULE);
     server.close_stderr();
 
     let body = serde_json::json!({ "day": DAY }).to_string();
@@ -1430,7 +1003,7 @@ fn the_scheduler_compacts_a_day_that_ended_and_leaves_one_written_today() {
     let (before, _) = ended.live_day();
     let records = ended.manifest().len();
     let (answers, groups_before) = {
-        let server = ended.start(NO_SCHEDULE);
+        let server = ended.serve(NO_SCHEDULE);
         let seen = (server.answers(), server.row_groups());
         server.shutdown();
         seen
@@ -1438,7 +1011,7 @@ fn the_scheduler_compacts_a_day_that_ended_and_leaves_one_written_today() {
     ended.backdate();
     // `0` is never: the day is due now, and a server told not to look leaves it.
     {
-        let idle = ended.start(NO_SCHEDULE);
+        let idle = ended.serve(NO_SCHEDULE);
         sleep(Duration::from_millis(500));
         assert_eq!(
             idle.compaction(),
@@ -1456,10 +1029,10 @@ fn the_scheduler_compacts_a_day_that_ended_and_leaves_one_written_today() {
     let started_on = today();
 
     let looking = ["--compact-interval-ms", "100"];
-    let control_server = control.start(&looking);
+    let control_server = control.serve(&looking);
     let control_since = Instant::now();
     let control_groups = control_server.row_groups();
-    let server = ended.start(&looking);
+    let server = ended.serve(&looking);
     assert_eq!(server.stats()["storage"]["compact_interval_ms"], 100);
 
     let deadline = Instant::now() + DEADLINE;
@@ -1527,7 +1100,7 @@ fn a_day_that_keeps_failing_is_left_longer_each_time() {
     db.live_day();
     db.backdate();
     let manifest = db.manifest_bytes();
-    let server = db.start_with(&["--compact-interval-ms", "100"], NO_ROOM);
+    let server = db.serve_env(&["--compact-interval-ms", "100"], NO_ROOM);
 
     let deadline = Instant::now() + DEADLINE;
     while server.compaction()["runs"] == 0 {
@@ -1554,7 +1127,7 @@ fn a_day_that_keeps_failing_is_left_longer_each_time() {
     );
     assert_eq!(db.manifest_bytes(), manifest);
 
-    let (status, health) = request(server.port, "GET", "/health", "", b"");
+    let (status, health) = request_with(server.port, "GET", "/health", "", b"");
     assert_eq!(status, 200, "{health}");
     let line = farm(1, 3);
     assert_eq!(server.ingest(&line)["errors"], serde_json::json!([]));
@@ -1570,7 +1143,7 @@ fn last_error_clears_once_the_day_has_nothing_left_to_compact() {
     let db = Db::with_live_day(LINES);
     db.live_day();
     db.backdate();
-    let server = db.start_with(&["--compact-interval-ms", "100"], NO_ROOM);
+    let server = db.serve_env(&["--compact-interval-ms", "100"], NO_ROOM);
     let deadline = Instant::now() + DEADLINE;
     while !server.compaction()["last_error"].is_string() {
         assert!(Instant::now() < deadline, "a day with no room never failed");
@@ -1584,7 +1157,9 @@ fn last_error_clears_once_the_day_has_nothing_left_to_compact() {
     load.push(input.display().to_string());
     db.spawn(&load).finish(DEADLINE).ok();
     assert!(
-        db.live().values().all(|file| file["finished"] == true),
+        db.live_of(DAY)
+            .values()
+            .all(|file| file["finished"] == true),
         "the load did not leave the day finished"
     );
 
@@ -1610,12 +1185,12 @@ fn the_compact_interval_flag_wins_over_a_malformed_variable() {
     let db = Db::new();
     let malformed = [("KIBBR__STORAGE__COMPACT_INTERVAL_MS", "abc")];
 
-    let server = db.start_with(&["--compact-interval-ms", "500"], &malformed);
+    let server = db.serve_env(&["--compact-interval-ms", "500"], &malformed);
     assert_eq!(server.stats()["storage"]["compact_interval_ms"], 500);
     server.shutdown();
 
     let serve = ["serve", "--port", "0", "--data-dir", &db.base_arg()].map(String::from);
-    db.spawn_with(&serve, &malformed, None)
+    db.spawn_with(&serve, None, &malformed, None)
         .finish(REFUSAL_DEADLINE)
         .refused(&["KIBBR__STORAGE__COMPACT_INTERVAL_MS=`abc` is not a whole number"]);
 }
@@ -1629,7 +1204,7 @@ fn a_server_told_to_stop_mid_compaction_exits_0_and_keeps_every_row_once() {
     let db = Db::with_live_day(MANY_LINES);
     let (before, _) = db.live_day();
     let records = db.manifest().len();
-    let server = db.start(NO_SCHEDULE);
+    let server = db.serve(NO_SCHEDULE);
     let answers = server.answers();
 
     let body = serde_json::json!({ "day": DAY }).to_string();
@@ -1645,10 +1220,10 @@ fn a_server_told_to_stop_mid_compaction_exits_0_and_keeps_every_row_once() {
             log.contains(&format!("compaction job {job} - compact {DAY}: cancelled")),
             "the day was not compacted, and the job did not say it was stopped:\n{log}"
         );
-        let live: BTreeSet<String> = db.live().into_keys().collect();
+        let live: BTreeSet<String> = db.live_of(DAY).into_keys().collect();
         assert_eq!(live, before, "the day's files are not as they were");
         assert_eq!(
-            db.on_disk(),
+            db.on_disk(DAY),
             before,
             "a stopped compaction left a file behind"
         );
@@ -1665,7 +1240,7 @@ fn a_server_told_to_stop_mid_compaction_exits_0_and_keeps_every_row_once() {
     }
     assert!(log.contains("exit 0"), "{log}");
 
-    let server = db.start(NO_SCHEDULE);
+    let server = db.serve(NO_SCHEDULE);
     assert_eq!(
         server.answers(),
         answers,

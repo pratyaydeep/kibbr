@@ -11,41 +11,17 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Child, Stdio};
 
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use kibbr::testing::config::{self, ServeFlags};
 use tokio_util::sync::CancellationToken;
+
+use crate::harness::*;
 
 /// Lines in the ingest body, and the three that are broken.
 const LINES: usize = 500;
 const BAD: [usize; 3] = [137, 400, 461];
 
 // ── A running server: the binary, as a process ─────────────────────────────────────
-
-struct Server {
-    child: Child,
-    port: u16,
-    stderr: BufReader<ChildStderr>,
-    data_dir: Option<PathBuf>,
-    /// Everything the server said before it listened: what a start found, and the banner.
-    banner: String,
-}
-
-/// A data directory of this test's own: storage defaults to disk, so with no `--data-dir`
-/// every test in this file would share whatever directory `cargo test` ran from.
-fn scratch_dir() -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "kibbr-serve-test-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    dir
-}
 
 impl Server {
     /// Start on port 0 and read back the port the OS chose: tests run concurrently, and 7700
@@ -58,45 +34,14 @@ impl Server {
     /// corpus can actually reach has to be smaller than the 10,000-row default.
     fn start_with(extra: &[&str]) -> Self {
         let memory = extra.windows(2).any(|pair| pair == ["--storage", "memory"]);
-        Self::start_on((!memory).then(scratch_dir), extra)
+        Self::start_on((!memory).then(|| scratch_dir("serve")), extra)
     }
 
     /// The same, on a data directory an earlier server of this test left: a restart.
     fn start_on(data_dir: Option<PathBuf>, extra: &[&str]) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
-        command.args(["serve", "--port", "0"]);
-        if let Some(dir) = &data_dir {
-            command.args(["--data-dir", &dir.display().to_string()]);
-        }
-        let mut child = command
-            .args(extra)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn kibbr serve");
-
-        let mut stderr = BufReader::new(child.stderr.take().expect("stderr was not piped"));
-        let mut port = None;
-        let mut banner = String::new();
-        // Past the banner's own length: a start after a kill says what it read back from
-        // the write-ahead log before the banner.
-        for _ in 0..80 {
-            let mut line = String::new();
-            if stderr.read_line(&mut line).unwrap_or(0) == 0 {
-                break;
-            }
-            banner.push_str(&line);
-            if let Some(at) = line.find("http://127.0.0.1:") {
-                let tail = &line[at + "http://127.0.0.1:".len()..];
-                port = tail.trim().parse().ok();
-            }
-            // Read to the end of the banner, not just to the port: the assertions below
-            // are about what the whole banner says, and the address is on its third line.
-            if line.contains("shutdown ") {
-                break;
-            }
-        }
-        let port = port.unwrap_or_else(|| panic!("no listening line in banner:\n{banner}"));
+        let mut server = Server::spawn(&[], data_dir.as_deref(), extra, &[]);
+        server.owns_dir = true;
+        let banner = &server.banner;
 
         // The backstop changes what an unlimited `MATCH` means on this surface, so the banner
         // names it rather than leaving it to be discovered from a truncated answer.
@@ -111,95 +56,22 @@ impl Server {
             "banner does not say where storage is:\n{banner}"
         );
 
-        Self {
-            child,
-            port,
-            stderr,
-            data_dir,
-            banner,
-        }
-    }
-
-    /// `kill -9`, and the data directory as it was left: nothing flushed, nothing sealed,
-    /// no checkpoint moved.
-    fn kill(mut self) -> PathBuf {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        self.data_dir.take().expect("a server with a directory")
-    }
-
-    /// `wait`, keeping the data directory for a restart.
-    fn wait_keeping(mut self) -> (Option<i32>, String, PathBuf) {
-        let dir = self.data_dir.take().expect("a server with a directory");
-        let (code, log) = self.wait();
-        (code, log, dir)
-    }
-
-    fn data_dir(&self) -> &Path {
-        self.data_dir
-            .as_deref()
-            .expect("this server was started in memory")
-    }
-
-    fn get(&self, path: &str) -> (u16, String) {
-        request(self.port, "GET", path, b"")
-    }
-
-    fn post(&self, path: &str, body: &[u8]) -> (u16, String) {
-        request(self.port, "POST", path, body)
-    }
-
-    /// A TrieQL query, as `/query` takes it.
-    fn query(&self, q: &str) -> serde_json::Value {
-        let body = serde_json::json!({ "q": q }).to_string();
-        let (status, text) = self.post("/query", body.as_bytes());
-        assert_eq!(status, 200, "query `{q}` answered {status}: {text}");
-        json(&text)
-    }
-
-    fn signal(&self, name: &str) {
-        let ok = Command::new("kill")
-            .args([name, &self.child.id().to_string()])
-            .status()
-            .expect("failed to run kill")
-            .success();
-        assert!(ok, "kill {name} failed");
-    }
-
-    /// Wait for exit, and return the code plus everything left on stderr.
-    fn wait(mut self) -> (Option<i32>, String) {
-        let status = self.child.wait().expect("failed to wait for kibbr serve");
-        let mut log = String::new();
-        let _ = self.stderr.read_to_string(&mut log);
-        // Already reaped; stop `Drop` from killing a pid that may have been reused. The
-        // data directory is left on `self`, so `Drop` still removes it.
-        self.child = Command::new("true").spawn().expect("failed to spawn true");
-        let _ = self.child.wait();
-        (status.code(), log)
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        if let Some(dir) = &self.data_dir {
-            let _ = fs::remove_dir_all(dir);
-        }
+        server
     }
 }
 
 // ── A running server: the library, in this process ─────────────────────────────────
 
-/// A server run by `kibbr::testing::server::run` on a thread of this process, with the settings the
-/// command line resolves, and stopped as a signal stops one: a stop that fails fails the test.
+/// A server run by `kibbr::testing::server::run` on a thread of this process, with the
+/// settings the command line resolves, and stopped as a signal stops one: a stop that fails
+/// fails the test.
 struct Served {
     port: u16,
     data_dir: Option<PathBuf>,
     /// Everything the server said before it listened: what a start found, and the banner.
     banner: String,
     cancel: CancellationToken,
-    run: Option<std::thread::JoinHandle<kibbr::testing::server::Result<kibbr::testing::server::Report>>>,
+    run: Option<std::thread::JoinHandle<ServerResult<ServerReport>>>,
 }
 
 /// What one thread's events say, each as its message: the banner is one of those events,
@@ -250,13 +122,13 @@ impl Served {
     /// The same, with flags as `kibbr serve` takes them. The port and the directory are
     /// this function's: `--storage memory` is the one way to have no directory.
     fn start_with(flags: ServeFlags) -> Self {
-        let data_dir = (!flags.memory()).then(scratch_dir);
+        let data_dir = (!flags.memory()).then(|| scratch_dir("serve"));
         let flags = ServeFlags {
             port: Some(0),
             data_dir: data_dir.clone(),
             ..flags
         };
-        let settings = config::settings(&config::File::default(), flags, config::Log::default())
+        let settings = settings(&ConfigFile::default(), flags, ConfigLog::default())
             .expect("the flags were refused");
         let cancel = CancellationToken::new();
         let (said, heard) = std::sync::mpsc::channel();
@@ -264,7 +136,7 @@ impl Served {
             let cancel = cancel.clone();
             std::thread::spawn(move || {
                 let _hearing = tracing::subscriber::set_default(Hear(std::sync::Mutex::new(said)));
-                kibbr::testing::server::run(settings, cancel)
+                run_server(settings, cancel)
             })
         };
 
@@ -344,62 +216,17 @@ impl Drop for Served {
     }
 }
 
-/// One request, one connection, read to EOF. Returns the status code and the body.
-fn request(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String) {
-    let (status, _, body) = request_raw(port, method, path, body);
-    (status, body)
-}
-
-/// The same, with the response headers kept: `/` is the one endpoint whose content type
-/// is part of what it promises.
-fn request_raw(port: u16, method: &str, path: &str, body: &[u8]) -> (u16, String, String) {
-    request_with(port, method, path, body, &[])
-}
-
-/// The same again with extra request headers - `Content-Encoding` is the one that needs
-/// them, and it is a header rather than anything a body can carry.
-fn request_with(
+/// A request with extra headers, its answer's headers kept: `Content-Encoding` is the one
+/// that needs them, and it is a header rather than anything a body can carry.
+fn request_headers(
     port: u16,
     method: &str,
     path: &str,
     body: &[u8],
     extra: &[(&str, &str)],
 ) -> (u16, String, String) {
-    let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("failed to connect");
-    let extra: String = extra
-        .iter()
-        .map(|(name, value)| format!("{name}: {value}\r\n"))
-        .collect();
-    let head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Content-Type: application/json\r\n{extra}\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    socket.write_all(head.as_bytes()).expect("failed to write");
-    // Write errors are not failures here: a server that refuses a body before reading it
-    // answers and closes mid-write, and whether the answer survives is what the read decides.
-    let _ = socket.write_all(body);
-    let _ = socket.flush();
-
-    let mut raw = Vec::new();
-    socket.read_to_end(&mut raw).expect("failed to read");
-    let text = String::from_utf8_lossy(&raw).into_owned();
-
-    let status = text
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .unwrap_or_else(|| panic!("no status line in response:\n{text}"));
-    let (headers, body) = match text.find("\r\n\r\n") {
-        Some(at) => (text[..at].to_lowercase(), text[at + 4..].to_string()),
-        None => panic!("no header/body split in response:\n{text}"),
-    };
-    (status, headers, body)
-}
-
-fn json(text: &str) -> serde_json::Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
+    let answer = send(port, method, path, &headers(extra), body);
+    (answer.status, answer.headers, answer.body)
 }
 
 // ── The corpus ─────────────────────────────────────────────────────────────────────
@@ -407,14 +234,7 @@ fn json(text: &str) -> serde_json::Value {
 /// `LINES` generated lines with `BAD` corrupted, one per failure kind: a truncated
 /// document, a non-object and a bad byte take three different routes to `DetectorError`.
 fn corpus() -> Vec<u8> {
-    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
-        .args(["gen-logs", "--lines", &LINES.to_string(), "--seed", "42"])
-        .output()
-        .expect("failed to run gen-logs");
-    assert!(out.status.success(), "gen-logs failed");
-
-    let mut lines: Vec<Vec<u8>> = out
-        .stdout
+    let mut lines: Vec<Vec<u8>> = hostile(LINES, 42)
         .split(|b| *b == b'\n')
         .map(<[u8]>::to_vec)
         .collect();
@@ -486,13 +306,6 @@ fn request_early(port: u16, path: &str, body: &[u8]) -> (u16, String, String) {
         .and_then(|code| code.parse().ok())
         .unwrap_or_else(|| panic!("no status line in response:\n{headers}"));
     (status, headers, String::from_utf8_lossy(&rest).into_owned())
-}
-
-/// `bytes`, gzipped, as a shipper with `compression = "gzip"` would send them.
-fn gzip(bytes: &[u8]) -> Vec<u8> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(bytes).expect("failed to gzip");
-    encoder.finish().expect("failed to finish gzip")
 }
 
 // ── The endpoints ──────────────────────────────────────────────────────────────────
@@ -619,7 +432,7 @@ fn three_bad_lines_report_exactly_those_three() {
 #[test]
 fn a_clean_body_reports_no_errors() {
     let server = Served::start();
-    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+    let out = kibbr()
         .args(["gen-logs", "--lines", "200", "--seed", "7"])
         .output()
         .expect("failed to run gen-logs");
@@ -674,7 +487,7 @@ fn a_signal_lets_the_in_flight_request_finish() {
     let server = Server::start();
     let port = server.port;
 
-    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+    let out = kibbr()
         .args(["gen-logs", "--lines", "20000", "--seed", "3"])
         .output()
         .expect("failed to run gen-logs");
@@ -770,7 +583,11 @@ fn oldest_first_pages_the_same_rows_from_the_other_end() {
             .as_array()
             .expect("times is an array")
             .iter()
-            .map(|t| t.as_str().expect("every generated line has a time").to_string())
+            .map(|t| {
+                t.as_str()
+                    .expect("every generated line has a time")
+                    .to_string()
+            })
             .collect()
     };
     let newest = times(&whole);
@@ -779,14 +596,19 @@ fn oldest_first_pages_the_same_rows_from_the_other_end() {
         .iter()
         .map(|t| chrono::DateTime::parse_from_rfc3339(t).expect("RFC 3339"))
         .collect();
-    assert!(instants.windows(2).all(|w| w[0] >= w[1]), "newest first is not descending");
+    assert!(
+        instants.windows(2).all(|w| w[0] >= w[1]),
+        "newest first is not descending"
+    );
 
     // Oldest first, a page at a time.
     let mut paged: Vec<String> = Vec::new();
     let mut paged_times: Vec<String> = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..40 {
-        let after = cursor.as_ref().map_or(String::new(), |c| format!(r#" AFTER "{c}""#));
+        let after = cursor
+            .as_ref()
+            .map_or(String::new(), |c| format!(r#" AFTER "{c}""#));
         let page = server.query(&format!("MATCH LOG {{}} ORDER BY time ASC LIMIT 37{after}"));
         assert_eq!(page["meta"]["order"], "oldest_first");
         paged.extend(rows_as_text(&page));
@@ -826,15 +648,6 @@ fn oldest_first_pages_the_same_rows_from_the_other_end() {
             .as_bytes(),
     );
     assert_eq!(status, 400);
-}
-
-fn rows_as_text(result: &serde_json::Value) -> Vec<String> {
-    result["rows"]
-        .as_array()
-        .expect("rows is an array")
-        .iter()
-        .map(ToString::to_string)
-        .collect()
 }
 
 /// The viewer is one file, with nothing to deploy alongside: asserted here, because adding
@@ -930,7 +743,7 @@ fn a_gzipped_body_ingests_identically() {
     let (plain_status, plain_body) = plain.post("/ingest", &corpus);
 
     let zipped = Served::start();
-    let (status, _, body) = request_with(
+    let (status, _, body) = request_headers(
         zipped.port,
         "POST",
         "/ingest",
@@ -951,7 +764,7 @@ fn a_gzipped_body_ingests_identically() {
 #[test]
 fn x_gzip_is_gzip() {
     let server = Served::start();
-    let (status, _, body) = request_with(
+    let (status, _, body) = request_headers(
         server.port,
         "POST",
         "/ingest",
@@ -989,7 +802,7 @@ fn a_corrupt_gzip_body_is_a_400_and_not_a_panic() {
     ];
 
     for (why, body) in bodies {
-        let (status, _, text) = request_with(
+        let (status, _, text) = request_headers(
             server.port,
             "POST",
             "/ingest",
@@ -1017,7 +830,7 @@ fn a_corrupt_gzip_body_is_a_400_and_not_a_panic() {
 fn an_unknown_content_encoding_is_415() {
     let server = Served::start();
     for encoding in ["br", "deflate", "zstd", "gzip, gzip"] {
-        let (status, _, body) = request_with(
+        let (status, _, body) = request_headers(
             server.port,
             "POST",
             "/ingest",
@@ -1033,7 +846,7 @@ fn an_unknown_content_encoding_is_415() {
     }
 
     // `identity` is not an unknown encoding, it is the explicit spelling of "none".
-    let (status, _, body) = request_with(
+    let (status, _, body) = request_headers(
         server.port,
         "POST",
         "/ingest",
@@ -1092,7 +905,7 @@ fn a_gzip_bomb_is_refused_while_inflating() {
         bomb.len()
     );
 
-    let (status, _, body) = request_with(
+    let (status, _, body) = request_headers(
         server.port,
         "POST",
         "/ingest",
@@ -1108,7 +921,7 @@ fn a_gzip_bomb_is_refused_while_inflating() {
     assert_eq!(stats["ingest"]["lines_read"], 0);
 
     // A body that inflates to under the cap is untouched by any of this.
-    let (status, _, body) = request_with(
+    let (status, _, body) = request_headers(
         server.port,
         "POST",
         "/ingest",
@@ -1134,7 +947,7 @@ fn past_capacity_ingest_sheds_with_retry_after() {
 
     // Big enough that one body holds the permit far longer than a queued sender waits, and
     // small enough that the body with the permit still answers inside the read timeout.
-    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+    let out = kibbr()
         .args(["gen-logs", "--lines", "20000", "--seed", "11"])
         .output()
         .expect("failed to run gen-logs");
@@ -1198,7 +1011,7 @@ fn with_no_wait_a_body_past_capacity_is_shed_at_once() {
         ..ServeFlags::default()
     });
     let port = server.port;
-    let out = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+    let out = kibbr()
         .args(["gen-logs", "--lines", "20000", "--seed", "11"])
         .output()
         .expect("failed to run gen-logs");
@@ -1255,8 +1068,8 @@ fn with_no_wait_a_body_past_capacity_is_shed_at_once() {
 #[test]
 fn a_wait_past_thirty_seconds_and_a_log_bound_of_nothing_are_refused_at_the_start() {
     let refused = |flag: &[&str], variable: Option<(&str, &str)>, want: &str| {
-        let dir = scratch_dir();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
+        let dir = scratch_dir("serve");
+        let mut command = kibbr();
         command
             .args(["serve", "--port", "0"])
             .args(["--data-dir", &dir.display().to_string()])
@@ -1740,8 +1553,8 @@ fn the_first_503_names_the_logs_write_error_and_so_do_stats_and_health() {
     // A socket pair where `Server` has a pipe: a socket can be told not to wait, so the
     // test learns that it is full from the write that would have had to.
     let (ours, theirs) = UnixStream::pair().expect("socket pair");
-    let dir = scratch_dir();
-    let child = Command::new(env!("CARGO_BIN_EXE_kibbr"))
+    let dir = scratch_dir("serve");
+    let child = kibbr()
         .args(["serve", "--port", "0", "--data-dir"])
         .arg(&dir)
         // One byte, so the second flush has to make a new segment; and a tick every ten
