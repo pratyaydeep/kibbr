@@ -49,7 +49,7 @@ scan_fan_rows = 32768               # --scan-fan-rows
 [schema]
 time_columns = ["@timestamp", "timestamp", "time", "ts", "ts_ms", "ts_unix",
                 "datetime", "event_time", "created_at"]    # --time-columns
-epoch_window = ["2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]
+epoch_window = ["2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]   # no flag; KIBBR__SCHEMA__EPOCH_WINDOW=start,end
 
 [log]
 level = "info"                      # --log-level            trace, debug, info, warn, error

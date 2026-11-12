@@ -12,7 +12,7 @@ kibbr compact --data-dir kibbr-data --day 2024-01-15 --json   # the report as on
 kibbr bench-storage day.ndjson            # what a file costs to store; --es URL to compare
 ```
 
-A compaction prints `compacted 2024-01-15: 10,000 rows, 105 row groups in 1 file(s) (483,545 bytes) -> 105 row groups in 1 file(s) (479,121 bytes), in 0.2s`; a second run of it, `2024-01-15: nothing to compact`.
+On a farm day of 10,000 lines (seed 42) sent in one `/ingest`, a compaction prints `compacted 2024-01-15: 10,000 rows, 105 row groups in 1 file(s) (483,558 bytes) -> 105 row groups in 1 file(s) (479,134 bytes), in 0.1s`; a second run of it, `2024-01-15: nothing to compact`.
 
 - **Nothing a query can see moves.** Not a row, not a count, not a row's position among its
   template's rows of the day - so a cursor handed out before a compaction resumes after it,
@@ -33,13 +33,13 @@ A compaction prints `compacted 2024-01-15: 10,000 rows, 105 row groups in 1 file
   name. `scripts/fault/compact_kill.sh` kills it twenty times, alone and under a server.
 - `/stats` has `storage.compaction`: whether one is running, how many days were rebuilt,
   the last one's report - the one `--json` prints - and the last error. A day that fails is
-  left for twice as long each time, and never makes `/ingest` refuse.
+  left for twice as long each time, a day at most, and never makes `/ingest` refuse.
 
 ## `bench-storage`
 
 - The first table is the file's size raw, under `gzip -9` and `zstd -19`, and as kibbr
   holds it - data files, catalog and manifest, in bytes and in disk blocks, the data files
-  broken down into column data, row group headers, schema records and footers - with
+  broken down into column data, row group headers, schema records, footers and file headers - with
   kibbr's total as a share of each compressor's. `--no-zstd` leaves `zstd -19` out: it runs
   at a few MB/s a thread, and on tens of gigabytes it is hours of the run.
 - `--zstd-threads N` is `zstd -19`'s threads, every CPU the process may use if not given. 1

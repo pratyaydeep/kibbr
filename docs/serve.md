@@ -17,7 +17,11 @@ gzip -c logs.ndjson | curl -s -X POST --data-binary @- \
 ```
 
 Also served: `GET /` (the [viewer](viewer.md)), `POST /load` ([load](load.md)) and
-`POST /compact` ([compact](compact.md)).
+`POST /compact` ([compact](compact.md)), and `GET /load/<job>` and `GET /compact/<job>`:
+the job running, done with its report, or failed with why.
+
+`/health` answers `"status":"degraded"` with a `detail` while the store cannot write; `ok`
+stays `true`, since it is the liveness check and a restart does not empty a disk.
 
 ## The server
 
@@ -151,8 +155,7 @@ The first, on the quickstart's `day.ndjson`, prints 36 buckets, `2024-01-15T09:0
   starts, so two overlapping ranges put their bars in the same places.
 - A second key is zero-filled too: three levels are three series, each with every bucket.
 - The range emits every bucket it touches. `SINCE 6h` at `time(5m)` is 72 buckets if `now`
-  is on a five-minute boundary and 73 otherwise; the first and last are partial. The comment
-  above `bucket_of` in `crates/kibbr-engine/src/query/buckets.rs` draws it.
+  is on a five-minute boundary and 73 otherwise; the first and last are partial.
 - A bucketed query returns aggregates, so `max_rows` does not reach it; `max_buckets`
   (10,000) and `max_groups` (100,000) do, and going over is a refusal naming both counts.
 

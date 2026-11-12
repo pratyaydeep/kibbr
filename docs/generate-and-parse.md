@@ -18,7 +18,7 @@ kibbr gen-logs --profile farm --lines 10000 --seed 42  # one day of a ten-servic
 | `--templates T` | 12 | `hostile` only: how many distinct log shapes to draw from |
 | `--seed S` | 42 | same seed, byte-identical output: nothing reads the wall clock |
 | `--profile P` | `hostile` | `hostile`, or `farm`: one day in time order, shaped like real logs |
-| `--day`, `--services`, `--dirty-rate` | 2024-01-15, 10, 0.5 | `farm` only |
+| `--day`, `--services`, `--dirty-rate` | 2024-01-15, 10, 0.5 | `farm` only: services 1 to 10 (below 6, no access log); dirty rate in percent |
 
 - `hostile` is hostile on purpose: hand-written fixtures do not surface type-inference bugs.
 - Every run holds nested objects, optional fields, unicode (CJK, emoji, RTL, combining

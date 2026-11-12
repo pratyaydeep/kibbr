@@ -4,15 +4,20 @@
 kibbr serve --data-dir kibbr-data     # then open http://127.0.0.1:7700/
 ```
 
-`GET /` is the web console: four pages over the server's own API.
+`GET /` is the web console: three pages over the server's own API.
 
 - **Logs** (`#/`): one search box, suggestions drawn from the template tree, and the queries
   run from this browser. Running a query opens its results (`#/?q=<query>`): matches over
   time, the log rows, how the query ran (Explain), and the templates it touched.
 - **Templates** (`#/templates`, `#/templates/<id>`): every template as a tree, and one
   template's columns and latest lines.
+
+  ![The Templates page: the template tree opened at event, request and health_check, and the health_check template's columns and latest lines](img/console-templates.png)
+
 - **Status** (`#/status`): health, ingest, the write-ahead log, storage, compaction, queries
   and the settings in effect, every value from `GET /stats` and `GET /health`.
+
+  ![The Status page of a server holding 250,000 lines: ingest, the write-ahead log, storage, compaction, queries and the settings in effect](img/console-status.png)
 
 Routes are hash routes, so no page can collide with an API path: `GET /templates` is JSON.
 Keys `1`–`3` move between the pages; ⌘↵ (Ctrl↵ off a Mac) runs the query.
@@ -20,19 +25,22 @@ Keys `1`–`3` move between the pages; ⌘↵ (Ctrl↵ off a Mac) runs the query
 ## What it asks of the server
 
 `GET /health`, `GET /stats`, `GET /templates` and `POST /query`, and nothing else: no
-request leaves for anywhere but this server, fonts included - `tests/serve.rs` asserts it.
+request leaves for anywhere but this server. The fonts are inlined as data URIs.
+`tests/serve.rs` asserts that the page loads no outside `src`, `href`, `@import` or `<link>`.
 
 - **Health.** `/health` and `/stats` are read when the page opens, every ten seconds and when
   the window regains focus. A degraded server, or one storing in memory, shows a banner
   across every page until the state clears. The Status page reads both itself, on opening
   and on Refresh, and keeps the ingest rate between its refreshes as a sparkline.
-- **A query is two requests**, built from the query as typed. The rows:
-  `MATCH LOG {filter} SINCE … [ORDER BY time ASC] LIMIT 200`, any `GROUP BY` dropped, the
-  next page asked with `AFTER` and the previous answer's `next_cursor` as the list scrolls
-  to its end; the Time button flips between newest and oldest first. The chart:
-  `COUNT LOG {filter} SINCE … GROUP BY time(<range ÷ 90>), level`, stacked info, warn and
-  error. A query the console cannot take apart goes to the server as typed, and a `400`
-  shows the parser's message under the query bar, with the mistake underlined at its `pos`.
+- **A query is up to three requests**, built from the query as typed. The rows:
+  `MATCH LOG {filter} [time clause] [ORDER BY time ASC] LIMIT 200`, any `GROUP BY`
+  dropped, the next page asked with `AFTER` and the previous answer's `next_cursor` as the
+  list scrolls to its end; the Time button flips between newest and oldest first. The
+  chart, only when the query has a time clause:
+  `COUNT LOG {filter} [time clause] GROUP BY time(<range ÷ 90>), level`, stacked info, warn
+  and error. And `GET /templates`, for the templates it touched. A query the console cannot
+  take apart goes to the server as typed, and a `400` shows the parser's message under the
+  query bar, with the mistake underlined at its `pos`.
 - **Rows are the objects they were ingested as** (Raw), rebuilt from the flattened keys,
   each with its time (from `times`) and level in their own columns: on one line, wrapped, or
   opened as indented JSON. Or one column per field (Columns). The keys the query named are
@@ -54,7 +62,7 @@ storage off (a private window, a blocked site) the console works and forgets.
 | `kibbr.theme` | `"light"` or `"dark"`; absent, the console follows the system |
 | `kibbr.recent` | the last 20 queries run from this browser, newest first, as `[{q, at}]` |
 | `kibbr.saved` | saved queries as `[{q, name}]`, written by the star; listed on Logs when there are any |
-| `kibbr.layout` | `{maximized, minimized}`: which Logs results panels are maximised and minimised |
+| `kibbr.layout` | `{maximized, minimized}`: the Logs results panel maximised, and those minimised |
 
 ## Building it
 
@@ -65,7 +73,7 @@ the Docker image and the crates.io package need no Node. Change `web/`, then reb
 
 ```
 cd web
-npm ci               # Node 20.19 or newer; see web/.nvmrc
+npm ci               # Node 20.19 or newer (package.json engines; web/.nvmrc pins 20)
 npm run build        # rescript build, vite build, and the copy into crates/kibbr-server
 ```
 

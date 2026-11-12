@@ -18,7 +18,7 @@ src/main.rs                 the clap definitions and the dispatch
 src/config.rs               where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
 src/logs.rs                 the process's own log: `tracing` events as lines of text or of JSON
 src/error.rs                thiserror enums of the commands, and what ends one
-src/client.rs               the small HTTP client `load`, `compact` and `bench-storage --es` speak
+src/client.rs               the small HTTP client `load`, `compact`, the status commands and `bench-storage --es` speak
 src/cmd/                    what someone runs in production; it never names src/tools/
 src/cmd/serve.rs            `kibbr serve` - the server's settings made, the server run, the exit code
 src/cmd/load.rs             `kibbr load` - the command: alone, or asked of the server holding the directory
@@ -33,12 +33,14 @@ src/tools/gen/              the generators - `hostile` (mod.rs) and the log farm
 src/tools/bench_storage.rs  `kibbr bench-storage`
 src/tools/bench/            `kibbr bench`
 src/tools/fuzzing/          the `cursor` and `trieql` harnesses, behind the `fuzzing` feature
+tests/                      one file an area (load, query, compact, restart, compat, ...); fixtures/ holds old-format data dirs
 tests/fixture.rs            outer-surface tests
 tests/serve.rs              the HTTP contract, over a bare TcpStream - in this process, or of the binary
 Dockerfile                  the image: a static binary on distroless, and the `bench` target
 bench/run.sh                `kibbr bench` in a container; bench/results/ holds what it measured
-deploy/                     the Kubernetes manifests and the Vector sinks
-scripts/                    the check, fault and measure scripts
+deploy/                     the Kubernetes manifests, the IAM policies and the Vector sinks
+scripts/                    the check, fault and measure scripts, and bump.sh and publish.sh
+web/                        the console's ReScript source, built into viewer.html (docs/viewer.md)
 ```
 
 - **Traits only where there are two.** The engine's row stores are the one place with a
@@ -61,8 +63,8 @@ engine's public API.
 src/lib.rs         what the handlers share, and the load job table
 src/settings.rs    `Settings`: every value a server runs on, plain data with a default
 src/lifecycle.rs   `run` - the runtime, the flush clock, signals, shutdown, the banner
-src/routes.rs      the router, `/templates`, `/stats`, `/health`, the request timeout
-src/handlers.rs    `/ingest`'s door, `/query`, `/load`
+src/routes.rs      the router, the console at `/`, `/templates`, `/stats`, the request timeout
+src/handlers.rs    `/health`, `/ingest`'s door, `/query`, `/load`
 src/ingest.rs      the door's half: a body's lines through `Database::ingest`, and the counts
 src/compaction.rs  `/compact`, and the look for a day that is due
 src/error.rs       what stops a server, and what stops the live door taking a body
@@ -95,7 +97,7 @@ src/query/       TrieQL, the plan, the scan, buckets, the cursor, limits, the an
 src/lifecycle.rs open (restore and replay), the checkpoint moved behind the flush, the close order
 src/database.rs  `Database` and `Options`: the three ways to open, and everything asked of it
 src/fuzzing/     the `wal_record`, `segment` and `record_log` harnesses, behind the `fuzzing` feature
-src/lib.rs       the public names, and `internals`
+src/lib.rs       the public names, `internals`, and `testing` behind `test-support`
 ```
 
 - **Three ways to open.** To serve, `Database::claim` then `Claim::open`; offline,
@@ -106,6 +108,17 @@ src/lib.rs       the public names, and `internals`
 - **Features.** `test-support` gives the tests of the crates above their fixtures;
   `fuzzing` is off by default.
 - The format's test vectors are in `testdata/format/`.
+- **Column encodings.** Each piece of a column chunk gets one encoding, by its type, and
+  never several tried with the smallest kept (`format/mod.rs`, `format/build.rs`):
+  - a value stored once when every row of the piece holds it
+  - a dictionary for strings
+  - varints for integers
+  - delta encoding for timestamps
+  - a bitmap for booleans
+  - plain for floats, Uuids and IPs
+
+  Then one zstd frame goes over the whole chunk, unless every piece is a constant, a bitmap
+  or a Uuid's raw bytes.
 
 ## Tests and lints
 
@@ -118,8 +131,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings # lints hav
 
 - Without `--all-features`, `tests/fuzz_regressions.rs` is not compiled and the committed
   crashers are not replayed.
-- The tests under `tests/` run the real binary and read its stdout: nothing reaches inside
-  the crate and there are no mocks.
+- Most tests under `tests/` run the real binary and read its stdout. `serve.rs` also runs
+  the server in this process, and `compact.rs` reads day files through `internals`. There
+  are no mocks.
 - The one that matters most in `tests/fixture.rs` is
   `every_fixture_value_gets_its_labelled_type`: every hand-labelled value in
   `testdata/fixture.ndjson` must come out with the type its label says.

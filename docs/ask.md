@@ -11,8 +11,9 @@ kibbr stats --addr 127.0.0.1:7700 --json  # by address; the answer as the server
   or `--addr host:port`. `--config kibbr.toml` names the directory the same way.
 - In `stats`, a name on the left is the path to the same value in the JSON.
 - `health` is for a machine: exit 0 while the server answers `"ok":true`, exit 1 when
-  nothing answers. A degraded server cannot write and still answers queries, so it is not
-  one to restart, and exits 0.
+  nothing answers or what answers does not say `"ok":true`. A degraded server cannot write
+  and still answers queries, so it is not one to restart, and exits 0.
+- `--json` on any of the three prints the answer as the server sent it.
 
 ```
 $ kibbr templates --data-dir kibbr-data

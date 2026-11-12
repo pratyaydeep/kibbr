@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 236" width="960" height="236" role="img" aria-labelledby="t d">
+  <title id="t">Where kibbr fits</title>
+  <desc id="d">Three tiers from newest to oldest logs: Elasticsearch or Loki for the newest three days, fast and expensive; kibbr for three days to six months, still queryable in a fraction of the space; a cold archive after that, cheap and not queryable.</desc>
+  <style>
+    .label { font: 500 13px 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #909DAB; }
+    .name  { font: 700 22px 'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif; fill: #CDD9E5; }
+    .note  { font: 400 15px 'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif; fill: #909DAB; }
+    .hi .name { fill: #EFF2F8; }
+    .hi .label { fill: #6CB6FF; }
+    .hi .note { fill: #CDD9E5; }
+    .axis  { font: 500 12px 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #636E7B; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#909DAB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="960" height="236" rx="12" fill="#22272E"/>
+
+  <!-- Box 1 -->
+  <g>
+    <rect x="24.5" y="24.5" width="270" height="150" rx="12" fill="#2D333B" stroke="#444C56"/>
+    <text class="label" x="48" y="62">Newest ~3 days</text>
+    <text class="name" x="48" y="100">Elasticsearch or Loki</text>
+    <text class="note" x="48" y="134">fast, expensive</text>
+  </g>
+
+  <line x1="302" y1="99.5" x2="334" y2="99.5" stroke="#909DAB" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- Box 2, highlighted -->
+  <g class="hi">
+    <rect x="345" y="23" width="270" height="153" rx="12" fill="#2A3442" stroke="#2F6FD1" stroke-width="2.5"/>
+    <text class="label" x="368" y="62">3 days to ~6 months</text>
+    <!-- the kibbr mark, from .design/assets/logo/mark-dark.svg -->
+    <g transform="translate(546 38) scale(0.75)">
+      <circle cx="3" cy="34" r="1.9" fill="#93979D"/><circle cx="9.6" cy="34" r="1.9" fill="#93979D"/>
+      <circle cx="54.4" cy="34" r="1.9" fill="#93979D"/><circle cx="61" cy="34" r="1.9" fill="#93979D"/>
+      <g stroke="#EFF2F8" stroke-linecap="round">
+        <line x1="16" y1="34" x2="48" y2="34" stroke-width="3.5"/>
+        <line x1="32" y1="34" x2="22" y2="20" stroke-width="4.2"/><line x1="32" y1="34" x2="42" y2="20" stroke-width="4.2"/>
+        <line x1="22" y1="20" x2="16" y2="8" stroke-width="3.8"/><line x1="22" y1="20" x2="28" y2="8" stroke-width="3.8"/>
+      </g>
+      <g fill="#EFF2F8">
+        <circle cx="32" cy="34" r="5.5"/><circle cx="22" cy="20" r="4.2"/><circle cx="42" cy="20" r="4.2"/>
+        <circle cx="16" cy="8" r="3.8"/><circle cx="28" cy="8" r="3.8"/>
+      </g>
+      <rect x="18.5" y="40" width="7" height="16" rx="2" fill="#2F6FD1"/>
+      <rect x="28.5" y="40" width="7" height="11" rx="2" fill="#D83A34"/>
+      <rect x="38.5" y="40" width="7" height="20" rx="2" fill="#A87508"/>
+    </g>
+    <text class="name" x="368" y="100">kibbr</text>
+    <text class="note" x="368" y="134">still queryable,</text>
+    <text class="note" x="368" y="155">a fraction of the space</text>
+  </g>
+
+  <line x1="623" y1="99.5" x2="655" y2="99.5" stroke="#909DAB" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- Box 3 -->
+  <g>
+    <rect x="665.5" y="24.5" width="270" height="150" rx="12" fill="#2D333B" stroke="#444C56"/>
+    <text class="label" x="689" y="62">Older</text>
+    <text class="name" x="689" y="100">Cold archive</text>
+    <text class="note" x="689" y="134">cheap, not queryable</text>
+  </g>
+
+  <!-- time axis -->
+  <line x1="24" y1="204.5" x2="926" y2="204.5" stroke="#444C56" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text class="axis" x="24" y="225">new</text>
+  <text class="axis" x="936" y="225" text-anchor="end">old</text>
+</svg>

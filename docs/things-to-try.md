@@ -8,7 +8,7 @@ echo '{"event":"login_failed","user":{"id":"u42","email":"u42@corp.example.com"}
 
 Parses a line you wrote: `order_id` comes out `Datetime 1700000000 (= 2023-11-14T22:13:20Z)`.
 
-- "Exactly ten digits" sits above "parses as i64": a timestamp misread as an integer turns
+- "Ten or thirteen digits, 2000 to 2100" sits above "parses as i64": a timestamp misread as an integer turns
   every time-range query into a full scan, and an order ID called a timestamp is the price.
 - Change the value to `170000000` and it is `Int64`. A column that holds both is `Int64`
   too: epoch digits beside an integer are integers, not text.

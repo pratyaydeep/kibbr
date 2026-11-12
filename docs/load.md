@@ -10,7 +10,7 @@ gzip -dc archive.gz | kibbr load --data-dir kibbr-data -        # standard input
 kibbr load --data-dir kibbr-data --replace-day 2024-01-15 day.ndjson.gz   # swap a day's source
 ```
 
-A load prints one line: `loaded 2,000 rows from 2,000 lines (0 rejected) as load f6a406cde2df80e9: 80 row groups in 1 file(s) over 1 day(s), 0.1s; ...`
+A load prints one line: `loaded 2,000 rows from 2,000 lines (0 rejected) as load <id>: 80 row groups in 1 file(s) over 1 day(s), 0.1s; ...`
 
 - **All or nothing.** Finished files go into `staging/`, then one `manifest.log` record
   publishes all of them. A load killed at any moment is wholly there after the next start or
@@ -29,12 +29,14 @@ A load prints one line: `loaded 2,000 rows from 2,000 lines (0 rejected) as load
   for a clean copy from the archive.
 - **Rows with no time of their own** take their arrival time, which for an old file is the
   wrong day. A time column is read for more forms than any other key - epoch seconds with
-  a fraction, 16 and 19 digits, a date with a zone name (`settings.md`) - so a key in one
-  of those needs only to be named in the time columns. The load counts them before it commits and stops, loading nothing, if more
-  than 1% (`--max-arrival-share`) would - naming the templates and their Datetime-typed
+  a fraction, 16 and 19 digits, a date with a zone name ([settings.md](settings.md)) - so
+  a key in one of those needs only to be named in the time columns (`--time-columns`). The
+  load counts them before it commits and stops, loading nothing, if more than 1%
+  (`--max-arrival-share`) would - naming the templates and their Datetime-typed
   keys, the names to add to the time columns. It checks the first 10,000 rows before it
   starts as well. `--proceed` loads anyway; the report always says how many rows took
-  their arrival time, and which day that is.
+  their arrival time, and which day that is. `--received-at` sets that arrival time; it
+  is now if not given.
 - A template keeps the time source it was made with, and a load stopped by the count has
   made its new templates already: set the time columns before loading a new source.
 - `--max-mb-per-sec` and `--threads` keep a load from crowding the live door out of CPU;
@@ -49,8 +51,8 @@ scripts/check/roundtrip.sh      # every line back out as it went in
 scripts/check/downgrade.sh      # a directory this build wrote, opened, queried and written on by an older build
 ```
 
-- Each prints how many runs of row groups its disk servers shared between threads, and
-  with `NEED_FAN_OUTS=1` fails at none.
+- The first three print how many runs of row groups their disk servers shared between
+  threads, and with `NEED_FAN_OUTS=1` fail at none.
 - That is for a run holding the shared scan to the plain one, with
   `KIBBR__QUERY__SCAN_THREADS=4 KIBBR__QUERY__SCAN_FAN_ROWS=0` set: on the scripts' own data
   almost nothing is shared out, and such a run would pass having checked nothing.
