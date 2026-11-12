@@ -3,7 +3,7 @@
 
 //! What an operator reaches for: the settings file, the two commands that ask a running
 //! server about itself, the log's two formats, and the deadline on a stop - all from
-//! outside the binary. Where a setting comes from is `src/config.rs`'s; this file holds
+//! outside the binary. Where a setting comes from is `src/cli/config.rs`'s; this file holds
 //! that the commands are wired to it.
 
 use std::io::Write;

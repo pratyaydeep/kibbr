@@ -1,7 +1,7 @@
 # bench
 
 `scripts/bench/run.sh` runs `kibbr bench` inside the image, on the farm day of seed 42. The bench
-itself is in the binary (`src/tools/bench/`); the script builds the image, runs the bench in
+itself is in the binary (`src/bench/`); the script builds the image, runs the bench in
 a container, brings the result out and writes it as a table with a `shed` column - what was
 turned away while each row was measured.
 

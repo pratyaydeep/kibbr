@@ -2,6 +2,25 @@
 
 One entry per tag, newest first.
 
+## Unreleased
+
+- **One crate.** kibbr is one package, `kibbr`: the engine is `src/engine/`, the HTTP
+  server `src/server/`, the command line `src/cli/`. `kibbr-engine` and `kibbr-server` are
+  no longer published; their last versions on crates.io stay as they are. The library
+  promises no API: what it exports is for the binary, the fuzzers and the tests.
+  [ARCHITECTURE.md](ARCHITECTURE.md) is the map.
+- **Log target.** The server's own log lines are under `kibbr::server::*`, not
+  `kibbr_server::*`: a `RUST_LOG`-style filter or a log pipeline that matched the old
+  target needs the new one. Nothing else a user sees changes.
+- The integration tests are one binary, `cargo test --test e2e`, over a shared harness;
+  `kibbr bench`'s tests need `--features bench`. Test data is `tests/data/`
+  (`testdata/fixture.ndjson` is `tests/data/type_ladder.ndjson`); every file of
+  `tests/data/hostile/` is now loaded by a test. Six scripts under `scripts/check/` and
+  `scripts/fault/` became tests.
+- `bench/` is `scripts/bench/`; saved native results are in `scripts/bench/results/native/`.
+  What the scripts and `kibbr bench` generate goes under `target/scratch/`, not `testdata/`.
+- `fuzz/corpus/` is no longer in git; `fuzz/regressions/` still is.
+
 ## 0.4.0 — 2026-11-12
 
 - **JSON comes back as it went in.** An array comes back as that array, and an empty object
@@ -25,7 +44,7 @@ One entry per tag, newest first.
 - Bench: `bench/compression.py` reads corpora published as many files (`urls`), with
   `bench/sizes.py` for sizes before downloading; Bluesky 100M and HDFS logs sources.
 
-## 0.3.0 — 2026-11-11
+## 0.3.0 — 2026-11-11 (not published)
 
 - **Three crates, from five.** `kibbr-engine` is now the whole database behind one handle,
   `Database`: what was `kibbr-core` is its `model` and `parse` modules, and what was

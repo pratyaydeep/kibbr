@@ -1,11 +1,51 @@
-# Deploying kibbr on Kubernetes
+# Deploying kibbr: a container, and Kubernetes
+
+## A container
+
+```
+docker build -t kibbr .                    # the image: one static binary on distroless
+docker run -d --name kibbr --stop-timeout 30 -p 127.0.0.1:7700:7700 -v kibbr-data:/var/lib/kibbr kibbr serve
+curl -s 127.0.0.1:7700/health              # {"ok":true,"status":"ok","version":"0.4.0","source":"https://github.com/pratyaydeep/kibbr"}
+curl -s -X POST 127.0.0.1:7700/query -H 'Content-Type: application/json' --data '{"q":"COUNT LOG {}"}'
+docker stop kibbr                          # a clean stop: exit code 0
+docker logs kibbr 2>&1 | tail -6           # the final flush, the checkpoint, ... "exit 0"
+docker rm kibbr                            # the volume keeps the data; run again, same count
+```
+
+- **The image** is the one binary, linked statically against musl, on
+  `gcr.io/distroless/static-debian12:nonroot`: 13,999,018 bytes, no shell, user 65532. It
+  was built on this laptop in 2 minutes 30 seconds, the two base images already pulled.
+- Its `HEALTHCHECK` is `kibbr health`, since there is no curl in it to ask with.
+- **What it sets**, each a variable a flag still wins over: the data under the volume
+  (`/var/lib/kibbr/data`, the trie snapshot beside it), every interface on port 7700 -
+  loopback inside a container is reachable from nowhere - and the log as JSON.
+- **`--stop-timeout 30`.** Docker kills a container ten seconds after it asks it to stop; a
+  kibbr with a request in flight gives it 25 (`shutdown_deadline`) before the final flush.
+  Killed early, nothing acknowledged is lost and the next start reads the log back.
+- **Ingest, stop, start again on the same volume, same count.** Measured with 50,000 lines
+  of `gen-logs`, every row still in a buffer when the stop came; `docker stop` took 1.07 s:
+
+```
+{..."msg":"final flush - 50,000 row(s) into 13,691 row group(s) in 31 file(s), 31 sealed, 8,020,407 byte(s), 0.77s"}
+{..."msg":"WAL checkpoint - position 50,000 of 50,000; 1 segment(s), 4,197,272 byte(s)"}
+{..."msg":"trie.json - /var/lib/kibbr/trie.json 2,316,614 byte(s), 864 template(s)"}
+{..."msg":"close stores - 864 store(s), 50,000 row(s) written"}
+{..."msg":"close WAL - closed"}
+{..."msg":"exit 0"}
+```
+
+- `scripts/bench/run.sh` runs `kibbr bench` in a container: [scripts/bench/README.md](../scripts/bench/README.md).
+- The rest of this file is the Kubernetes manifests - a StatefulSet of one pod and its
+  volume - and the two Vector sinks, and what of them was checked and what was not.
+
+## Kubernetes
 
 **These manifests are untested.** There was no cluster to apply them to. They were
 written from the design and the Vector 0.37.1 reference and checked as far as a laptop
 can check them; the list of what that covers, and what it does not, is the second half
 of this file. Read them as a first draft by someone who has not seen your cluster.
 
-## What is here
+### What is here
 
 ```
 k8s/namespace.yaml        the `kibbr` namespace, held to the `restricted` pod security profile
@@ -20,7 +60,7 @@ vector/kibbr.toml         what is added to Vector's configuration: one transform
 vector/kibbr.test.toml    what that file is checked with; not deployed
 ```
 
-## One replica
+### One replica
 
 `replicas: 1` is the design. A data directory has one writer, and nothing copies rows
 between pods, so a second replica is a second, separate database: it would take half of
@@ -28,7 +68,7 @@ what Vector sends through the Service and answer every query with half of the lo
 While the one pod is down - a restart, a node drain - Vector keeps what it could not
 send in a buffer on the node's disk and sends it when the pod is back.
 
-## Before applying
+### Before applying
 
 Each of these is marked `REPLACE` where it is written:
 
@@ -56,7 +96,7 @@ and add `vector/kibbr.toml` to the Vector DaemonSet's ConfigMap. Vector's own se
 account needs `s3:PutObject` on the bucket's `logs/` prefix for the archive sink; that
 role belongs to the DaemonSet and is not written here.
 
-## What the pieces decide
+### What the pieces decide
 
 - **Thirty seconds to stop.** `terminationGracePeriodSeconds: 30`, and kibbr gives the
   requests in flight 25 of them before it flushes, checkpoints and exits 0
@@ -91,7 +131,7 @@ role belongs to the DaemonSet and is not written here.
   `aws s3 sync s3://<bucket>/logs/date=2026-10-09/ day/ && kibbr load day/` on a machine
   that has the files; the manifests do not put them on the pod's volume.
 
-## What was checked
+### What was checked
 
 - **The Kubernetes manifests against the API's schemas**, with kubeconform in strict
   mode - an unknown or misspelled field is an error - for Kubernetes 1.25, 1.29 and
@@ -142,7 +182,7 @@ role belongs to the DaemonSet and is not written here.
 - **The image the StatefulSet runs**: not root, a volume at `/var/lib/kibbr`, ingest,
   stop, start on the same volume, same count (the repository's README has the run).
 
-## What was not
+### What was not
 
 - **Nothing was applied to a cluster.** Not the scheduling, the volume's provisioning
   and its `fsGroup` ownership, the probes' timing, the pod security profile's verdict,

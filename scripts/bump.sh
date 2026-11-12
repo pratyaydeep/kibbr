@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Set the version of the crate, the first step of a release (CONTRIBUTING.md).
+# Set the version of the crate, the first step of a release (RELEASING.md).
 #
 #   1. Cargo.toml: `version` under [package].
 #   2. Cargo.lock: the crate's entry, by `cargo update --workspace`; CI publishes with
 #      --locked, so a lockfile left behind fails the release.
-#   3. docs/serve.md and docs/container.md: the version in the /health example.
+#   3. docs/serve.md and deploy/README.md: the version in the /health example.
 #   4. CHANGELOG.md: a `## VERSION — today` section on top, unless it has one, holding a
 #      placeholder that scripts/publish.sh refuses to release.
 #
@@ -16,7 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=${1:?usage: scripts/bump.sh VERSION}
-DOCS=(docs/serve.md docs/container.md)
+DOCS=(docs/serve.md deploy/README.md)
 PLACEHOLDER="- TODO: what changed"
 
 fail() { echo "bump: $*" >&2; exit 1; }
@@ -59,4 +59,4 @@ else
 fi
 
 git diff --stat
-echo "== commit, push, then make the GitHub release v$VERSION (CONTRIBUTING.md)"
+echo "== commit, push, then make the GitHub release v$VERSION (RELEASING.md)"

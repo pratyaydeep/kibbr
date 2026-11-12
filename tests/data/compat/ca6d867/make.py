@@ -12,7 +12,7 @@ empty object out of a line's keys. Writes, beside this file:
   expected.json   what that same build answers once it has started on a copy of data/
                   and replayed the log: every query of QUERIES, and /templates
 
-tests/compat.rs starts the current build on a copy of data/ and holds it to
+tests/storage.rs starts the current build on a copy of data/ and holds it to
 expected.json. Nothing here is run by the tests; it is how the fixture was made.
 """
 import http.client, json, os, shutil, signal, subprocess, sys, tempfile, time

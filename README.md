@@ -60,7 +60,7 @@ $ curl -s -X POST -d '{"q": "COUNT LOG {\"event\": \"login_ok\"}"}' http://127.0
 
 Open **http://127.0.0.1:7700/** for the built-in web console.
 
-There is also a [Docker image](docs/container.md), and [compaction](docs/compact.md) shrinks a finished day.
+There is also a [Docker image](deploy/README.md), and [compaction](docs/compact.md) shrinks a finished day.
 
 ## Queries
 
@@ -103,7 +103,9 @@ An application emits thousands of lines but only dozens of shapes. kibbr keeps e
 
 ## Docs
 
-More in [docs/](docs), starting with [docs/serve.md](docs/serve.md). Website: **https://pratyaydeep.github.io/kibbr/**. Crate API: [docs.rs](https://docs.rs/kibbr).
+More in [docs/](docs/README.md), starting with [docs/serve.md](docs/serve.md). Website: **https://pratyaydeep.github.io/kibbr/**.
+
+To change the code, start with [ARCHITECTURE.md](ARCHITECTURE.md), a map of where each part lives, and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 

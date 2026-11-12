@@ -1,7 +1,7 @@
 # `fixture.ndjson`
 
 Hand-written. Each line carries one value under `v` and the type the type ladder is
-required to give it under `expect`. `tests/fixture.rs` runs the real binary over the
+required to give it under `expect`. `tests/values.rs` runs the real binary over the
 file and compares the printed type against the label - the outer surface, no
 mocks.
 
@@ -18,7 +18,7 @@ The cases that matter, and why:
 | `1700000123` | `Datetime` | Another order ID, naming 2023. Still a wrong guess, by design: the window narrows the mistake, and the column join corrects the rest the first time an id of another shape arrives. |
 | `4500000120` / `9876543210` | `Int64` | An order ID naming 2112 and a phone number naming 2282. Ten digits outside the window fall through rule 2 - not refused, not text - and rule 6 reads them as the integers they are. |
 | `1705312200` | `Datetime` | A real timestamp, 2024-01-15. The window costs it nothing. |
-| `"0946684799"` / `"0946684800"` / `4102444799` / `4102444800` | `Int64` / `Int64` / `Datetime` / `Int64` | The window in seconds, `[2000-01-01, 2100-01-01)`: the last second before it opens, the first inside, the last inside, the first after it closes. The end is not included. The start cannot be reached by rule 2 at all: every ten-digit value naming a moment before 2001-09-09 has a leading zero, and a leading zero is not an epoch (below), so `"0946684800"` is the integer 946684800 rather than 2000-01-01. A window starting later than 2001-09-09 is tested in `tests/fixture.rs`. |
+| `"0946684799"` / `"0946684800"` / `4102444799` / `4102444800` | `Int64` / `Int64` / `Datetime` / `Int64` | The window in seconds, `[2000-01-01, 2100-01-01)`: the last second before it opens, the first inside, the last inside, the first after it closes. The end is not included. The start cannot be reached by rule 2 at all: every ten-digit value naming a moment before 2001-09-09 has a leading zero, and a leading zero is not an epoch (below), so `"0946684800"` is the integer 946684800 rather than 2000-01-01. A window starting later than 2001-09-09 is tested in `tests/values.rs`. |
 | `"0946684799999"` / `"0946684800000"` / `4102444799999` / `4102444800000` | `Int64` / `Int64` / `Datetime` / `Int64` | The same four edges in milliseconds, thirteen digits. |
 | `"0999999999"` / `"1000000000"` | `Int64` / `Datetime` | Either side of the leading zero. `"0999999999"` names 2001-09-09T01:46:39Z, inside the window, and was taken for that date. Seconds since 1970 carry no leading zero, so ten digits that start with one are an id kept at a fixed width, and read as an epoch they come back as a date nobody wrote; rule 6 has them. `"1000000000"` is the first ten digits without one. |
 | `"0999999999999"` / `"1000000000000"` | `Int64` / `Datetime` | The same pair in milliseconds, thirteen digits. |

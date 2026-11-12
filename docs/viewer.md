@@ -67,14 +67,14 @@ storage off (a private window, a blocked site) the console works and forgets.
 ## Building it
 
 The console is ReScript and React in `web/`, built by Vite into one self-contained HTML
-file - scripts, styles, fonts and icons inlined - at `crates/kibbr-server/src/viewer.html`.
+file - scripts, styles, fonts and icons inlined - at `src/server/viewer.html`.
 That file is committed: the server compiles it in with `include_str!`, so `cargo build`,
 the Docker image and the crates.io package need no Node. Change `web/`, then rebuild it:
 
 ```
 cd web
 npm ci               # Node 20.19 or newer (package.json engines; web/.nvmrc pins 20)
-npm run build        # rescript build, vite build, and the copy into crates/kibbr-server
+npm run build        # rescript build, vite build, and the copy into src/server
 ```
 
 CI builds it again and fails when the committed `viewer.html` differs from what `web/`

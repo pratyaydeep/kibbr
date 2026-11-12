@@ -62,7 +62,7 @@ The layering rules (what the engine and the server may name) and the SPDX header
 
 ## bump.sh and publish.sh - make a version and publish it
 
-A release is usually a GitHub release; CONTRIBUTING.md has the steps. Publishing one runs
+A release is usually a GitHub release; RELEASING.md has the steps. Publishing one runs
 `.github/workflows/release.yml`, which checks that `web/` still builds the committed
 `viewer.html` and then runs `scripts/publish.sh` with the version from the tag.
 

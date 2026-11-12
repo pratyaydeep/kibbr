@@ -1349,7 +1349,7 @@ mod format {
     }
 
     /// A `Datetime` is RFC 3339 in every format, with sub-second precision kept; the
-    /// `typed_values` of `parse --json` are the deliberate exception (`tests/fixture.rs`).
+    /// `typed_values` of `parse --json` are the deliberate exception (`tests/values.rs`).
     #[test]
     fn renders_datetimes_as_rfc3339() {
         let (rows, _) = query(&[r#"MATCH LOG {"service": "auth"}"#, "--format", "ndjson"]);

@@ -124,7 +124,7 @@ unknown field `wal_dir`, expected one of `base_path`, `trie_file`, `max_open_seg
 
 ```
 $ kibbr --log-format json serve --storage memory
-{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr_server::lifecycle","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"request_timeout_ms":30000,"scan_threads":4}
-{"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr_server::lifecycle","msg":"storage is in memory: everything ingested is lost when this process exits"}
-{"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr_server::lifecycle","msg":"SIGTERM received - shutting down"}
+{"ts":"2026-10-10T14:50:07.252Z","level":"info","target":"kibbr::server::runtime","msg":"listening on http://127.0.0.1:61046","addr":"127.0.0.1:61046","storage":"memory","data_dir":"","max_rows":10000,"ingest_concurrency":8,"ingest_wait_ms":100,"shutdown_deadline_ms":25000,"request_timeout_ms":30000,"scan_threads":4}
+{"ts":"2026-10-10T14:50:07.252Z","level":"warn","target":"kibbr::server::runtime","msg":"storage is in memory: everything ingested is lost when this process exits"}
+{"ts":"2026-10-10T14:50:08.745Z","level":"info","target":"kibbr::server::runtime","msg":"SIGTERM received - shutting down"}
 ```
