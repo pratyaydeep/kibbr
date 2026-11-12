@@ -518,44 +518,13 @@ pub fn epoch_window(file: &File) -> Result<EpochWindow, ConfigError> {
         .ok_or_else(|| bad("the start is not before the end, so the window is empty".into()))
 }
 
-/// How `Storage` is loaded - flag > environment > file > default - as a trait because
-/// an inherent `impl` cannot be written here for the server crate's type.
-pub trait LoadStorage: Sized {
-    #[allow(clippy::too_many_arguments)]
-    fn load(
-        file: &File,
-        durable: bool,
-        data_dir: Option<PathBuf>,
-        trie_file: Option<PathBuf>,
-        flush_ms: Option<usize>,
-        row_group_ms: Option<usize>,
-        max_open_segments: Option<usize>,
-        segment_max_bytes: Option<usize>,
-        max_buffer_bytes: Option<usize>,
-    ) -> Result<Self, ConfigError>;
-    fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf;
-    fn with_compact_interval(self, file: &File, flag_ms: Option<usize>)
-        -> Result<Self, ConfigError>;
-    fn with_wal(
-        self,
-        file: &File,
-        segment_bytes: Option<usize>,
-        batch_lines: Option<usize>,
-        queue_bytes: Option<usize>,
-    ) -> Result<Self, ConfigError>;
-    fn with_scan(
-        self,
-        file: &File,
-        threads: Option<usize>,
-        fan_rows: Option<usize>,
-    ) -> Result<Self, ConfigError>;
-}
-
-impl LoadStorage for Storage {
+/// How `Storage` is loaded - flag > environment > file > default: the server's type,
+/// loaded here, where the flags and the file are read.
+impl Storage {
     /// The same four rules, over the storage settings; `durable` is the `--storage` choice,
     /// so `--storage memory --data-dir /x` is an instruction and not a contradiction.
     #[allow(clippy::too_many_arguments)]
-    fn load(
+    pub(crate) fn load(
         file: &File,
         durable: bool,
         data_dir: Option<PathBuf>,
@@ -683,14 +652,14 @@ impl LoadStorage for Storage {
 
     /// The data directory a command was pointed at, as named and **without creating it**, so
     /// a command that only works on a directory already there refuses a mistyped path.
-    fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf {
+    pub(crate) fn base_named(file: &File, data_dir: Option<PathBuf>) -> PathBuf {
         resolve_path(data_dir, BASE_PATH_ENV, file.storage.base_path.as_ref())
             .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR))
     }
 
     /// How often `serve` looks for a day that is due: `--compact-interval-ms` >
     /// environment > default; apart from `load` so the flag is never refused for a variable.
-    fn with_compact_interval(
+    pub(crate) fn with_compact_interval(
         mut self,
         file: &File,
         flag_ms: Option<usize>,
@@ -707,7 +676,7 @@ impl LoadStorage for Storage {
 
     /// How `serve` writes its write-ahead log: `--wal-segment-bytes`, `--batch-size` and
     /// `--wal-queue-bytes`, each over its variable, over the default; only `serve` writes one.
-    fn with_wal(
+    pub(crate) fn with_wal(
         mut self,
         file: &File,
         segment_bytes: Option<usize>,
@@ -754,7 +723,7 @@ impl LoadStorage for Storage {
 
     /// What a server's queries may use: `--scan-threads` and `--scan-fan-rows`, each over its
     /// variable, over the default; more threads than cores are refused, 0 and 1 both mean none.
-    fn with_scan(
+    pub(crate) fn with_scan(
         mut self,
         file: &File,
         threads: Option<usize>,
@@ -823,30 +792,10 @@ pub fn limits(
     })
 }
 
-/// How `ApiLimits` is loaded: as `LoadStorage` is, and a trait for the same reason.
-pub trait LoadApiLimits: Sized {
-    fn load(
-        file: &File,
-        max_body_bytes: Option<usize>,
-        max_decompressed_bytes: Option<usize>,
-        ingest_concurrency: Option<usize>,
-    ) -> Result<Self, ConfigError>;
-    fn with_ingest_wait(self, file: &File, flag_ms: Option<usize>) -> Result<Self, ConfigError>;
-    fn with_shutdown_deadline(
-        self,
-        file: &File,
-        flag: Option<Duration>,
-    ) -> Result<Self, ConfigError>;
-    fn with_request_timeout(
-        self,
-        file: &File,
-        flag: Option<Duration>,
-    ) -> Result<Self, ConfigError>;
-}
-
-impl LoadApiLimits for ApiLimits {
+/// How `ApiLimits` is loaded: as `Storage` is.
+impl ApiLimits {
     /// The same four rules, over the request limits.
-    fn load(
+    pub(crate) fn load(
         file: &File,
         max_body_bytes: Option<usize>,
         max_decompressed_bytes: Option<usize>,
@@ -894,7 +843,7 @@ impl LoadApiLimits for ApiLimits {
 
     /// How long `serve` keeps a body waiting before it sheds it: `--ingest-wait-ms` >
     /// environment > default; zero sheds at once, more than `MAX_INGEST_WAIT_MS` is refused.
-    fn with_ingest_wait(
+    pub(crate) fn with_ingest_wait(
         mut self,
         file: &File,
         flag_ms: Option<usize>,
@@ -917,7 +866,7 @@ impl LoadApiLimits for ApiLimits {
 
     /// How long a stopping `serve` gives the requests in flight: `--shutdown-deadline` >
     /// environment > `[api] shutdown_deadline` > 25 seconds; zero is no deadline.
-    fn with_shutdown_deadline(
+    pub(crate) fn with_shutdown_deadline(
         mut self,
         file: &File,
         flag: Option<Duration>,
@@ -935,7 +884,7 @@ impl LoadApiLimits for ApiLimits {
 
     /// How long `serve` gives one request: `--request-timeout` > environment > `[api]
     /// request_timeout` > 30 seconds; zero is no timeout.
-    fn with_request_timeout(
+    pub(crate) fn with_request_timeout(
         mut self,
         file: &File,
         flag: Option<Duration>,
@@ -952,42 +901,13 @@ impl LoadApiLimits for ApiLimits {
     }
 }
 
-/// `serve`'s own flags, as clap read them: each `None` where the command line did not
-/// say, so that its variable, the file and the default are asked in turn.
-#[derive(Debug, Clone, Default)]
-pub struct ServeFlags {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub max_rows: Option<usize>,
-    pub max_buckets: Option<usize>,
-    pub max_groups: Option<usize>,
-    pub max_body_bytes: Option<usize>,
-    pub max_decompressed_bytes: Option<usize>,
-    pub ingest_concurrency: Option<usize>,
-    pub ingest_wait_ms: Option<usize>,
-    pub shutdown_deadline: Option<Duration>,
-    pub request_timeout: Option<Duration>,
-    /// `--storage memory`: no data directory, whatever else names one.
-    pub memory: bool,
-    pub data_dir: Option<PathBuf>,
-    pub trie_file: Option<PathBuf>,
-    pub flush_interval_ms: Option<usize>,
-    pub row_group_timeout_ms: Option<usize>,
-    pub wal_segment_bytes: Option<usize>,
-    pub batch_size: Option<usize>,
-    pub wal_queue_bytes: Option<usize>,
-    pub max_open_segments: Option<usize>,
-    pub segment_max_bytes: Option<usize>,
-    pub max_buffer_bytes: Option<usize>,
-    pub compact_interval_ms: Option<usize>,
-    pub scan_threads: Option<usize>,
-    pub scan_fan_rows: Option<usize>,
-    pub time_columns: Option<Vec<String>>,
-}
-
 /// What `kibbr serve` runs on: the one place the server's `Settings` is made, in a fixed
 /// order so the first setting refused is always the same one.
-pub fn settings(file: &File, flags: ServeFlags, log: Log) -> Result<Settings, ConfigError> {
+pub fn settings(
+    file: &File,
+    flags: crate::cli::serve::Args,
+    log: Log,
+) -> Result<Settings, ConfigError> {
     let (host, port) = listen(file, flags.host, flags.port)?;
     Ok(Settings {
         host,
@@ -1004,7 +924,7 @@ pub fn settings(file: &File, flags: ServeFlags, log: Log) -> Result<Settings, Co
         .with_request_timeout(file, flags.request_timeout)?,
         storage: Storage::load(
             file,
-            !flags.memory,
+            flags.storage == crate::cli::serve::StorageKind::Disk,
             flags.data_dir,
             flags.trie_file,
             flags.flush_interval_ms,

@@ -83,7 +83,7 @@ pub fn server(
             found: "--addr".to_string(),
         });
     }
-    let base = <config::Storage as config::LoadStorage>::base_named(file, data_dir);
+    let base = config::Storage::base_named(file, data_dir);
     if let Some(address) = crate::engine::holder(&base).and_then(|holder| holder.address) {
         return Ok(Server {
             address,
@@ -274,6 +274,58 @@ fn stats_lines(answer: &Value) -> String {
         .iter()
         .map(|(name, value)| format!("{name:<width$}  {value}\n"))
         .collect()
+}
+
+
+/// The flags of `kibbr health`.
+#[derive(clap::Args)]
+pub struct HealthArgs {
+    /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+    /// `[api] native_addr`, 127.0.0.1:7700]
+    #[arg(long, value_name = "HOST:PORT")]
+    pub addr: Option<String>,
+    /// The data directory whose server is asked.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Print the server's answer as it sent it, one JSON object, instead of a word.
+    #[arg(long)]
+    pub json: bool,
+}
+
+
+/// The flags of `kibbr stats`.
+#[derive(clap::Args)]
+pub struct StatsArgs {
+    /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+    /// `[api] native_addr`, 127.0.0.1:7700]
+    #[arg(long, value_name = "HOST:PORT")]
+    pub addr: Option<String>,
+    /// The data directory whose server is asked.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Print the server's answer as it sent it, one JSON object, instead of a line a
+    /// number.
+    #[arg(long)]
+    pub json: bool,
+}
+
+
+/// The flags of `kibbr templates`.
+#[derive(clap::Args)]
+pub struct TemplatesArgs {
+    /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+    /// `[api] native_addr`, 127.0.0.1:7700]
+    #[arg(long, value_name = "HOST:PORT")]
+    pub addr: Option<String>,
+    /// The data directory whose server is asked.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Print the server's answer as it sent it, one JSON object, instead of a table.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[cfg(test)]

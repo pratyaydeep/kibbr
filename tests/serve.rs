@@ -250,7 +250,7 @@ impl Served {
     /// The same, with flags as `kibbr serve` takes them. The port and the directory are
     /// this function's: `--storage memory` is the one way to have no directory.
     fn start_with(flags: ServeFlags) -> Self {
-        let data_dir = (!flags.memory).then(scratch_dir);
+        let data_dir = (!flags.memory()).then(scratch_dir);
         let flags = ServeFlags {
             port: Some(0),
             data_dir: data_dir.clone(),

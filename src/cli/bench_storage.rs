@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::cli::config::{LoadStorage as _, Schema, Storage};
+use crate::cli::config::{Schema, Storage};
 use crate::cli::error::{CliError, DetectorErrorKind};
 use crate::cli::load::{self, Asked, LoadError};
 use crate::engine::display::commas;
@@ -24,7 +24,7 @@ use crate::engine::inspect::{
 };
 use crate::engine::{Database, FlushSummary, Opener, ReadError};
 
-pub struct Args {
+pub struct Resolved {
     pub input: PathBuf,
     pub es: Option<String>,
     pub scratch: Option<PathBuf>,
@@ -260,11 +260,32 @@ fn compressed(
     })
 }
 
-pub fn run(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), CliError> {
+/// The `bench-storage` arm of `cli.rs`: the flags resolved against the settings, then `run`.
+pub fn cli(
+    file: &crate::cli::config::File,
+    out: &mut dyn Write,
+    args: Args,
+) -> Result<(), CliError> {
+    run(
+        &Resolved {
+            input: args.input,
+            es: args.es,
+            scratch: args.scratch,
+            keep: args.keep,
+            no_zstd: args.no_zstd,
+            zstd_threads: args.zstd_threads.unwrap_or_else(all_threads),
+            settings: file.clone(),
+        },
+        crate::cli::config::schema(file, args.time_columns),
+        out,
+    )
+}
+
+pub fn run(args: &Resolved, schema: Schema, out: &mut dyn Write) -> Result<(), CliError> {
     run_inner(args, schema, out).map_err(CliError::from)
 }
 
-fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), LoadError> {
+fn run_inner(args: &Resolved, schema: Schema, out: &mut dyn Write) -> Result<(), LoadError> {
     let (scratch, ours) = match &args.scratch {
         Some(dir) => {
             if fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some()) {
@@ -303,7 +324,7 @@ fn open(dir: &Path, storage: &Storage, schema: &Schema) -> Result<Database, Load
 }
 
 fn measure(
-    args: &Args,
+    args: &Resolved,
     schema: Schema,
     scratch: &Path,
     out: &mut dyn Write,
@@ -606,7 +627,7 @@ fn written(flush: FlushSummary) -> Result<(), LoadError> {
 /// The input through the live door, measured, compacted and measured again. Flushes are
 /// counted in lines, not left to a clock, so a file gives the same row groups every run.
 fn live_day(
-    args: &Args,
+    args: &Resolved,
     schema: &Schema,
     data: &Path,
     block: u64,
@@ -803,6 +824,38 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
     })();
     let _ = call("DELETE", at(""), None);
     result
+}
+
+
+/// The flags of `kibbr bench-storage`.
+#[derive(clap::Args)]
+pub struct Args {
+    /// NDJSON, gzip or zstd.
+    #[arg(value_name = "FILE")]
+    pub input: PathBuf,
+    /// Also index the same lines into this Elasticsearch - a scratch index, deleted
+    /// after - and print its store size beside kibbr's.
+    #[arg(long, value_name = "URL")]
+    pub es: Option<String>,
+    /// Where to load it. Must be absent or empty. [default: a directory under the
+    /// system's temporary directory]
+    #[arg(long, value_name = "PATH")]
+    pub scratch: Option<PathBuf>,
+    /// Leave the scratch directory in place, to look at.
+    #[arg(long)]
+    pub keep: bool,
+    /// Leave zstd -19 out: it runs on one thread at a few MB/s, so on tens of gigabytes it
+    /// takes hours.
+    #[arg(long)]
+    pub no_zstd: bool,
+    /// Threads for zstd -19. 1 is the plain zstd -19, the smallest it makes; more split
+    /// the input into jobs, a little larger and close to N times faster. [default: every
+    /// CPU this process may use]
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+    pub zstd_threads: Option<u32>,
+    /// As `load --time-columns`. Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
+    #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+    pub time_columns: Option<Vec<String>>,
 }
 
 #[cfg(test)]

@@ -42,7 +42,8 @@ pub mod testing {
 
     /// The settings a server is run on, as the command line builds them from its flags.
     pub mod config {
-        pub use crate::cli::config::{settings, File, Log, ServeFlags};
+        pub use crate::cli::config::{settings, File, Log};
+        pub use crate::cli::serve::Args as ServeFlags;
     }
 
     /// The server, run on a thread of the test's own process.

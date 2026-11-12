@@ -237,12 +237,20 @@ fn display_value(ty: Option<ColumnType>, value: &ColValue, raw: &str) -> String 
 }
 
 /// The `parse` arm of `cli.rs`: the input opened, then `run`.
-pub fn cli<W: Write>(
-    input: &str,
-    out: &mut W,
-    limit: Option<u64>,
-    json: bool,
-) -> Result<(), CliError> {
-    let reader = crate::cli::open(input)?;
-    run(reader, out, limit, json)
+pub fn cli<W: Write>(out: &mut W, args: Args) -> Result<(), CliError> {
+    let reader = crate::cli::open(&args.input)?;
+    run(reader, out, args.limit, args.json)
+}
+
+/// The flags of `kibbr parse`.
+#[derive(clap::Args)]
+pub struct Args {
+    /// Path to an NDJSON file, or `-` for stdin.
+    pub input: String,
+    /// Stop after this many lines.
+    #[arg(long)]
+    pub limit: Option<u64>,
+    /// Emit the `ParsedLog` as NDJSON instead of the human table.
+    #[arg(long)]
+    pub json: bool,
 }

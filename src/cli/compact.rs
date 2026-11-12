@@ -8,12 +8,11 @@
 //! (`POST /compact`), and with none the command takes the lock and compacts alone.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::cli::config::LoadStorage as _;
 
 use crate::engine::database::compaction::{line, Report, NO_DISK};
 use crate::engine::StoreError;
@@ -58,7 +57,7 @@ impl From<crate::engine::LockError> for CompactError {
 
 /// `kibbr compact`, as the command line gave it.
 #[derive(Debug)]
-pub struct Args {
+pub struct Resolved {
     pub day: Option<String>,
     pub threads: Option<usize>,
     /// Whether `--segment-max-bytes` was given, only to say so when a server's own size will
@@ -91,7 +90,7 @@ pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactEr
 /// Run `kibbr compact` alone if no process holds the data directory, otherwise as a client
 /// of the server that does, by the same rule as `load::command`.
 pub fn command(
-    args: Args,
+    args: Resolved,
     day: Option<i64>,
     storage: crate::cli::config::Storage,
     schema: crate::cli::config::Schema,
@@ -165,7 +164,7 @@ fn opened_alone(e: crate::engine::Error) -> CompactError {
 /// The compaction in this process, holding the directory's lock.
 fn alone(
     db: crate::engine::Database,
-    args: &Args,
+    args: &Resolved,
     day: Option<i64>,
     out: &mut dyn io::Write,
 ) -> Result<(), CompactError> {
@@ -199,7 +198,7 @@ fn client(
     address: &str,
     token: &str,
     base: &Path,
-    args: &Args,
+    args: &Resolved,
     out: &mut dyn io::Write,
 ) -> Result<(), CompactError> {
     if args.segment_max_bytes.is_some() {
@@ -295,12 +294,15 @@ fn client(
 pub fn cli(
     file: &crate::cli::config::File,
     out: &mut dyn io::Write,
-    day: Option<String>,
-    data_dir: Option<std::path::PathBuf>,
-    threads: Option<usize>,
-    segment_max_bytes: Option<usize>,
-    json: bool,
+    args: Args,
 ) -> Result<(), crate::cli::error::CliError> {
+    let Args {
+        day,
+        data_dir,
+        threads,
+        segment_max_bytes,
+        json,
+    } = args;
     // Before the settings are loaded, which creates the directory they name: a
     // compaction of a path that is not a data directory makes nothing there.
     let base = crate::cli::config::Storage::base_named(file, data_dir.clone());
@@ -316,7 +318,7 @@ pub fn cli(
         segment_max_bytes,
         None,
     )?;
-    let args = Args {
+    let args = Resolved {
         day,
         threads,
         segment_max_bytes,
@@ -324,6 +326,31 @@ pub fn cli(
     };
     let schema = crate::cli::config::schema(file, None);
     command(args, day_number, storage, schema, out).map_err(crate::cli::error::CliError::from)
+}
+
+
+/// The flags of `kibbr compact`.
+#[derive(clap::Args)]
+pub struct Args {
+    /// Compact this UTC day now, whatever its age. Without it, every day that is due:
+    /// each day before today whose last live row was written before today.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub day: Option<String>,
+    /// The data directory, which must be one already; nothing is created.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Threads to encode on, at most one per core. [default: one per core up to 8
+    /// alone, half that inside a server]
+    #[arg(long, value_name = "N")]
+    pub threads: Option<usize>,
+    /// A rebuilt file is sealed at this many bytes, when no server holds the directory.
+    /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
+    #[arg(long, value_name = "BYTES")]
+    pub segment_max_bytes: Option<usize>,
+    /// Print the report as one JSON object instead of a line a day.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[cfg(test)]
@@ -367,7 +394,7 @@ mod tests {
             ..crate::cli::config::Storage::default()
         };
         let schema = crate::cli::config::Schema::default();
-        let args = || Args {
+        let args = || Resolved {
             day: None,
             threads: Some(1),
             segment_max_bytes: None,

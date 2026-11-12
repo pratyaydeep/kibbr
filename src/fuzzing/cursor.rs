@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 
 use crate::cli::config::{Limits, Schema};
 use crate::cli::error::{self, CliError};
-use crate::cli::query::{self, Args, Format};
+use crate::cli::query::{self, Format, Resolved};
 use crate::engine::parse::flatten;
 use crate::engine::model::types::ColValue;
 use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
@@ -702,10 +702,10 @@ fn resume(src: &mut String, text: &str) -> usize {
 
 /// The query `source` writes, as the flag surface is handed it; `--after` takes the token
 /// as it stands, with nothing to escape.
-fn flags(mode: QueryMode, p: usize, w: usize, limit: Option<usize>, after: &str) -> Args {
+fn flags(mode: QueryMode, p: usize, w: usize, limit: Option<usize>, after: &str) -> Resolved {
     let fetching = mode == QueryMode::Fetch;
     let window = &WINDOWS[w];
-    Args {
+    Resolved {
         trieql: None,
         matches: PATTERNS[p]
             .terms

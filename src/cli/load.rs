@@ -16,7 +16,6 @@ use thiserror::Error;
 
 pub use crate::engine::load::*;
 
-use crate::cli::config::LoadStorage as _;
 
 /// What `kibbr load` can fail with that the load itself cannot - the server asked to run
 /// it - carried in the load's own error as its `Caller`.
@@ -47,7 +46,7 @@ impl From<crate::cli::error::CliError> for LoadError {
 
 /// `kibbr load`, as the command line gave it.
 #[derive(Debug)]
-pub struct Args {
+pub struct Resolved {
     pub inputs: Vec<PathBuf>,
     pub replace_day: Option<String>,
     pub max_mb_per_sec: Option<f64>,
@@ -70,7 +69,7 @@ pub(crate) const POLL: Duration = Duration::from_millis(100);
 /// Run `kibbr load` alone if no process holds the data directory, otherwise as a client of
 /// the server that does: one process writes the catalog and the manifest.
 pub fn command(
-    args: Args,
+    args: Resolved,
     storage: crate::cli::config::Storage,
     schema: crate::cli::config::Schema,
     out: &mut dyn io::Write,
@@ -174,7 +173,7 @@ fn opened_alone(e: crate::engine::Error) -> LoadError {
 /// The load in this process, holding the directory's lock.
 fn alone(
     db: crate::engine::Database,
-    args: &Args,
+    args: &Resolved,
     mut opts: Options,
     out: &mut dyn io::Write,
 ) -> Result<(), LoadError> {
@@ -202,7 +201,7 @@ fn client(
     address: &str,
     token: &str,
     base: &Path,
-    args: &Args,
+    args: &Resolved,
     share: f64,
     out: &mut dyn io::Write,
 ) -> Result<(), LoadError> {
@@ -254,7 +253,7 @@ fn client_run(
     address: &str,
     token: &str,
     base: &Path,
-    args: &Args,
+    args: &Resolved,
     share: f64,
     spool: &Path,
 ) -> Result<Report, LoadError> {
@@ -352,23 +351,25 @@ fn client_run(
 }
 
 /// The `load` arm of `cli.rs`: the settings loaded, then `command`.
-#[allow(clippy::too_many_arguments)]
 pub fn cli(
     file: &crate::cli::config::File,
     out: &mut dyn io::Write,
-    inputs: Vec<PathBuf>,
-    data_dir: Option<PathBuf>,
-    replace_day: Option<String>,
-    max_mb_per_sec: Option<f64>,
-    threads: Option<usize>,
-    load_buffer_bytes: Option<usize>,
-    received_at: Option<String>,
-    proceed: bool,
-    max_arrival_share: Option<f64>,
-    time_columns: Option<Vec<String>>,
-    segment_max_bytes: Option<usize>,
-    json: bool,
+    args: Args,
 ) -> Result<(), crate::cli::error::CliError> {
+    let Args {
+        inputs,
+        data_dir,
+        replace_day,
+        max_mb_per_sec,
+        threads,
+        load_buffer_bytes,
+        received_at,
+        proceed,
+        max_arrival_share,
+        time_columns,
+        segment_max_bytes,
+        json,
+    } = args;
     let storage = crate::cli::config::Storage::load(
         file,
         true,
@@ -381,7 +382,7 @@ pub fn cli(
         None,
     )?;
     let schema = crate::cli::config::schema(file, time_columns.clone());
-    let args = Args {
+    let args = Resolved {
         inputs,
         replace_day,
         max_mb_per_sec,
@@ -394,4 +395,54 @@ pub fn cli(
         json,
     };
     command(args, storage, schema, out).map_err(crate::cli::error::CliError::from)
+}
+
+/// The flags of `kibbr load`.
+#[derive(clap::Args)]
+pub struct Args {
+    /// Files, directories - every file under them, names starting with `.` skipped - or
+    /// `-` for standard input. Read in order of file name, whatever order given.
+    #[arg(required = true, value_name = "INPUT")]
+    pub inputs: Vec<PathBuf>,
+    /// The data directory. Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Publish these rows as the whole of this UTC day, retiring every file it held, in one
+    /// step. Every row must be on that day.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub replace_day: Option<String>,
+    /// Parse and encode at most this many megabytes of input a second, after decompression,
+    /// so a load leaves the machine to the live door.
+    #[arg(long, value_name = "MB")]
+    pub max_mb_per_sec: Option<f64>,
+    /// Threads to parse and encode on, at most one per core. [default: one per core up
+    /// to 8 alone, half that inside a server]
+    #[arg(long, value_name = "N")]
+    pub threads: Option<usize>,
+    /// Memory the load may hold rows in before it writes them; past it the largest row
+    /// groups are written early. [default: 64 MiB]
+    #[arg(long, value_name = "BYTES")]
+    pub load_buffer_bytes: Option<usize>,
+    /// The arrival time given to rows with no time of their own. [default: now]
+    #[arg(long, value_name = "RFC3339")]
+    pub received_at: Option<String>,
+    /// Load even when more than --max-arrival-share of the rows have no time of their
+    /// own and would be stored at their arrival time - now, or --received-at.
+    #[arg(long)]
+    pub proceed: bool,
+    /// The percentage of rows that may fall back to arrival time before the load stops,
+    /// loading nothing. [default: 1]
+    #[arg(long, value_name = "PERCENT")]
+    pub max_arrival_share: Option<f64>,
+    /// As `serve --time-columns`; used only when no server holds the directory.
+    /// Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
+    #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+    pub time_columns: Option<Vec<String>>,
+    /// A data file is sealed at this many bytes, when no server holds the directory.
+    /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
+    #[arg(long, value_name = "BYTES")]
+    pub segment_max_bytes: Option<usize>,
+    /// Print the report as one JSON object instead of a line.
+    #[arg(long)]
+    pub json: bool,
 }

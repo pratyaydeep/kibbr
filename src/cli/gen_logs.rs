@@ -442,17 +442,16 @@ pub enum Profile {
 
 /// A flag that belongs to the other profile is refused rather than ignored: a `--day` that
 /// silently did nothing would leave its caller measuring the wrong file.
-#[allow(clippy::too_many_arguments)]
-pub fn gen_logs<W: Write>(
-    out: &mut W,
-    profile: Profile,
-    lines: u64,
-    templates: Option<usize>,
-    seed: u64,
-    day: Option<String>,
-    services: Option<usize>,
-    dirty_rate: Option<f64>,
-) -> Result<(), GenError> {
+pub fn gen_logs<W: Write>(out: &mut W, args: Args) -> Result<(), GenError> {
+    let Args {
+        profile,
+        lines,
+        templates,
+        seed,
+        day,
+        services,
+        dirty_rate,
+    } = args;
     match profile {
         Profile::Hostile => {
             for (given, flag) in [
@@ -508,4 +507,34 @@ pub fn gen_logs<W: Write>(
             farm::generate(out, &opts)
         }
     }
+}
+
+/// The flags of `kibbr gen-logs`.
+#[derive(clap::Args)]
+pub struct Args {
+    /// `hostile`: every case the parser must survive, over thirty days. `farm`: one day of a
+    /// ten-service estate, in time order, shaped like real traffic.
+    #[arg(long, value_enum, default_value = "hostile")]
+    pub profile: Profile,
+    /// How many NDJSON lines to write.
+    #[arg(long, default_value_t = 1000)]
+    pub lines: u64,
+    /// `hostile` only: how many log shapes to draw from; optional fields split each into
+    /// several templates. [default: 12]
+    #[arg(long)]
+    pub templates: Option<usize>,
+    /// Same seed, byte-identical output. Nothing here reads the wall clock.
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
+    /// `farm` only: the simulated day, YYYY-MM-DD, UTC. [default: 2024-01-15]
+    #[arg(long)]
+    pub day: Option<String>,
+    /// `farm` only: how many services run, 1 to 10; below 6 there is no access log.
+    /// [default: 10]
+    #[arg(long)]
+    pub services: Option<usize>,
+    /// `farm` only: percent of the values of five named keys that arrive dirty -
+    /// `""`, `"N/A"`, or a number where a string was. [default: 0.5]
+    #[arg(long, value_name = "PERCENT")]
+    pub dirty_rate: Option<f64>,
 }

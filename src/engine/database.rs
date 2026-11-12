@@ -763,7 +763,11 @@ impl Database {
     /// One parsed line's template, and no row: a trie to plan on, for `kibbr-bench`'s plan
     /// step.
     #[cfg(feature = "bench")]
-    pub fn learn(&self, parsed: &crate::engine::parse::flatten::ParsedLog, now: DateTime<Utc>) -> Result<(), TrieError> {
+    pub fn learn(
+        &self,
+        parsed: &crate::engine::parse::flatten::ParsedLog,
+        now: DateTime<Utc>,
+    ) -> Result<(), TrieError> {
         self.trie.ingest(parsed, now).map(drop)
     }
 
