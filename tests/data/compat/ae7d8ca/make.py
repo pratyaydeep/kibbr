@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the compatibility fixture with a kibbr built from ae7d8ca.
 
-    python3 tests/fixtures/compat-ae7d8ca/make.py /path/to/kibbr-built-from-ae7d8ca
+    python3 tests/data/compat/ae7d8ca/make.py /path/to/kibbr-built-from-ae7d8ca
 
 Writes, beside this file:
 

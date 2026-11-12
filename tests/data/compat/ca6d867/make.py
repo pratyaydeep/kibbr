@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the JSON-shapes compatibility fixture with a kibbr built from ca6d867.
 
-    python3 tests/fixtures/compat-ca6d867/make.py /path/to/kibbr-built-from-ca6d867
+    python3 tests/data/compat/ca6d867/make.py /path/to/kibbr-built-from-ca6d867
 
 ca6d867 is the last build that stored an array as the string of its JSON text and left an
 empty object out of a line's keys. Writes, beside this file:

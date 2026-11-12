@@ -92,8 +92,8 @@ echo "ram disk             $MOUNT (${DISK_MB}MB)"
 WORK=$(mktemp -d)
 trap '[ -n "$PID" ] && kill -KILL "$PID" 2>/dev/null; wait 2>/dev/null; cleanup; rm -rf "$WORK"' EXIT
 
-INPUT=testdata/ingest-limits/${BATCH}-seed${GEN_SEED}-batch.ndjson
-mkdir -p testdata/ingest-limits
+INPUT=target/scratch/ingest-limits/${BATCH}-seed${GEN_SEED}-batch.ndjson
+mkdir -p target/scratch/ingest-limits
 [ -f "$INPUT" ] || "$BIN" gen-logs --lines "$BATCH" --templates 12 --seed "$GEN_SEED" > "$INPUT"
 
 mkdir -p "$MOUNT/data"

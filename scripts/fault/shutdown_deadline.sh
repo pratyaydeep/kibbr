@@ -41,7 +41,7 @@
 # gone, its exit code, the rows the final flush wrote, what the restart replayed and what
 # it counts.
 #
-# The store is loaded once through the bulk door and kept under testdata/shutdown-deadline/
+# The store is loaded once through the bulk door and kept under target/scratch/shutdown-deadline/
 # (scratch, ignored): 2,500,000 lines are 590 MB of NDJSON and 430 MB of store, and about
 # a minute and a half to load. A run takes a copy of it - a clone, where the volume makes
 # them - and removes the copy when it ends. **The server holds every row the query has
@@ -77,10 +77,10 @@ SERVE_FLAGS=${SERVE_FLAGS:-}
 # Another build can be measured by naming its binary; the default is built first.
 [ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 
-mkdir -p testdata/shutdown-deadline
-STREAM=testdata/shutdown-deadline/${QUERY_LINES}-seed${GEN_SEED}.ndjson
-EXTRA=testdata/shutdown-deadline/${BUFFERED}-seed$((GEN_SEED + 1)).ndjson
-BASE=testdata/shutdown-deadline/base-${QUERY_LINES}-seed${GEN_SEED}
+mkdir -p target/scratch/shutdown-deadline
+STREAM=target/scratch/shutdown-deadline/${QUERY_LINES}-seed${GEN_SEED}.ndjson
+EXTRA=target/scratch/shutdown-deadline/${BUFFERED}-seed$((GEN_SEED + 1)).ndjson
+BASE=target/scratch/shutdown-deadline/base-${QUERY_LINES}-seed${GEN_SEED}
 
 [ -s "$EXTRA" ] || "$BIN" gen-logs --lines "$BUFFERED" --seed $((GEN_SEED + 1)) > "$EXTRA" || exit 1
 # `loaded` is written last: a base without it is a load that was interrupted.

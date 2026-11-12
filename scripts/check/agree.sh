@@ -32,7 +32,7 @@
 # BIN names another build, as in the other scripts; the default is built first.
 #
 #   COMBOS=100 KIBBR_SEED=7 NLINES=2000 scripts/check/agree.sh
-#   INPUT=testdata/two-doors/200000-seed1.ndjson PRINT_QUERIES=1 scripts/check/agree.sh
+#   INPUT=target/scratch/two-doors/200000-seed1.ndjson PRINT_QUERIES=1 scripts/check/agree.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/../.."

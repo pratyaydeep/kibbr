@@ -38,7 +38,7 @@ use report::{
 
 /// Where the loaded directory, each server's copy of it and the default results go, unless
 /// `--dir` names another place.
-pub const DEFAULT_DIR: &str = "testdata/bench";
+pub const DEFAULT_DIR: &str = "target/scratch/bench";
 /// `--runs`, unless given: odd, so that the median of the runs is one of them.
 pub const DEFAULT_RUNS: usize = 3;
 /// `--samples`, unless given: with 100, the p99 is the 99th smallest.

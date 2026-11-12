@@ -44,7 +44,7 @@ BIN=${BIN:-./target/release/kibbr}
 OLD_BIN=${OLD_BIN:-}
 HOSTILE=${HOSTILE:-2000}
 FARM=${FARM:-2000}
-CASES=testdata/roundtrip.ndjson
+CASES=tests/data/roundtrip.ndjson
 
 [ "$BIN" = ./target/release/kibbr ] && { cargo build --release --quiet || exit 1; }
 

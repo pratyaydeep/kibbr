@@ -82,7 +82,7 @@
 # ONE SENDER, in file order, as in two_doors.sh: a row's position among rows of one
 # timestamp is the order it arrived in, and the position is what the cursors are checked on.
 #
-# The corpus is two_doors.sh's farm day, cached under testdata/two-doors/, and the query set
+# The corpus is two_doors.sh's farm day, cached under target/scratch/two-doors/, and the query set
 # is agree.sh's, printed once and asked of every round. Do not run this across midnight UTC:
 # "today" is what makes the live directory and the control not due.
 #
@@ -120,8 +120,8 @@ case "$BIN" in /*) ;; *) BIN=$PWD/${BIN#./} ;; esac
 
 # two_doors.sh's file, so a run of either leaves the corpus for the other. Written aside
 # and renamed: a generation cut short must not be cached as the corpus.
-mkdir -p testdata/two-doors
-INPUT=testdata/two-doors/farm-${NLINES}-seed${GEN_SEED}.ndjson
+mkdir -p target/scratch/two-doors
+INPUT=target/scratch/two-doors/farm-${NLINES}-seed${GEN_SEED}.ndjson
 if [ ! -s "$INPUT" ]; then
   "$BIN" gen-logs --profile farm --lines "$NLINES" --seed "$GEN_SEED" > "$INPUT.tmp.$$" \
     && mv "$INPUT.tmp.$$" "$INPUT" || { rm -f "$INPUT.tmp.$$"; exit 1; }

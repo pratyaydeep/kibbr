@@ -52,7 +52,7 @@
 # the time of a row with none of its own, so two instants would be a disagreement about the
 # clock.
 #
-# The input is agree.sh's generator, flag for flag, cached under testdata/two-doors/, so
+# The input is agree.sh's generator, flag for flag, cached under target/scratch/two-doors/, so
 # agree.sh pointed at it with INPUT draws from the same lines. PROFILE=farm asks the same
 # of a farm day (gen-logs --profile farm) instead - time-ordered, with dirty values and
 # services that spell their time four ways - which is the data the storage encodings are
@@ -100,12 +100,12 @@ case "$RESTART_BIN" in /*) ;; *) RESTART_BIN=$PWD/${RESTART_BIN#./} ;; esac
 
 # Written aside and renamed: an interrupted generation left in place would be cached as the
 # corpus and every later run would ask about a truncated file.
-mkdir -p testdata/two-doors
+mkdir -p target/scratch/two-doors
 # The clock agree.sh draws its windows from: the generator's, or the farm's one day.
 case "$PROFILE" in
-  hostile) INPUT=testdata/two-doors/${NLINES}-seed${GEN_SEED}.ndjson
+  hostile) INPUT=target/scratch/two-doors/${NLINES}-seed${GEN_SEED}.ndjson
            GEN=(--templates 12); CLOCK=(BASE=1705314600 SPAN=2592000) ;;
-  farm)    INPUT=testdata/two-doors/farm-${NLINES}-seed${GEN_SEED}.ndjson
+  farm)    INPUT=target/scratch/two-doors/farm-${NLINES}-seed${GEN_SEED}.ndjson
            GEN=(--profile farm); CLOCK=(BASE=1705276800 SPAN=86400) ;;
   *)       echo "PROFILE=$PROFILE: hostile or farm" >&2; exit 1 ;;
 esac

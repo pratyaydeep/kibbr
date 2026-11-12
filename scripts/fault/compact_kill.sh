@@ -116,8 +116,8 @@ case "$BIN" in /*) ;; *) BIN=$PWD/${BIN#./} ;; esac
 
 # Written under a temporary name and renamed: a generation cut short must not leave a
 # truncated file that later runs trust.
-mkdir -p testdata/compact-kill
-INPUT=testdata/compact-kill/farm-${NLINES}-seed${GEN_SEED}.ndjson
+mkdir -p target/scratch/compact-kill
+INPUT=target/scratch/compact-kill/farm-${NLINES}-seed${GEN_SEED}.ndjson
 if [ ! -s "$INPUT" ]; then
   "$BIN" gen-logs --profile farm --lines "$NLINES" --seed "$GEN_SEED" > "$INPUT.tmp.$$" \
     && mv "$INPUT.tmp.$$" "$INPUT" || { rm -f "$INPUT.tmp.$$"; exit 1; }

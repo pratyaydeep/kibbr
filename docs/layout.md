@@ -107,7 +107,7 @@ src/lib.rs       the public names, `internals`, and `testing` behind `test-suppo
   handle. `kibbr-server` never names it (`scripts/check/no_internals.sh`).
 - **Features.** `test-support` gives the tests of the crates above their fixtures;
   `fuzzing` is off by default.
-- The format's test vectors are in `testdata/format/`.
+- The format's test vectors are in `tests/data/format/`.
 - **Column encodings.** Each piece of a column chunk gets one encoding, by its type, and
   never several tried with the smallest kept (`format/mod.rs`, `format/build.rs`):
   - a value stored once when every row of the piece holds it
@@ -136,4 +136,4 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings # lints hav
   are no mocks.
 - The one that matters most in `tests/fixture.rs` is
   `every_fixture_value_gets_its_labelled_type`: every hand-labelled value in
-  `testdata/fixture.ndjson` must come out with the type its label says.
+  `tests/data/type_ladder.ndjson` must come out with the type its label says.

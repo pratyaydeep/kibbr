@@ -29,7 +29,7 @@ BIN=./target/release/kibbr
 SEED=42
 LINES=1000
 TEMPLATES=12
-OUT=testdata/store
+OUT=target/scratch/store
 INPUT=""
 VERIFY=0
 

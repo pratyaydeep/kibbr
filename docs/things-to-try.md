@@ -71,10 +71,10 @@ One JSON record a line instead of the table: `template_id`, `fingerprint`, `keys
 `is_new_template`, `raw_line`. Key order is stable run to run, so it diffs cleanly.
 
 ```
-kibbr parse testdata/fixture.ndjson
+kibbr parse tests/data/type_ladder.ndjson
 ```
 
 The fixture: hand-written values, each labelled with the type it must get - the ten-digit
 cases, `"NaN"`, `"TRUE"`, `"9223372036854775808"`, `[1700000000]` and the rest.
-[`testdata/FIXTURE.md`](../testdata/FIXTURE.md) says why each is there. Add a line in the
+[`tests/data/README.md`](../tests/data/README.md) says why each is there. Add a line in the
 same shape and the test suite checks your case too.

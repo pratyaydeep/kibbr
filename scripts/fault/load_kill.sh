@@ -48,8 +48,8 @@ T_MS=${T_MS:-}
 # Written under a temporary name and renamed: a generation cut short must not leave a
 # truncated file that later runs trust. The load id hashes the file's name and bytes, so
 # the name stays fixed for a given corpus.
-mkdir -p testdata/load-kill
-INPUT=testdata/load-kill/farm-${NLINES}-seed${GEN_SEED}.ndjson
+mkdir -p target/scratch/load-kill
+INPUT=target/scratch/load-kill/farm-${NLINES}-seed${GEN_SEED}.ndjson
 if [ ! -s "$INPUT" ]; then
   "$BIN" gen-logs --profile farm --lines "$NLINES" --seed "$GEN_SEED" > "$INPUT.tmp.$$" \
     && mv "$INPUT.tmp.$$" "$INPUT" || { rm -f "$INPUT.tmp.$$"; exit 1; }

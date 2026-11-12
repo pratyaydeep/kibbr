@@ -13,7 +13,7 @@ use crate::engine::store::{effective_ts, Row};
 
 fn vector(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata")
+        .join("tests/data")
         .join("format")
         .join(name);
     std::fs::read(path).expect("a test vector")

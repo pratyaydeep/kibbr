@@ -12,7 +12,7 @@ use serde_json::Value;
 
 /// The worked example: three templates, one promoted dimension (`event`), and `user_id`
 /// on all three, so each answer has a promoted and a non-promoted route.
-const FIXTURE: &str = include_str!("../testdata/sample_logs.ndjson");
+const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
 
 fn kibbr() -> Command {
     Command::new(env!("CARGO_BIN_EXE_kibbr"))

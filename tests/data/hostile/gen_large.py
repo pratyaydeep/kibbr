@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the multi-MB hostile inputs deleted to save disk. Run from repo root."""
 import os
-d = "testdata/hostile"
+d = "tests/data/hostile"
 G1 = b'{"event":"start","id":1}\n'; G2 = b'{"event":"end","id":2}\n'
 def w(n, mid): open(os.path.join(d, n), "wb").write(G1 + mid + G2)
 

@@ -29,8 +29,8 @@ kibbr gen-logs --profile farm --lines 10000 --seed 42  # one day of a ten-servic
 ## Parse
 
 ```
-kibbr gen-logs --lines 1000 --seed 42 > testdata/sample.ndjson
-kibbr parse testdata/sample.ndjson --limit 1             # a file
+kibbr gen-logs --lines 1000 --seed 42 > sample.ndjson
+kibbr parse sample.ndjson --limit 1             # a file
 kibbr gen-logs --lines 1000 --seed 42 | kibbr parse - --limit 1   # or stdin
 ```
 

@@ -25,7 +25,7 @@
 #                       the window
 #
 # RUNS runs; every number printed is the median over them. The data directory is built
-# once, by this script, through `/ingest`, and kept in testdata/live-door/ - delete it to
+# once, by this script, through `/ingest`, and kept in target/scratch/live-door/ - delete it to
 # rebuild. A run's server is killed rather than stopped: what it holds is not needed, and
 # a clean stop would time the final flush instead of the searches.
 #
@@ -57,7 +57,7 @@ S4='MATCH LOG {} LIMIT 500'
 # Another build can be measured by naming its binary; the default is built first.
 [ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 
-DIR=testdata/live-door
+DIR=target/scratch/live-door
 mkdir -p "$DIR"
 INPUT=$DIR/${CORPUS_LINES}-seed${GEN_SEED}.ndjson
 LOAD=$DIR/${LOAD_LINES}-seed${GEN_SEED}.ndjson

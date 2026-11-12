@@ -42,17 +42,17 @@
 # again: the script says so and goes on to the next. Delete the entry to measure it again.
 # The file is rewritten after each source, so a run that stops keeps what it measured.
 # Each result is also written as <tag>.md, in a directory named for the output without its
-# `.json`: bench/results/compression/postgresql.md beside bench/results/compression.json.
+# `.json`: scripts/bench/results/compression/postgresql.md beside scripts/bench/results/compression.json.
 #
-# Downloads, the logs read out of them and each run's raw output go under testdata/compression/<tag>/,
+# Downloads, the logs read out of them and each run's raw output go under target/scratch/compression/<tag>/,
 # which is git-ignored scratch. A download that is there already is used, not fetched again.
 #
-#   bench/compression.py                                   # every source in bench/compression.json
-#   bench/compression.py --tag postgresql                  # that one only
-#   bench/compression.py --input mine.json --output out.json --no-build
+#   scripts/bench/compression.py                                   # every source in scripts/bench/compression.json
+#   scripts/bench/compression.py --tag postgresql                  # that one only
+#   scripts/bench/compression.py --input mine.json --output out.json --no-build
 #
-#   --input FILE    the sources                                 [bench/compression.json]
-#   --output FILE   the results                                 [bench/results/compression.json]
+#   --input FILE    the sources                                 [scripts/bench/compression.json]
+#   --output FILE   the results                                 [scripts/bench/results/compression.json]
 #   --tag TAG       measure only this source; given more than once, these sources
 #   --bin PATH      the kibbr to run; nothing is built          [target/release/kibbr, built]
 #   --no-build      use target/release/kibbr as it is
@@ -84,8 +84,8 @@ import urllib.request
 import zipfile
 import zlib
 
-ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-WORK = os.path.join(ROOT, "testdata", "compression")
+ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+WORK = os.path.join(ROOT, "target", "scratch", "compression")
 TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 GZIP_MAGIC = b"\x1f\x8b"
@@ -660,7 +660,7 @@ def machine():
                         break
         except OSError:
             pass
-    # What the box is, as whoever started it says: bench/cloud/ sets it to the instance type.
+    # What the box is, as whoever started it says: scripts/bench/cloud/ sets it to the instance type.
     if os.environ.get("KIBBR_MACHINE"):
         m["host"] = os.environ["KIBBR_MACHINE"]
     return m
@@ -807,8 +807,8 @@ def write_markdown(result, into):
 
 def main():
     p = argparse.ArgumentParser(description="kibbr bench-storage over downloaded log corpora")
-    p.add_argument("--input", default=os.path.join(ROOT, "bench", "compression.json"))
-    p.add_argument("--output", default=os.path.join(ROOT, "bench", "results", "compression.json"))
+    p.add_argument("--input", default=os.path.join(ROOT, "scripts", "bench", "compression.json"))
+    p.add_argument("--output", default=os.path.join(ROOT, "scripts", "bench", "results", "compression.json"))
     p.add_argument("--tag", action="append", help="measure only this source (repeatable)")
     p.add_argument("--bin", help="the kibbr to run; nothing is built")
     p.add_argument("--no-build", action="store_true", help="use target/release/kibbr as it is")

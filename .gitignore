@@ -2,38 +2,11 @@
 .dev
 sample.ndjson
 
-/lab
-/lab-rs
-
-# Everything under testdata/ is scratch - corpora, data dirs, builds and run output that
-# `gen-logs` and the scripts rebuild - except the committed fixtures named below.
-# Ignoring a path never untracks a file already committed, so testdata/hostile/ stays
-# tracked; a new file there still needs `git add -f`, as it did before.
-/testdata/*
-!/testdata/FIXTURE.md
-!/testdata/fixture.ndjson
-!/testdata/roundtrip.ndjson
-!/testdata/sample_logs.ndjson
-!/testdata/format/
-
-# `kibbr bench` keeps its loaded directory, its work and its default results under
-# testdata/bench/, and all of that is scratch. A result saved there by name, with the raw
-# log beside it, is not: a baseline is taken once and every later result is compared with
-# it. In this order - the last line keeps the loaded directory's marker and its load log,
-# which end in .json and .log too, out.
-!/testdata/bench/
-/testdata/bench/*
-!/testdata/bench/*.json
-!/testdata/bench/*.log
-/testdata/bench/farm-*
-
-/brag*
+# Scripts keep what they generate and cache under target/scratch/<name>/, which /target
+# above already covers: every file under tests/data/ is a committed fixture.
 
 # Claude Code's per-machine state: settings, worktrees.
 .claude/
-
-# The design handoff: local only, not committed. The web console copies what it uses into web/.
-/.design
 
 # macOS folder metadata.
 .DS_Store

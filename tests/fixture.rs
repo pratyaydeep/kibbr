@@ -105,10 +105,10 @@ fn row<'a>(block: &[&'a str], key: &str) -> Vec<&'a str> {
 /// labelled type, ambiguous ones included.
 #[test]
 fn every_fixture_value_gets_its_labelled_type() {
-    let fixture = include_str!("../testdata/fixture.ndjson");
+    let fixture = include_str!("../tests/data/type_ladder.ndjson");
     let expected: Vec<&str> = fixture.lines().filter(|l| !l.trim().is_empty()).collect();
 
-    let stdout = run(&["parse", "testdata/fixture.ndjson"]);
+    let stdout = run(&["parse", "tests/data/type_ladder.ndjson"]);
     let blocks = blocks(&stdout);
     assert_eq!(
         blocks.len(),
@@ -142,7 +142,7 @@ fn every_fixture_value_gets_its_labelled_type() {
 /// labelled lines share one or an id: `{"event=login":1}` is not `{"event":"login"}`.
 #[test]
 fn every_labelled_fixture_line_gets_its_template() {
-    let stdout = run(&["parse", "testdata/fixture.ndjson", "--json"]);
+    let stdout = run(&["parse", "tests/data/type_ladder.ndjson", "--json"]);
     let mut seen = std::collections::HashMap::new();
     for line in stdout.lines() {
         let record = json_record(line);

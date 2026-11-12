@@ -12,10 +12,10 @@
 # file: both copy /out/kibbr out of one build stage, and this script checks that the two
 # are the same bytes before it measures one and reports the size of the other.
 #
-#   bench/run.sh                               # this laptop: 200,000 lines
-#   bench/run.sh --lines 1000000 --threads 8   # the cloud box
+#   scripts/bench/run.sh                               # this laptop: 200,000 lines
+#   scripts/bench/run.sh --lines 1000000 --threads 8   # the cloud box
 #
-# What it writes, under bench/results/, named for the UTC date (and `-2`, `-3` for a
+# What it writes, under scripts/bench/results/, named for the UTC date (and `-2`, `-3` for a
 # second and third run of one day - a result is never written over):
 #
 #   <date>.md     the table, and what it was measured on
@@ -29,7 +29,7 @@
 #
 # **The numbers are this image's on this machine's Docker**, which on a laptop is a
 # Linux VM with some of the cores and memory. They are not comparable with
-# testdata/bench/*.json, which were measured on macOS without one, and the bench says so
+# scripts/bench/results/native/*.json, which were measured on macOS without one, and the bench says so
 # if asked to compare them.
 #
 #   --lines N       lines in the loaded day and in the live stream     [200000]
@@ -45,7 +45,7 @@
 #   --volume NAME   the Docker volume                                   [kibbr-bench]
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 LINES=200000
 THREADS=""
@@ -66,19 +66,19 @@ while [ $# -gt 0 ]; do
     --unchecked) UNCHECKED=yes; shift ;;
     --no-build) BUILD=no; shift ;;
     -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "bench/run.sh: unknown argument $1" >&2; exit 2 ;;
+    *) echo "scripts/bench/run.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
 
 docker version --format '{{.Server.Version}}' >/dev/null 2>&1 ||
-  { echo "bench/run.sh: no Docker daemon answers" >&2; exit 1; }
+  { echo "scripts/bench/run.sh: no Docker daemon answers" >&2; exit 1; }
 
 now() { python3 -c 'import time; print("%.3f" % time.time())'; }
 elapsed() { python3 -c 'import sys, time; print("%.1f" % (time.time() - float(sys.argv[1])))' "$1"; }
 
 BEGAN=$(now)
 COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
-DIRTY=$(git diff --quiet HEAD -- src crates Cargo.toml Cargo.lock Dockerfile 2>/dev/null && echo no || echo yes)
+DIRTY=$(git diff --quiet HEAD -- src Cargo.toml Cargo.lock Dockerfile 2>/dev/null && echo no || echo yes)
 
 # A tag of its own beside a name with one (`kibbr:0.1.0` -> `kibbr:0.1.0-bench`).
 case "$IMAGE" in
@@ -111,7 +111,7 @@ same_binary() {
   return $same
 }
 same_binary || {
-  echo "bench/run.sh: $IMAGE and $BENCH_IMAGE do not hold the same kibbr: build both from one" >&2
+  echo "scripts/bench/run.sh: $IMAGE and $BENCH_IMAGE do not hold the same kibbr: build both from one" >&2
   echo "  checkout (run without --no-build)" >&2
   exit 1
 }
@@ -120,7 +120,7 @@ same_binary || {
 ARGS=(bench --profile farm --lines "$LINES" --dir /var/lib/kibbr/bench)
 if [ -n "$THREADS" ]; then
   docker run --rm "$BENCH_IMAGE" bench --help 2>/dev/null | grep -q -- '--threads' || {
-    echo "bench/run.sh: the kibbr bench in $BENCH_IMAGE has no --threads: the servers it measures" >&2
+    echo "scripts/bench/run.sh: the kibbr bench in $BENCH_IMAGE has no --threads: the servers it measures" >&2
     echo "  take the build's own scan threads (half the cores, at most 4), and no flag of" >&2
     echo "  this script reaches them. Run without --threads, or on a build whose bench has it." >&2
     exit 2
@@ -131,11 +131,11 @@ fi
 [ -z "$SAMPLES" ] || ARGS+=(--samples "$SAMPLES")
 [ -z "$UNCHECKED" ] || ARGS+=(--unchecked)
 
-mkdir -p bench/results
+mkdir -p scripts/bench/results
 DATE=$(date -u +%Y-%m-%d)
 NAME=$DATE
 n=1
-while [ -e "bench/results/$NAME.md" ] || [ -e "bench/results/$NAME.json" ]; do
+while [ -e "scripts/bench/results/$NAME.md" ] || [ -e "scripts/bench/results/$NAME.json" ]; do
   n=$((n + 1)); NAME=$DATE-$n
 done
 # The result's name inside the volume: the time, so that it is no earlier run's.
@@ -155,11 +155,11 @@ docker start -a "$CONTAINER"
 CODE=$?
 BENCH_S=$(elapsed "$T")
 if [ "$CODE" != 0 ]; then
-  echo "bench/run.sh: kibbr bench exited $CODE after ${BENCH_S}s; nothing was written" >&2
+  echo "scripts/bench/run.sh: kibbr bench exited $CODE after ${BENCH_S}s; nothing was written" >&2
   exit 1
 fi
-docker cp "$CONTAINER:$INSIDE.json" "bench/results/$NAME.json" >/dev/null || exit 1
-docker cp "$CONTAINER:$INSIDE.log" "bench/results/$NAME.log" >/dev/null || exit 1
+docker cp "$CONTAINER:$INSIDE.json" "scripts/bench/results/$NAME.json" >/dev/null || exit 1
+docker cp "$CONTAINER:$INSIDE.log" "scripts/bench/results/$NAME.log" >/dev/null || exit 1
 WALL_S=$(elapsed "$BEGAN")
 
 DOCKER=$(docker version --format '{{.Server.Version}} on {{.Server.Os}}/{{.Server.Arch}}')
@@ -169,7 +169,7 @@ THREADS_SAID=${THREADS:-"none - the default scan threads of the build"}
 NAME="$NAME" COMMIT="$COMMIT" DIRTY="$DIRTY" IMAGE="$IMAGE" BENCH_IMAGE="$BENCH_IMAGE" IMAGE_ID="$IMAGE_ID" IMAGE_BYTES="$IMAGE_BYTES" \
 BUILD_S="$BUILD_S" BENCH_S="$BENCH_S" WALL_S="$WALL_S" DOCKER="$DOCKER" DOCKER_HOST_FACTS="$DOCKER_HOST_FACTS" \
 THREADS="$THREADS_SAID" \
-python3 - "bench/results/$NAME.json" "bench/results/$NAME.md" <<'PY' || exit 1
+python3 - "scripts/bench/results/$NAME.json" "scripts/bench/results/$NAME.md" <<'PY' || exit 1
 import json, os, sys
 
 src, out = sys.argv[1], sys.argv[2]
@@ -281,6 +281,6 @@ with open(out, "w") as f:
 PY
 
 echo
-cat "bench/results/$NAME.md"
+cat "scripts/bench/results/$NAME.md"
 echo
-echo "bench/run.sh: ${WALL_S}s start to end (build ${BUILD_S}s, bench ${BENCH_S}s) - bench/results/$NAME.md"
+echo "scripts/bench/run.sh: ${WALL_S}s start to end (build ${BUILD_S}s, bench ${BENCH_S}s) - scripts/bench/results/$NAME.md"

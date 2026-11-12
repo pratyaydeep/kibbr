@@ -34,8 +34,8 @@ STOP_TIMEOUT_SECONDS=${STOP_TIMEOUT_SECONDS:-1800}
 # Another build can be measured by naming its binary; the default is built first.
 [ "$BIN" != ./target/release/kibbr ] || cargo build --release --quiet || exit 1
 
-mkdir -p testdata/live-door
-INPUT=testdata/live-door/${LINES}-seed${GEN_SEED}.ndjson
+mkdir -p target/scratch/live-door
+INPUT=target/scratch/live-door/${LINES}-seed${GEN_SEED}.ndjson
 [ -s "$INPUT" ] || "$BIN" gen-logs --lines "$LINES" --seed "$GEN_SEED" > "$INPUT"
 
 WORK=$(mktemp -d)

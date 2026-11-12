@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # A kibbr bench on a fresh EC2 box, from the laptop: the box builds kibbr, runs one job,
 # uploads what it measured to S3 and terminates itself. No SSH, no open port, nothing to
-# remember to switch off. What the box runs is bench/cloud/box.sh; this is everything
+# remember to switch off. What the box runs is scripts/bench/cloud/box.sh; this is everything
 # around it.
 #
-#   bench/cloud/aws.sh setup                 # once: the bucket, and a role that can only
+#   scripts/bench/cloud/aws.sh setup                 # once: the bucket, and a role that can only
 #                                            # write to it; checks the region and quota
-#   bench/cloud/aws.sh launch                # the compression job on the default box
-#   bench/cloud/aws.sh status                # the latest run: its status and last lines
-#   bench/cloud/aws.sh fetch                 # its results, into the repository
-#   bench/cloud/aws.sh runs                  # every run in the bucket, and live boxes
-#   bench/cloud/aws.sh kill                  # terminate every live bench box
+#   scripts/bench/cloud/aws.sh launch                # the compression job on the default box
+#   scripts/bench/cloud/aws.sh status                # the latest run: its status and last lines
+#   scripts/bench/cloud/aws.sh fetch                 # its results, into the repository
+#   scripts/bench/cloud/aws.sh runs                  # every run in the bucket, and live boxes
+#   scripts/bench/cloud/aws.sh kill                  # terminate every live bench box
 #
 # launch's flags:
 #
@@ -23,8 +23,8 @@
 #   --ref REF        what is measured: a commit, branch or tag that is on GitHub   [HEAD,
 #                    which must be pushed: the box clones from GitHub, not from here]
 #   --tags "A B"     compression: these sources only            [every one not measured]
-#   --no-zstd        compression: as bench/compression.py --no-zstd
-#   --zstd-threads N compression: as bench/compression.py --zstd-threads; 1 is the plain,
+#   --no-zstd        compression: as scripts/bench/compression.py --no-zstd
+#   --zstd-threads N compression: as scripts/bench/compression.py --zstd-threads; 1 is the plain,
 #                    smallest zstd -19          [every vCPU the box has]
 #   --hours H        the box terminates itself after H hours, finished or not   [8]
 #
@@ -40,7 +40,7 @@
 # give it --hours 6.
 
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../.." || exit 1
 
 die() { echo "aws.sh: $*" >&2; exit 1; }
 command -v aws >/dev/null || die "no aws CLI: brew install awscli, then aws configure"
@@ -150,8 +150,8 @@ launch() {
   # The box clones GitHub: what is measured has to be there.
   if [ -z "$ref" ]; then
     ref=$(git rev-parse HEAD) || die "not in a git checkout"
-    git diff --quiet HEAD -- src crates Cargo.toml Cargo.lock bench ||
-      echo "aws.sh: uncommitted changes to the source or bench/ are not on the box: it measures $ref" >&2
+    git diff --quiet HEAD -- src Cargo.toml Cargo.lock scripts/bench ||
+      echo "aws.sh: uncommitted changes to the source or scripts/bench/ are not on the box: it measures $ref" >&2
   fi
   local named
   if named=$(git ls-remote --exit-code origin "$ref" 2>/dev/null); then
@@ -179,7 +179,7 @@ launch() {
     echo '#!/bin/bash'
     echo "export KIBBR_JOB=$job KIBBR_RUN=$run KIBBR_BUCKET=s3://$b KIBBR_REF=$ref KIBBR_MAX_HOURS=$hours"
     echo "export KIBBR_TAGS='$tags' KIBBR_NO_ZSTD=$nozstd KIBBR_ZSTD_THREADS=$zthreads"
-    sed 1d bench/cloud/box.sh
+    sed 1d scripts/bench/cloud/box.sh
   } > "$ud"
   [ "$spot" = 0 ] || market=(--instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time","InstanceInterruptionBehavior":"terminate"}}')
 
@@ -203,7 +203,7 @@ launch() {
 
   echo "launched $id: $type in $REGION$([ "$spot" = 1 ] && echo ", spot"), $job at $ref"
   echo "run $run, results to s3://$b/$run/"
-  echo "it terminates itself when done, or after $hours h. Watch: bench/cloud/aws.sh status"
+  echo "it terminates itself when done, or after $hours h. Watch: scripts/bench/cloud/aws.sh status"
 }
 
 status() {
@@ -219,7 +219,7 @@ status() {
 fetch() {
   local b r dir; b=$(bucket); r=$(run_name "${1:-}")
   [ -n "$r" ] || die "no runs in s3://$b yet"
-  dir=testdata/cloud/$r
+  dir=target/scratch/cloud/$r
   mkdir -p "$dir"
   aws s3 cp --only-show-errors --recursive "s3://$b/$r/" "$dir/" || die "could not download s3://$b/$r/"
   echo "run $r: $(cat "$dir/status" 2>/dev/null || echo 'no status')"
@@ -227,11 +227,11 @@ fetch() {
   tar xzf "$dir/results.tgz" -C "$dir" || die "could not unpack $dir/results.tgz"
   # The box started from this repository's results and only added to them, so its copy
   # replaces ours; git diff shows what it added.
-  if [ -f "$dir/bench/results/compression.json" ]; then
-    cp "$dir/bench/results/compression.json" bench/results/compression.json
-    mkdir -p bench/results/compression
-    cp "$dir"/bench/results/compression/*.md bench/results/compression/ 2>/dev/null
-    echo "bench/results/compression.json and compression/*.md updated: git diff bench/results"
+  if [ -f "$dir/scripts/bench/results/compression.json" ]; then
+    cp "$dir/scripts/bench/results/compression.json" scripts/bench/results/compression.json
+    mkdir -p scripts/bench/results/compression
+    cp "$dir"/scripts/bench/results/compression/*.md scripts/bench/results/compression/ 2>/dev/null
+    echo "scripts/bench/results/compression.json and compression/*.md updated: git diff scripts/bench/results"
   fi
   echo "everything the box wrote, its log and box.txt: $dir/"
 }

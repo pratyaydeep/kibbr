@@ -32,7 +32,7 @@ docker rm kibbr                            # the volume keeps the data; run agai
 {..."msg":"exit 0"}
 ```
 
-- `bench/run.sh` runs `kibbr bench` in a container: [bench/README.md](../bench/README.md).
+- `scripts/bench/run.sh` runs `kibbr bench` in a container: [scripts/bench/README.md](../scripts/bench/README.md).
 - `deploy/` holds the Kubernetes manifests - a StatefulSet of one pod and its volume - and
   the two Vector sinks; [deploy/README.md](../deploy/README.md) says what of them was
   checked and what was not.

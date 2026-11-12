@@ -10,7 +10,7 @@
 # exactly once, and nothing returned that was not ingested.
 #
 # The input is generated lines - the hostile profile, every shape the parser must survive,
-# and the farm, shaped like real traffic - and testdata/roundtrip.ndjson, written by hand
+# and the farm, shaped like real traffic - and tests/data/roundtrip.ndjson, written by hand
 # to hold every spelling that must come back as it went in: leading zeros, a `+`, "-0", a
 # string and a number that parse alike, RFC 3339 at an offset and at "-00:00", a lower-case
 # `t` and `z` and a space, an epoch as a number and as a string, "True" and "TRUE", upper-
@@ -54,7 +54,7 @@ cd "$(dirname "$0")/../.."
 BIN=${BIN:-./target/release/kibbr}
 HOSTILE=${HOSTILE:-3000}
 FARM=${FARM:-3000}
-CASES=testdata/roundtrip.ndjson
+CASES=tests/data/roundtrip.ndjson
 # 1: fail unless the disk server shared out at least one run of row groups
 # (`queries.scan_fan_outs` in /stats). For a run made to hold a scan shared between
 # threads to the memory store - KIBBR__QUERY__SCAN_THREADS and KIBBR__QUERY__SCAN_FAN_ROWS=0

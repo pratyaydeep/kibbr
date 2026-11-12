@@ -52,15 +52,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && /out/kibbr-bench --version
 
 # ── bench ──────────────────────────────────────────────────────────────────────────
-# `docker build --target bench`: what bench/run.sh runs `kibbr-bench` in. Not the image
-# that is deployed, and the same `kibbr` binary, byte for byte, beside the bench, which
-# runs it as every server, load and generator.
+# `docker build --target bench`: what scripts/bench/run.sh runs `kibbr-bench` in. Not the
+# image that is deployed, and the same `kibbr` binary, byte for byte, beside the bench,
+# which runs it as every server, load and generator.
 #
 # `kibbr-bench` asks the system two things through programs - `ps -axo pid=,ppid=,comm=`
 # for another kibbr process, `df -Pk` for the room its work needs - and stops if either
 # cannot be run. The image below has neither, and BusyBox's `ps` does not take those
 # flags; these are procps' and coreutils'. There is no git here, so the bench records no
-# commit: bench/run.sh writes the checkout's beside the result.
+# commit: scripts/bench/run.sh writes the checkout's beside the result.
 FROM debian:12-slim AS bench
 RUN apt-get update \
  && apt-get install -y --no-install-recommends procps \

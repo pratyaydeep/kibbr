@@ -627,8 +627,8 @@ field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.ar
 
 # Written under a temporary name and renamed: a generation cut short must not leave a
 # truncated file that later runs trust.
-mkdir -p testdata/crash-test
-INPUT=testdata/crash-test/stream-${NLINES}-seed${GEN_SEED}.ndjson
+mkdir -p target/scratch/crash-test
+INPUT=target/scratch/crash-test/stream-${NLINES}-seed${GEN_SEED}.ndjson
 if [ ! -s "$INPUT" ]; then
   "$BIN" gen-logs --profile farm --lines "$NLINES" --seed "$GEN_SEED" > "$WORK/farm.ndjson" \
     && "$BIN" gen-logs --lines "$((NLINES / 10 + 1))" --seed "$GEN_SEED" > "$WORK/hostile.ndjson" \

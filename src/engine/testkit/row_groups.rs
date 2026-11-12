@@ -3,7 +3,7 @@
 
 //! The row groups the typed column's tests are run over: one shared list, since a layout
 //! one of the tests never saw is a layout nothing says they agree on.
-//! Three sources: every file under `testdata/format/`, row groups the builder makes, and
+//! Three sources: every file under `tests/data/format/`, row groups the builder makes, and
 //! pieces laid out plain by hand, which a file from before the encodings still holds.
 
 // What this crate's tests build from; with `test-support` alone nothing in the library
@@ -181,14 +181,14 @@ fn plain_text(values: &[&str]) -> Vec<u8> {
 /// the same files.
 fn vectors_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata")
+        .join("tests/data")
         .join("format")
 }
 
-/// The `.col` files under `testdata/format/`, by name.
+/// The `.col` files under `tests/data/format/`, by name.
 pub(crate) fn vector_files() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(vectors_dir())
-        .expect("testdata/format")
+        .expect("tests/data/format")
         .map(|entry| entry.expect("a directory entry").path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "col"))
         .collect();
@@ -196,7 +196,7 @@ pub(crate) fn vector_files() -> Vec<PathBuf> {
     files
 }
 
-/// Every row group of every file under `testdata/format/`: a sealed file through its footer,
+/// Every row group of every file under `tests/data/format/`: a sealed file through its footer,
 /// the cut one through the walk, each chunk read as a query reads it.
 pub(crate) fn vectors() -> Vec<Sample> {
     let mut out = Vec::new();

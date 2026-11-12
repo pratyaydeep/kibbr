@@ -6,7 +6,7 @@
 # concurrency and no opinion about a 503, so it cannot say whether the answers are ones a
 # shipper acts on correctly - which is what putting kibbr behind a shipper is betting on.
 #
-# Vector 0.37.1 is the pinned version. Downloaded into testdata/ and run from there:
+# Vector 0.37.1 is the pinned version. Downloaded into target/scratch/ and run from there:
 # nothing installed, nothing on PATH, and the version is the one being claimed rather than
 # whichever a machine happens to have. On arm64 it runs under Rosetta - 0.37.1 shipped no
 # arm64 darwin build.
@@ -28,7 +28,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 VERSION=0.37.1
-DIR=testdata/vector
+DIR=target/scratch/vector
 RUN=$DIR/run
 BIN=$DIR/vector-x86_64-apple-darwin/bin/vector
 KIBBR=./target/release/kibbr

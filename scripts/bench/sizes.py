@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# How big a source in bench/compression.json is before anything is downloaded: one request
+# How big a source in scripts/bench/compression.json is before anything is downloaded: one request
 # a file for its last four bytes. The answer's Content-Range gives the file's size, and a gzip
 # file's last four bytes are its decoded size modulo 2^32 (RFC 1952's ISIZE) - exact for a
 # file of one gzip member under 4 GiB, as JSONBench's are. A file large enough that it could
@@ -8,12 +8,12 @@
 # 7.2 GB. A plain file decodes to itself. A server that will not send a range gives the size
 # alone, from Content-Length.
 #
-#   bench/sizes.py --tag bluesky-1b                 # every file of the source
-#   bench/sizes.py --tag bluesky-1b --first 100     # its first 100: the 100M of JSONBench
-#   bench/sizes.py --tag bluesky-1b --first 3 --each
+#   scripts/bench/sizes.py --tag bluesky-1b                 # every file of the source
+#   scripts/bench/sizes.py --tag bluesky-1b --first 100     # its first 100: the 100M of JSONBench
+#   scripts/bench/sizes.py --tag bluesky-1b --first 3 --each
 #
 # To check the trailer is telling the truth, bluesky-1m's file_0001.json.gz decodes to
-# 480,778,277 bytes (bench/results/compression/bluesky-1m.md).
+# 480,778,277 bytes (scripts/bench/results/compression/bluesky-1m.md).
 
 import argparse
 import concurrent.futures

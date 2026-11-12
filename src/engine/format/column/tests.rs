@@ -23,7 +23,7 @@ fn decoded(sample: &Sample) -> Column {
     Column::decode(&chunk.bytes, chunk.at, &chunk.dir, sample.rows).expect("decodes")
 }
 
-/// Every file under `testdata/format/`, read as compaction reads it and as a query does: the
+/// Every file under `tests/data/format/`, read as compaction reads it and as a query does: the
 /// typed decoder prints every row as the cell `Reader::chunks` made.
 #[test]
 fn the_vectors_read_the_same_through_both_readers() {

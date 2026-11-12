@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # What a cloud bench box runs, start to end, with no one logged in: set up, build kibbr,
-# run one job, upload what it measured, and switch itself off. `bench/cloud/aws.sh launch`
+# run one job, upload what it measured, and switch itself off. `scripts/bench/cloud/aws.sh launch`
 # sends this file as the instance's user data, with the settings below written above it,
 # and starts the instance so that switching off terminates it: a box that ran is a box
 # that is gone, and the only thing it leaves is its upload.
@@ -14,7 +14,7 @@
 #   KIBBR_REPO       the repository cloned            [https://github.com/pratyaydeep/kibbr]
 #   KIBBR_REF        the commit, branch or tag measured                     [main]
 #   KIBBR_TAGS       compression: the sources measured, space-separated  [every source not
-#                    in bench/results/compression.json yet]
+#                    in scripts/bench/results/compression.json yet]
 #   KIBBR_NO_ZSTD    compression: 1 is `--no-zstd`
 #   KIBBR_ZSTD_THREADS  compression: N is `--zstd-threads N`; zstd -19's threads, 1 the
 #                    plain and smallest              [unset: every CPU the box has]
@@ -27,13 +27,13 @@
 #
 #   log.txt          this script's output, every 5 minutes and at the end
 #   status           running, done, or failed and the step that failed
-#   results.tgz      at the end, done or failed: bench/results/ and each source's
+#   results.tgz      at the end, done or failed: scripts/bench/results/ and each source's
 #                    bench-storage output, a `urls` source's sha256 of each file it
 #                    fetched, and box.txt - what the box was
 #
 # The box is the one place the numbers come from, so it is described once, in box.txt,
 # and named in each result: `KIBBR_MACHINE` is the instance type and region, and
-# bench/compression.py writes it beside the CPU and memory it reads itself.
+# scripts/bench/compression.py writes it beside the CPU and memory it reads itself.
 
 set -uo pipefail
 export HOME=${HOME:-/root}
@@ -72,11 +72,11 @@ finish() {
   [ -z "$UPLOADER" ] || kill "$UPLOADER" 2>/dev/null
   if [ "$code" = 0 ]; then status "done"; say "done"; else status "failed at $STEP (exit $code)"; say "failed at $STEP (exit $code)"; fi
   if [ -d "$SRC" ]; then
-    cp "$OUT/box.txt" "$SRC/bench/results/box.txt" 2>/dev/null
+    cp "$OUT/box.txt" "$SRC/scripts/bench/results/box.txt" 2>/dev/null
     # The results and each run's own output, with a `urls` source's sha256 of each file it
     # fetched; not the downloads, nor the logs read out of them.
-    (cd "$SRC" && shopt -s nullglob && tar czf "$OUT/results.tgz" --ignore-failed-read bench/results \
-      testdata/compression/*/bench-storage-* testdata/compression/*/*.sha256) && put "$OUT/results.tgz" results.tgz
+    (cd "$SRC" && shopt -s nullglob && tar czf "$OUT/results.tgz" --ignore-failed-read scripts/bench/results \
+      target/scratch/compression/*/bench-storage-* target/scratch/compression/*/*.sha256) && put "$OUT/results.tgz" results.tgz
   fi
   sleep 1 # the last lines through tee
   put "$LOG" log.txt
@@ -157,8 +157,8 @@ case "$JOB" in
     for t in ${KIBBR_TAGS:-}; do ARGS+=(--tag "$t"); done
     [ "${KIBBR_NO_ZSTD:-0}" != 1 ] || ARGS+=(--no-zstd)
     [ -z "${KIBBR_ZSTD_THREADS:-}" ] || ARGS+=(--zstd-threads "$KIBBR_ZSTD_THREADS")
-    say "bench/compression.py ${ARGS[*]}"
-    python3 bench/compression.py "${ARGS[@]}" || exit 1
+    say "scripts/bench/compression.py ${ARGS[*]}"
+    python3 scripts/bench/compression.py "${ARGS[@]}" || exit 1
     ;;
   *)
     say "no such job: $JOB"; exit 2 ;;

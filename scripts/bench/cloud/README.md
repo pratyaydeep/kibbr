@@ -1,4 +1,4 @@
-# bench/cloud
+# scripts/bench/cloud
 
 A bench on a fresh EC2 box, started from the laptop. The box clones kibbr from GitHub,
 builds it, runs one job, uploads what it measured to S3 and terminates itself: no SSH, no
@@ -10,7 +10,7 @@ everything around it.
 ```
 brew install awscli
 aws configure                 # an IAM user's access key, not the root account's; region ap-south-2
-bench/cloud/aws.sh setup
+scripts/bench/cloud/aws.sh setup
 ```
 
 `setup` makes a bucket, `kibbr-bench-<account id>`, and a role the box runs as that can
@@ -28,27 +28,27 @@ Two things a new account may need first, and `setup` checks both:
 
 ```
 git push                                  # the box measures what is on GitHub
-bench/cloud/aws.sh launch                 # every compression source not measured yet
-bench/cloud/aws.sh status                 # where it is: the log is uploaded every 5 minutes
-bench/cloud/aws.sh fetch                  # when status says done
-git diff bench/results
+scripts/bench/cloud/aws.sh launch                 # every compression source not measured yet
+scripts/bench/cloud/aws.sh status                 # where it is: the log is uploaded every 5 minutes
+scripts/bench/cloud/aws.sh fetch                  # when status says done
+git diff scripts/bench/results
 ```
 
-`fetch` puts the results in `bench/results/compression.json` and
-`bench/results/compression/<tag>.md`, and everything the box wrote, its whole log and
-`box.txt` (what the box was), under `testdata/cloud/<run>/`.
+`fetch` puts the results in `scripts/bench/results/compression.json` and
+`scripts/bench/results/compression/<tag>.md`, and everything the box wrote, its whole log and
+`box.txt` (what the box was), under `target/scratch/cloud/<run>/`.
 
 ## Jobs
 
 | job | what it runs | box | about |
 |---|---|---|---|
-| `compression` | `bench/compression.py`: every source in `bench/compression.json` not in `bench/results/compression.json` yet | `m7i.2xlarge`, 100 GB gp3 | 1 h and about ₹60 for cockroachdb, elasticsearch and spark, zstd -19 on all 8 vCPUs; about 3 h with `--zstd-threads 1` |
+| `compression` | `scripts/bench/compression.py`: every source in `scripts/bench/compression.json` not in `scripts/bench/results/compression.json` yet | `m7i.2xlarge`, 100 GB gp3 | 1 h and about ₹60 for cockroachdb, elasticsearch and spark, zstd -19 on all 8 vCPUs; about 3 h with `--zstd-threads 1` |
 
 ```
-bench/cloud/aws.sh launch --tags "spark"            # one source
-bench/cloud/aws.sh launch --no-zstd                 # without zstd -19, most of the time
-bench/cloud/aws.sh launch --zstd-threads 1          # the plain, smallest zstd -19: slower
-bench/cloud/aws.sh launch --spot                    # usually much cheaper (aws ec2 describe-spot-price-history says how much)
+scripts/bench/cloud/aws.sh launch --tags "spark"            # one source
+scripts/bench/cloud/aws.sh launch --no-zstd                 # without zstd -19, most of the time
+scripts/bench/cloud/aws.sh launch --zstd-threads 1          # the plain, smallest zstd -19: slower
+scripts/bench/cloud/aws.sh launch --spot                    # usually much cheaper (aws ec2 describe-spot-price-history says how much)
 ```
 
 The compressed bytes are the same on any machine; the load and compaction times are this
@@ -63,7 +63,7 @@ zstd job, about 32 MB at level 19, gets no speedup from more threads.
 
 MongoDB's result has no `zstd -19` column: on one thread it is about 7 hours of the
 69.6 GB, and under 2 on eight. To fill it in, take its entry out of
-`bench/results/compression.json`, push, and `launch --tags mongodb --disk 250 --hours 6`.
+`scripts/bench/results/compression.json`, push, and `launch --tags mongodb --disk 250 --hours 6`.
 
 ## When something goes wrong
 
