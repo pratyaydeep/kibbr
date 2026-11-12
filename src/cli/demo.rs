@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use chrono::Utc;
 
-use crate::error::{CliError, DetectorError, DetectorErrorKind};
+use crate::cli::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::engine::parse::flatten::parse_line;
 use crate::engine::display::commas;
 use crate::engine::parse::lines::{
@@ -70,7 +70,7 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
                 // Flushed and reported before the skip, never after: the skip may be the
                 // last thing this process does.
                 out.flush().map_err(CliError::Write)?;
-                crate::error::report(&DetectorError::new(
+                crate::cli::error::report(&DetectorError::new(
                     read_lines as usize,
                     DetectorErrorKind::LineTooLong {
                         limit: MAX_LINE_BYTES,
@@ -108,7 +108,7 @@ pub fn run<R: BufRead, W: Write>(mut input: R, out: &mut W, full: bool) -> Resul
                 // Flush first: stdout is block-buffered when piped and stderr is not,
                 // so without this the rejections all arrive before the tree.
                 out.flush().map_err(CliError::Write)?;
-                crate::error::report(&e);
+                crate::cli::error::report(&e);
                 continue;
             }
         };
@@ -355,8 +355,8 @@ fn render_columns<W: Write>(columns: &[String], indent: &str, out: &mut W) -> Re
     Ok(())
 }
 
-/// The `demo` arm of `main.rs`: the input opened, then `run`.
+/// The `demo` arm of `cli.rs`: the input opened, then `run`.
 pub fn cli<W: Write>(input: &str, out: &mut W, full: bool) -> Result<(), CliError> {
-    let reader = crate::cmd::open(input)?;
+    let reader = crate::cli::open(input)?;
     run(reader, out, full)
 }

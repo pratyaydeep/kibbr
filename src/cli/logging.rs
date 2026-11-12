@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 use tracing::{span, Event, Level, Metadata};
 
-use crate::config::{Log, LogFormat, LogLevel};
+use crate::cli::config::{Log, LogFormat, LogLevel};
 
 /// What `install` was given. Unset until then - in the tests of this crate, which
 /// install nothing, and in a process that failed before it had read its settings.
@@ -42,9 +42,9 @@ pub fn json() -> bool {
 /// lines as text, one `error` event as JSON.
 pub fn failed(e: &(dyn std::error::Error + 'static)) {
     if json() {
-        tracing::error!("{}", crate::error::chain(e));
+        tracing::error!("{}", crate::cli::error::chain(e));
     } else {
-        crate::error::report(e);
+        crate::cli::error::report(e);
     }
 }
 

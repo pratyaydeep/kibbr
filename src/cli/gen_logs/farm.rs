@@ -13,8 +13,8 @@ use std::io::Write;
 
 use serde_json::{Map, Value};
 
-use crate::error::GenError;
-use crate::tools::gen::civil_from_days;
+use crate::cli::error::GenError;
+use crate::cli::gen_logs::civil_from_days;
 use crate::engine::rng::Rng;
 
 pub struct Options {

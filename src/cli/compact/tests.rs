@@ -34,12 +34,12 @@ fn a_run_with_no_day_due_prints_nothing_as_lines_and_no_days_as_json() {
 fn a_compaction_alone_says_so_in_lock_and_a_second_command_is_refused_at_once() {
     let dir = std::env::temp_dir().join(format!("kibbr-compact-lock-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let storage = crate::config::Storage {
+    let storage = crate::cli::config::Storage {
         base_path: Some(dir.clone()),
         trie_file: Some(dir.join("trie.json")),
-        ..crate::config::Storage::default()
+        ..crate::cli::config::Storage::default()
     };
-    let schema = crate::config::Schema::default();
+    let schema = crate::cli::config::Schema::default();
     let args = || Args {
         day: None,
         threads: Some(1),
@@ -50,7 +50,7 @@ fn a_compaction_alone_says_so_in_lock_and_a_second_command_is_refused_at_once() 
     // A directory with no day in it: the run is over at once, and what it wrote to
     // `LOCK` while it ran is still there to read.
     let db = crate::engine::Database::open_offline(
-        crate::config::options(&storage, &schema),
+        crate::cli::config::options(&storage, &schema),
         crate::engine::Opener::Compact,
     )
     .expect("the directory, alone");

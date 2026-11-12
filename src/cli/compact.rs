@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::config::LoadStorage as _;
+use crate::cli::config::LoadStorage as _;
 
 use crate::engine::database::compaction::{line, Report, NO_DISK};
 use crate::engine::StoreError;
@@ -33,7 +33,7 @@ pub enum CompactError {
     #[error("{}", NO_DISK)]
     NoDisk,
     #[error(transparent)]
-    Cli(Box<crate::error::CliError>),
+    Cli(Box<crate::cli::error::CliError>),
     /// The server that holds the data directory ran the compaction, and it failed there.
     #[error("{0}")]
     Remote(String),
@@ -42,8 +42,8 @@ pub enum CompactError {
     Server { address: String, detail: String },
 }
 
-impl From<crate::error::CliError> for CompactError {
-    fn from(e: crate::error::CliError) -> Self {
+impl From<crate::cli::error::CliError> for CompactError {
+    fn from(e: crate::cli::error::CliError) -> Self {
         CompactError::Cli(Box::new(e))
     }
 }
@@ -93,8 +93,8 @@ pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactEr
 pub fn command(
     args: Args,
     day: Option<i64>,
-    storage: crate::config::Storage,
-    schema: crate::config::Schema,
+    storage: crate::cli::config::Storage,
+    schema: crate::cli::config::Schema,
     out: &mut dyn io::Write,
 ) -> Result<(), CompactError> {
     let base = storage
@@ -104,7 +104,7 @@ pub fn command(
     let waited = Instant::now();
     loop {
         let opened = crate::engine::Database::open_offline(
-            crate::config::options(&storage, &schema),
+            crate::cli::config::options(&storage, &schema),
             crate::engine::Opener::Compact,
         );
         match opened {
@@ -124,8 +124,8 @@ pub fn command(
                         return Err(crate::engine::LockError::Held { path, holder }.into())
                     }
                     // A server still starting: it writes its address once it can answer.
-                    _ if waited.elapsed() < crate::cmd::load::SERVER_STARTING_WAIT => {
-                        std::thread::sleep(crate::cmd::load::POLL);
+                    _ if waited.elapsed() < crate::cli::load::SERVER_STARTING_WAIT => {
+                        std::thread::sleep(crate::cli::load::POLL);
                     }
                     _ => return Err(crate::engine::LockError::Held { path, holder }.into()),
                 }
@@ -149,7 +149,7 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
             .iter()
             .try_for_each(|day| writeln!(out, "{}", line(day)))
     };
-    written.map_err(|e| crate::error::CliError::Write(e).into())
+    written.map_err(|e| crate::cli::error::CliError::Write(e).into())
 }
 
 /// What opening the directory alone failed with, as the command has always said it: the
@@ -158,7 +158,7 @@ fn opened_alone(e: crate::engine::Error) -> CompactError {
     match e {
         crate::engine::Error::Lock(e) => e.into(),
         crate::engine::Error::Store(e) => e.into(),
-        e => crate::error::CliError::from(e).into(),
+        e => crate::cli::error::CliError::from(e).into(),
     }
 }
 
@@ -171,14 +171,14 @@ fn alone(
 ) -> Result<(), CompactError> {
     let threads = args
         .threads
-        .unwrap_or_else(crate::cmd::load::alone_threads)
+        .unwrap_or_else(crate::cli::load::alone_threads)
         .max(1);
     let (days, ran) = db
         .compact_now(day, threads, &mut |_, result| {
             // One day asked for is one error, and the command ends on it. Of the days that
             // were due, each failure is said where it happened and the command ends on a count.
             if let (None, Err(e)) = (day, result) {
-                crate::error::report(e);
+                crate::cli::error::report(e);
             }
         })
         .ok_or(CompactError::NoDisk)?;
@@ -228,7 +228,7 @@ fn client(
     });
     let bytes = serde_json::to_vec(&body).unwrap_or_default();
     let shown = [("x-kibbr-load-token", token)];
-    let (status, answer) = crate::client::request(
+    let (status, answer) = crate::cli::http::request(
         address,
         "POST",
         "/compact",
@@ -237,7 +237,7 @@ fn client(
         Duration::from_secs(60),
     )
     .map_err(|e| server(e.to_string()))?;
-    let answer = crate::cmd::load::json_of(status, &answer).map_err(server)?;
+    let answer = crate::cli::load::json_of(status, &answer).map_err(server)?;
     if status != 202 {
         return Err(CompactError::Remote(
             answer["error"]
@@ -253,8 +253,8 @@ fn client(
             .map_err(|e| server(format!("a report this build cannot read ({e})")))
     };
     loop {
-        std::thread::sleep(crate::cmd::load::POLL);
-        let (status, answer) = crate::client::request(
+        std::thread::sleep(crate::cli::load::POLL);
+        let (status, answer) = crate::cli::http::request(
             address,
             "GET",
             &format!("/compact/{job}"),
@@ -273,7 +273,7 @@ fn client(
                 "answered {status} about compaction job {job}"
             )));
         }
-        let answer = crate::cmd::load::json_of(status, &answer).map_err(server)?;
+        let answer = crate::cli::load::json_of(status, &answer).map_err(server)?;
         match answer["state"].as_str() {
             Some("running") => continue,
             Some("done") => return print_report(&report(&answer)?, args.json, out),
@@ -291,21 +291,21 @@ fn client(
     }
 }
 
-/// The `compact` arm of `main.rs`: the day checked, the settings loaded, then `command`.
+/// The `compact` arm of `cli.rs`: the day checked, the settings loaded, then `command`.
 pub fn cli(
-    file: &crate::config::File,
+    file: &crate::cli::config::File,
     out: &mut dyn io::Write,
     day: Option<String>,
     data_dir: Option<std::path::PathBuf>,
     threads: Option<usize>,
     segment_max_bytes: Option<usize>,
     json: bool,
-) -> Result<(), crate::error::CliError> {
+) -> Result<(), crate::cli::error::CliError> {
     // Before the settings are loaded, which creates the directory they name: a
     // compaction of a path that is not a data directory makes nothing there.
-    let base = crate::config::Storage::base_named(file, data_dir.clone());
+    let base = crate::cli::config::Storage::base_named(file, data_dir.clone());
     let day_number = precheck(day.as_deref(), &base)?;
-    let storage = crate::config::Storage::load(
+    let storage = crate::cli::config::Storage::load(
         file,
         true,
         data_dir,
@@ -322,8 +322,8 @@ pub fn cli(
         segment_max_bytes,
         json,
     };
-    let schema = crate::config::schema(file, None);
-    command(args, day_number, storage, schema, out).map_err(crate::error::CliError::from)
+    let schema = crate::cli::config::schema(file, None);
+    command(args, day_number, storage, schema, out).map_err(crate::cli::error::CliError::from)
 }
 
 #[cfg(test)]

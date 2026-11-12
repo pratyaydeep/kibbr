@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
-use crate::error::{CliError, DetectorError, DetectorErrorKind};
+use crate::cli::error::{CliError, DetectorError, DetectorErrorKind};
 use crate::engine::parse::flatten::parse_line;
 use crate::engine::display::rfc3339;
 use crate::engine::parse::lines::{
@@ -54,7 +54,7 @@ pub fn run<R: BufRead, W: Write>(
                 // Flushed and reported before the skip, never after: the skip may be the
                 // last thing this process does.
                 out.flush().map_err(CliError::Write)?;
-                crate::error::report(&DetectorError::new(
+                crate::cli::error::report(&DetectorError::new(
                     read_lines as usize,
                     DetectorErrorKind::LineTooLong {
                         limit: MAX_LINE_BYTES,
@@ -96,7 +96,7 @@ pub fn run<R: BufRead, W: Write>(
                 out.flush().map_err(CliError::Write)?;
                 // stderr, so the rejection never lands in the middle of the NDJSON
                 // that `--json` promises on stdout.
-                crate::error::report(&e);
+                crate::cli::error::report(&e);
                 continue;
             }
         };
@@ -236,13 +236,13 @@ fn display_value(ty: Option<ColumnType>, value: &ColValue, raw: &str) -> String 
     }
 }
 
-/// The `parse` arm of `main.rs`: the input opened, then `run`.
+/// The `parse` arm of `cli.rs`: the input opened, then `run`.
 pub fn cli<W: Write>(
     input: &str,
     out: &mut W,
     limit: Option<u64>,
     json: bool,
 ) -> Result<(), CliError> {
-    let reader = crate::cmd::open(input)?;
+    let reader = crate::cli::open(input)?;
     run(reader, out, limit, json)
 }

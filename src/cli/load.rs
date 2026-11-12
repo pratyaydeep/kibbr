@@ -16,7 +16,7 @@ use thiserror::Error;
 
 pub use crate::engine::load::*;
 
-use crate::config::LoadStorage as _;
+use crate::cli::config::LoadStorage as _;
 
 /// What `kibbr load` can fail with that the load itself cannot - the server asked to run
 /// it - carried in the load's own error as its `Caller`.
@@ -36,8 +36,8 @@ impl From<Asked> for LoadError {
     }
 }
 
-impl From<crate::error::CliError> for LoadError {
-    fn from(e: crate::error::CliError) -> Self {
+impl From<crate::cli::error::CliError> for LoadError {
+    fn from(e: crate::cli::error::CliError) -> Self {
         LoadError::Caller(Box::new(e))
     }
 }
@@ -71,8 +71,8 @@ pub(crate) const POLL: Duration = Duration::from_millis(100);
 /// the server that does: one process writes the catalog and the manifest.
 pub fn command(
     args: Args,
-    storage: crate::config::Storage,
-    schema: crate::config::Schema,
+    storage: crate::cli::config::Storage,
+    schema: crate::cli::config::Schema,
     out: &mut dyn io::Write,
 ) -> Result<(), LoadError> {
     let base = storage
@@ -109,7 +109,7 @@ pub fn command(
     let waited = Instant::now();
     loop {
         let opened = crate::engine::Database::open_offline(
-            crate::config::options(&storage, &schema),
+            crate::cli::config::options(&storage, &schema),
             crate::engine::Opener::Load,
         );
         match opened {
@@ -158,7 +158,7 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
     } else {
         report.summary()
     };
-    writeln!(out, "{text}").map_err(|e| crate::error::CliError::Write(e).into())
+    writeln!(out, "{text}").map_err(|e| crate::cli::error::CliError::Write(e).into())
 }
 
 /// What opening the directory alone failed with, as the command has always said it: the
@@ -167,7 +167,7 @@ fn opened_alone(e: crate::engine::Error) -> LoadError {
     match e {
         crate::engine::Error::Lock(e) => e.into(),
         crate::engine::Error::Store(e) => e.into(),
-        e => crate::error::CliError::from(e).into(),
+        e => crate::cli::error::CliError::from(e).into(),
     }
 }
 
@@ -190,7 +190,7 @@ fn alone(
     }
     let result = resolve(&args.inputs, Some(&spool)).and_then(|inputs| {
         opts.inputs = inputs;
-        db.load(&opts, &Control::default(), &mut |e| crate::error::report(e))
+        db.load(&opts, &Control::default(), &mut |e| crate::cli::error::report(e))
     });
     let _ = fs::remove_file(&spool);
     print_report(&result?, args.json, out)
@@ -295,7 +295,7 @@ fn client_run(
     });
     let bytes = serde_json::to_vec(&body).unwrap_or_default();
     let shown = [("x-kibbr-load-token", token)];
-    let (status, answer) = crate::client::request(
+    let (status, answer) = crate::cli::http::request(
         address,
         "POST",
         "/load",
@@ -317,7 +317,7 @@ fn client_run(
         .ok_or_else(|| server("no job number in its answer".to_string()))?;
     loop {
         std::thread::sleep(POLL);
-        let (status, answer) = crate::client::request(
+        let (status, answer) = crate::cli::http::request(
             address,
             "GET",
             &format!("/load/{job}"),
@@ -351,10 +351,10 @@ fn client_run(
     }
 }
 
-/// The `load` arm of `main.rs`: the settings loaded, then `command`.
+/// The `load` arm of `cli.rs`: the settings loaded, then `command`.
 #[allow(clippy::too_many_arguments)]
 pub fn cli(
-    file: &crate::config::File,
+    file: &crate::cli::config::File,
     out: &mut dyn io::Write,
     inputs: Vec<PathBuf>,
     data_dir: Option<PathBuf>,
@@ -368,8 +368,8 @@ pub fn cli(
     time_columns: Option<Vec<String>>,
     segment_max_bytes: Option<usize>,
     json: bool,
-) -> Result<(), crate::error::CliError> {
-    let storage = crate::config::Storage::load(
+) -> Result<(), crate::cli::error::CliError> {
+    let storage = crate::cli::config::Storage::load(
         file,
         true,
         data_dir,
@@ -380,7 +380,7 @@ pub fn cli(
         segment_max_bytes,
         None,
     )?;
-    let schema = crate::config::schema(file, time_columns.clone());
+    let schema = crate::cli::config::schema(file, time_columns.clone());
     let args = Args {
         inputs,
         replace_day,
@@ -393,5 +393,5 @@ pub fn cli(
         time_columns,
         json,
     };
-    command(args, storage, schema, out).map_err(crate::error::CliError::from)
+    command(args, storage, schema, out).map_err(crate::cli::error::CliError::from)
 }

@@ -1,15 +1,15 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `kibbr serve`: the command line of the server, which is a library (`kibbr_server`). Writes
-//! nothing to standard output: the banner and the lifecycle log go to stderr through `logs`.
+//! `kibbr serve`: the command line of the server, which is a module of its own
+//! (`crate::server`). Writes nothing to standard output: the banner and the lifecycle log go to stderr through `logging`.
 
 use std::process::ExitCode;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{self, File, Log, ServeFlags};
-use crate::error::CliError;
+use crate::cli::config::{self, File, Log, ServeFlags};
+use crate::cli::error::CliError;
 
 /// A flag rather than inferred from `--data-dir`, so that `--storage memory --data-dir /x`
 /// reads as an instruction and not as a contradiction.

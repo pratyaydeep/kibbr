@@ -13,9 +13,9 @@ use std::sync::OnceLock;
 
 use chrono::{DateTime, Utc};
 
-use crate::config::{Limits, Schema};
-use crate::error::{self, CliError};
-use crate::cmd::query::{self, Args, Format};
+use crate::cli::config::{Limits, Schema};
+use crate::cli::error::{self, CliError};
+use crate::cli::query::{self, Args, Format};
 use crate::engine::parse::flatten;
 use crate::engine::model::types::ColValue;
 use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};

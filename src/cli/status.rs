@@ -15,8 +15,8 @@ use std::time::Duration;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::config::{self, File};
-use crate::error::CliError;
+use crate::cli::config::{self, File};
+use crate::cli::error::CliError;
 use crate::engine::display::commas;
 
 /// How long a server is given to answer. Both answers are built from memory.
@@ -116,7 +116,7 @@ fn get_within(
     path: &'static str,
     timeout: Duration,
 ) -> Result<(String, Value), AskError> {
-    let (status, body) = crate::client::request(&server.address, "GET", path, &[], None, timeout)
+    let (status, body) = crate::cli::http::request(&server.address, "GET", path, &[], None, timeout)
         .map_err(|source| AskError::Unreachable {
             address: server.address.clone(),
             found: server.found.clone(),

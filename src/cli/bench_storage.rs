@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::{LoadStorage as _, Schema, Storage};
-use crate::error::{CliError, DetectorErrorKind};
-use crate::cmd::load::{self, Asked, LoadError};
+use crate::cli::config::{LoadStorage as _, Schema, Storage};
+use crate::cli::error::{CliError, DetectorErrorKind};
+use crate::cli::load::{self, Asked, LoadError};
 use crate::engine::display::commas;
 use crate::engine::internals::{
     self as raw, CompactOptions, FlushKind, SinkError, HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP,
@@ -35,7 +35,7 @@ pub struct Args {
     /// into jobs, so the bytes differ a little.
     pub zstd_threads: u32,
     /// The settings file, for what a scratch directory's storage is opened with.
-    pub settings: crate::config::File,
+    pub settings: crate::cli::config::File,
 }
 
 /// Every CPU this process may use, the default for `--zstd-threads`; 1 when that is unknown.
@@ -294,11 +294,11 @@ fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), Loa
 /// taken through `dir`, the path this command built, and held until the handle goes, and
 /// nothing written to say who holds it.
 fn open(dir: &Path, storage: &Storage, schema: &Schema) -> Result<Database, LoadError> {
-    let options = crate::config::options(storage, schema);
+    let options = crate::cli::config::options(storage, schema);
     Database::open_offline_locking(dir, options, Opener::Quiet).map_err(|e| match e {
         crate::engine::Error::Lock(e) => e.into(),
         crate::engine::Error::Store(e) => e.into(),
-        e => crate::error::CliError::from(e).into(),
+        e => crate::cli::error::CliError::from(e).into(),
     })
 }
 
@@ -352,7 +352,7 @@ fn measure(
         max_arrival_share: load::DEFAULT_MAX_ARRIVAL_SHARE,
     };
     let report = db.load(&opts, &load::Control::default(), &mut |e| {
-        crate::error::report(e)
+        crate::cli::error::report(e)
     })?;
     drop(db);
 
@@ -524,7 +524,7 @@ fn measure(
             LoadError::Input(format!(
                 "the table above stands, but the same lines could not be measured as a live \
                  day: {}",
-                crate::error::chain(&e)
+                crate::cli::error::chain(&e)
             ))
         })?;
     let (before, was) = &live.before;
@@ -661,7 +661,7 @@ fn live_day(
                 e.kind,
                 DetectorErrorKind::NotDurable { .. } | DetectorErrorKind::NotStored { .. }
             ) {
-                crate::error::report(&e);
+                crate::cli::error::report(&e);
             }
         },
     )
@@ -720,11 +720,11 @@ fn live_day(
 /// The same lines in a scratch Elasticsearch index: its primary store size once
 /// force-merged, and how many lines it refused.
 fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
-    let url = crate::client::parse_url(url).map_err(LoadError::Input)?;
+    let url = crate::cli::http::parse_url(url).map_err(LoadError::Input)?;
     let index = format!("kibbr-bench-{}", std::process::id());
     let at = |path: &str| format!("{}/{index}{path}", url.prefix);
     let call = |method: &str, path: String, body: Option<(&str, &[u8])>| {
-        let (status, answer) = crate::client::request(
+        let (status, answer) = crate::cli::http::request(
             &url.address,
             method,
             &path,

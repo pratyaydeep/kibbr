@@ -10,7 +10,7 @@ use std::io::Write;
 
 use serde_json::{Map, Value};
 
-use crate::error::GenError;
+use crate::cli::error::GenError;
 use crate::engine::rng::Rng;
 
 pub mod farm;

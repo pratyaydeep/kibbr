@@ -16,9 +16,9 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 
-use crate::config::Limits;
-use crate::cmd::query;
-use crate::{error, tools::gen};
+use crate::cli::config::Limits;
+use crate::cli::query;
+use crate::cli::{error, gen_logs as gen};
 use crate::engine::parse::flatten;
 use crate::engine::display::commas;
 use crate::engine::query::Query;

@@ -135,10 +135,9 @@
 
 pub mod engine;
 pub mod server;
+pub mod cli;
+pub mod bench;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 
-pub mod client;
-pub mod cmd;
-pub mod config;
-pub mod error;
-pub mod logs;
-pub mod tools;
+pub use cli::run;

@@ -27,7 +27,7 @@ pub const SCHEMA: &str = "kibbr-bench/1";
 /// The bench's own source, in the order it is digested with ASCII white space left out:
 /// two results under two digests were measured by two instruments.
 pub const SOURCES: [(&str, &str); 8] = [
-    ("mod.rs", include_str!("mod.rs")),
+    ("bench.rs", include_str!("../bench.rs")),
     ("corpus.rs", include_str!("corpus.rs")),
     ("server.rs", include_str!("server.rs")),
     ("wire.rs", include_str!("wire.rs")),
@@ -3603,7 +3603,7 @@ pub fn log_summary(log: &mut Log, file: &ResultFile) -> Result<(), SpeedError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::bench::{flags, plan, queries, Args};
+    use crate::bench::{flags, plan, queries, Args};
 
     #[test]
     fn a_result_is_written_under_the_names_a_reader_is_told_and_reads_back_the_same() {
@@ -4162,7 +4162,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "mod.rs",
+                "bench.rs",
                 "corpus.rs",
                 "server.rs",
                 "wire.rs",
@@ -4690,7 +4690,7 @@ S4 under ingest: the buffer limit was reached in 291 of 300 baseline laps and 0 
         write(&paths[0], &baseline().file, "").expect("saved");
         write(&paths[1], &columns().file, "").expect("saved");
         let mut out = Vec::new();
-        crate::tools::bench::table(&paths, &mut out).expect("no FAIL line");
+        crate::bench::table(&paths, &mut out).expect("no FAIL line");
         assert_eq!(String::from_utf8(out).expect("text"), format!("{TWO}\n"));
     }
 

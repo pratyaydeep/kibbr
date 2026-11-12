@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use kibbr::config::{self, ServeFlags};
+use kibbr::cli::config::{self, ServeFlags};
 use tokio_util::sync::CancellationToken;
 
 /// Lines in the ingest body, and the three that are broken.
