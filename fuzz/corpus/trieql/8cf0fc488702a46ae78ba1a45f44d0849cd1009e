@@ -1,1 +1,0 @@
-COUNT LOG {} SINCE +5m GROUP BY time(+1h) LIMIT +3

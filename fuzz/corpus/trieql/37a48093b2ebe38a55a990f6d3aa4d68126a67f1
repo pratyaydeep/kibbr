@@ -1,1 +1,0 @@
-COUNT LOG {"a": "b"} GROUP BY a SINCE 1h

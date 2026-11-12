@@ -1,1 +1,0 @@
-COUNT LOG {} SINCE 6h GROUP BY level, time(1h)

@@ -17,9 +17,10 @@ pub use crate::engine::fuzzing::{record_log, segment, wal_record};
 
 #[cfg(test)]
 mod tests {
-    //! Every input a fuzz target ever crashed on, and the committed corpus, replayed through
-    //! the code the fuzzer runs (`kibbr::fuzzing`) on the stable toolchain, so a change that
-    //! breaks an input the fuzzer already reached fails here. A plain `cargo test` runs them.
+    //! Every input a fuzz target ever crashed on (`fuzz/regressions/`, committed), and the
+    //! corpus where one is on disk (`fuzz/corpus/`, not in git), replayed through the code
+    //! the fuzzer runs (`kibbr::fuzzing`) on the stable toolchain, so a change that breaks
+    //! an input the fuzzer already reached fails here. A plain `cargo test` runs them.
 
     use std::fs;
     use std::path::Path;

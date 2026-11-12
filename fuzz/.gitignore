@@ -2,3 +2,6 @@ target
 artifacts
 coverage
 logs
+# What cargo fuzz grows as it runs: local to each machine. Inputs that once crashed a
+# target are kept, in regressions/, and replayed by cargo test.
+corpus

@@ -1,1 +1,0 @@
-MATCH LOG {"a": *} SINCT
