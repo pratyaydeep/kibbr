@@ -124,6 +124,14 @@ Code: `LoadCommit::replace_day` (`store/disk.rs`), `load::Options::replace_day`;
 `kibbr load --replace-day`.
 Name mismatch: the hyphenated word appears only in comments.
 
+**Compact, compaction, compactor, rebuild.** One job at four levels. To *compact* a day
+is to rewrite its data files as fewer, sorted ones (`kibbr compact`, `POST /compact`,
+`Database::compact` and `compact_now`). A *compaction* is one such run and its record:
+which days it takes, its report and the job table (`database/compaction.rs`, reached as
+`engine::compaction`). The *compactor* is the server's part: the `/compact` handler and
+the loop that starts due runs (`src/server/compactor.rs`). The *rebuild* is the store's
+rewrite of one day's files, the work itself (`store/disk/rebuild.rs`).
+
 **Cut.** "Cut" has no single meaning in the code. It is used for: (1) a file that a crash
 stopped in the middle of a write (also called a *tear*; see
 `tests/data/format/two_templates_cut.col`); (2) undoing a failed write (`Writer::rollback`);
@@ -142,9 +150,22 @@ stopped by it says so, and gives a cursor for the next page.
 Code: `Limits::max_rows` (`query/limits.rs`), `LimitSource::Backstop` (`query.rs`);
 the flag `--max-rows`.
 
+**Visit.** To visit is what a scan does with each row that survives the filter: it hands
+the row to a *visitor*, which keeps it, counts it or groups it.
+Code: `store/visit.rs` (the trait `Visitor`, `Wants`, `ScanOptions`, `Term`); the query's
+visitor is `Fetch` in `query/execute.rs`.
+
 **Oracle (reference).** The oracle is a slow, simple re-implementation of query answers. It
 checks the real engine. It shares no mechanism with the engine on purpose.
 Code: `src/cli/query/oracle.rs`; `kibbr query --reference`; `scripts/check/agree.sh`.
+
+## The code
+
+**Inspect.** `engine::inspect` (in `src/engine.rs`) is the one door past the `Database`
+handle: the trie and stores as they are, the frames of a data file, a live day written
+without a log. Only the diagnostic commands (`demo`, `bench-storage`), the `cursor` fuzz
+harness, some tests and `kibbr::testing` use it; the server never does
+(`tests/source_rules.rs`).
 
 ## Name collisions
 

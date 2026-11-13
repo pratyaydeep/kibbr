@@ -17,7 +17,7 @@ use std::time::{Instant, SystemTime};
 
 use chrono::{DateTime, NaiveDate};
 
-use super::fan::Fan;
+use super::scan_threads::Fan;
 use super::manifest::{self, FileRecord, Manifest, Record};
 use crate::engine::format::build::{self, schema_of, Encoded, Level};
 use crate::engine::format::file::{self, Entry, Index, Mark, Reader, Writer};

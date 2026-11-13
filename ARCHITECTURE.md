@@ -75,7 +75,7 @@ Query path:
  query/plan.rs     walk the trie's key index (templates/trie/keys.rs) -> Plan. No row read.
         ▼
  query/execute.rs  scan only the planned leaves: store/disk/scan.rs, store/filter.rs,
-        │          store/fan.rs; query/buckets.rs (GROUP BY time), query/cursor.rs
+        │          store/scan_threads.rs; query/buckets.rs (GROUP BY time), query/cursor.rs
         │          (AFTER), query/limits.rs (the backstop)
         ▼
  QueryResult (query.rs) -> JSON (query/answer.rs): one shape for HTTP and --format json

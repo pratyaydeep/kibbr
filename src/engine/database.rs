@@ -29,7 +29,7 @@ use crate::engine::templates::catalog::CatalogError;
 use crate::engine::ingest;
 use crate::engine::lock::{DataLock, Holder};
 use crate::engine::store::disk::{self, CompactOptions};
-use crate::engine::store::fan::{self, Fan};
+use crate::engine::store::scan_threads::{self, Fan};
 use crate::engine::stop::Stop;
 use crate::engine::store::{FlushSummary, StoreError, StoreManager, WriteHealth};
 use crate::engine::templates::trie::{Trie, TrieError};
@@ -687,11 +687,11 @@ impl Database {
 
     /// Held for as long as an ingested body is in its task: a query meanwhile scans on its
     /// own thread, so the scan takes no core from the parse. `None` with no scan threads.
-    pub fn ingest_body(&self) -> Option<fan::Body<'_>> {
+    pub fn ingest_body(&self) -> Option<scan_threads::Body<'_>> {
         self.fan.as_deref().map(Fan::body)
     }
 
-    /// The scan threads, for whoever must let them go last: see `store::fan`.
+    /// The scan threads, for whoever must let them go last: see `store::scan_threads`.
     pub fn fan(&self) -> Option<Arc<Fan>> {
         self.fan.clone()
     }

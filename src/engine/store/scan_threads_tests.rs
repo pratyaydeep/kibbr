@@ -54,8 +54,8 @@ fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
     assert_eq!(
         holding("rayon"),
         [
-            "src/engine/store/fan.rs",
-            "src/engine/store/fan_tests.rs"
+            "src/engine/store/scan_threads.rs",
+            "src/engine/store/scan_threads_tests.rs"
         ]
     );
     assert_eq!(
@@ -63,7 +63,7 @@ fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
         [
             "src/engine/store/disk/scan.rs",
             "src/engine/store/disk/scan_tests.rs",
-            "src/engine/store/fan_tests.rs"
+            "src/engine/store/scan_threads_tests.rs"
         ]
     );
 }

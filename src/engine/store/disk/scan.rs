@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use super::{Stored, View};
 use crate::engine::store::filter::{hits, hits_by_row, instants, said_instants, Instants, Sel};
-use crate::engine::store::fan::{Fan, Turn};
+use crate::engine::store::scan_threads::{Fan, Turn};
 use crate::engine::format::column::{Col, Column, Memo};
 use crate::engine::format::file::{Reader, StoredChunk};
 use crate::engine::format::read::{Header, Marks, ALL_NULL, SOME_NULL};

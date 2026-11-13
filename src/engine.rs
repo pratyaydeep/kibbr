@@ -79,7 +79,7 @@ pub use store::{present, system_time};
 // A query's stop, the scan threads a server lets go last, and the generator's numbers.
 pub use rng::Rng;
 pub use stop::Stop;
-pub use store::fan::Fan;
+pub use store::scan_threads::Fan;
 
 /// The fuzz harnesses of the engine's own formats, which `src/fuzzing.rs` hands to
 /// `fuzz/`; they see the private modules, as tests do.

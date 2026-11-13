@@ -12,10 +12,9 @@ One entry per tag, newest first.
 - **Log targets.** The `target` of each line kibbr logs (`--log-format json`) is the module
   that logged it, and the modules moved: `kibbr_server::*` is `kibbr::server::*` (the
   server's `lifecycle` is `runtime`, its `compaction` is `compactor`), `kibbr_engine::*` is
-  `kibbr::engine::*` (`rows::*` is `store::*`, `rows::scan_threads` is `store::fan`,
-  `lifecycle` is `database::lifecycle`), and the commands' `kibbr::cmd::*` and
-  `kibbr::tools::*` are `kibbr::cli::*`. A log pipeline that matched an old target needs the
-  new one. The messages, levels and fields are unchanged; nothing else a user sees changes.
+  `kibbr::engine::*` (`rows::*` is `store::*`, `lifecycle` is `database::lifecycle`), and
+  the commands' `kibbr::cmd::*` and `kibbr::tools::*` are `kibbr::cli::*`. A log pipeline
+  that matched an old target needs the new one. The messages, levels and fields are unchanged; nothing else a user sees changes.
 - **`kibbr bench` is `kibbr-bench`**, a binary of its own built with `--features bench`
   (`cargo build --release --features bench`). It measures the `kibbr` beside it, or the one
   `--kibbr PATH` names; its flags are the old subcommand's, and `--plan-only` prints the

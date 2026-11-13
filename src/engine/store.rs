@@ -21,7 +21,7 @@ pub(crate) mod disk;
 pub(crate) mod filter;
 pub(crate) mod manifest;
 pub(crate) mod memory;
-pub(crate) mod fan;
+pub(crate) mod scan_threads;
 pub(crate) mod visit;
 
 pub(crate) use disk::DiskStore;
@@ -464,7 +464,7 @@ pub trait Store: Send + Sync {
     }
     /// The disk store's scan threads, which the door and the server both hold; `None` for every
     /// store but a server's disk store.
-    fn fan(&self) -> Option<Arc<fan::Fan>> {
+    fn fan(&self) -> Option<Arc<scan_threads::Fan>> {
         None
     }
 
@@ -596,7 +596,7 @@ impl StoreManager {
     }
 
     /// The scan threads of the store underneath, if it has any (`Store::fan`).
-    pub fn fan(&self) -> Option<Arc<fan::Fan>> {
+    pub fn fan(&self) -> Option<Arc<scan_threads::Fan>> {
         self.backend.fan()
     }
 
