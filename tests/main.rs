@@ -9,7 +9,7 @@
 //! `cargo test --test e2e -- <module>::` runs one topic. `bench::speed` runs `kibbr-bench`,
 //! which is built only with `--features bench`; `--all-features` runs everything. The fuzz
 //! regressions are unit tests of the crate (`src/fuzzing.rs`), replayed by a plain
-//! `cargo test`. `layers` reads the source rather than running the binary.
+//! `cargo test`. `source_rules` reads the source rather than running the binary.
 
 mod harness;
 
@@ -18,9 +18,7 @@ mod bench;
 /// `kibbr compact` and a server's compaction.
 mod compact;
 /// `kibbr gen-logs`.
-mod gen;
-/// Which layer of the source may name which, and the licence header on every file.
-mod layers;
+mod gen_logs;
 /// `kibbr load`, the bulk door.
 mod load;
 /// Settings, the commands that ask a running server, the log, and a stop's deadline.
@@ -29,6 +27,8 @@ mod operations;
 mod query;
 /// `kibbr serve` and its HTTP surface.
 mod serve;
+/// Which layer of the source may name which, and the licence header on every file.
+mod source_rules;
 /// Row groups, restarts, and data directories other builds wrote.
 mod storage;
 /// The trie: one tree whatever order the lines came in.

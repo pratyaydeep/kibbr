@@ -31,7 +31,7 @@ jobs:
 
       # Every step below runs even when one before it failed, so one run shows all of them.
       # Every feature on, so the bench and its tests are built and run too. The layering
-      # rules and the SPDX headers are tests (tests/layers.rs).
+      # rules and the SPDX headers are tests (tests/source_rules.rs).
       - name: cargo test --all-features
         if: ${{ !cancelled() }}
         run: cargo test --all-features --no-fail-fast

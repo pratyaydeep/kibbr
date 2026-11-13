@@ -64,9 +64,9 @@ a killed process, two builds or a differential run is a script in `scripts/fault
 ## Rules a check enforces
 
 - A new `.rs` file starts with the two lines every other one starts with: the copyright
-  line and `// SPDX-License-Identifier: AGPL-3.0-only`. `tests/layers.rs` checks it.
+  line and `// SPDX-License-Identifier: AGPL-3.0-only`. `tests/source_rules.rs` checks it.
 - The engine names no async runtime, no HTTP and no command line, and the server names no
-  command line: `tests/layers.rs`, which reads the source.
+  command line: `tests/source_rules.rs`, which reads the source.
 - clippy with `-D warnings`, on all targets, with every feature and with none.
 
 ## The web console

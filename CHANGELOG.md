@@ -25,7 +25,7 @@ One entry per tag, newest first.
   plain `cargo test`. Test data is `tests/data/` (`testdata/fixture.ndjson` is
   `tests/data/type_ladder.ndjson`); every file of `tests/data/hostile/` is now loaded by a
   test. Six scripts under `scripts/check/` and `scripts/fault/` became tests, and three
-  (`no_internals.sh`, `cmd_no_tools.sh`, `spdx.sh`) became `tests/layers.rs`.
+  (`no_internals.sh`, `cmd_no_tools.sh`, `spdx.sh`) became `tests/source_rules.rs`.
 - `bench/` is `scripts/bench/`; saved native results are in `scripts/bench/results/native/`.
   What the scripts and `kibbr-bench` generate goes under `target/scratch/`, not `testdata/`.
 - `fuzz/corpus/` is no longer in git; `fuzz/regressions/` still is.

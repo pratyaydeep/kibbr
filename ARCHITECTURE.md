@@ -99,7 +99,7 @@ Query path:
 | `src/cli/` | one file a subcommand (`serve.rs`, `load.rs`, `query.rs` with `query/oracle.rs`, `gen_logs.rs`, ...), and `config.rs` (settings), `logging.rs` (kibbr's own log), `http.rs` (the small client) |
 | `src/bench.rs`, `src/bench/` | `kibbr-bench` (`src/bin/kibbr-bench.rs`), built only with `--features bench`; it measures the `kibbr` beside it |
 | `src/fuzzing.rs`, `src/fuzzing/` | the fuzz harnesses `fuzz/` calls as `kibbr::fuzzing::<target>::run`, and the replay of `fuzz/regressions/` (a unit test) |
-| `tests/main.rs` | the one integration-test binary, `e2e`: a module a topic, `harness.rs` shared, `layers.rs` the layer rules |
+| `tests/main.rs` | the one integration-test binary, `e2e`: a module a topic, `harness.rs` shared, `source_rules.rs` the layer rules and the licence headers |
 | `tests/data/` | `type_ladder.ndjson` (labelled types), `format/` (format vectors), `hostile/`, `compat/<sha>/` (data directories older builds wrote); its `README.md` says why each is there |
 | `scripts/check/`, `scripts/fault/`, `scripts/measure/`, `scripts/bench/` | differential checks; kill and fault tests; measurements; benchmarks (all on the release binary) |
 | `fuzz/` | its own Cargo workspace; the harnesses live in `src/fuzzing/` and `src/engine/fuzzing/` |
@@ -125,7 +125,7 @@ Engine paths are under `src/engine/`.
 
 | Rule | Enforced by |
 |---|---|
-| The engine has no async runtime, no HTTP and no flags, and names neither the server nor the command line. The server names neither the command line nor `engine::inspect`. | `tests/layers.rs`, which reads the source. |
+| The engine has no async runtime, no HTTP and no flags, and names neither the server nor the command line. The server names neither the command line nor `engine::inspect`. | `tests/source_rules.rs`, which reads the source. |
 | Above the engine, code names only what `engine.rs` re-exports, its four namespaces (`model`, `query`, `load`, `compaction`), and the two doors `inspect` and `fuzzing`; every other engine module is private. | The compiler (a private module is E0603). |
 | A `200` from `/ingest` means every line of the body is in the WAL, flushed. It is stored exactly once, even after `kill -9`. | `scripts/fault/crash_test.sh` (CI), `tests/storage.rs`, the `wal_record` fuzz target. |
 | A template's `catalog.log` record is flushed before its first row is logged. | `ingest::place_in`; `scripts/fault/crash_templates.sh`. |
@@ -134,7 +134,7 @@ Engine paths are under `src/engine/`.
 | The memory store and the disk store give the same answers. | `scripts/check/store_agree.sh`. |
 | The oracle shares no mechanism with the engine. | Review; `scripts/check/agree.sh` (CI) compares them. |
 | Traits only where there are two implementations (the row stores in `store.rs`). | Review. |
-| Every `.rs` file starts with the copyright and SPDX lines. | `tests/layers.rs`. |
+| Every `.rs` file starts with the copyright and SPDX lines. | `tests/source_rules.rs`. |
 
 ## Cross-cutting concerns
 
