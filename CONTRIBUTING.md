@@ -1,7 +1,7 @@
 # Contributing
 
 Thank you for helping. This page starts with what you need on day one.
-The legal part is at the end.
+The legal part and the release steps are at the end.
 
 ## Build and test
 
@@ -12,6 +12,7 @@ From the repository root:
 cargo build --release
 cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets -- -D warnings
 ```
 
 Use `--all-features`: without it `kibbr-bench` (the `bench` feature) is not built and its
@@ -19,6 +20,13 @@ tests, `bench::speed`, do not run; the fuzz regressions are replayed either way.
 integration tests are one binary, `e2e`, a module a topic; to run one topic give its
 module path, `cargo test --all-features --test e2e -- load::`, and to run one area's unit
 tests its path in the crate, `cargo test --lib store::`.
+
+Run the tests as a normal user. As root, the tests that make a directory read-only to
+see a refusal fail, because root writes anyway; if you must, run
+`cargo test --all-features --no-fail-fast` and read the failures as those.
+
+Where a new test goes (inline, a `<module>_tests.rs` file, `tests/`, or a script) is in
+"Tests" in [ARCHITECTURE.md](ARCHITECTURE.md#tests).
 
 Try the binary in one minute: see "Try it in a minute" in [README.md](README.md).
 
@@ -38,28 +46,14 @@ Every commit needs a `Signed-off-by:` line: use `git commit -s`.
 
 ## Before a pull request
 
-From the repository root:
+From the repository root, the four commands of "Build and test", then:
 
 ```
-cargo build --release
-cargo test --all-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo clippy --all-targets -- -D warnings
 scripts/check/agree.sh
 ROUNDS=3 scripts/fault/crash_test.sh
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same on Linux.
-
-## Where a test goes
-
-A unit test goes in its module's `tests` module: inline up to 100 lines, and past that a
-sibling file, `wal.rs` -> `wal_tests.rs`, declared as
-`#[cfg(test)] #[path = "wal_tests.rs"] mod tests;`. A test of the binary or of HTTP goes in a topic module of the `e2e`
-binary (`tests/<topic>.rs`), with what topics share in `tests/harness.rs`. A test that needs
-a killed process, two builds or a differential run is a script in `scripts/fault/` or
-`scripts/check/`. The scripts run the release binary and need `bash`, `curl` and `python3`;
-[scripts/README.md](scripts/README.md) lists them and what each prints when it passes.
 
 ## Rules a check enforces
 
@@ -75,9 +69,19 @@ The console is `src/server/viewer.html`, built from the ReScript source in `web/
 `web/`, run `npm run build` there, and commit the built `viewer.html` with it: CI fails if
 they differ ([docs/viewer.md](docs/viewer.md)).
 
-## Releases
+## Fuzzing and benchmarks
 
-How a version is released is in [RELEASING.md](RELEASING.md).
+The fuzz targets are in `fuzz/`, a Cargo workspace of its own; their harnesses are
+`src/fuzzing/` and `src/engine/fuzzing/`. Fuzzing needs a nightly toolchain and
+`cargo install cargo-fuzz`. `fuzz/run.sh [secs] [target...]` runs every target (or the
+ones named) for `secs` seconds each, 1800 by default. A crash is fixed, then its input is
+committed under `fuzz/regressions/<target>/`, which a plain `cargo test` replays on stable.
+
+`kibbr-bench` measures this build's speed on one farm day:
+`cargo run --release --features bench --bin kibbr-bench -- --help`. `scripts/bench/run.sh`
+runs it inside the container image and writes the table;
+[scripts/bench/README.md](scripts/bench/README.md) says how to read a result and compare it
+with a baseline.
 
 ## Licence and sign-off
 
@@ -130,3 +134,28 @@ By making a contribution to this project, I certify that:
     maintained indefinitely and may be redistributed consistent with
     this project or the open source license(s) involved.
 ```
+
+## Releases
+
+A GitHub release publishes the crate, `kibbr`, to crates.io:
+`.github/workflows/release.yml` runs when a release is published (not a draft).
+
+Once per repository, add the token: on crates.io, Account Settings > API Tokens, make one
+with the `publish-update` scope for the kibbr crate; on GitHub, Settings > Secrets and
+variables > Actions, add it as the repository secret `CARGO_REGISTRY_TOKEN`.
+
+For each version, for example 0.3.0:
+
+1. `scripts/bump.sh 0.3.0` sets the version in Cargo.toml, Cargo.lock and the docs, and
+   adds a `## 0.3.0 — DATE` section to CHANGELOG.md. Write that section in place of its
+   placeholder, which the release refuses, and commit.
+2. Check it: `scripts/publish.sh --dry-run 0.3.0`. The dry run builds the crate as packaged,
+   under `target/package/`.
+3. Push the commit. Tag it `v0.3.0` and push the tag, or let the release form make the tag.
+4. On GitHub, Releases > Draft a new release: tag `v0.3.0`, the notes from
+   `scripts/publish.sh --notes 0.3.0`. Publish it.
+
+The workflow fails before publishing anything if the tag is not the version in Cargo.toml,
+CHANGELOG.md has no section for it, `web/` does not build the committed `viewer.html`, the
+token is missing, or the dry run fails. Then it publishes `kibbr`.
+[scripts/README.md](scripts/README.md) describes the scripts.

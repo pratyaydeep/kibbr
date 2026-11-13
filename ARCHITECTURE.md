@@ -94,9 +94,9 @@ Query path:
 | `src/engine/format.rs`, `format/` | storage format v3: frames, row groups, column encodings; its tests are `format_tests.rs`, with the encodings in `format/encodings_tests.rs` and the vectors in `format/vectors_tests.rs` |
 | `src/engine/query.rs`, `query/` | TrieQL, plan, scan, buckets, cursor, limits, result JSON |
 | `src/engine/display.rs` | how values are *printed* (not the storage format) |
-| `src/server.rs`, `src/server/` | router, handlers, the body of a request, flush clock and shutdown (`runtime.rs`), `/compact` (`compactor.rs`), the console `viewer.html` |
-| `src/cli.rs` | the clap definitions and the dispatch |
-| `src/cli/` | one file a subcommand (`serve.rs`, `load.rs`, `query.rs` with `query/oracle.rs`, `gen_logs.rs`, ...), and `config.rs` (settings), `logging.rs` (kibbr's own log), `http.rs` (the small client) |
+| `src/server.rs`, `src/server/` | the server's state; `routes.rs`: the router, the layers over every request, and the GET handlers of the viewer, `/stats` and `/templates`; `handlers.rs`: admission, `/health`, `/ingest`, `/query`, `/load` and `GET /load/{job}`; `body.rs`: an `/ingest` body; `compactor.rs`: `/compact`, `GET /compact/{job}` and the compaction loop; `runtime.rs`: the flush clock, signals and shutdown; the console `viewer.html` |
+| `src/cli.rs` | the top-level clap `Cli`, the `Command` enum and the dispatch |
+| `src/cli/` | one file a subcommand (`serve.rs`, `load.rs`, `query.rs` with `query/oracle.rs`, `gen_logs.rs`, ...), each holding that command's clap `Args` and its run; and `config.rs` (settings), `logging.rs` (kibbr's own log), `http.rs` (the small client) |
 | `src/bench.rs`, `src/bench/` | `kibbr-bench` (`src/bin/kibbr-bench.rs`), built only with `--features bench`; it measures the `kibbr` beside it |
 | `src/fuzzing.rs`, `src/fuzzing/` | the fuzz harnesses `fuzz/` calls as `kibbr::fuzzing::<target>::run`, and the replay of `fuzz/regressions/` (a unit test) |
 | `tests/main.rs` | the one integration-test binary, `e2e`: a module a topic, `harness.rs` shared, `source_rules.rs` the layer rules and the licence headers |
@@ -111,15 +111,15 @@ Query path:
 
 Engine paths are under `src/engine/`.
 
-| To change | Touch |
-|---|---|
-| TrieQL syntax or query meaning | `query/trieql.rs` (grammar), `query.rs` (`Query`), `query/plan.rs`, `query/execute.rs`; the flags in `src/cli/query.rs` build the same `Query`; `src/cli/query/oracle.rs` must give the same answer. Tests: `query/trieql_tests.rs`, `query_tests.rs`, `tests/trieql.rs`, `tests/query.rs`. Checks: `scripts/check/parser_equivalence.sh`, `scripts/check/agree.sh`. Docs: the `/query` section of `docs/serve.md` |
-| `GROUP BY time(...)` bucketing | `query/buckets.rs` (`bucket_of`, `check_buckets`) **and** `floor_to` in `src/cli/query/oracle.rs`. The oracle re-implements the rule on purpose, so do not make it call the engine. Tests: `tests/query.rs` (`buckets`); check: `scripts/check/agree.sh` |
-| A new value type | `model/types.rs` (`ColumnType`, `ColValue`, the join), `model/infer.rs` (a new rung; order matters), `format.rs` (`type_byte`, `type_of_byte`, `encodes`), `format/build.rs`; `src/cli/gen_logs.rs` (`Gen`) to generate it; `tests/data/type_ladder.ndjson` and `tests/data/README.md` (run by `tests/values.rs`). A new type byte is also a storage format change: see below |
-| A new HTTP endpoint | `src/server/routes.rs` (`router`), `src/server/handlers.rs`, `src/server_tests.rs`, `tests/serve.rs` (the HTTP contract), `docs/serve.md`; `src/cli/http.rs` if a command calls it |
-| The storage format | `format/` (`VERSION`, the kinds, the `OPTIONAL` bit), `format/vectors_tests.rs` with `tests/data/format/*.col` and their `.col.txt` dumps, `tests/storage.rs` with `tests/data/compat/<sha>/` (each has a `make.py`), `scripts/check/downgrade.sh`, `fuzz/fuzz_targets/segment.rs`. Prefer an optional kind, so that older builds step over it |
-| A new CLI subcommand | a variant and its dispatch in `src/cli.rs`, the command in `src/cli/<name>.rs`, a test module in `tests/`, a page in `docs/` |
-| A setting | `src/cli/config.rs`, `kibbr.toml.example`, `docs/settings.md`; `src/server/settings.rs` if the server reads it |
+| To change | Touch | Unit tests |
+|---|---|---|
+| TrieQL syntax or query meaning | `query/trieql.rs` (grammar), `query.rs` (`Query`), `query/plan.rs`, `query/execute.rs`; the flags in `src/cli/query.rs` build the same `Query`; `src/cli/query/oracle.rs` must give the same answer. Integration: `tests/trieql.rs`, `tests/query.rs`. Checks: `scripts/check/parser_equivalence.sh`, `scripts/check/agree.sh`. Docs: the `/query` section of `docs/serve.md` | `query/trieql_tests.rs`, `query_tests.rs` |
+| `GROUP BY time(...)` bucketing | `query/buckets.rs` (`bucket_of`, `check_buckets`) **and** `floor_to` in `src/cli/query/oracle.rs`. The oracle re-implements the rule on purpose, so do not make it call the engine. Integration: `tests/query.rs` (`buckets`); check: `scripts/check/agree.sh` | `query_tests.rs` |
+| A new value type | `model/types.rs` (`ColumnType`, `ColValue`, the join), `model/infer.rs` (a new rung; order matters), `format.rs` (`type_byte`, `type_of_byte`, `encodes`), `format/build.rs`; `src/cli/gen_logs.rs` (`Gen`) to generate it; `tests/data/type_ladder.ndjson` and `tests/data/README.md` (run by `tests/values.rs`). A new type byte is also a storage format change: see below | `model/types_tests.rs`, `model/infer_tests.rs`, `format/encodings_tests.rs` |
+| A new HTTP endpoint | `src/server/routes.rs` (`router`; a GET that only reads goes beside `get_stats`), `src/server/handlers.rs` (a handler that admits a body or starts a job), `tests/serve.rs` (the HTTP contract), `docs/serve.md`; `src/cli/http.rs` if a command calls it | `src/server_tests.rs` |
+| The storage format | `format/` (`VERSION`, the kinds, the `OPTIONAL` bit), `tests/data/format/*.col` and their `.col.txt` dumps, `tests/storage.rs` with `tests/data/compat/<sha>/` (each has a `make.py`), `scripts/check/downgrade.sh`, `fuzz/fuzz_targets/segment.rs`. Prefer an optional kind, so that older builds step over it | `format/vectors_tests.rs`, `format/encodings_tests.rs`, `format/file_tests.rs`, `format/column_tests.rs` |
+| A new CLI subcommand | a variant and its dispatch in `src/cli.rs`, the command and its clap `Args` in `src/cli/<name>.rs`, a test module in `tests/`, a page in `docs/` | inline `mod tests` in `src/cli/<name>.rs`, or `src/cli/<name>_tests.rs` past 100 lines |
+| A setting | `src/cli/config.rs`, `kibbr.toml.example`, `docs/settings.md`; `src/server/settings.rs` if the server reads it | `src/cli/config_tests.rs` |
 
 ## Invariants and boundaries
 
@@ -154,9 +154,7 @@ named for the module, `wal.rs` -> `wal_tests.rs`, declared as
 never just tests. A test of the binary or of HTTP goes in a topic module of `tests/main.rs`
 (`tests/<topic>.rs`), with what topics share in `tests/harness.rs`; a test that needs a
 killed process, two builds or a differential run is a script in `scripts/fault/` or
-`scripts/check/` ([scripts/README.md](scripts/README.md)).
-
-```
-cargo test                  # unit tests (the fuzz regressions among them) and e2e
-cargo test --all-features   # also bench::speed, which runs kibbr-bench
-```
+`scripts/check/`; the scripts run the release binary and need `bash`, `curl` and
+`python3`, and [scripts/README.md](scripts/README.md) lists them and what each prints when
+it passes. The fuzz regressions are unit tests (`src/fuzzing.rs`). The commands that build
+and run all of it are in [CONTRIBUTING.md](CONTRIBUTING.md#build-and-test).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set the version of the crate, the first step of a release (RELEASING.md).
+# Set the version of the crate, the first step of a release ("Releases" in CONTRIBUTING.md).
 #
 #   1. Cargo.toml: `version` under [package].
 #   2. Cargo.lock: the crate's entry, by `cargo update --workspace`; CI publishes with
@@ -59,4 +59,4 @@ else
 fi
 
 git diff --stat
-echo "== commit, push, then make the GitHub release v$VERSION (RELEASING.md)"
+echo "== commit, push, then make the GitHub release v$VERSION ("Releases" in CONTRIBUTING.md)"

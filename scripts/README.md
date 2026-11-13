@@ -21,6 +21,7 @@ seed of the generated lines.
 | `two_doors.sh` | `PASS two doors agree on N queries x 2 rounds`: `/ingest` and `kibbr load` cannot be told apart |
 | `compact_agree.sh` | `PASS a live day of N rows answers the same compacted three ways as it did before` |
 | `roundtrip.sh` | `N lines ingested, N rows returned, 0 differences`: every value back as it went in |
+| `downgrade.sh` | `downgrade to COMMIT: ok`: an older build opens, answers and keeps writing a data directory this build wrote |
 | `strip_comments.py` | not a check of the binary: prints Rust source without comments, to show a diff changed comments only |
 
 `store_agree.sh`, `two_doors.sh` and `roundtrip.sh` print `scan fan-outs ...`, and with
@@ -60,9 +61,27 @@ checks of order ids, date forms, the `received_at` column, time columns, a lost
 | `explain_time.sh` | no gate: prints the walk and the wall time at 1,000 and 1,000,000 lines; the walk should not grow |
 | `log_report.sh` | no gate: prints a file's size, compressibility, templates and columns, side by side for several files |
 
+## bench/ - kibbr-bench in the image, and its saved results
+
+| script | what it does |
+|---|---|
+| `run.sh` | builds the image, runs `kibbr-bench` in a container on the farm day of seed 42, and writes the result as a table; no gate, a measurement |
+| `cloud/aws.sh`, `cloud/box.sh` | the same on a fresh EC2 box, from the laptop (`aws.sh`) and on the box (`box.sh`) |
+| `compression.py` | each real corpus in `compression.json` downloaded and run through `kibbr bench-storage` (raw, gzip, zstd, a load, a live day before and after compaction), its numbers kept as JSON |
+| `sizes.py` | how big a source in `compression.json` is, before anything is downloaded |
+
+`results/` holds saved results, the native ones in `results/native/`.
+[bench/README.md](bench/README.md) says how to run them and when two are comparable.
+
+## Not here: fuzzing
+
+The fuzz targets are in `fuzz/`, with `fuzz/run.sh [secs] [target...]` to run them (nightly
+and `cargo-fuzz`); "Fuzzing and benchmarks" in [CONTRIBUTING.md](../CONTRIBUTING.md) has
+the rest.
+
 ## bump.sh and publish.sh - make a version and publish it
 
-A release is usually a GitHub release; RELEASING.md has the steps. Publishing one runs
+A release is usually a GitHub release; "Releases" in CONTRIBUTING.md has the steps. Publishing one runs
 `.github/workflows/release.yml`, which checks that `web/` still builds the committed
 `viewer.html` and then runs `scripts/publish.sh` with the version from the tag.
 
