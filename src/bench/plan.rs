@@ -17,9 +17,8 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 
 use crate::cli::config::Limits;
-use crate::cli::query;
 use crate::cli::{error, gen_logs as gen};
-use crate::engine::query::Query;
+use crate::engine::query::{answer, Query};
 use crate::engine::{commas, parse_line, Database, Options, Schema};
 
 use super::phases::percentile;
@@ -191,9 +190,9 @@ pub fn measure(samples: usize) -> Result<PlanRun, SpeedError> {
     let shapes = queries();
     let mut parsed = Vec::with_capacity(Shapes::<()>::NAMES.len());
     for shape in shapes.each() {
-        let query = query::from_trieql(&shape.text, now, Limits::default()).map_err(|e| {
+        let query = answer::from_trieql(&shape.text, now, Limits::default()).map_err(|e| {
             SpeedError::Surface {
-                surface: "query::from_trieql",
+                surface: "answer::from_trieql",
                 detail: format!("{}: {}", shape.text, error::chain(&e)),
             }
         })?;
@@ -202,7 +201,7 @@ pub fn measure(samples: usize) -> Result<PlanRun, SpeedError> {
     let [p1, p2, p3, p4] = Shapes::<()>::NAMES;
     let [q1, q2, q3, q4] = parsed.as_slice() else {
         return Err(SpeedError::Surface {
-            surface: "query::from_trieql",
+            surface: "answer::from_trieql",
             detail: "the four shapes did not parse to four queries".to_string(),
         });
     };

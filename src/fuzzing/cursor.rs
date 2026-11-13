@@ -19,6 +19,7 @@ use crate::cli::query::{self, Format, Resolved};
 use crate::engine::parse_line;
 use crate::engine::model::types::ColValue;
 use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
+use crate::engine::query::answer;
 use crate::engine::query::trieql::Kind;
 use crate::engine::inspect::{self as db, MemoryDb};
 
@@ -333,7 +334,7 @@ impl Fixture {
         let queries: Vec<Query> = (0..PATTERNS.len())
             .map(|p| {
                 let (src, _) = source(QueryMode::Fetch, p, 0, None, None);
-                query::from_trieql(&src, now, LIMITS_CONFIG).expect("a fixture query")
+                answer::from_trieql(&src, now, LIMITS_CONFIG).map_err(CliError::from).expect("a fixture query")
             })
             .collect();
         let guards: Vec<u32> = queries.iter().map(guard_of).collect();
@@ -396,7 +397,7 @@ impl Fixture {
             );
             for (other, pattern) in PATTERNS.iter().enumerate() {
                 let (src, _) = source(QueryMode::Fetch, other, 0, None, Some(text));
-                let built = query::from_trieql(&src, self.now, LIMITS_CONFIG);
+                let built = answer::from_trieql(&src, self.now, LIMITS_CONFIG).map_err(CliError::from);
                 if other == *p {
                     assert_eq!(cursor.check(&self.queries[other]), Ok(()));
                     assert!(built.is_ok(), "`{src}` refuses its own cursor: {built:?}");
@@ -417,7 +418,7 @@ impl Fixture {
             for w in 0..WINDOWS.len() {
                 for limit in LIMITS {
                     let (src, _) = source(QueryMode::Fetch, *p, w, limit, Some(text));
-                    let built = query::from_trieql(&src, self.now, LIMITS_CONFIG);
+                    let built = answer::from_trieql(&src, self.now, LIMITS_CONFIG).map_err(CliError::from);
                     assert!(built.is_ok(), "`{src}` refuses its own cursor: {built:?}");
                 }
             }
@@ -428,7 +429,7 @@ impl Fixture {
                     "the truncated cursor `{short}` decodes"
                 );
                 let (src, quote) = source(QueryMode::Fetch, *p, 0, None, Some(short));
-                match query::from_trieql(&src, self.now, LIMITS_CONFIG) {
+                match answer::from_trieql(&src, self.now, LIMITS_CONFIG).map_err(CliError::from) {
                     Err(CliError::Trieql(e)) => {
                         assert!(matches!(e.kind, Kind::BadCursor { .. }), "`{src}`: {e:?}");
                         assert_eq!(e.pos, quote, "`{src}`: the error is not at the cursor");
@@ -441,7 +442,7 @@ impl Fixture {
 
     /// A query the harness wrote itself and knows to be well-formed.
     fn built(&self, src: &str) -> Query {
-        query::from_trieql(src, self.now, LIMITS_CONFIG)
+        answer::from_trieql(src, self.now, LIMITS_CONFIG).map_err(CliError::from)
             .unwrap_or_else(|e| panic!("`{src}` is refused: {e:?}"))
     }
 
@@ -832,7 +833,7 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
     // parser must still refuse text that is not one, and a dropped one must not move the answer.
     let total = fx.orders[p][0].len() as u64;
     let (src, quote) = source(QueryMode::Count, p, 0, None, Some(text));
-    match (query::from_trieql(&src, fx.now, LIMITS_CONFIG), &cursor) {
+    match (answer::from_trieql(&src, fx.now, LIMITS_CONFIG).map_err(CliError::from), &cursor) {
         (Ok(query), Some(_)) => {
             assert_eq!(
                 query.cursor, None,
@@ -848,7 +849,7 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
     }
     let mut src = format!("MATCH LOG {} GROUP BY level", PATTERNS[p].text);
     let quote = resume(&mut src, text);
-    match (query::from_trieql(&src, fx.now, LIMITS_CONFIG), &cursor) {
+    match (answer::from_trieql(&src, fx.now, LIMITS_CONFIG).map_err(CliError::from), &cursor) {
         (Ok(query), Some(_)) => {
             assert_eq!(
                 query.cursor, None,
@@ -876,7 +877,7 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
     }
 
     let (src, quote) = source(QueryMode::Fetch, p, w, limit, Some(text));
-    let built = query::from_trieql(&src, fx.now, LIMITS_CONFIG);
+    let built = answer::from_trieql(&src, fx.now, LIMITS_CONFIG).map_err(CliError::from);
     let by_flags = query::build(&flags(QueryMode::Fetch, p, w, limit, text), fx.now);
     let Some((bytes, cursor)) = cursor else {
         match built {
@@ -994,8 +995,8 @@ fn foreign(fx: &Fixture, p: usize, payload: &[u8]) {
 
     let bare = format!("MATCH LOG {written}");
     let with = format!("{bare} AFTER \"{real}\"");
-    let resumed = query::from_trieql(&with, fx.now, LIMITS_CONFIG);
-    let alone = match query::from_trieql(&bare, fx.now, LIMITS_CONFIG) {
+    let resumed = answer::from_trieql(&with, fx.now, LIMITS_CONFIG).map_err(CliError::from);
+    let alone = match answer::from_trieql(&bare, fx.now, LIMITS_CONFIG).map_err(CliError::from) {
         Ok(alone) => alone,
         Err(e) => {
             rendered(&bare, &e);
@@ -1076,7 +1077,7 @@ fn confused(fx: &Fixture, alone: &Query, bare: &str, pick: u8) {
     };
     assert_ne!(twin, alone.matches, "`{bare}`: a twin is another pattern");
     let src = format!("MATCH LOG {}", pattern_text(&twin));
-    let other = match query::from_trieql(&src, fx.now, LIMITS_CONFIG) {
+    let other = match answer::from_trieql(&src, fx.now, LIMITS_CONFIG).map_err(CliError::from) {
         Ok(other) => other,
         // The one twin that is not a pattern: its `=` was the first character of the key,
         // and a key may not be empty.
@@ -1089,7 +1090,7 @@ fn confused(fx: &Fixture, alone: &Query, bare: &str, pick: u8) {
     if guard_of(&other) == guard_of(alone) {
         return told_apart(alone, &other, &with);
     }
-    match query::from_trieql(&with, fx.now, LIMITS_CONFIG) {
+    match answer::from_trieql(&with, fx.now, LIMITS_CONFIG).map_err(CliError::from) {
         Err(e @ CliError::Cursor(CursorError::WrongQuery)) => rendered(&with, &e),
         other => panic!("`{with}` did not refuse the cursor of `{bare}`: {other:?}"),
     }
@@ -1212,7 +1213,7 @@ fn unquoted(fx: &Fixture, text: &str, p: usize) {
         return;
     }
     let src = format!("MATCH LOG {} AFTER \"{text}\"", PATTERNS[p].text);
-    let Ok(query) = query::from_trieql(&src, fx.now, LIMITS_CONFIG) else {
+    let Ok(query) = answer::from_trieql(&src, fx.now, LIMITS_CONFIG).map_err(CliError::from) else {
         return;
     };
     let cursor = query

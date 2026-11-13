@@ -21,11 +21,10 @@ use crate::cli::config::{Limits, Schema};
 use crate::cli::error::{CliError, QueryError};
 // A TrieQL string into a `Query` and an answer into JSON are the engine's
 // (`engine::query::answer`), since `POST /query` is their other caller.
-use crate::engine::query::answer::{self as wire, canonical, row_json};
-pub use crate::engine::query::answer::result_json;
+use crate::engine::query::answer::{self, canonical, result_json, row_json};
 use crate::engine::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
 use crate::engine::query::{
-    self as engine, Cursor, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
+    self as engine, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
     QueryResult, TimeRange,
 };
 use crate::engine::query::trieql::{self, ago};
@@ -133,7 +132,7 @@ pub(crate) fn build(args: &Resolved, now: DateTime<Utc>) -> Result<Query, CliErr
     // TrieQL builds the same `Query` the flags do. Both routes end at `Query::new`, the
     // one place the limit's default and its per-mode meaning are decided.
     if let Some(text) = &args.trieql {
-        return from_trieql(text, now, args.limits);
+        return answer::from_trieql(text, now, args.limits).map_err(CliError::from);
     }
 
     let matches = args
@@ -174,32 +173,18 @@ pub(crate) fn build(args: &Resolved, now: DateTime<Utc>) -> Result<Query, CliErr
         (None, None) => TimeRange::default(),
     };
 
-    finish(Query::new(
+    // Does the cursor belong to this query, and may it bucket as it asks: the last thing
+    // either surface does.
+    answer::finish(Query::new(
         matches,
         mode,
         time,
         args.limit,
-        cursor(args.after.as_deref())?,
+        answer::cursor(args.after.as_deref())?,
         system_time(now),
         args.limits,
     ))
-}
-
-/// A TrieQL string to a `Query`: the server crate's `from_trieql`, which is what
-/// `POST /query` accepts, with what it refuses said as this command's own error.
-pub fn from_trieql(text: &str, now: DateTime<Utc>, limits: Limits) -> Result<Query, CliError> {
-    wire::from_trieql(text, now, limits).map_err(CliError::from)
-}
-
-/// The cursor text as a `Cursor`, before there is a `Query` to check it against.
-fn cursor(text: Option<&str>) -> Result<Option<Cursor>, CliError> {
-    wire::cursor(text).map_err(CliError::from)
-}
-
-/// The last thing `build` does on either surface: does this cursor belong to this query,
-/// and may it bucket as it asks? The server crate's `finish`.
-fn finish(query: Query) -> Result<Query, CliError> {
-    wire::finish(query).map_err(CliError::from)
+    .map_err(CliError::from)
 }
 
 /// Split on the *first* `=`: a value may contain one, a key may not - `a=b=c` is the key

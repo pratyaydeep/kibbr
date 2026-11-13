@@ -14,8 +14,10 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-pub use crate::engine::load::*;
-
+use crate::engine::load::{
+    alone_threads, resolve, Control, LoadError, Options, Report, DEFAULT_LOAD_BUFFER_BYTES,
+    DEFAULT_MAX_ARRIVAL_SHARE,
+};
 
 /// What `kibbr load` can fail with that the load itself cannot - the server asked to run
 /// it - carried in the load's own error as its `Caller`.

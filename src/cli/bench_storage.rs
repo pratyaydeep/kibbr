@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use crate::cli::config::{Schema, Storage};
 use crate::cli::error::{CliError, DetectorErrorKind};
-use crate::cli::load::{self, Asked, LoadError};
+use crate::cli::load::Asked;
+use crate::engine::load::{self, LoadError};
 use crate::engine::commas;
 use crate::engine::inspect::{
     self as raw, CompactOptions, FlushKind, SinkError, HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP,

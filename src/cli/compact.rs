@@ -169,7 +169,7 @@ fn alone(
 ) -> Result<(), CompactError> {
     let threads = args
         .threads
-        .unwrap_or_else(crate::cli::load::alone_threads)
+        .unwrap_or_else(crate::engine::load::alone_threads)
         .max(1);
     let (days, ran) = db
         .compact_now(day, threads, &mut |_, result| {

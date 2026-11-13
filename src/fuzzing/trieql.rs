@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 
 use crate::cli::config::Limits;
 use crate::cli::error::{self, CliError};
-use crate::cli::query;
+use crate::engine::query::answer;
 use crate::engine::query::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
 use crate::engine::query::trieql::{self, Kind, ParseError, Parsed};
 
@@ -49,7 +49,7 @@ fn check(src: &str) {
 
     // The path a client's string actually takes: a different answer from it would mean
     // the parser gave two answers for one input.
-    match (parsed, query::from_trieql(src, now, Limits::default())) {
+    match (parsed, answer::from_trieql(src, now, Limits::default()).map_err(CliError::from)) {
         (Err(e), Err(CliError::Trieql(f))) => {
             assert_eq!(
                 e.pos,

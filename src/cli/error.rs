@@ -135,7 +135,7 @@ pub enum CliError {
     #[error(transparent)]
     Serve(crate::server::Error),
     #[error(transparent)]
-    Load(#[from] crate::cli::load::LoadError),
+    Load(#[from] crate::engine::load::LoadError),
     #[error(transparent)]
     Compact(#[from] crate::cli::compact::CompactError),
     #[cfg(feature = "bench")]

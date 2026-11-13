@@ -606,7 +606,7 @@ fn busy(permits: usize) -> Response {
         .into_response()
 }
 
-/// `{"q":"<trieql>"}` in, `query::result_json` out; the body is decoded here so a
+/// `{"q":"<trieql>"}` in, `answer::result_json` out; the body is decoded here so a
 /// malformed one is answered in the same `{"ok":false,"error":...}` shape.
 pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -> Response {
     let request: QueryRequest = match serde_json::from_slice(&body) {
