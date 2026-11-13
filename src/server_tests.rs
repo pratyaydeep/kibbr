@@ -419,11 +419,11 @@ fn a_server_says_the_scan_threads_it_resolved_in_stats_and_in_its_banner() {
         .expect("a runtime");
     // Each server's settings, and the threads and the rows it must then say.
     let cases = [
-        (in_memory, 1, crate::engine::inspect::DEFAULT_FAN_ROWS),
+        (in_memory, 1, crate::engine::DEFAULT_FAN_ROWS),
         (on_disk("none", 0, 7), 1, 7),
         (on_disk("one", 1, 7), 1, 7),
         (
-            on_disk("two", 2, crate::engine::inspect::DEFAULT_FAN_ROWS),
+            on_disk("two", 2, crate::engine::DEFAULT_FAN_ROWS),
             2,
             32_768,
         ),

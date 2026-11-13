@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use crate::cli::config::{Schema, Storage};
 use crate::cli::error::{CliError, DetectorErrorKind};
 use crate::cli::load::{self, Asked, LoadError};
-use crate::engine::display::commas;
+use crate::engine::commas;
 use crate::engine::inspect::{
     self as raw, CompactOptions, FlushKind, SinkError, HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP,
     KIND_SCHEMA, TRAILER_LEN,
@@ -798,7 +798,7 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
                 path: input.to_path_buf(),
                 source,
             })?;
-            let line = crate::engine::parse::lines::strip_eol(&line);
+            let line = crate::engine::strip_eol(&line);
             if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }

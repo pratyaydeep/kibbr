@@ -19,11 +19,8 @@ use chrono::{DateTime, Utc};
 use crate::cli::config::Limits;
 use crate::cli::query;
 use crate::cli::{error, gen_logs as gen};
-use crate::engine::parse::flatten;
-use crate::engine::display::commas;
 use crate::engine::query::Query;
-use crate::engine::database::Schema;
-use crate::engine::{Database, Options};
+use crate::engine::{commas, parse_line, Database, Options, Schema};
 
 use super::phases::percentile;
 use super::report::{PlanRun, PlanShape, QueryText, Shapes};
@@ -102,7 +99,7 @@ fn build(now: DateTime<Utc>) -> Result<(Database, u64), SpeedError> {
     // Every line ends in a line feed, so what follows the last one is not a line.
     let text = lines.strip_suffix(b"\n").unwrap_or(&lines);
     for (at, line) in text.split(|byte| *byte == b'\n').enumerate() {
-        let Ok(parsed) = flatten::parse_line(line, at + 1) else {
+        let Ok(parsed) = parse_line(line, at + 1) else {
             skipped += 1;
             continue;
         };

@@ -64,7 +64,7 @@ fn scan_threads_are_the_flag_then_the_variable_then_the_default_and_never_above_
     let untouched = Storage::default();
     assert_eq!(
         (untouched.scan_threads, untouched.scan_fan_rows),
-        (0, crate::engine::database::DEFAULT_FAN_ROWS)
+        (0, crate::engine::DEFAULT_FAN_ROWS)
     );
     assert_eq!(untouched.disk_options().scan_threads, 0);
 
@@ -77,7 +77,7 @@ fn scan_threads_are_the_flag_then_the_variable_then_the_default_and_never_above_
     assert_eq!(default, (cores / 2).clamp(1, 4));
     assert_eq!(
         scan(None, None).expect("the defaults"),
-        (default, crate::engine::database::DEFAULT_FAN_ROWS)
+        (default, crate::engine::DEFAULT_FAN_ROWS)
     );
 
     // The variable over the default, and the flag over the variable.
@@ -211,7 +211,7 @@ fn the_ingest_wait_and_the_logs_bound_are_the_flag_then_the_variable_then_the_de
             .with_wal(&File::default(), None, None, flag)
             .map(|storage| (storage.wal_queue_bytes, storage.wal_options().queue_bytes))
     };
-    let default = crate::engine::database::DEFAULT_WAL_QUEUE_BYTES;
+    let default = crate::engine::DEFAULT_WAL_QUEUE_BYTES;
     assert_eq!(default, 256 * 1024 * 1024);
     assert_eq!(Storage::default().wal_queue_bytes, default);
     assert_eq!(bound(None).expect("the default"), (default, default));

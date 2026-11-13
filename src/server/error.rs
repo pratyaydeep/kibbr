@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-pub use crate::engine::error::{chain, IngestError};
+pub use crate::engine::{chain, IngestError};
 
 /// What stops a server from starting or from finishing cleanly, and, last, the engine's
 /// errors a request is refused with.

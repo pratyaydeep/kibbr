@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::cli::config::{self, File};
 use crate::cli::error::CliError;
-use crate::engine::display::commas;
+use crate::engine::commas;
 
 /// How long a server is given to answer. Both answers are built from memory.
 const TIMEOUT: Duration = Duration::from_secs(10);

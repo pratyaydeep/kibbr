@@ -23,7 +23,7 @@ use crate::cli::error::{CliError, QueryError};
 // `POST /query` is their other caller: here under the names this module always had.
 use crate::engine::query::answer::{self as wire, canonical, row_json};
 pub use crate::engine::query::answer::result_json;
-use crate::engine::display::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
+use crate::engine::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
 use crate::engine::query::{
     self as engine, Cursor, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
     QueryResult, TimeRange,

@@ -8,10 +8,9 @@ use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
 use crate::cli::error::{CliError, DetectorError, DetectorErrorKind};
-use crate::engine::parse::flatten::parse_line;
-use crate::engine::display::rfc3339;
-use crate::engine::parse::lines::{
-    read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
+use crate::engine::{
+    parse_line, read_line, rfc3339, skip_to_eol, strip_bom, strip_eol, Line, Resync,
+    MAX_LINE_BYTES,
 };
 use crate::engine::model::types::{ColValue, ColumnType};
 
@@ -142,7 +141,7 @@ pub fn run<R: BufRead, W: Write>(
 /// The parsed row as NDJSON, every map emitted in `keys` order: `HashMap` order is not
 /// stable between runs, and a diff must mean a real change.
 fn render_json<W: Write>(
-    parsed: &crate::engine::parse::flatten::ParsedLog,
+    parsed: &crate::engine::ParsedLog,
     out: &mut W,
 ) -> Result<(), CliError> {
     let mut values = serde_json::Map::new();
@@ -177,7 +176,7 @@ fn render_json<W: Write>(
 /// `line_no` is the physical line, the same number a rejection is reported against, so
 /// one stream never holds two numbering schemes.
 fn render<W: Write>(
-    parsed: &crate::engine::parse::flatten::ParsedLog,
+    parsed: &crate::engine::ParsedLog,
     line_no: usize,
     out: &mut W,
 ) -> Result<(), CliError> {

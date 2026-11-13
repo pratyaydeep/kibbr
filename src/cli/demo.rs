@@ -14,10 +14,9 @@ use std::time::Instant;
 use chrono::Utc;
 
 use crate::cli::error::{CliError, DetectorError, DetectorErrorKind};
-use crate::engine::parse::flatten::parse_line;
-use crate::engine::display::commas;
-use crate::engine::parse::lines::{
-    read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
+use crate::engine::{
+    commas, parse_line, read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync,
+    MAX_LINE_BYTES,
 };
 use crate::engine::model::types::ColumnType;
 use crate::engine::inspect::{Node, Trie, ROOT_LABEL};

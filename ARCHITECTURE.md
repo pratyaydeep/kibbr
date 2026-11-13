@@ -18,8 +18,12 @@ A query walks the trie first, so it skips templates that cannot match without an
 One Cargo package, `kibbr`, in three layers, each naming only the ones under it:
 
 - `src/engine.rs` and `src/engine/`: the whole database behind one handle, `Database`.
-  Synchronous: no async runtime, no HTTP, no command-line flags. Its modules are private;
-  `engine.rs` re-exports what the layers above use.
+  Synchronous: no async runtime, no HTTP, no command-line flags. The layers above name
+  only what `engine.rs` offers: the items it re-exports (`engine::Database`,
+  `engine::commas`, ...) and four namespaces, `engine::model`, `engine::query`,
+  `engine::load` and `engine::compaction`. Every other engine module is private. Two
+  doors reach further, each for named callers: `engine::inspect` (the diagnostic
+  commands, some tests, and `kibbr::testing`) and `engine::fuzzing` (the fuzz harnesses).
 - `src/server.rs` and `src/server/`: HTTP over one `Database`.
 - `src/cli.rs` and `src/cli/`: the command line, one file a subcommand. `src/main.rs` sets
   the allocator (mimalloc; why is at `#[global_allocator]`) and calls `kibbr::run()`.
@@ -122,7 +126,7 @@ Engine paths are under `src/engine/`.
 | Rule | Enforced by |
 |---|---|
 | The engine has no async runtime, no HTTP and no flags, and names neither the server nor the command line. The server names neither the command line nor `engine::inspect`. | `tests/layers.rs`, which reads the source. |
-| Only the engine sees past its facade: its modules are private, and the few in-crate tools that read further use `pub(crate) mod inspect`. | The compiler (a private module is E0603). |
+| Above the engine, code names only what `engine.rs` re-exports, its four namespaces (`model`, `query`, `load`, `compaction`), and the two doors `inspect` and `fuzzing`; every other engine module is private. | The compiler (a private module is E0603). |
 | A `200` from `/ingest` means every line of the body is in the WAL, flushed. It is stored exactly once, even after `kill -9`. | `scripts/fault/crash_test.sh` (CI), `tests/storage.rs`, the `wal_record` fuzz target. |
 | A template's `catalog.log` record is flushed before its first row is logged. | `ingest::place_in`; `scripts/fault/crash_templates.sh`. |
 | A data file that `manifest.log` does not name is not part of the database. | `store/manifest.rs`; `scripts/fault/compact_kill.sh`, `scripts/fault/load_kill.sh`. |

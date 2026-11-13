@@ -11,7 +11,7 @@ use std::time::Duration;
 pub use crate::engine::query::limits::Limits;
 // Where rows are kept is the database's to say, and is declared there; a server is
 // started with it all the same.
-pub use crate::engine::database::{
+pub use crate::engine::{
     Schema, Storage, DEFAULT_COMPACT_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS,
     DEFAULT_ROW_GROUP_TIMEOUT_MS,
 };

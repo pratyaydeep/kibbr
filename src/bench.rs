@@ -26,7 +26,7 @@ use chrono::{SecondsFormat, Utc};
 use thiserror::Error;
 
 use crate::cli::error::CliError;
-use crate::engine::display::commas;
+use crate::engine::commas;
 
 use corpus::{BuiltBy, Corpus};
 use host::Swap;

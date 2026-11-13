@@ -3,7 +3,7 @@
 
 //! `kibbr compact` - the command: who runs it and what it prints. The rebuild is the
 //! store's (`store::disk::rebuild`) and the run the engine's
-//! (`crate::engine::database::compaction`). Who holds `LOCK` decides where it runs, as for
+//! (`crate::engine::compaction`). Who holds `LOCK` decides where it runs, as for
 //! `kibbr load`: one process writes the manifest, so a server holding the directory is asked
 //! (`POST /compact`), and with none the command takes the lock and compacts alone.
 
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::engine::database::compaction::{line, Report, NO_DISK};
+use crate::engine::compaction::{line, Report, NO_DISK};
 use crate::engine::StoreError;
 
 #[derive(Debug, Error)]

@@ -42,8 +42,8 @@ use tokio_util::sync::CancellationToken;
 use std::path::Path;
 
 use crate::server::error::IngestError;
-use engine::display::{commas, rfc3339_at};
 use engine::query::answer;
+use engine::{commas, rfc3339_at};
 use engine::{compaction, load, CompactRefused, Database, Fan, Stop, StoreError};
 
 /// The default port this server listens on.
@@ -316,7 +316,7 @@ impl Server {
         schema: Schema,
         load_token: Option<String>,
     ) -> Result<Self, Error> {
-        let db = engine::database::Claim::unlocked(engine::Options { storage, schema }).open()?;
+        let db = engine::Claim::unlocked(engine::Options { storage, schema }).open()?;
         Ok(Self::with(db, now, limits, api, load_token))
     }
 }
@@ -349,7 +349,7 @@ pub mod settings;
 #[path = "server_tests.rs"]
 mod tests;
 #[cfg(test)]
-use engine::database::MAX_REPORTED_ERRORS;
+use engine::MAX_REPORTED_ERRORS;
 
 pub use error::{Error, Result};
 pub use runtime::{run, Report};

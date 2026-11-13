@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use crate::cli::config::{Limits, Schema};
 use crate::cli::error::{self, CliError};
 use crate::cli::query::{self, Format, Resolved};
-use crate::engine::parse::flatten;
+use crate::engine::parse_line;
 use crate::engine::model::types::ColValue;
 use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
 use crate::engine::query::trieql::Kind;
@@ -302,7 +302,7 @@ impl Fixture {
             .zip(&lines)
             .enumerate()
             .map(|(n, (line, json))| {
-                let parsed = flatten::parse_line(json.as_bytes(), n + 1).expect("a JSON line");
+                let parsed = parse_line(json.as_bytes(), n + 1).expect("a JSON line");
                 let leaf = engine::leaf_key(&parsed.walk_tokens());
                 let seq = seen.entry(leaf).or_insert(0);
                 let rank = (Reverse(Some(line.nanos())), leaf, *seq);

@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::engine::parse::flatten::ParsedLog;
+use crate::engine::ParsedLog;
 use crate::engine::model::infer::in_epoch_window;
 use crate::engine::model::types::{ColValue, ColumnType, DtForm};
 use crate::engine::query::{
