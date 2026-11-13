@@ -883,4 +883,5 @@ fn warm(unit: &Unit<'_>, ask: &Ask<'_>, sel: &Sel) {
 }
 
 #[cfg(test)]
+#[path = "scan_tests.rs"]
 mod tests;

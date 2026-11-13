@@ -997,4 +997,5 @@ fn env_usize(var: &'static str) -> Result<Option<usize>, ConfigError> {
 }
 
 #[cfg(test)]
+#[path = "config_tests.rs"]
 mod tests;

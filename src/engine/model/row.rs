@@ -220,4 +220,5 @@ pub fn effective_ts(row: &Row, column: &str) -> Option<i64> {
 }
 
 #[cfg(test)]
+#[path = "row_tests.rs"]
 mod tests;

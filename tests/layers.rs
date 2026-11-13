@@ -9,7 +9,7 @@
 //! never names the async runtime, HTTP, the command line or anything above it, so it stays
 //! a database with no runtime in it; the server (`src/server/`) never names the command line,
 //! nor `engine::inspect`, the door the command line's diagnostics read past the handle by.
-//! The server's own tests (`src/server/tests.rs`) may use that door, as they used the
+//! The server's own tests (`src/server_tests.rs`) may use that door, as they used the
 //! engine's `testing` module before. Comments are not read.
 
 use std::fs;
@@ -46,7 +46,7 @@ const RULES: &[(&str, &[&str], &[&str])] = &[
     (
         "src/server",
         &["clap::", "crate::cli", "crate::bench", "engine::inspect"],
-        &["src/server/tests.rs"],
+        &["src/server_tests.rs"],
     ),
 ];
 

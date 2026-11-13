@@ -2435,4 +2435,5 @@ pub fn data_files(base: &Path) -> BTreeSet<PathBuf> {
 }
 
 #[cfg(test)]
+#[path = "disk_tests.rs"]
 mod tests;

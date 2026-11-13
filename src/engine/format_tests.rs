@@ -3,7 +3,9 @@
 
 use super::*;
 
+#[path = "format/encodings_tests.rs"]
 pub(super) mod encodings;
+#[path = "format/vectors_tests.rs"]
 mod vectors;
 
 #[test]

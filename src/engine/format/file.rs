@@ -1183,4 +1183,5 @@ impl<F: Read + Seek> Reader<F> {
 }
 
 #[cfg(test)]
+#[path = "file_tests.rs"]
 mod tests;

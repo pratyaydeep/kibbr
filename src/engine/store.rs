@@ -892,4 +892,5 @@ pub(crate) fn value_bytes(value: &ColValue) -> usize {
 }
 
 #[cfg(test)]
+#[path = "store_tests.rs"]
 mod tests;

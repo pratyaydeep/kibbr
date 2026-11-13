@@ -340,4 +340,5 @@ pub use plan::*;
 /// The bucket arithmetic, which the CLI surface can only reach one query at a time: its
 /// properties hold for any range and width, so they are checked over generated ones.
 #[cfg(test)]
+#[path = "query_tests.rs"]
 mod tests;

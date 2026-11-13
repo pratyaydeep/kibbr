@@ -826,4 +826,5 @@ impl PieceRef<'_> {
 }
 
 #[cfg(test)]
+#[path = "column_tests.rs"]
 mod tests;

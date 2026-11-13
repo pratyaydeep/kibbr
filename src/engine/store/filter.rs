@@ -680,4 +680,5 @@ impl<'c> Instants<'c> {
 }
 
 #[cfg(test)]
+#[path = "filter_tests.rs"]
 mod tests;

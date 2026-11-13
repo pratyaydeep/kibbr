@@ -346,6 +346,7 @@ mod routes;
 mod runtime;
 pub mod settings;
 #[cfg(test)]
+#[path = "server_tests.rs"]
 mod tests;
 #[cfg(test)]
 use engine::database::MAX_REPORTED_ERRORS;

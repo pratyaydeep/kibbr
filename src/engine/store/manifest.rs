@@ -368,4 +368,5 @@ pub fn path_in(base: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
+#[path = "manifest_tests.rs"]
 mod tests;

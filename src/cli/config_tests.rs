@@ -44,7 +44,7 @@ impl Drop for Cleared {
 /// renamed, fails this and not an operator's first start.
 #[test]
 fn the_example_file_is_read_and_sets_every_key() {
-    let text = include_str!("../../../kibbr.toml.example");
+    let text = include_str!("../../kibbr.toml.example");
     let file = File::parse(text).expect("kibbr.toml.example is read");
     let all = format!("{file:?}");
     assert!(!all.contains("None"), "a key the example leaves out: {all}");

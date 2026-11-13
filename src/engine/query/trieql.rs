@@ -714,4 +714,5 @@ pub fn ago(now: SystemTime, d: Duration) -> Option<SystemTime> {
 }
 
 #[cfg(test)]
+#[path = "trieql_tests.rs"]
 mod tests;

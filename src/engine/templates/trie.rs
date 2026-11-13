@@ -1023,4 +1023,5 @@ fn write<T>(lock: &RwLock<T>) -> Result<RwLockWriteGuard<'_, T>, TrieError> {
 }
 
 #[cfg(test)]
+#[path = "trie_tests.rs"]
 mod tests;

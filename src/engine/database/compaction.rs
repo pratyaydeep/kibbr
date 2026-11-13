@@ -338,4 +338,5 @@ fn backoff(interval: Duration, times: u32) -> Duration {
 }
 
 #[cfg(test)]
+#[path = "compaction_tests.rs"]
 mod tests;

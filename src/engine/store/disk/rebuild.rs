@@ -1151,4 +1151,5 @@ impl Sink<'_> {
 }
 
 #[cfg(test)]
+#[path = "rebuild_tests.rs"]
 mod tests;

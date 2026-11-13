@@ -8,7 +8,7 @@ directory).
 | `type_ladder.ndjson` | one value a line, labelled with the type the ladder must give it (below) | `tests/values.rs` |
 | `sample_logs.ndjson` | a few application lines of mixed shapes | `tests/harness.rs` (`SAMPLE_LOGS`) |
 | `roundtrip.ndjson` | hand-written values that must come back as they went in | `scripts/check/roundtrip.sh`, `scripts/check/downgrade.sh` |
-| `format/` | data files (`.col`) of storage format v3, each with its `.col.txt` dump and, where it has one, the `.ndjson` it was made from | `src/engine/format/tests/vectors.rs`, `src/engine/testkit/row_groups.rs` |
+| `format/` | data files (`.col`) of storage format v3, each with its `.col.txt` dump and, where it has one, the `.ndjson` it was made from | `src/engine/format/vectors_tests.rs`, `src/engine/testkit/row_groups.rs` |
 | `hostile/` | lines a parser can trip on: bad UTF-8, deep and wide nesting, odd keys | `tests/load.rs`, each file through `kibbr load` |
 | `compat/<sha>/` | a data directory an older build wrote, the answers it must still give (`expected.json`), and the `make.py` that wrote it | `tests/storage.rs` |
 

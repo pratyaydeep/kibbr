@@ -53,8 +53,9 @@ CI (`.github/workflows/ci.yml`) runs the same on Linux.
 
 ## Where a test goes
 
-A unit test goes in a `tests.rs` beside its module (`wal.rs` -> `wal/tests.rs`), or inline
-when it is short. A test of the binary or of HTTP goes in a topic module of the `e2e`
+A unit test goes in its module's `tests` module: inline up to 100 lines, and past that a
+sibling file, `wal.rs` -> `wal_tests.rs`, declared as
+`#[cfg(test)] #[path = "wal_tests.rs"] mod tests;`. A test of the binary or of HTTP goes in a topic module of the `e2e`
 binary (`tests/<topic>.rs`), with what topics share in `tests/harness.rs`. A test that needs
 a killed process, two builds or a differential run is a script in `scripts/fault/` or
 `scripts/check/`. The scripts run the release binary and need `bash`, `curl` and `python3`;

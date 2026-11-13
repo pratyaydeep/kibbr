@@ -55,15 +55,15 @@ fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
         holding("rayon"),
         [
             "src/engine/store/fan.rs",
-            "src/engine/store/fan/tests.rs"
+            "src/engine/store/fan_tests.rs"
         ]
     );
     assert_eq!(
         holding(".turn("),
         [
             "src/engine/store/disk/scan.rs",
-            "src/engine/store/disk/scan/tests.rs",
-            "src/engine/store/fan/tests.rs"
+            "src/engine/store/disk/scan_tests.rs",
+            "src/engine/store/fan_tests.rs"
         ]
     );
 }

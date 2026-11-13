@@ -83,4 +83,5 @@ pub fn parse(text: &str) -> KeyPath {
 }
 
 #[cfg(test)]
+#[path = "key_tests.rs"]
 mod tests;

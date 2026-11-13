@@ -1725,4 +1725,5 @@ fn apply_loop(shared: &Arc<Shared>, rx: &Receiver<Batch>, mut apply: Apply) {
 }
 
 #[cfg(test)]
+#[path = "wal_tests.rs"]
 mod tests;

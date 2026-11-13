@@ -160,4 +160,5 @@ impl Turn<'_> {
 }
 
 #[cfg(test)]
+#[path = "fan_tests.rs"]
 mod tests;
