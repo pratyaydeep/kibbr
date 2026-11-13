@@ -1,10 +1,12 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! What a server keeps about the compactions it runs, and the run itself.
+//! A compaction run, and the jobs a `Database` keeps of the runs a server starts.
 //!
 //! The rebuild is the store's (`store::disk::rebuild`); here is what is around it: which
-//! days a run takes, what it reports, and the jobs, counters and failures a server keeps.
+//! days a run takes (`plan`), the run (`run`) and what it reports (`Report`, `line`), and
+//! the jobs, counters and failures (`Jobs`) behind `/compact`. `kibbr compact` runs the
+//! same `run` through `Database::compact_now`, with no server.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;

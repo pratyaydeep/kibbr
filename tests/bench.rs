@@ -432,7 +432,7 @@ mod speed {
         let lines: Vec<&str> = stdout.lines().collect();
         let at = lines
             .iter()
-            .rposition(|line| line.starts_with("kibbr bench   commit "))
+            .rposition(|line| line.starts_with("kibbr-bench   commit "))
             .unwrap_or_else(|| panic!("no table in:\n{stdout}"));
         lines[at..].to_vec()
     }
@@ -574,7 +574,7 @@ mod speed {
         let table = table_of(&stdout);
         let shapes: Vec<String> = table.iter().map(|line| shape(line)).collect();
         assert!(
-            shapes[0].starts_with("kibbr bench commit ")
+            shapes[0].starts_with("kibbr-bench commit ")
                 && shapes[0].ends_with(" farm N lines, median of N runs of N samples"),
             "{:?}",
             table[0]
@@ -1033,7 +1033,7 @@ mod speed {
         assert_eq!(ran.status.code(), Some(1));
         let said = text(&ran.stderr);
         assert!(
-            said.contains("kibbr bench measures the farm profile only"),
+            said.contains("kibbr-bench measures the farm profile only"),
             "{said}"
         );
         assert!(ran.stdout.is_empty());

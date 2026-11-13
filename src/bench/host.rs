@@ -118,8 +118,8 @@ pub fn cpu_clock_check() -> Result<Option<f64>, SpeedError> {
             "the clock a server's CPU time is read from does not agree with getrusage: over \
              one spin of this process, getrusage counted {by_own:.4} s of CPU and {} counted \
              {by_read:.4} s, {:.3} of it, where 0.98 to 1.02 is allowed. Every scan rate \
-             would be out by as much, so nothing was measured; this is a fault in how kibbr \
-             bench reads this system's clock, and waiting does not mend it",
+             would be out by as much, so nothing was measured; this is a fault in how \
+             kibbr-bench reads this system's clock, and waiting does not mend it",
             os::cpu_clock().unwrap_or_else(|| "the system".to_string()),
             by_read / by_own,
         )));

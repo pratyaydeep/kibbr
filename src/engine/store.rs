@@ -3,7 +3,7 @@
 
 //! Leaf storage: the scan interface, the two implementations behind it, and the registry.
 //! `LeafStore` holds one leaf's rows and `Store` writes them out; neither has a clock, which
-//! lives in `serve`. No lock is over all of it: each leaf locks itself, and a flush
+//! lives in the server (`src/server/runtime.rs`). No lock is over all of it: each leaf locks itself, and a flush
 //! holds no lock an append or a query waits on while it touches the disk
 //! (`disk::DiskLeaf::state`).
 

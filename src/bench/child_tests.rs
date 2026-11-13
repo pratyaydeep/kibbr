@@ -400,7 +400,7 @@ fn a_server_is_up_at_its_first_200_of_health_and_goes_with_its_copy() {
     let error = server.stats(&mut conn).unwrap_err().to_string();
     assert!(
         error.starts_with(
-            "GET /stats did not answer the way kibbr bench reads it: status 500: no (server pid "
+            "GET /stats did not answer the way kibbr-bench reads it: status 500: no (server pid "
         ) && error.ends_with("server-1.log)"),
         "{error}"
     );

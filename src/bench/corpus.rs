@@ -201,7 +201,7 @@ fn enough(dir: &Path, free: u64, lines: u64) -> Result<(), SpeedError> {
     let need = lines.saturating_mul(FREE_BYTES_PER_LINE);
     if free < need {
         return Err(SpeedError::Host(format!(
-            "the volume that holds {} has {} bytes free, and kibbr bench --lines {} needs {} \
+            "the volume that holds {} has {} bytes free, and kibbr-bench --lines {} needs {} \
              ({} a line) before it builds anything. Make room on it, or name a directory on \
              another volume with --dir",
             dir.display(),

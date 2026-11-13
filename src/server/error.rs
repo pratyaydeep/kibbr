@@ -42,5 +42,5 @@ pub enum Error {
     Database(#[from] crate::engine::Error),
 }
 
-/// What this crate's functions return when they fail.
+/// What the server's functions return when they fail.
 pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -673,8 +673,8 @@ fn a_volume_must_have_room_for_every_line_before_anything_is_built() {
         .to_string();
     assert_eq!(
         told,
-        "the volume that holds target/scratch/bench has 1,999,999,999 bytes free, and kibbr \
-             bench --lines 1,000,000 needs 2,000,000,000 (2,000 a line) before it builds \
+        "the volume that holds target/scratch/bench has 1,999,999,999 bytes free, and \
+             kibbr-bench --lines 1,000,000 needs 2,000,000,000 (2,000 a line) before it builds \
              anything. Make room on it, or name a directory on another volume with --dir"
     );
     assert!(

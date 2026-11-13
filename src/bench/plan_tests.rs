@@ -137,7 +137,7 @@ fn a_shape_is_its_timings_and_the_one_leaf_count_every_plan_returned() {
     let moved = shape("P2", vec![1.0, 1.0], &[7, 8]).expect_err("two counts");
     assert_eq!(
         moved.to_string(),
-        "engine::plan did not answer the way kibbr bench reads it: P2 planned to 7 \
+        "engine::plan did not answer the way kibbr-bench reads it: P2 planned to 7 \
              leaves and then to 8 on the same trie"
     );
     let none = shape("P2", Vec::new(), &[]).expect_err("no timing");

@@ -842,7 +842,7 @@ pub fn read(path: &Path) -> Result<Saved, SpeedError> {
         }
         None => {
             return Err(refused(
-                "it has no `schema`, so it is not a result kibbr bench saved".to_string(),
+                "it has no `schema`, so it is not a result kibbr-bench saved".to_string(),
             ))
         }
     }
@@ -2286,7 +2286,7 @@ pub fn table(saved: &[Saved]) -> Result<Table, SpeedError> {
     let mut lines = Vec::new();
 
     let mut head = format!(
-        "kibbr bench   commit {}",
+        "kibbr-bench   commit {}",
         sha12(&others.last().copied().unwrap_or(base).commit)
     );
     if !others.is_empty() {
@@ -2520,7 +2520,7 @@ fn start_lines(file: &ResultFile, loaded: &Corpus) -> Vec<String> {
     if !flags.checked {
         what.push_str("; UNCHECKED - not a measurement");
     }
-    lines.push(fact("kibbr bench", &what));
+    lines.push(fact("kibbr-bench", &what));
 
     let commit = &file.commit;
     lines.push(fact(

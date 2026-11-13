@@ -3,8 +3,8 @@
 
 use thiserror::Error;
 
-// What is wrong with one line is the flattener's to say, and it is two crates down; here
-// under the names every command already uses.
+// What is wrong with one line is the flattener's to say, in the engine; here under the
+// names every command already uses.
 pub use crate::engine::{chain, report, DetectorError, DetectorErrorKind};
 
 /// Errors from the log generator.
@@ -131,7 +131,7 @@ pub enum CliError {
     Exec(#[from] crate::engine::query::ExecError),
 
     /// What a server could not start or finish with, or refused a TrieQL string with: the
-    /// server crate's own error.
+    /// server's own error.
     #[error(transparent)]
     Serve(crate::server::Error),
     #[error(transparent)]
@@ -146,7 +146,7 @@ pub enum CliError {
 }
 
 impl From<crate::server::Error> for CliError {
-    /// The engine's errors the server crate carries through stay the variants they always
+    /// The engine's errors the server carries through stay the variants they always
     /// were, so a TrieQL string refused by `kibbr query` and by `POST /query` is one failure.
     fn from(e: crate::server::Error) -> Self {
         match e {

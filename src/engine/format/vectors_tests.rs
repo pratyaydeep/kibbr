@@ -17,8 +17,8 @@ use crate::engine::format::frame::Next;
 use crate::engine::model::row::{effective_ts, Row};
 use crate::engine::parse::flatten::parse_line;
 
-/// At the workspace's root, two directories up: the binary crate's fuzz harness reads
-/// the same files.
+/// `tests/data/format/` at the package root: the `segment` fuzz target reads the same
+/// files.
 fn vectors() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data")

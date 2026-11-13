@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! The HTTP server of [kibbr](https://github.com/pratyaydeep/kibbr), a database for
-//! structured JSON logs, over one `Database`: it never reaches past the engine's public API.
-//! Internal to kibbr; no API stability promised.
+//! structured JSON logs, over one `Database`: it names only what `src/engine.rs` offers,
+//! and never `engine::inspect`.
 //!
-//! The server, as a library: `run` is given a `Settings` and a token to stop it by, and
-//! serves the native HTTP surface until the token is cancelled or a signal arrives.
+//! `run` (`runtime.rs`) is given a `Settings` and a token to stop it by, and serves the
+//! native HTTP surface until the token is cancelled or a signal arrives; `kibbr serve`
+//! calls it, and so do the tests.
 //!
 //! Nothing here reads a flag or writes to stderr, and the flush clock lives here, not in
 //! the store: deciding when to write is a fact about the process lifecycle.

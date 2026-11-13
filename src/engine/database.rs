@@ -1142,7 +1142,7 @@ impl Database {
     }
 }
 
-/// What reaches into a database for a test of a crate above: its parts, and the
+/// What reaches into a database for a test of a layer above (the server's): its parts, and the
 /// compaction jobs as they stand. Not for anything but a test.
 #[cfg(test)]
 impl Database {

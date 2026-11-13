@@ -108,10 +108,10 @@ fn laps_saved_before_the_store_s_writes_were_kept_read_with_none() {
 fn the_log_keeps_every_line_it_prints() {
     let mut printed = Vec::new();
     let mut log = Log::new(&mut printed);
-    log.line("kibbr bench  farm").expect("a line");
+    log.line("kibbr-bench  farm").expect("a line");
     log.line("commit       1bfe096e45ef").expect("a line");
     let kept = log.text().to_string();
-    assert_eq!(kept, "kibbr bench  farm\ncommit       1bfe096e45ef\n");
+    assert_eq!(kept, "kibbr-bench  farm\ncommit       1bfe096e45ef\n");
     assert_eq!(printed, kept.as_bytes());
 }
 
@@ -840,7 +840,7 @@ fn a_file_that_is_not_a_result_of_this_schema_is_refused_by_path() {
     );
     assert_eq!(
         refused("other.json", Some(r#"{"lines": 3}"#)),
-        "it has no `schema`, so it is not a result kibbr bench saved"
+        "it has no `schema`, so it is not a result kibbr-bench saved"
     );
     assert!(refused("half.json", Some(r#"{"schema": "kibbr-bench/1"}"#))
         .starts_with("it is not a whole result of `kibbr-bench/1` ("));
@@ -1031,7 +1031,7 @@ fn the_table_of_one_result_is_the_eight_rows_and_what_the_scan_row_was_divided_b
     }
     quiet.file.per_run = per_run(&quiet.file.runs);
     quiet.file.medians = medians(&quiet.file.per_run);
-    let rows = r##"kibbr bench   commit 1bfe096e45ef   farm 1,000,000 lines, median of 3 runs of 100 samples
+    let rows = r##"kibbr-bench   commit 1bfe096e45ef   farm 1,000,000 lines, median of 3 runs of 100 samples
                                                baseline
 ingest lines/s                                 91,166
 S1 promoted value   p50 / p99                  1.52 / 2.10 ms
@@ -1052,7 +1052,7 @@ scan rows/s/core is rows holding `status` x 25 asks of COUNT LOG {"status":"200"
 }
 
 /// A baseline and one column after it, as they print.
-const TWO: &str = r##"kibbr bench   commit 77aa3e12ab77   baseline on 1bfe096e45ef   farm 1,000,000 lines, median of 3 runs of 100 samples
+const TWO: &str = r##"kibbr-bench   commit 77aa3e12ab77   baseline on 1bfe096e45ef   farm 1,000,000 lines, median of 3 runs of 100 samples
                                                baseline              after 1 (columns)
 ingest lines/s                                 91,166                92,040 (1.01x)
 S1 promoted value   p50 / p99                  1.52 / 2.10 ms        0.61 / 0.92 ms (2.5x / 2.3x)
@@ -1095,7 +1095,7 @@ fn two_saved_files_print_the_table_their_results_did() {
 fn the_table_of_three_results_has_a_column_a_file_and_heads_each_line_under_it() {
     assert_eq!(
         printed(&[baseline(), columns(), parallel()]),
-        r##"kibbr bench   commit 9d0c3e12ab77   baseline on 1bfe096e45ef   farm 1,000,000 lines, median of 3 runs of 100 samples
+        r##"kibbr-bench   commit 9d0c3e12ab77   baseline on 1bfe096e45ef   farm 1,000,000 lines, median of 3 runs of 100 samples
                                                baseline              after 1 (columns)                after 2 (parallel)
 ingest lines/s                                 91,166                92,040 (1.01x)                   90,870 (1.00x)
 S1 promoted value   p50 / p99                  1.52 / 2.10 ms        0.61 / 0.92 ms (2.5x / 2.3x)     0.58 / 0.90 ms (2.6x / 2.3x)
@@ -2192,7 +2192,7 @@ fn the_log_opens_with_what_is_measured_on_what_over_which_bytes() {
     let (file, loaded) = at_the_start();
     assert_eq!(
         start_lines(&file, &loaded).join("\n"),
-        r##"kibbr bench  farm, 1,000,000 lines; 3 runs of 100 samples; 4 senders, 2,000-line bodies; label: baseline
+        r##"kibbr-bench  farm, 1,000,000 lines; 3 runs of 100 samples; 4 senders, 2,000-line bodies; label: baseline
 commit       1bfe096e45ef, src clean (git rev-parse HEAD in the working directory when the bench ran; committed 2026-10-07T02:40:29+05:30)
 binary       /Users/pratyaydeep/repo/kibbr/target/release/kibbr  6,735,968 bytes  crc32c 9a3f01c2  built 2026-10-07T02:44:11+05:30  release
 bench code   crc32c 5d11e0aa over 8 source files, white space left out
@@ -2242,7 +2242,7 @@ fn the_log_says_what_a_first_line_cannot_take_for_granted() {
     loaded.left_out = vec![PathBuf::from("LOCK"), PathBuf::from("data/.DS_Store")];
     let lines = start_lines(&file, &loaded);
     let has = |text: &str| assert!(lines.iter().any(|line| line == text), "{text}\n{lines:#?}");
-    has("kibbr bench  farm, 1,000,000 lines; 3 runs of 1 samples; 4 senders, 2,000-line bodies; label: baseline; UNCHECKED - not a measurement");
+    has("kibbr-bench  farm, 1,000,000 lines; 3 runs of 1 samples; 4 senders, 2,000-line bodies; label: baseline; UNCHECKED - not a measurement");
     has("commit       unknown (git rev-parse HEAD in the working directory when the bench ran)");
     has("binary       /Users/pratyaydeep/repo/kibbr/target/release/kibbr  6,735,968 bytes  crc32c 9a3f01c2  built 2026-10-07T02:44:11+05:30  release  - built before the commit above was made");
     has("machine      Apple M2; 8 cores; 8,589,934,592 bytes of memory; macOS 14.3.1; 13.2 GiB free on the volume");

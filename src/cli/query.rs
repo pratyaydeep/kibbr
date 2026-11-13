@@ -19,8 +19,8 @@ use serde_json::{Map, Value};
 
 use crate::cli::config::{Limits, Schema};
 use crate::cli::error::{CliError, QueryError};
-// A TrieQL string into a `Query` and an answer into JSON are the server crate's, since
-// `POST /query` is their other caller: here under the names this module always had.
+// A TrieQL string into a `Query` and an answer into JSON are the engine's
+// (`engine::query::answer`), since `POST /query` is their other caller.
 use crate::engine::query::answer::{self as wire, canonical, row_json};
 pub use crate::engine::query::answer::result_json;
 use crate::engine::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};

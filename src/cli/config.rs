@@ -15,12 +15,12 @@ use thiserror::Error;
 
 use crate::engine::model::infer::EpochWindow;
 
-// The two groups of settings the crates below this one read, declared where they are
-// read; this module is where they are loaded and what the commands name them by.
+// The two groups of settings the engine reads, declared there, where they are read;
+// this module is where they are loaded and what the commands name them by.
 pub use crate::engine::query::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
 pub use crate::engine::{Options, Schema};
 
-// What a server runs on is declared in the server crate, where it is read; this module
+// What a server runs on is declared in `src/server/settings.rs`, where it is read; this module
 // is where each is loaded and what the commands name them by.
 pub use crate::server::settings::{
     default_ingest_concurrency, ApiLimits, Banner, Settings, Storage,

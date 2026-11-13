@@ -54,7 +54,7 @@ fn an_error_quotes_the_end_of_what_a_child_wrote() {
 fn an_error_says_what_was_met_in_one_sentence() {
     assert_eq!(
         SpeedError::Profile.to_string(),
-        "kibbr bench measures the farm profile only"
+        "kibbr-bench measures the farm profile only"
     );
     assert_eq!(
         SpeedError::OutExists(PathBuf::from("target/scratch/bench/baseline.json")).to_string(),
