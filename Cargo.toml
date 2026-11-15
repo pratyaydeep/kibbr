@@ -88,8 +88,8 @@ tokio-util.workspace = true
 zstd.workspace = true
 
 [features]
-# The fuzz targets' harnesses, here and in the engine, for fuzz/ and for
-# tests/fuzz_regressions.rs; off by default, so the binary carries none of them.
+# The engine's fuzz harnesses, which `--all-features` here builds too; off by default, so
+# the binary carries none of them.
 fuzzing = ["kibbr-engine/fuzzing"]
 
 [dev-dependencies]

@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Every input a fuzz target ever crashed on, and the committed corpus, replayed through
-//! the code the fuzzer runs (`kibbr::tools::fuzzing` and `kibbr_engine::fuzzing`) on the
-//! stable toolchain, so a change that breaks an input the fuzzer already reached fails here.
-//! Compiled with the `fuzzing` feature: `cargo test --all-features`.
-
-#![cfg(feature = "fuzzing")]
+//! the code the fuzzer runs on the stable toolchain, so a change that breaks an input the
+//! fuzzer already reached fails here. Compiled with the `fuzzing` feature:
+//! `cargo test --workspace --all-features`.
 
 use std::fs;
 use std::path::Path;
 
 fn replay(target: &str, run: fn(&[u8])) {
-    let fuzz = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz");
+    // Two directories up: the repository root, where `fuzz/` is.
+    let fuzz = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz");
+    let mut replayed = 0;
     for dir in ["regressions", "corpus"] {
         let dir = fuzz.join(dir).join(target);
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -27,31 +27,38 @@ fn replay(target: &str, run: fn(&[u8])) {
             let data = fs::read(&path).unwrap();
             let caught = std::panic::catch_unwind(|| run(&data));
             assert!(caught.is_ok(), "{} breaks the {target} target", path.display());
+            replayed += 1;
         }
     }
+    // A target with nothing to replay is a moved folder or a renamed target, not a pass.
+    assert!(
+        replayed > 0,
+        "no input for the {target} target under {}",
+        fuzz.display()
+    );
 }
 
 #[test]
 fn trieql() {
-    replay("trieql", kibbr::tools::fuzzing::trieql::run);
+    replay("trieql", super::trieql::run);
 }
 
 #[test]
 fn wal_record() {
-    replay("wal_record", kibbr_engine::fuzzing::wal_record::run);
+    replay("wal_record", super::wal_record::run);
 }
 
 #[test]
 fn cursor() {
-    replay("cursor", kibbr::tools::fuzzing::cursor::run);
+    replay("cursor", super::cursor::run);
 }
 
 #[test]
 fn segment() {
-    replay("segment", kibbr_engine::fuzzing::segment::run);
+    replay("segment", super::segment::run);
 }
 
 #[test]
 fn record_log() {
-    replay("record_log", kibbr_engine::fuzzing::record_log::run);
+    replay("record_log", super::record_log::run);
 }

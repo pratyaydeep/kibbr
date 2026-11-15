@@ -125,9 +125,8 @@
 //!
 //! # Stability
 //!
-//! The modules here are public so the fuzz targets under `fuzz/` can call the harnesses
-//! in `tools::fuzzing` (here `cursor` and `trieql`, the other three in
-//! `kibbr_engine::fuzzing`), and so the three crates can be read as one. None of it is a
+//! The modules here are public so the three crates can be read as one; the fuzz targets
+//! under `fuzz/` call the harnesses in `kibbr_engine::fuzzing`. None of it is a
 //! stable interface: use the binary and its HTTP API, which are versioned in the
 //! [changelog](https://github.com/pratyaydeep/kibbr/blob/main/CHANGELOG.md).
 //!

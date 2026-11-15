@@ -5,17 +5,17 @@
 //! every input parses or is refused with an error whose byte position lies inside the input
 //! and points at what the error says it found. Ill-formed UTF-8 is decoded lossily, not
 //! skipped, so byte-level mutations stay queries. `now` is fixed, so a crasher replays to
-//! the same answer in `tests/fuzz_regressions.rs`.
+//! the same answer in `fuzzing/tests.rs`.
 
 use chrono::{DateTime, Utc};
 
-use crate::config::Limits;
-use crate::error::{self, CliError};
-use crate::cmd::query;
-use crate::engine::query::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
-use crate::engine::query::trieql::{self, Kind, ParseError, Parsed};
+use crate::error::{self, Error};
+use crate::query::answer as query;
+use crate::query::limits::Limits;
+use crate::query::{Cursor, CursorError, ExecError, GroupKey, QueryMode};
+use crate::query::trieql::{self, Kind, ParseError, Parsed};
 
-/// The instant `SINCE` is counted back from. Fixed, and the one `crates/kibbr-engine/src/query/trieql.rs` tests
+/// The instant `SINCE` is counted back from. Fixed, and the one `query/trieql.rs` tests
 /// against, so a seed taken from a test parses to the window the test saw.
 const NOW_SECS: i64 = 1_700_000_000;
 
@@ -50,7 +50,7 @@ fn check(src: &str) {
     // The path a client's string actually takes: a different answer from it would mean
     // the parser gave two answers for one input.
     match (parsed, query::from_trieql(src, now, Limits::default())) {
-        (Err(e), Err(CliError::Trieql(f))) => {
+        (Err(e), Err(Error::Trieql(f))) => {
             assert_eq!(
                 e.pos,
                 f.pos,
@@ -65,7 +65,7 @@ fn check(src: &str) {
             );
             // The body of the 400. `chain` walks the source chain, which is the other
             // thing an error type can get wrong without the parser noticing.
-            let _ = error::chain(&CliError::Trieql(f));
+            let _ = error::chain(&Error::Trieql(f));
         }
         (Err(e), Ok(_)) => panic!(
             "{}: refused by the parser at byte {} and accepted by from_trieql",
@@ -77,7 +77,7 @@ fn check(src: &str) {
             shown(src),
             e.pos
         ),
-        (Ok(_), Err(CliError::Trieql(f))) => panic!(
+        (Ok(_), Err(Error::Trieql(f))) => panic!(
             "{}: parsed, and then refused by the parser at byte {} inside from_trieql",
             shown(src),
             f.pos
@@ -88,11 +88,9 @@ fn check(src: &str) {
             assert!(
                 matches!(
                     other,
-                    CliError::Cursor(CursorError::WrongQuery)
-                        | CliError::Exec(ExecError::Buckets(_))
-                        | CliError::Serve(crate::server::Error::Database(
-                            crate::engine::Error::BucketKeyClash
-                        ))
+                    Error::Cursor(CursorError::WrongQuery)
+                        | Error::Exec(ExecError::Buckets(_))
+                        | Error::BucketKeyClash
                 ),
                 "{}: parsed, and then refused for something a parsed query cannot be: {other}",
                 shown(src)

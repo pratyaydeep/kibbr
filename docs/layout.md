@@ -2,7 +2,7 @@
 
 A workspace of three crates, each naming only the ones under it - `kibbr`, then
 `kibbr-server`, `kibbr-engine` - and `fuzz/` beside them, a workspace of its own that depends
-on `kibbr-engine` and `kibbr` with `fuzzing` on. The two library crates each have a README
+on `kibbr-engine` with `fuzzing` on. The two library crates each have a README
 with their files: [engine](../crates/kibbr-engine/README.md),
 [server](../crates/kibbr-server/README.md). What were `kibbr-core` and `kibbr-storage` are
 modules of `kibbr-engine` now (`model` and `parse`; `format`, `templates`, `rows`, `ingest`,
@@ -32,7 +32,6 @@ src/tools/demo.rs           the `demo` tree
 src/tools/gen/              the generators - `hostile` (mod.rs) and the log farm (farm.rs)
 src/tools/bench_storage.rs  `kibbr bench-storage`
 src/tools/bench/            `kibbr bench`
-src/tools/fuzzing/          the `cursor` and `trieql` harnesses, behind the `fuzzing` feature
 tests/                      one file an area (load, query, compact, restart, compat, ...); fixtures/ holds old-format data dirs
 tests/fixture.rs            outer-surface tests
 tests/serve.rs              the HTTP contract, over a bare TcpStream - in this process, or of the binary
@@ -96,15 +95,15 @@ src/compact.rs   which days a run takes, its report, the one-at-a-time job table
 src/query/       TrieQL, the plan, the scan, buckets, the cursor, limits, the answer
 src/lifecycle.rs open (restore and replay), the checkpoint moved behind the flush, the close order
 src/database.rs  `Database` and `Options`: the three ways to open, and everything asked of it
-src/fuzzing/     the `wal_record`, `segment` and `record_log` harnesses, behind the `fuzzing` feature
+src/fuzzing/     the five fuzz harnesses and the replay of their inputs, behind the `fuzzing` feature
 src/lib.rs       the public names, `internals`, and `testing` behind `test-support`
 ```
 
 - **Three ways to open.** To serve, `Database::claim` then `Claim::open`; offline,
   `Database::open_offline`; in memory, `Database::in_memory`.
 - **`internals`** is doc-hidden and has no stability promise. It holds what the command
-  line's diagnostics (`demo`, `bench-storage`) and the `cursor` fuzz harness read past the
-  handle. `kibbr-server` never names it (`scripts/check/no_internals.sh`).
+  line's diagnostics (`demo`, `bench-storage`) read past the handle. `kibbr-server` never
+  names it (`scripts/check/no_internals.sh`).
 - **Features.** `test-support` gives the tests of the crates above their fixtures;
   `fuzzing` is off by default.
 - The format's test vectors are in `testdata/format/`.
@@ -123,14 +122,14 @@ src/lib.rs       the public names, `internals`, and `testing` behind `test-suppo
 ## Tests and lints
 
 ```
-cargo test --workspace --all-features                                # every crate, tests/ at the root, the fuzz regressions
+cargo test --workspace --all-features                                # every crate, tests/ at the root, the fuzz replay
 cargo test -p kibbr-engine --all-features                            # one crate's own
 cargo test -p kibbr-engine rows::                                    # one area: the module path is the filter
 cargo clippy --workspace --all-targets --all-features -- -D warnings # lints have to be clean
 ```
 
-- Without `--all-features`, `tests/fuzz_regressions.rs` is not compiled and the committed
-  crashers are not replayed.
+- Without `--all-features`, the engine's `src/fuzzing/tests.rs` is not compiled and the
+  committed crashers are not replayed.
 - Most tests under `tests/` run the real binary and read its stdout. `serve.rs` also runs
   the server in this process, and `compact.rs` reads day files through `internals`. There
   are no mocks.

@@ -1,11 +1,19 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The `AFTER` cursor (`engine::Cursor`), held to what a cursor is: a token a client
+//! The `AFTER` cursor (`query::Cursor`), held to what a cursor is: a token a client
 //! hands back is untrusted, so decoding never panics, a token that is not a cursor of its
 //! query is refused, and an accepted one, real or forged, resolves to a suffix of the
 //! query's own answer. Answers are compared against an order worked out here from the
 //! fixture's lines, not the engine's; nothing reads a clock, a file or a socket.
+//!
+//! One check is not made here: that `kibbr query`'s flags build the query its TrieQL
+//! builds. The flags are the command line's, which this crate cannot name, and they are an
+//! operator's input, not a client's. `run_with` hands each such query to a caller that
+//! has the flags (`Flagged`); `src/cmd/query/tests.rs` replays `fixtures` and
+//! `fuzz/regressions/cursor/` through it, so the bytes of an input are read here and
+//! nowhere else. That is why this module, alone of the five, is also compiled with
+//! `test-support`.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -13,14 +21,15 @@ use std::sync::OnceLock;
 
 use chrono::{DateTime, Utc};
 
-use crate::config::{Limits, Schema};
-use crate::error::{self, CliError};
-use crate::cmd::query::{self, Args, Format};
-use crate::engine::parse::flatten;
-use crate::engine::model::types::ColValue;
-use crate::engine::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
-use crate::engine::query::trieql::Kind;
-use crate::engine::internals::{self as db, Db};
+use crate::error::{self, Error};
+use crate::ingest::{self as db, Db};
+use crate::model::types::ColValue;
+use crate::parse::flatten;
+use crate::query::answer as query;
+use crate::query::limits::Limits;
+use crate::query::trieql::Kind;
+use crate::query::{self as engine, Cursor, CursorError, Match, MatchValue, Query, QueryMode, Rank};
+use crate::Schema;
 
 /// 2024-01-16T00:00:00Z: the instant every query is built against, and the arrival time of
 /// every fixture line - the day after their timestamps, so `SINCE 1d` has rows both sides.
@@ -409,7 +418,7 @@ impl Fixture {
                         pattern.text
                     );
                     assert!(
-                        matches!(built, Err(CliError::Cursor(CursorError::WrongQuery))),
+                        matches!(built, Err(Error::Cursor(CursorError::WrongQuery))),
                         "`{src}` did not refuse another query's cursor: {built:?}"
                     );
                 }
@@ -429,7 +438,7 @@ impl Fixture {
                 );
                 let (src, quote) = source(QueryMode::Fetch, *p, 0, None, Some(short));
                 match query::from_trieql(&src, self.now, LIMITS_CONFIG) {
-                    Err(CliError::Trieql(e)) => {
+                    Err(Error::Trieql(e)) => {
                         assert!(matches!(e.kind, Kind::BadCursor { .. }), "`{src}`: {e:?}");
                         assert_eq!(e.pos, quote, "`{src}`: the error is not at the cursor");
                     }
@@ -570,7 +579,7 @@ impl Fixture {
 }
 
 /// The lines an answer's rows are, by the `n` each was written with.
-fn numbers(rows: &[crate::engine::Row]) -> Vec<i64> {
+fn numbers(rows: &[crate::Row]) -> Vec<i64> {
     rows.iter()
         .map(|row| match row.get("n") {
             Some(ColValue::Int64(n)) => *n,
@@ -700,40 +709,84 @@ fn resume(src: &mut String, text: &str) -> usize {
     quote
 }
 
-/// The query `source` writes, as the flag surface is handed it; `--after` takes the token
-/// as it stands, with nothing to escape.
-fn flags(mode: QueryMode, p: usize, w: usize, limit: Option<usize>, after: &str) -> Args {
-    let fetching = mode == QueryMode::Fetch;
-    let window = &WINDOWS[w];
-    Args {
-        trieql: None,
-        matches: PATTERNS[p]
-            .terms
-            .iter()
-            .map(|(key, want)| format!("{key}={}", want.unwrap_or("*")))
-            .collect(),
-        count: !fetching,
-        fetch: fetching,
-        exists: false,
-        group_by: None,
-        since: window.ago.map(str::to_string),
-        between: match (window.ago, window.since, window.until) {
-            (None, Some(from), Some(to)) => Some(vec![from.to_string(), to.to_string()]),
+/// One query `hold` builds from TrieQL, as the flag surface would be handed it: the query
+/// `source` writes, part by part, and beside it the text and what the text built.
+pub struct Flagged<'a> {
+    /// `Fetch` or `Count`: the verb.
+    pub mode: QueryMode,
+    /// The pattern: each key, and the value it has to equal or `None` for `*`.
+    pub terms: &'a [(&'static str, Option<&'static str>)],
+    /// `--since`'s operand, where the window is a `SINCE`.
+    pub since: Option<&'static str>,
+    /// `--between`'s two instants, where it is a `BETWEEN`.
+    pub between: Option<[&'static str; 2]>,
+    pub limit: Option<usize>,
+    /// `--after`'s operand: the token as it stands, with nothing to escape.
+    pub after: &'a str,
+    pub now: DateTime<Utc>,
+    pub limits: Limits,
+    /// The same query as TrieQL, and what it built.
+    pub src: &'a str,
+    pub built: &'a Result<Query, Error>,
+}
+
+impl Window {
+    /// The window as `--since` and `--between` say it: one of them, or neither.
+    fn flags(&self) -> (Option<&'static str>, Option<[&'static str; 2]>) {
+        let between = match (self.ago, self.since, self.until) {
+            (None, Some(from), Some(to)) => Some([from, to]),
             _ => None,
-        },
-        format: Format::Table,
-        explain: false,
-        reference: false,
-        limit,
-        after: Some(after.to_string()),
-        limits: LIMITS_CONFIG,
-        schema: Schema::default(),
+        };
+        (self.ago, between)
     }
+}
+
+/// Texts that are not cursors, for `fixtures`: nothing, no dot, another version, a body
+/// that is not hex, and one digit short.
+const NOT_CURSORS: [&str; 5] = [
+    "",
+    "v3",
+    "v2.00",
+    "v3.zz",
+    "v3.000000000000000000000000000000000000000000000000000000000",
+];
+
+/// Inputs that put every cursor the engine issued, and a few texts that are not cursors,
+/// through `hold` under every pattern, limit and window: what the flags' test replays
+/// beside `fuzz/regressions/cursor/`, written here so the layout of an input is too.
+pub fn fixtures() -> Vec<Vec<u8>> {
+    let fx = fixture();
+    let byte = |n: usize| u8::try_from(n).expect("an index that fits a header byte");
+    let mut out = Vec::new();
+    for p in 0..PATTERNS.len() {
+        for l in 0..LIMITS.len() {
+            for w in 0..WINDOWS.len() {
+                let header = |mode: u8| vec![mode, byte(p), byte(l), byte(w)];
+                for pick in 0..fx.issued.len() {
+                    let mut input = header(1);
+                    input.push(byte(pick));
+                    out.push(input);
+                }
+                for text in NOT_CURSORS {
+                    let mut input = header(0);
+                    input.extend_from_slice(text.as_bytes());
+                    out.push(input);
+                }
+            }
+        }
+    }
+    out
 }
 
 // ── One input ──────────────────────────────────────────────────────────────────────
 
 pub fn run(data: &[u8]) {
+    run_with(data, &|_| {});
+}
+
+/// `run`, with each query `hold` builds also handed to `flags`: the caller that has the
+/// flag surface holds it to building the same query.
+pub fn run_with(data: &[u8], flags: &dyn Fn(&Flagged)) {
     let fx = fixture();
     let header = |at: usize| usize::from(data.get(at).copied().unwrap_or(0));
     let p = header(1) % PATTERNS.len();
@@ -748,7 +801,7 @@ pub fn run(data: &[u8]) {
         2 => forged(fx, p, payload),
         _ => return foreign(fx, p, payload),
     };
-    hold(fx, &text, p, w, limit);
+    hold(fx, &text, p, w, limit, flags);
 }
 
 /// A cursor the engine issued, with the input's edits applied: the first byte picks the
@@ -816,7 +869,30 @@ fn forged(fx: &Fixture, p: usize, payload: &[u8]) -> String {
 }
 
 /// Everything a token is held to, against pattern `p` under window `w` and `limit`.
-fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
+fn hold(
+    fx: &Fixture,
+    text: &str,
+    p: usize,
+    w: usize,
+    limit: Option<usize>,
+    flags: &dyn Fn(&Flagged),
+) {
+    let ask = |mode: QueryMode, w: usize, limit: Option<usize>, src: &str, built: &Result<Query, Error>| {
+        let (since, between) = WINDOWS[w].flags();
+        flags(&Flagged {
+            mode,
+            terms: PATTERNS[p].terms,
+            since,
+            between,
+            limit,
+            after: text,
+            now: fx.now,
+            limits: LIMITS_CONFIG,
+            src,
+            built,
+        });
+    };
+
     // Decoding: a cursor exactly when the text has a cursor's shape, and the refusal the
     // shape calls for when it has not.
     let cursor = match (shape(text), Cursor::decode(text)) {
@@ -832,7 +908,9 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
     // parser must still refuse text that is not one, and a dropped one must not move the answer.
     let total = fx.orders[p][0].len() as u64;
     let (src, quote) = source(QueryMode::Count, p, 0, None, Some(text));
-    match (query::from_trieql(&src, fx.now, LIMITS_CONFIG), &cursor) {
+    let built = query::from_trieql(&src, fx.now, LIMITS_CONFIG);
+    ask(QueryMode::Count, 0, None, &src, &built);
+    match (built, &cursor) {
         (Ok(query), Some(_)) => {
             assert_eq!(
                 query.cursor, None,
@@ -864,31 +942,20 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
         (Err(e), None) => refused_at(&src, &e, quote),
         (other, _) => panic!("`{src}`: {other:?}"),
     }
-    // And `--count --after`: the flags hand the token to the decoder with no parser in
-    // front of it, so the refusal is the decoder's own.
-    let counted = query::build(&flags(QueryMode::Count, p, 0, None, text), fx.now);
-    match (counted, Cursor::decode(text)) {
-        (Ok(query), Ok(_)) => assert_eq!(query.cursor, None, "--count kept `{text}`"),
-        (Err(CliError::Cursor(got)), Err(want)) => {
-            assert_eq!(got, want, "--count --after `{text}`");
-        }
-        (other, _) => panic!("--count --after `{text}`: {other:?}"),
-    }
 
     let (src, quote) = source(QueryMode::Fetch, p, w, limit, Some(text));
     let built = query::from_trieql(&src, fx.now, LIMITS_CONFIG);
-    let by_flags = query::build(&flags(QueryMode::Fetch, p, w, limit, text), fx.now);
+    ask(QueryMode::Fetch, w, limit, &src, &built);
     let Some((bytes, cursor)) = cursor else {
         match built {
             Err(e) => refused_at(&src, &e, quote),
             other => panic!("`{src}` took text that is not a cursor: {other:?}"),
         }
-        match (by_flags, Cursor::decode(text)) {
-            (Err(CliError::Cursor(got)), Err(want)) => {
-                assert_eq!(got, want, "--after `{text}`");
-                rendered(text, &CliError::Cursor(got));
-            }
-            (other, _) => panic!("--after took text that is not a cursor: {other:?}"),
+        // The decoder's own refusal, with no parser in front of it: what `--after` is
+        // answered with, and it quotes the token as the parser's does the query.
+        match Cursor::decode(text) {
+            Err(e) => rendered(text, &Error::Cursor(e)),
+            Ok(cursor) => panic!("`{text}` is not a cursor and decoded to {cursor:?}"),
         }
         return unquoted(fx, text, p);
     };
@@ -922,37 +989,16 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
         );
     }
 
-    // And through both doors: refused as another query's, or taken and resolved to a
-    // suffix of this query's own order.
+    // And through the door: refused as another query's, or taken and resolved to a suffix
+    // of this query's own order.
     if guard == fx.guards[p] {
         let query = built.unwrap_or_else(|e| panic!("`{src}` refused its own cursor: {e:?}"));
         assert_eq!(query.cursor, Some(cursor), "`{src}` carries another cursor");
-        // The flags build the query the text does, cursor included, so what `pages` shows
-        // of one it shows of both.
-        let flagged = by_flags.unwrap_or_else(|e| panic!("--after refused `{text}`: {e:?}"));
-        assert_eq!(
-            flagged.matches, query.matches,
-            "`{src}`: the flags' pattern"
-        );
-        assert_eq!(flagged.mode, query.mode, "`{src}`: the flags' mode");
-        assert_eq!(
-            (flagged.time.since, flagged.time.until),
-            (query.time.since, query.time.until),
-            "`{src}`: the flags' window"
-        );
-        assert_eq!(
-            (flagged.limit, flagged.limit_source),
-            (query.limit, query.limit_source),
-            "`{src}`: the flags' limit"
-        );
-        assert_eq!(flagged.cursor, query.cursor, "`{src}`: the flags' cursor");
         fx.pages(p, w, limit, query, Some(cursor));
     } else {
-        for (door, built) in [("AFTER", built), ("--after", by_flags)] {
-            match built {
-                Err(e @ CliError::Cursor(CursorError::WrongQuery)) => rendered(&src, &e),
-                other => panic!("`{src}`: {door} did not refuse another query's cursor: {other:?}"),
-            }
+        match built {
+            Err(e @ Error::Cursor(CursorError::WrongQuery)) => rendered(&src, &e),
+            other => panic!("`{src}`: AFTER did not refuse another query's cursor: {other:?}"),
         }
     }
     unquoted(fx, text, p);
@@ -960,9 +1006,9 @@ fn hold(fx: &Fixture, text: &str, p: usize, w: usize, limit: Option<usize>) {
 
 /// A refusal of the cursor's text by the parser: it is `BadCursor`, and it points at the
 /// cursor's opening quote - inside the query, at the token that is wrong.
-fn refused_at(src: &str, e: &CliError, quote: usize) {
+fn refused_at(src: &str, e: &Error, quote: usize) {
     rendered(src, e);
-    let CliError::Trieql(e) = e else {
+    let Error::Trieql(e) = e else {
         panic!("`{src}` was refused by something other than the parser: {e:?}");
     };
     assert!(matches!(e.kind, Kind::BadCursor { .. }), "`{src}`: {e:?}");
@@ -972,7 +1018,7 @@ fn refused_at(src: &str, e: &CliError, quote: usize) {
 
 /// The refusal as `POST /query` answers it and the CLI prints it. It quotes the client's
 /// text back, so it is held to being a sentence and to costing the query plus a constant.
-fn rendered(src: &str, e: &CliError) {
+fn rendered(src: &str, e: &Error) {
     let line = error::chain(e);
     assert!(!line.is_empty(), "`{src}` was refused with nothing said");
     assert!(
@@ -1008,7 +1054,7 @@ fn foreign(fx: &Fixture, p: usize, payload: &[u8]) {
     if alone.cursor.is_some() {
         // The text brought a cursor of its own, and the grammar has room for one.
         match resumed {
-            Err(e @ CliError::Trieql(_)) => rendered(&with, &e),
+            Err(e @ Error::Trieql(_)) => rendered(&with, &e),
             other => panic!("`{with}` has two cursors and was not refused: {other:?}"),
         }
         return;
@@ -1060,7 +1106,7 @@ fn foreign(fx: &Fixture, p: usize, payload: &[u8]) {
     }
     if guard != fx.guards[p] {
         match resumed {
-            Err(e @ CliError::Cursor(CursorError::WrongQuery)) => rendered(&with, &e),
+            Err(e @ Error::Cursor(CursorError::WrongQuery)) => rendered(&with, &e),
             other => panic!("`{with}` did not refuse another query's cursor: {other:?}"),
         }
         return;
@@ -1090,7 +1136,7 @@ fn confused(fx: &Fixture, alone: &Query, bare: &str, pick: u8) {
         return told_apart(alone, &other, &with);
     }
     match query::from_trieql(&with, fx.now, LIMITS_CONFIG) {
-        Err(e @ CliError::Cursor(CursorError::WrongQuery)) => rendered(&with, &e),
+        Err(e @ Error::Cursor(CursorError::WrongQuery)) => rendered(&with, &e),
         other => panic!("`{with}` did not refuse the cursor of `{bare}`: {other:?}"),
     }
 }

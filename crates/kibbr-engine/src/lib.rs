@@ -25,7 +25,7 @@ pub mod compact;
 pub mod query;
 mod lifecycle;
 pub mod database;
-#[cfg(feature = "fuzzing")]
+#[cfg(any(feature = "fuzzing", feature = "test-support"))]
 pub mod fuzzing;
 
 pub use database::{
@@ -51,8 +51,8 @@ pub use rows::{FlushSummary, Stop, StoreError};
 pub use wal::{Advanced, Stats as WalStats};
 
 /// What the command line's diagnostic commands reach past the handle for: `demo` draws the
-/// trie, `bench-storage` writes a live day without a log and walks the frames of the files
-/// it measures, and the `cursor` fuzz harness builds a database from its lines in memory. No stability promise, and `kibbr-server` never names it
+/// trie, and `bench-storage` writes a live day without a log and walks the frames of the files
+/// it measures. No stability promise, and `kibbr-server` never names it
 /// (`scripts/check/no_internals.sh`).
 #[doc(hidden)]
 pub mod internals {

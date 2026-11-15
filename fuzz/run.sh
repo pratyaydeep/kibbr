@@ -7,11 +7,12 @@
 # Each target runs in libFuzzer's fork mode so that a crash is filed under
 # fuzz/artifacts/<target>/ and the run goes on to its full time. The memory limits are
 # what holds "never allocates unbounded memory from a length prefix": no harness in
-# src/tools/fuzzing/ or crates/kibbr-engine/src/fuzzing/ allocates anything large itself, so
-# 512MB in one malloc is the subject's.
+# crates/kibbr-engine/src/fuzzing/ allocates anything large itself, so 512MB in one malloc
+# is the subject's.
 #
 # A crasher is fixed, then committed under fuzz/regressions/<target>/ with a name that
-# says what it broke; tests/fuzz_regressions.rs replays those and the corpus on stable.
+# says what it broke; crates/kibbr-engine/src/fuzzing/tests.rs replays those and the corpus
+# on stable.
 set -u
 cd "$(dirname "$0")"
 secs=${1:-1800}

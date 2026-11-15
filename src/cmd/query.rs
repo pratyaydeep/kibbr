@@ -126,7 +126,7 @@ fn in_memory(schema: &Schema) -> Database {
 // ── Text and flags to a Query ──────────────────────────────────────────────────────
 
 /// `now` is a parameter, not a call, so a caller can fix it and both surfaces take the
-/// same one. Visible to the crate so `fuzzing::cursor` can hand `--after` a token.
+/// same one.
 pub(crate) fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> {
     // TrieQL builds the same `Query` the flags do. Both routes end at `Query::new`, the
     // one place the limit's default and its per-mode meaning are decided.
@@ -855,3 +855,6 @@ pub fn cli<W: Write>(
     };
     run(reader, out, &args)
 }
+
+#[cfg(test)]
+mod tests;
