@@ -65,7 +65,7 @@ src/server/handlers.rs   `/health`, `/ingest`'s door, `/query`, `/load`
 src/server/receive.rs    the door's half: a body's lines through `Database::ingest`, and the counts
 src/server/schedule.rs   `/compact`, and the look for a day that is due
 src/server/error.rs      what stops a server, and what stops the live door taking a body
-src/server/tests.rs      the unit tests
+src/tests/server.rs      the unit tests of src/server.rs
 src/server/viewer.html   the log viewer served at `/` - one file, compiled in
 ```
 
@@ -73,7 +73,7 @@ src/server/viewer.html   the log viewer served at `/` - one file, compiled in
 
 The whole database behind one handle, `Database`: the library, in `src/engine/`. No HTTP,
 no flags, no async runtime. The paths below are from `src/engine/`. Modules lowest first;
-each one's unit tests are in a `tests.rs` beside it (`wal/tests.rs`), and
+each one's unit tests are in the `tests/` folder beside it (`tests/wal.rs` for `wal.rs`), and
 `format/encodings.rs` and `format/vectors.rs` are modules of tests of their own.
 
 ```
@@ -128,7 +128,7 @@ cargo test --lib rows::                                              # one area:
 cargo clippy --workspace --all-targets --all-features -- -D warnings # lints have to be clean
 ```
 
-- Without `--all-features`, the engine's `fuzzing/tests.rs` is not compiled and the
+- Without `--all-features`, the engine's `tests/fuzzing.rs` is not compiled and the
   committed crashers are not replayed.
 - Most tests under `tests/` run the real binary and read its stdout. `compact.rs` also
   reads day files through `internals`. There are no mocks.

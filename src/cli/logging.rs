@@ -199,4 +199,5 @@ impl tracing::Subscriber for Lines {
 }
 
 #[cfg(test)]
+#[path = "tests/logging.rs"]
 mod tests;

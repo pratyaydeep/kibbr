@@ -556,4 +556,5 @@ pub fn row_of(parsed: &ParsedLog) -> Row {
 // ── Tests ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[path = "tests/flatten.rs"]
 mod tests;

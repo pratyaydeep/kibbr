@@ -224,4 +224,5 @@ fn ascending(name: &str, list: &[Posting]) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[path = "tests/keys.rs"]
 mod tests;

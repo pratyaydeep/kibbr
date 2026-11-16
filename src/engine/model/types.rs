@@ -235,4 +235,5 @@ impl TimeSource {
 }
 
 #[cfg(test)]
+#[path = "tests/types.rs"]
 mod tests;

@@ -962,4 +962,5 @@ pub fn cli<W: Write>(
 pub mod oracle;
 
 #[cfg(test)]
+#[path = "tests/query.rs"]
 mod tests;

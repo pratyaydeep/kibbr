@@ -369,4 +369,5 @@ pub fn path_in(data_dir: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
+#[path = "tests/catalog.rs"]
 mod tests;

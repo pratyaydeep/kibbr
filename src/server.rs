@@ -344,6 +344,7 @@ mod run;
 mod routes;
 pub mod settings;
 #[cfg(test)]
+#[path = "tests/server.rs"]
 mod tests;
 #[cfg(test)]
 use kibbr::database::MAX_REPORTED_ERRORS;

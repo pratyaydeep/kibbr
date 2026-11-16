@@ -4,7 +4,7 @@
 //! What the fuzz targets hold their subject to, one module per target, each with one
 //! `run(data)`: a TrieQL string, an `AFTER` cursor, the log's records, a data file's
 //! segments, and the catalog's and the manifest's records. They live beside what they
-//! test, with its private parts in reach, and `tests.rs` here replays every committed
+//! test, with its private parts in reach, and `tests/fuzzing.rs` replays every committed
 //! crasher on the stable toolchain. Compiled only with `fuzzing`, but for `cursor`, which
 //! `test-support` compiles too: the command line's test of its flags reads an input
 //! through it.
@@ -22,4 +22,5 @@ pub mod trieql;
 pub mod wal_record;
 
 #[cfg(all(test, feature = "fuzzing"))]
+#[path = "tests/fuzzing.rs"]
 mod tests;

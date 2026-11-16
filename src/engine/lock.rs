@@ -156,4 +156,5 @@ pub fn holder(base: &Path) -> Option<Holder> {
 }
 
 #[cfg(test)]
+#[path = "tests/lock.rs"]
 mod tests;

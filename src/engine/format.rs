@@ -864,4 +864,5 @@ pub(crate) fn count_set(map: &[u8]) -> usize {
 }
 
 #[cfg(test)]
+#[path = "tests/format.rs"]
 mod tests;

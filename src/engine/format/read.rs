@@ -870,4 +870,5 @@ pub(crate) fn surely_text(text: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests/read.rs"]
 mod tests;

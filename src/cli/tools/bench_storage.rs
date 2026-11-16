@@ -837,4 +837,5 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
 }
 
 #[cfg(test)]
+#[path = "tests/bench_storage.rs"]
 mod tests;

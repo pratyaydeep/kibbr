@@ -326,4 +326,5 @@ fn stats_lines(answer: &Value) -> String {
 }
 
 #[cfg(test)]
+#[path = "tests/status.rs"]
 mod tests;

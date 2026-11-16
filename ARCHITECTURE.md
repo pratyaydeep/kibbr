@@ -99,6 +99,6 @@ bytes lives in the engine.** That is query text, cursors and every file format.
 - The server's and the command line's own code is not fuzzed.
 - One check left the fuzz targets when the harnesses moved into the engine: "the flags of
   `kibbr query` and TrieQL build the same query". It is about operator input, so it is a
-  test of the binary now (`src/cli/query/tests.rs`). It runs on the harness's own cursors
+  test of the binary now (`src/cli/tests/query.rs`). It runs on the harness's own cursors
   and on every file in `fuzz/regressions/cursor/`. It is no longer fuzzed with coverage
   guidance.

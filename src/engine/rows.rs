@@ -1374,4 +1374,5 @@ pub(crate) fn project(row: &Row, columns: &[String]) -> Row {
 }
 
 #[cfg(test)]
+#[path = "tests/rows.rs"]
 mod tests;

@@ -366,4 +366,5 @@ fn is_email(s: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests/infer.rs"]
 mod tests;

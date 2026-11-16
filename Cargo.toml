@@ -109,7 +109,7 @@ zstd.workspace = true
 # with: a `#[cfg(test)]` item of the library is not there for the binary's tests. It only
 # adds items.
 test-support = []
-# The fuzz targets' harnesses, for fuzz/ and for the replay in src/engine/fuzzing/tests.rs;
+# The fuzz targets' harnesses, for fuzz/ and for the replay in src/engine/tests/fuzzing.rs;
 # off by default, so a build carries none of them.
 fuzzing = []
 

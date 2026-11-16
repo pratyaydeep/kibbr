@@ -354,4 +354,5 @@ pub fn cli(
 }
 
 #[cfg(test)]
+#[path = "tests/compact.rs"]
 mod tests;

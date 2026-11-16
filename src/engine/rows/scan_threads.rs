@@ -160,4 +160,5 @@ impl Turn<'_> {
 }
 
 #[cfg(test)]
+#[path = "tests/scan_threads.rs"]
 mod tests;

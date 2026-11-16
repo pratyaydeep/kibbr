@@ -381,4 +381,5 @@ pub fn read_lines<R: BufRead>(
 }
 
 #[cfg(test)]
+#[path = "tests/ingest.rs"]
 mod tests;

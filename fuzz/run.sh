@@ -11,7 +11,7 @@
 # is the subject's.
 #
 # A crasher is fixed, then committed under fuzz/regressions/<target>/ with a name that
-# says what it broke; src/engine/fuzzing/tests.rs replays those and the corpus
+# says what it broke; src/engine/tests/fuzzing.rs replays those and the corpus
 # on stable.
 set -u
 cd "$(dirname "$0")"

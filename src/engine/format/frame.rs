@@ -317,4 +317,5 @@ pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
+#[path = "tests/frame.rs"]
 mod tests;

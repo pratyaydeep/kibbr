@@ -1248,4 +1248,5 @@ fn check_written(choices: &[u8]) {
 }
 
 #[cfg(test)]
+#[path = "tests/record_log.rs"]
 mod tests;

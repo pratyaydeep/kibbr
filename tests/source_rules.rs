@@ -14,7 +14,7 @@
 //! 6. Every `.rs` file starts with the two licence lines.
 //! 8. A production command never names the tools.
 //!
-//! (Rule 7 is about where unit tests sit, and is not here yet.)
+//! 7. Unit tests sit in `dir/tests/x.rs`, beside the `dir/x.rs` they test.
 //!
 //! The test reads lines of text and has no parser: it does not follow a path inside the
 //! crate or open a `use` tree. Each rule also has a test of its own below, which gives the
@@ -113,8 +113,11 @@ enum Layer {
 }
 
 impl Layer {
-    /// The layer a file under `src/` is in, and `None` for a file anywhere else.
+    /// The layer a file under `src/` is in, and `None` for a file anywhere else. A file of
+    /// unit tests, `dir/tests/x.rs`, is in the layer of the `dir/x.rs` it tests.
     fn of(path: &str) -> Option<Layer> {
+        let tested = tested_by(path);
+        let path = tested.as_deref().unwrap_or(path);
         if path.starts_with("src/engine/") {
             Some(Layer::Engine)
         } else if path == "src/server.rs" || path.starts_with("src/server/") {
@@ -141,6 +144,14 @@ impl Layer {
             Layer::CommandLine => "the command line",
         }
     }
+}
+
+/// The file that the unit tests in `path` test: `dir/x.rs` for `dir/tests/x.rs`, and
+/// `None` for a path that is not of that form.
+fn tested_by(path: &str) -> Option<String> {
+    let (dir, name) = path.rsplit_once('/')?;
+    let dir = dir.strip_suffix("/tests")?;
+    Some(format!("{dir}/{name}"))
 }
 
 // ── Reading a line ─────────────────────────────────────────────────────────────────
@@ -513,6 +524,33 @@ fn no_licence(source: &Source) -> Vec<String> {
     }
 }
 
+// ── Rule 7: where unit tests sit ───────────────────────────────────────────────────
+
+/// A module's tests are `dir/tests/x.rs`, declared in `dir/x.rs` with a `#[path]`. So no
+/// file under `src/` is named `tests.rs`, and every file in a `tests` folder has the file
+/// it tests beside that folder. `paths` is every file under `src/`.
+fn tests_out_of_place(paths: &[&str]) -> Vec<String> {
+    let mut found = Vec::new();
+    for path in paths {
+        if !path.starts_with("src/") {
+            continue;
+        }
+        if path.ends_with("/tests.rs") {
+            found.push(format!(
+                "{path}: a file named `tests.rs`; the tests of `dir/x.rs` are `dir/tests/x.rs`"
+            ));
+        }
+        if let Some(tested) = tested_by(path) {
+            if !paths.contains(&tested.as_str()) {
+                found.push(format!(
+                    "{path}: no `{tested}` for these tests to be the tests of"
+                ));
+            }
+        }
+    }
+    found
+}
+
 // ── Rule 8: a production command never names the tools ─────────────────────────────
 
 /// `tools` as a module: the word, then `::`, or the `;`, `}` or `,` that ends it in a
@@ -641,6 +679,8 @@ fn the_sources_keep_the_rules_the_compiler_does_not_hold() {
     }
 
     let mut found = in_no_list(&dependencies);
+    let paths: Vec<&str> = sources.iter().map(|source| source.path.as_str()).collect();
+    found.extend(tests_out_of_place(&paths));
     for source in &sources {
         found.extend(check(source, &dependencies, &command_line));
     }
@@ -907,6 +947,52 @@ mod planted {
         assert_eq!(
             without("src/engine/wal.rs", &format!("{LICENCE}\nfn x() {{}}\n")),
             0
+        );
+    }
+
+    #[test]
+    fn rule_7_unit_tests_out_of_their_place_are_caught() {
+        let good = [
+            "src/engine/wal.rs",
+            "src/engine/tests/wal.rs",
+            "src/engine/rows/disk.rs",
+            "src/engine/rows/tests/disk.rs",
+            "src/server.rs",
+            "src/tests/server.rs",
+            "tests/serve.rs",
+        ];
+        assert_eq!(tests_out_of_place(&good), Vec::<String>::new());
+        // The old place: a `tests.rs` in the module's own folder.
+        let old = ["src/engine/wal.rs", "src/engine/wal/tests.rs"];
+        assert_eq!(tests_out_of_place(&old).len(), 1);
+        // Tests with nothing beside their folder to be the tests of.
+        let orphan = ["src/engine/wal.rs", "src/engine/tests/wall.rs"];
+        assert_eq!(tests_out_of_place(&orphan).len(), 1);
+        // The end-to-end tests at the repository's root are not unit tests.
+        assert_eq!(
+            tests_out_of_place(&["tests/tests.rs"]),
+            Vec::<String>::new()
+        );
+
+        // A file of unit tests is in the layer of what it tests.
+        assert_eq!(Layer::of("src/tests/server.rs"), Some(Layer::Server));
+        assert_eq!(
+            Layer::of("src/engine/rows/tests/disk.rs"),
+            Some(Layer::Engine)
+        );
+        assert_eq!(
+            Layer::of("src/cli/tests/query.rs"),
+            Some(Layer::CommandLine)
+        );
+        assert_eq!(caught("src/tests/server.rs", "use clap::Parser;"), 1);
+        assert_eq!(caught("src/tests/server.rs", "use tokio::sync::Notify;"), 0);
+        assert_eq!(
+            caught("src/engine/tests/wal.rs", "use tokio::sync::Notify;"),
+            1
+        );
+        assert_eq!(
+            caught("src/cli/tests/load.rs", "use crate::cli::tools::gen_logs;"),
+            1
         );
     }
 

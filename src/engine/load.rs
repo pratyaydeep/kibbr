@@ -1764,4 +1764,5 @@ fn stage_all(
 }
 
 #[cfg(test)]
+#[path = "tests/load.rs"]
 mod tests;

@@ -129,4 +129,5 @@ fn dechunk(mut body: &[u8]) -> io::Result<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[path = "tests/http.rs"]
 mod tests;

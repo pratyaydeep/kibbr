@@ -1515,4 +1515,5 @@ fn group(feed: &mut Feed<'_>, out: &mut Vec<u8>, index: &mut Index) -> usize {
 }
 
 #[cfg(test)]
+#[path = "tests/segment.rs"]
 mod tests;

@@ -1279,4 +1279,5 @@ pub struct Stats {
 }
 
 #[cfg(test)]
+#[path = "tests/database.rs"]
 mod tests;

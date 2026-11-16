@@ -4246,4 +4246,5 @@ fn time_value(form: TimeForm, ms: i64, micros: u32) -> Value {
 }
 
 #[cfg(test)]
+#[path = "tests/farm.rs"]
 mod tests;

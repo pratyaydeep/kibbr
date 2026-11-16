@@ -56,21 +56,21 @@ fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
         names.sort_unstable();
         names
     };
-    // Each module's tests are a file of their own beside its code, and name these words too:
-    // these in asking, the scan's in taking a turn.
+    // Each module's tests are a file of their own, in the `tests` folder beside its code,
+    // and name these words too: these in asking, the scan's in taking a turn.
     assert_eq!(
         holding("rayon"),
         [
             "src/engine/rows/scan_threads.rs",
-            "src/engine/rows/scan_threads/tests.rs"
+            "src/engine/rows/tests/scan_threads.rs"
         ]
     );
     assert_eq!(
         holding(".turn("),
         [
             "src/engine/rows/disk/scan.rs",
-            "src/engine/rows/disk/scan/tests.rs",
-            "src/engine/rows/scan_threads/tests.rs"
+            "src/engine/rows/disk/tests/scan.rs",
+            "src/engine/rows/tests/scan_threads.rs"
         ]
     );
 }

@@ -745,4 +745,5 @@ pub(crate) fn log_error(message: &str) {
 }
 
 #[cfg(test)]
+#[path = "tests/lifecycle.rs"]
 mod tests;

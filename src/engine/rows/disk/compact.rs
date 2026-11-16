@@ -1149,4 +1149,5 @@ impl Sink<'_> {
 }
 
 #[cfg(test)]
+#[path = "tests/compact.rs"]
 mod tests;
