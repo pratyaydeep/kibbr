@@ -1,5 +1,5 @@
 // Just enough TrieQL to take a typed query apart: the server's lexer, mirrored
-// (crates/kibbr-engine/src/trieql.rs), and its clauses in their order -
+// (src/engine/query/trieql.rs), and its clauses in their order -
 //
 //   MATCH|COUNT LOG {pattern} [SINCE d | BETWEEN t AND t] [GROUP BY …]
 //     [ORDER BY time [ASC|DESC]] [LIMIT n] [AFTER "c"]

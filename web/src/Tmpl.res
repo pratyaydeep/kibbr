@@ -1,4 +1,4 @@
-// A template's path read the way the trie writes it (crates/kibbr-core/src/flatten.rs):
+// A template's path read the way the trie writes it (src/engine/parse/flatten.rs):
 // the promoted `key=value` tokens first, split at the first unescaped `=`, then a token for
 // each other key.
 

@@ -30,14 +30,41 @@ jobs:
         run: cargo build --release
 
       # Every step below runs even when one before it failed, so one run shows all of them.
-      # Every feature on: without `fuzzing` the fuzz regressions are silently not replayed.
+      # What a contributor types: the `kibbr` package alone, no feature named.
+      - name: cargo test
+        if: ${{ !cancelled() }}
+        run: cargo test --no-fail-fast
+
+      # Every package and every feature: the bench's tests, and with `fuzzing` the replay of
+      # the saved fuzz inputs, which without it is silently not run.
       - name: cargo test --workspace --all-features
         if: ${{ !cancelled() }}
         run: cargo test --workspace --all-features --no-fail-fast
 
-      - name: cargo clippy -D warnings
+      # Three builds are linted. Everything, with every feature; the package's tests as
+      # `cargo test` builds them; and the build that ships, which has no test hooks in it.
+      - name: cargo clippy, everything
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo clippy, the package and its tests
+        if: ${{ !cancelled() }}
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo clippy, the build that ships
+        if: ${{ !cancelled() }}
+        run: cargo clippy -- -D warnings
+
+      # What a release would upload, built from the package alone. Uploads nothing.
+      - name: cargo publish --dry-run
+        if: ${{ !cancelled() }}
+        run: cargo publish --dry-run --locked
+
+      # The fuzz targets are a workspace of their own and run on nightly; this only makes
+      # sure that they still build against the library.
+      - name: cargo check, the fuzz targets
+        if: ${{ !cancelled() }}
+        run: cargo check --manifest-path fuzz/Cargo.toml
 
       - name: scripts/check/agree.sh
         if: ${{ !cancelled() }}

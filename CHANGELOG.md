@@ -2,6 +2,42 @@
 
 One entry per tag, newest first.
 
+## Unreleased
+
+- **One crate, from three.** The engine and the server are part of the `kibbr` crate now: its
+  library is the engine, and its binary is the server and the command line.
+  `cargo install --locked kibbr` is as before. `kibbr-engine` and `kibbr-server` get no more
+  releases; both end at 0.4.1, which is a notice only. The library is how the binary is built
+  and promises no stable interface: use the binary and its HTTP API.
+- **`kibbr bench` is `kibbr-bench`,** a binary of its own that is not published
+  (`crates/kibbr-devtools/`). It measures the `kibbr` in its own directory, so build both:
+  `cargo build --release --workspace`, then `target/release/kibbr-bench --lines 1000000
+  --profile farm`. It takes no `--config`, `--log-level` or `--log-format`. With it go the
+  Dockerfile's `bench` target and `bench/run.sh`: the bench runs natively
+  (`bench/README.md`).
+- **A bench result saved before this release reads `NOT THE SAME BENCH`** beside a new one.
+  The bench's digest of its own source changed with the move; take a new baseline.
+- **kibbr's own log targets changed,** because the module paths did. In the JSON log
+  (`--log-format json`) the `target` of a line is now:
+
+  | before | now |
+  |---|---|
+  | `kibbr_server::lifecycle` | `kibbr::server::run` |
+  | `kibbr_server::routes` | `kibbr::server::routes` |
+  | `kibbr_engine::lifecycle` | `kibbr::lifecycle` |
+  | `kibbr_engine::wal` | `kibbr::wal` |
+  | `kibbr_engine::rows::disk` | `kibbr::rows::disk` |
+  | `kibbr_engine::rows::scan_threads` | `kibbr::rows::scan_threads` |
+  | `kibbr_engine::templates::trie` | `kibbr::templates::trie` |
+  | `kibbr_engine::templates::snapshot` | `kibbr::templates::snapshot` |
+
+  The text log, the banner's target and every message are as they were.
+- No change to the on-disk format, to compression, to the HTTP API or to what any other
+  command prints.
+- For contributors: `tests/source_rules.rs` holds the rules of the layers and replaces
+  `scripts/check/spdx.sh`, `no_internals.sh` and `cmd_no_tools.sh`; `scripts/bump.sh` turns
+  `## Unreleased` into the version's heading; `scripts/publish.sh` publishes one crate.
+
 ## 0.4.0 — 2026-11-12
 
 - **JSON comes back as it went in.** An array comes back as that array, and an empty object

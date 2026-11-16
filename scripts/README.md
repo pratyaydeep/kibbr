@@ -71,14 +71,14 @@ A release is usually a GitHub release; CONTRIBUTING.md has the steps. Publishing
 `.github/workflows/release.yml`, which checks that `web/` still builds the committed
 `viewer.html` and then runs `scripts/publish.sh` with the version from the tag.
 
-`scripts/bump.sh 0.1.0` sets the version: in Cargo.toml for the three crates (kibbr-engine,
-kibbr-server, kibbr), in Cargo.lock, in the `/health` example of docs/serve.md and
-docs/container.md, and as a new CHANGELOG.md section holding `- TODO: what changed`, which
-`scripts/publish.sh` refuses. It commits nothing.
+`scripts/bump.sh 0.1.0` sets the version: in Cargo.toml, in Cargo.lock, in the `/health`
+example of docs/serve.md and docs/container.md, and in CHANGELOG.md, where `## Unreleased`
+becomes the version's heading with its notes under it. With no `## Unreleased` it makes a
+new section holding `- TODO: what changed`, which `scripts/publish.sh` refuses. It commits
+nothing.
 
 `scripts/publish.sh 0.1.0` checks the version against Cargo.toml and that CHANGELOG.md has a
-`## 0.1.0 ` section, dry-runs the three crates, and publishes them in dependency order
-(kibbr-engine, kibbr-server, kibbr) 30 seconds apart. `--dry-run` stops after the dry run;
+`## 0.1.0 ` section, dry-runs the one package, `kibbr`, and publishes it. `--dry-run` stops after the dry run;
 `--notes` stops after the two checks and prints the CHANGELOG section, the text for the
 release. Without either it publishes for real, from wherever it runs: leave that to the
 workflow.

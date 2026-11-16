@@ -19,7 +19,7 @@
 # Alpine, because its Rust targets musl and links it statically: the binary that comes
 # out needs nothing of the image it was built in. musl-dev is the C library's headers
 # and startup files for the two C dependencies, libzstd and mimalloc; gcc is in the base.
-FROM rust:1.96-alpine AS build
+FROM rust:1.96.1-alpine AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./

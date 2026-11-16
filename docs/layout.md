@@ -1,20 +1,18 @@
 # kibbr's layout, tests and lints
 
-A workspace of three crates, each naming only the ones under it - `kibbr`, then
-`kibbr-server`, `kibbr-engine` - and `fuzz/` beside them, a workspace of its own that depends
-on `kibbr-engine` with `fuzzing` on. The two library crates each have a README
-with their files: [engine](../crates/kibbr-engine/README.md),
-[server](../crates/kibbr-server/README.md). What were `kibbr-core` and `kibbr-storage` are
-modules of `kibbr-engine` now (`model` and `parse`; `format`, `templates`, `rows`, `ingest`,
-`wal` and `lock`); on crates.io their names stop at 0.2.3.
+One published package, `kibbr`, with two crates in it. The library is the engine
+(`src/engine/`). The binary is the server and the command line (`src/main.rs`). Each layer
+names only the ones under it: the command line, then the server, then the engine.
+[ARCHITECTURE.md](../ARCHITECTURE.md) is the map. `fuzz/` is a workspace of its own that
+depends on the library with `fuzzing` on, and `crates/kibbr-devtools/` holds the bench.
 
-## The binary, `kibbr`
+## The command line
 
 The command line over a `Database`. It opens a data directory no other way.
 
 ```
-Cargo.toml                  the workspace, and the `kibbr` crate: the binary - the command line
-src/main.rs                 the clap definitions and the dispatch
+Cargo.toml                  the workspace, and the `kibbr` package: the library and the binary
+src/main.rs                 the binary's root: the clap definitions and the dispatch
 src/config.rs               where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
 src/logs.rs                 the process's own log: `tracing` events as lines of text or of JSON
 src/error.rs                thiserror enums of the commands, and what ends one
@@ -53,50 +51,50 @@ web/                        the console's ReScript source, built into viewer.htm
   system one aborted the server with "pointer being freed was not allocated" at unrelated
   free sites that neither the code (no `unsafe`) nor AddressSanitizer could account for.
 
-## The server, `kibbr-server`
+## The server
 
-HTTP over one `Database`. It depends on `kibbr-engine` only, and reaches no further than the
-engine's public API.
-
-```
-src/lib.rs         what the handlers share, and the load job table
-src/settings.rs    `Settings`: every value a server runs on, plain data with a default
-src/lifecycle.rs   `run` - the runtime, the flush clock, signals, shutdown, the banner
-src/routes.rs      the router, the console at `/`, `/templates`, `/stats`, the request timeout
-src/handlers.rs    `/health`, `/ingest`'s door, `/query`, `/load`
-src/ingest.rs      the door's half: a body's lines through `Database::ingest`, and the counts
-src/compaction.rs  `/compact`, and the look for a day that is due
-src/error.rs       what stops a server, and what stops the live door taking a body
-src/tests.rs       the unit tests
-src/viewer.html    the log viewer served at `/` - one file, compiled in
-```
-
-## The engine, `kibbr-engine`
-
-The whole database behind one handle, `Database`. No HTTP, no flags, no async runtime.
-Modules lowest first; each one's unit tests are in a `tests.rs` beside it (`src/wal/tests.rs`),
-and `format/encodings.rs` and `format/vectors.rs` are modules of tests of their own. Each
-module's files are in [its README](../crates/kibbr-engine/README.md).
+HTTP over one `Database`: a module of the binary, `server`. It names the engine's public
+items only, and never the command line.
 
 ```
-src/model/       the types (`ColumnType`, `ColValue`, `TimeSource`), the type ladder, the tokens, a row and its instant
-src/parse/       a line read under a byte cap, flattened into a row, and `KeyPath`
-src/fmt.rs       how a value, a count and an instant are printed
-src/rng.rs       a deterministic PRNG
-src/error/       `Error`, `IngestError`, and the line errors
-src/lock.rs      `DataLock`: one process owns a data directory
-src/format/      storage format v3: frame, build, the file `Writer` and `Reader`, read, column
-src/templates/   the trie and its key index, `catalog.log`, and `trie.json`
-src/rows/        `StoreManager` and the store traits, the disk store (scan, compaction), memory, filter, manifest, scan threads
-src/ingest.rs    the live door: one parsed line into the trie and its store
-src/wal.rs       the write-ahead log
-src/load.rs      the bulk door
-src/compact.rs   which days a run takes, its report, the one-at-a-time job table
-src/query/       TrieQL, the plan, the scan, buckets, the cursor, limits, the answer
-src/lifecycle.rs open (restore and replay), the checkpoint moved behind the flush, the close order
-src/database.rs  `Database` and `Options`: the three ways to open, and everything asked of it
-src/fuzzing/     the five fuzz harnesses and the replay of their inputs, behind the `fuzzing` feature
-src/lib.rs       the public names, `internals`, and `testing` behind `test-support`
+src/server.rs            what the handlers share, and the load job table
+src/server/settings.rs   `Settings`: every value a server runs on, plain data with a default
+src/server/run.rs        `run` - the runtime, the flush clock, signals, shutdown, the banner
+src/server/routes.rs     the router, the console at `/`, `/templates`, `/stats`, the request timeout
+src/server/handlers.rs   `/health`, `/ingest`'s door, `/query`, `/load`
+src/server/receive.rs    the door's half: a body's lines through `Database::ingest`, and the counts
+src/server/schedule.rs   `/compact`, and the look for a day that is due
+src/server/error.rs      what stops a server, and what stops the live door taking a body
+src/server/tests.rs      the unit tests
+src/server/viewer.html   the log viewer served at `/` - one file, compiled in
+```
+
+## The engine
+
+The whole database behind one handle, `Database`: the library, in `src/engine/`. No HTTP,
+no flags, no async runtime. The paths below are from `src/engine/`. Modules lowest first;
+each one's unit tests are in a `tests.rs` beside it (`wal/tests.rs`), and
+`format/encodings.rs` and `format/vectors.rs` are modules of tests of their own.
+
+```
+model/       the types (`ColumnType`, `ColValue`, `TimeSource`), the type ladder, the tokens, a row and its instant
+parse/       a line read under a byte cap, flattened into a row, and `KeyPath`
+fmt.rs       how a value, a count and an instant are printed
+rng.rs       a deterministic PRNG
+error/       `Error`, `IngestError`, and the line errors
+lock.rs      `DataLock`: one process owns a data directory
+format/      storage format v3: frame, build, the file `Writer` and `Reader`, read, column
+templates/   the trie and its key index, `catalog.log`, and `trie.json`
+rows/        `StoreManager` and the store traits, the disk store (scan, compaction), memory, filter, manifest, scan threads
+ingest.rs    the live door: one parsed line into the trie and its store
+wal.rs       the write-ahead log
+load.rs      the bulk door
+compact.rs   which days a run takes, its report, the one-at-a-time job table
+query/       TrieQL, the plan, the scan, buckets, the cursor, limits, the answer
+lifecycle.rs open (restore and replay), the checkpoint moved behind the flush, the close order
+database.rs  `Database` and `Options`: the three ways to open, and everything asked of it
+fuzzing/     the five fuzz harnesses and the replay of their inputs, behind the `fuzzing` feature
+lib.rs       the public names, `internals`, and `testing` behind `test-support`
 ```
 
 - **Three ways to open.** To serve, `Database::claim` then `Claim::open`; offline,
@@ -104,8 +102,8 @@ src/lib.rs       the public names, `internals`, and `testing` behind `test-suppo
 - **`internals`** is doc-hidden and has no stability promise. It holds what the command
   line's diagnostics (`demo`, `bench-storage`) read past the handle. The server never
   names it (`tests/source_rules.rs`).
-- **Features.** `test-support` gives the tests of the crates above their fixtures;
-  `fuzzing` is off by default.
+- **Features.** `test-support` gives the binary's tests their fixtures; `fuzzing` is
+  off by default. Neither is for a build that runs in production.
 - The format's test vectors are in `testdata/format/`.
 - **Column encodings.** Each piece of a column chunk gets one encoding, by its type, and
   never several tried with the smallest kept (`format/mod.rs`, `format/build.rs`):
@@ -122,13 +120,15 @@ src/lib.rs       the public names, `internals`, and `testing` behind `test-suppo
 ## Tests and lints
 
 ```
-cargo test --workspace --all-features                                # every crate, tests/ at the root, the fuzz replay
-cargo test -p kibbr-engine --all-features                            # one crate's own
-cargo test -p kibbr-engine rows::                                    # one area: the module path is the filter
+cargo test                                                           # the `kibbr` package: engine, server, command line, tests/
+cargo test --workspace --all-features                                # the bench too, and the fuzz replay
+cargo test --lib                                                     # the engine's own tests
+cargo test --bin kibbr                                               # the server's and the command line's own tests
+cargo test --lib rows::                                              # one area: the module path is the filter
 cargo clippy --workspace --all-targets --all-features -- -D warnings # lints have to be clean
 ```
 
-- Without `--all-features`, the engine's `src/fuzzing/tests.rs` is not compiled and the
+- Without `--all-features`, the engine's `fuzzing/tests.rs` is not compiled and the
   committed crashers are not replayed.
 - Most tests under `tests/` run the real binary and read its stdout. `compact.rs` also
   reads day files through `internals`. There are no mocks.

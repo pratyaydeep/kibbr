@@ -3,7 +3,7 @@
 
 use thiserror::Error;
 
-// What is wrong with one line is the flattener's to say, and it is two crates down; here
+// What is wrong with one line is the flattener's to say, and it is in the engine; here
 // under the names every command already uses.
 pub use kibbr::error::{chain, report, DetectorError, DetectorErrorKind};
 
