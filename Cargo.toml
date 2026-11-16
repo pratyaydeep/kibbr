@@ -65,7 +65,10 @@ rust-version.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories = ["database-implementations", "command-line-utilities"]
-include = ["/src/", "/Cargo.toml", "/Cargo.lock", "/README.md", "/CHANGELOG.md",
+# By name and by kind, not all of src/: with an `include` list Cargo does not read
+# .gitignore, and "/src/" would package a file git ignores, such as a .DS_Store.
+include = ["/src/**/*.rs", "/src/server/viewer.html", "/Cargo.toml", "/Cargo.lock",
+           "/README.md", "/CHANGELOG.md",
            "/LICENSE", "/LICENSE-CONTRIBUTOR", "/NOTICE", "/COMMERCIAL.md",
            "/TRADEMARK.md", "/kibbr.toml.example"]
 
