@@ -355,6 +355,16 @@ fn render_columns<W: Write>(columns: &[String], indent: &str, out: &mut W) -> Re
     Ok(())
 }
 
+/// The flags of `kibbr demo`, as clap reads them.
+#[derive(clap::Args)]
+pub struct Flags {
+    /// Path to an NDJSON file, or `-` for stdin.
+    pub input: String,
+    /// Print every subtree instead of summarising the large ones as `… N templates`.
+    #[arg(long)]
+    pub full: bool,
+}
+
 /// The `demo` arm of `cli.rs`: the input opened, then `run`.
 pub fn cli<W: Write>(input: &str, out: &mut W, full: bool) -> Result<(), CliError> {
     let reader = crate::cli::open(input)?;

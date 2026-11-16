@@ -50,7 +50,8 @@ values), the modules, and TrieQL. It is the front page on docs.rs.
 compactions it runs. Nothing there reads a flag or writes to stderr, and the flush clock
 is there, not in the store.
 
-`src/cli.rs` is the command line: the clap types of every subcommand, and the dispatch.
+`src/cli.rs` is the command line: the top-level clap type, the enum of the subcommands,
+and the dispatch. A subcommand's flags are in its own file, as a struct named `Flags`.
 The subcommands are in two halves.
 
 - `src/cli/` holds what someone runs in production, one file each: `serve.rs`,

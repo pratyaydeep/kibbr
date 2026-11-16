@@ -810,30 +810,133 @@ fn dedup(mut items: Vec<String>) -> Vec<String> {
     items
 }
 
+/// The flags of `kibbr explain`, as clap reads them.
+#[derive(clap::Args)]
+pub struct ExplainFlags {
+    /// e.g. `COUNT LOG {"event": "login_failed"} SINCE 1h`.
+    pub query: String,
+    /// As `serve --max-rows`: what an unlimited `MATCH` would be cut at.
+    #[arg(long, value_name = "ROWS")]
+    pub max_rows: Option<usize>,
+    /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
+    /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
+    #[arg(long, value_name = "BUCKETS")]
+    pub max_buckets: Option<usize>,
+    /// Groups a bucketed `GROUP BY` may emit before the query is refused.
+    /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
+    #[arg(long, value_name = "GROUPS")]
+    pub max_groups: Option<usize>,
+}
+
+/// The flags of `kibbr query`, as clap reads them.
+#[derive(clap::Args)]
+pub struct Flags {
+    /// Path to an NDJSON file, or `-` for stdin.
+    pub input: String,
+
+    /// A TrieQL query. Give this or the flags below, not both.
+    #[arg(
+        value_name = "TRIEQL",
+        conflicts_with_all = [
+            "matches", "count", "fetch", "exists", "group_by", "since", "between",
+            "limit", "after"
+        ]
+    )]
+    pub query: Option<String>,
+
+    /// `KEY=VALUE`, repeatable. `VALUE` may be `*` for "present and not null".
+    #[arg(long = "match", value_name = "KEY=VALUE")]
+    pub matches: Vec<String>,
+
+    // The four verbs are mutually exclusive. Spelled out rather than put in an `ArgGroup`,
+    // which reports the pair as its first member repeated.
+    /// How many rows match. The default when no other verb is given.
+    #[arg(long, conflicts_with_all = ["fetch", "exists", "group_by"])]
+    pub count: bool,
+    /// The matching rows themselves.
+    #[arg(long, conflicts_with_all = ["exists", "group_by"])]
+    pub fetch: bool,
+    /// Whether the template exists at all - the trie walk only, no rows read.
+    #[arg(long, conflicts_with_all = ["group_by"])]
+    pub exists: bool,
+    /// Count per distinct value of these keys. A key may be `time(<duration>)`, which
+    /// buckets by the timestamp instead - TrieQL spells it `GROUP BY time(5m)`.
+    #[arg(long = "group-by", value_name = "KEY[,KEY]")]
+    pub group_by: Option<String>,
+
+    /// Relative window ending now: a number followed by s, m, h or d.
+    #[arg(long, value_name = "DURATION", conflicts_with = "between")]
+    pub since: Option<String>,
+    /// Absolute window `[FROM, TO)`, both RFC 3339.
+    #[arg(long, num_args = 2, value_names = ["FROM", "TO"])]
+    pub between: Option<Vec<String>>,
+
+    #[arg(long, value_enum, default_value = "table")]
+    pub format: Format,
+
+    /// Print the execution plan and execute nothing.
+    #[arg(long)]
+    pub explain: bool,
+
+    /// Answer with the brute-force reference scanner instead of the engine.
+    #[arg(long)]
+    pub reference: bool,
+
+    /// Return at most this many rows, newest first; TrieQL spells it `LIMIT n`. Omitted,
+    /// every matching row comes back; `--limit 0` asks for none.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// Resume after a previous answer's `next_cursor`. TrieQL spells it `AFTER "…"`.
+    /// Only valid for the query that produced it.
+    #[arg(long, value_name = "CURSOR")]
+    pub after: Option<String>,
+
+    /// Rows a query that names no `LIMIT` is cut at; `0` disables it.
+    /// Overrides `KIBBR__QUERY__MAX_ROWS`.
+    #[arg(long, value_name = "ROWS")]
+    pub max_rows: Option<usize>,
+    /// Buckets a `GROUP BY time(...)` may emit before the query is refused.
+    /// `0` disables it. Overrides `KIBBR__QUERY__MAX_BUCKETS`.
+    #[arg(long, value_name = "BUCKETS")]
+    pub max_buckets: Option<usize>,
+    /// Groups a bucketed `GROUP BY` may emit before the query is refused.
+    /// `0` disables it. Overrides `KIBBR__QUERY__MAX_GROUPS`.
+    #[arg(long, value_name = "GROUPS")]
+    pub max_groups: Option<usize>,
+    /// As `serve --time-columns`: the names a template's time column is chosen from.
+    /// Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
+    #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+    pub time_columns: Option<Vec<String>>,
+}
+
 /// The `query` arm of `cli.rs`: the limits settled, the input opened, then `run`.
-#[allow(clippy::too_many_arguments)]
 pub fn cli<W: Write>(
     file: &crate::cli::config::File,
     out: &mut W,
-    input: &str,
-    trieql: Option<String>,
-    matches: Vec<String>,
-    count: bool,
-    fetch: bool,
-    exists: bool,
-    group_by: Option<String>,
-    since: Option<String>,
-    between: Option<Vec<String>>,
-    format: Format,
-    explain: bool,
-    reference: bool,
-    limit: Option<usize>,
-    after: Option<String>,
-    max_rows: Option<usize>,
-    max_buckets: Option<usize>,
-    max_groups: Option<usize>,
-    time_columns: Option<Vec<String>>,
+    flags: Flags,
 ) -> Result<(), CliError> {
+    let Flags {
+        input,
+        query: trieql,
+        matches,
+        count,
+        fetch,
+        exists,
+        group_by,
+        since,
+        between,
+        format,
+        explain,
+        reference,
+        limit,
+        after,
+        max_rows,
+        max_buckets,
+        max_groups,
+        time_columns,
+    } = flags;
+    let input = input.as_str();
     let limits = crate::cli::config::limits(file, max_rows, max_buckets, max_groups)?;
     let reader = super::open(input)?;
     let args = Args {

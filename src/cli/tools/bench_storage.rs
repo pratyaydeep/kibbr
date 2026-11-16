@@ -24,6 +24,37 @@ use kibbr::internals::{
 };
 use kibbr::{Database, FlushSummary, Opener, ReadError};
 
+/// The flags of `kibbr bench-storage`, as clap reads them.
+#[derive(clap::Args)]
+pub struct Flags {
+    /// NDJSON, gzip or zstd.
+    #[arg(value_name = "FILE")]
+    pub input: PathBuf,
+    /// Also index the same lines into this Elasticsearch - a scratch index, deleted
+    /// after - and print its store size beside kibbr's.
+    #[arg(long, value_name = "URL")]
+    pub es: Option<String>,
+    /// Where to load it. Must be absent or empty. [default: a directory under the
+    /// system's temporary directory]
+    #[arg(long, value_name = "PATH")]
+    pub scratch: Option<PathBuf>,
+    /// Leave the scratch directory in place, to look at.
+    #[arg(long)]
+    pub keep: bool,
+    /// Leave zstd -19 out: it runs on one thread at a few MB/s, so on tens of gigabytes it
+    /// takes hours.
+    #[arg(long)]
+    pub no_zstd: bool,
+    /// Threads for zstd -19. 1 is the plain zstd -19, the smallest it makes; more split
+    /// the input into jobs, a little larger and close to N times faster. [default: every
+    /// CPU this process may use]
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+    pub zstd_threads: Option<u32>,
+    /// As `load --time-columns`. Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
+    #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+    pub time_columns: Option<Vec<String>>,
+}
+
 pub struct Args {
     pub input: PathBuf,
     pub es: Option<String>,

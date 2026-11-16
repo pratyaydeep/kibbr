@@ -236,6 +236,19 @@ fn display_value(ty: Option<ColumnType>, value: &ColValue, raw: &str) -> String 
     }
 }
 
+/// The flags of `kibbr parse`, as clap reads them.
+#[derive(clap::Args)]
+pub struct Flags {
+    /// Path to an NDJSON file, or `-` for stdin.
+    pub input: String,
+    /// Stop after this many lines.
+    #[arg(long)]
+    pub limit: Option<u64>,
+    /// Emit the `ParsedLog` as NDJSON instead of the human table.
+    #[arg(long)]
+    pub json: bool,
+}
+
 /// The `parse` arm of `cli.rs`: the input opened, then `run`.
 pub fn cli<W: Write>(
     input: &str,

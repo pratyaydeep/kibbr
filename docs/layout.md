@@ -13,7 +13,7 @@ The command line over a `Database`. It opens a data directory no other way.
 ```
 Cargo.toml                       the workspace, and the `kibbr` package: the library and the binary
 src/main.rs                      the binary's root: the allocator, and the two modules `server` and `cli`
-src/cli.rs                       the command line: the clap definitions and the dispatch
+src/cli.rs                       the command line: the enum of the subcommands and the dispatch; each one's flags are in its own file
 src/cli/config.rs                where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
 src/cli/logging.rs               the process's own log: `tracing` events as lines of text or of JSON
 src/cli/error.rs                 thiserror enums of the commands, and what ends one

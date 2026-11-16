@@ -70,6 +70,55 @@ pub struct Server {
     pub found: String,
 }
 
+/// The flags of `kibbr templates`, as clap reads them.
+#[derive(clap::Args)]
+pub struct TemplatesFlags {
+    /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+    /// `[api] native_addr`, 127.0.0.1:7700]
+    #[arg(long, value_name = "HOST:PORT")]
+    pub addr: Option<String>,
+    /// The data directory whose server is asked.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Print the server's answer as it sent it, one JSON object, instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// The flags of `kibbr stats`, as clap reads them.
+#[derive(clap::Args)]
+pub struct StatsFlags {
+    /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+    /// `[api] native_addr`, 127.0.0.1:7700]
+    #[arg(long, value_name = "HOST:PORT")]
+    pub addr: Option<String>,
+    /// The data directory whose server is asked.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Print the server's answer as it sent it, one JSON object, instead of a line a
+    /// number.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// The flags of `kibbr health`, as clap reads them.
+#[derive(clap::Args)]
+pub struct HealthFlags {
+    /// The server to ask, `host:port`. [default: the server holding --data-dir; with none,
+    /// `[api] native_addr`, 127.0.0.1:7700]
+    #[arg(long, value_name = "HOST:PORT")]
+    pub addr: Option<String>,
+    /// The data directory whose server is asked.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+    /// Print the server's answer as it sent it, one JSON object, instead of a word.
+    #[arg(long)]
+    pub json: bool,
+}
+
 /// Which server: `--addr`, or the one whose `LOCK` in the data directory says where it
 /// listens, or the address in the settings; the `LOCK` is read and never taken.
 pub fn server(

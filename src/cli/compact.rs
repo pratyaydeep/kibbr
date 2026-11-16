@@ -291,16 +291,43 @@ fn client(
     }
 }
 
+/// The flags of `kibbr compact`, as clap reads them.
+#[derive(clap::Args)]
+pub struct Flags {
+    /// Compact this UTC day now, whatever its age. Without it, every day that is due:
+    /// each day before today whose last live row was written before today.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub day: Option<String>,
+    /// The data directory, which must be one already; nothing is created.
+    /// Overrides `KIBBR__STORAGE__BASE_PATH`. [default: kibbr-data]
+    #[arg(long, value_name = "PATH")]
+    pub data_dir: Option<std::path::PathBuf>,
+    /// Threads to encode on, at most one per core. [default: one per core up to 8
+    /// alone, half that inside a server]
+    #[arg(long, value_name = "N")]
+    pub threads: Option<usize>,
+    /// A rebuilt file is sealed at this many bytes, when no server holds the directory.
+    /// Overrides `KIBBR__STORAGE__SEGMENT_MAX_BYTES`. [default: 512 MiB]
+    #[arg(long, value_name = "BYTES")]
+    pub segment_max_bytes: Option<usize>,
+    /// Print the report as one JSON object instead of a line a day.
+    #[arg(long)]
+    pub json: bool,
+}
+
 /// The `compact` arm of `cli.rs`: the day checked, the settings loaded, then `command`.
 pub fn cli(
     file: &crate::cli::config::File,
     out: &mut dyn io::Write,
-    day: Option<String>,
-    data_dir: Option<std::path::PathBuf>,
-    threads: Option<usize>,
-    segment_max_bytes: Option<usize>,
-    json: bool,
+    flags: Flags,
 ) -> Result<(), crate::cli::error::CliError> {
+    let Flags {
+        day,
+        data_dir,
+        threads,
+        segment_max_bytes,
+        json,
+    } = flags;
     // Before the settings are loaded, which creates the directory they name: a
     // compaction of a path that is not a data directory makes nothing there.
     let base = crate::cli::config::Storage::base_named(file, data_dir.clone());
