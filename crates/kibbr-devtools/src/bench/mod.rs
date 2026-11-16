@@ -152,7 +152,7 @@ pub struct Args {
 pub enum SpeedError {
     /// `--profile hostile`: the queries, their expected answers and the places in the
     /// stream are the farm's.
-    #[error("kibbr bench measures the farm profile only")]
+    #[error("kibbr-bench measures the farm profile only")]
     Profile,
 
     /// Checked before anything runs, so that an hour of measuring cannot end at a file it
@@ -207,7 +207,7 @@ pub enum SpeedError {
 
     /// Something the bench reads answered in another form than the one it was written
     /// for, met in the preflight before a run is spent.
-    #[error("{surface} did not answer the way kibbr bench reads it: {detail}")]
+    #[error("{surface} did not answer the way kibbr-bench reads it: {detail}")]
     Surface {
         surface: &'static str,
         detail: String,
@@ -255,7 +255,7 @@ pub enum SpeedError {
     #[error("{path} cannot be the baseline of this run: {detail}")]
     Baseline { path: PathBuf, detail: String },
 
-    #[error("JSON that kibbr bench reads or writes is not in the form it has")]
+    #[error("JSON that kibbr-bench reads or writes is not in the form it has")]
     Json(#[from] serde_json::Error),
 
     /// Returned after the table is printed, so that the command still ends on its table and
@@ -1199,7 +1199,7 @@ mod tests {
     fn an_error_says_what_was_met_in_one_sentence() {
         assert_eq!(
             SpeedError::Profile.to_string(),
-            "kibbr bench measures the farm profile only"
+            "kibbr-bench measures the farm profile only"
         );
         assert_eq!(
             SpeedError::OutExists(PathBuf::from("testdata/bench/baseline.json")).to_string(),

@@ -68,7 +68,7 @@ fn bench(dir: &Path, runs: usize, samples: usize, more: &[&str]) -> Output {
         .arg(dir)
         .args(more)
         .output()
-        .expect("failed to run kibbr bench")
+        .expect("failed to run kibbr-bench")
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -112,7 +112,7 @@ fn table_of(stdout: &str) -> Vec<&str> {
     let lines: Vec<&str> = stdout.lines().collect();
     let at = lines
         .iter()
-        .rposition(|line| line.starts_with("kibbr bench   commit "))
+        .rposition(|line| line.starts_with("kibbr-bench   commit "))
         .unwrap_or_else(|| panic!("no table in:\n{stdout}"));
     lines[at..].to_vec()
 }
@@ -246,14 +246,14 @@ fn a_bench_run_prints_the_eight_rows_and_saves_every_sample_behind_them() {
 
     let ran = bench(dir, 3, 1, &["--out", a.to_str().expect("a path")]);
     let stderr = text(&ran.stderr);
-    assert!(ran.status.success(), "kibbr bench failed:\n{stderr}");
+    assert!(ran.status.success(), "kibbr-bench failed:\n{stderr}");
     let stdout = text(&ran.stdout);
 
     // ── The table is the last thing printed: the eight rows, then what is under them ──
     let table = table_of(&stdout);
     let shapes: Vec<String> = table.iter().map(|line| shape(line)).collect();
     assert!(
-        shapes[0].starts_with("kibbr bench commit ")
+        shapes[0].starts_with("kibbr-bench commit ")
             && shapes[0].ends_with(" farm N lines, median of N runs of N samples"),
         "{:?}",
         table[0]
@@ -542,7 +542,7 @@ fn a_bench_run_prints_the_eight_rows_and_saves_every_sample_behind_them() {
         .arg(&a)
         .arg(&a)
         .output()
-        .expect("failed to run kibbr bench --table");
+        .expect("failed to run kibbr-bench --table");
     assert!(printed.status.success(), "{}", text(&printed.stderr));
     let printed = text(&printed.stdout);
     let rows: Vec<&str> = printed.lines().collect();
@@ -708,11 +708,11 @@ fn a_profile_the_bench_does_not_measure_is_refused_by_name() {
         .arg("--dir")
         .arg(&dir)
         .output()
-        .expect("failed to run kibbr bench");
+        .expect("failed to run kibbr-bench");
     assert_eq!(ran.status.code(), Some(1));
     let said = text(&ran.stderr);
     assert!(
-        said.contains("kibbr bench measures the farm profile only"),
+        said.contains("kibbr-bench measures the farm profile only"),
         "{said}"
     );
     assert!(ran.stdout.is_empty());

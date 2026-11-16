@@ -1022,7 +1022,7 @@ mod tests {
         let error = server.stats(&mut conn).unwrap_err().to_string();
         assert!(
             error.starts_with(
-                "GET /stats did not answer the way kibbr bench reads it: status 500: no (server pid "
+                "GET /stats did not answer the way kibbr-bench reads it: status 500: no (server pid "
             ) && error.ends_with("server-1.log)"),
             "{error}"
         );
