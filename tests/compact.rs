@@ -21,6 +21,8 @@ use kibbr::internals::{open_sealed, Reader};
 use kibbr::internals::FormatError;
 use serde_json::Value;
 
+use crate::harness::{json, strings};
+
 /// Farm lines for most tests: one day, every line carrying its own time.
 const LINES: usize = 3_000;
 
@@ -691,19 +693,6 @@ fn request(port: u16, method: &str, path: &str, extra: &str, body: &[u8]) -> (u1
         status,
         String::from_utf8_lossy(&response[split + 4..]).into_owned(),
     )
-}
-
-fn json(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
-}
-
-/// A JSON array of strings as a set; anything else is the empty set.
-fn strings(v: &Value) -> BTreeSet<String> {
-    v.as_array()
-        .into_iter()
-        .flatten()
-        .map(|s| s.as_str().expect("an array of strings").to_string())
-        .collect()
 }
 
 fn farm(lines: usize, seed: u64) -> Vec<u8> {

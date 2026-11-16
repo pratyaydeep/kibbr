@@ -6,17 +6,15 @@
 //! them apart. Pinned here because the differential judges the engine against the oracle:
 //! dropped from both, they would keep agreeing.
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
+
+use crate::harness::kibbr;
 
 /// The worked example: three templates, one promoted dimension (`event`), and `user_id`
 /// on all three, so each answer has a promoted and a non-promoted route.
 const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
-
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
 
 /// Runs a query with the fixture on stdin, fed from a separate thread: writing inline
 /// deadlocks once the input outgrows a pipe buffer.

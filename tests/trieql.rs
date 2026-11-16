@@ -6,15 +6,13 @@
 //! That a query and the flags it translates answer alike is
 //! `scripts/check/parser_equivalence.sh`; pinned below is one case per grammar clause.
 
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 
 use serde_json::Value;
 
-const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
+use crate::harness::kibbr;
 
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
+const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
 
 /// `kibbr explain`, which parses and executes nothing - the parser on its own.
 fn explain(query: &str) -> Output {

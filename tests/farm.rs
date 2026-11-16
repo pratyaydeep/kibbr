@@ -5,11 +5,9 @@
 //! the storage measurements are going to lean on. Everything runs the real binary.
 
 use std::collections::HashSet;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
+use crate::harness::{fnv1a, kibbr};
 
 fn run(args: &[&str]) -> String {
     let out = kibbr().args(args).output().expect("failed to run kibbr");
@@ -59,12 +57,6 @@ fn farm(lines: usize, extra: &[&str]) -> String {
     let mut args = vec!["gen-logs", "--profile", "farm", "--lines", &n];
     args.extend_from_slice(extra);
     run(&args)
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 
 /// The instant a farm line was stamped with, in milliseconds, whichever service wrote it.

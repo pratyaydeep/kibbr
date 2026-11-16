@@ -6,7 +6,8 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+
+use crate::harness::kibbr;
 
 /// Farm lines, one day: more than a day has flushes, and few enough that either door
 /// stores each template as one row group.
@@ -43,10 +44,6 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
-}
-
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
 }
 
 /// A line with every count in it replaced by `N`, and the counts in the order they stood.

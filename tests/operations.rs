@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::harness::json;
+
 fn kibbr() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
     // The variables are settings too, and would answer for the file under test.
@@ -63,10 +65,6 @@ impl Drop for Scratch {
 
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
-}
-
-fn json(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
 }
 
 /// A running `kibbr serve`, killed when dropped.

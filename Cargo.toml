@@ -65,6 +65,8 @@ rust-version.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories = ["database-implementations", "command-line-utilities"]
+# The tests under tests/ are one binary, named below, and not one a file.
+autotests = false
 # By name and by kind, not all of src/: with an `include` list Cargo does not read
 # .gitignore, and "/src/" would package a file git ignores, such as a .DS_Store.
 include = ["/src/**/*.rs", "/src/server/viewer.html", "/Cargo.toml", "/Cargo.lock",
@@ -80,6 +82,11 @@ path = "src/engine/lib.rs"
 [[bin]]
 name = "kibbr"
 path = "src/main.rs"
+
+# The end-to-end tests: one binary, one module a topic (tests/main.rs).
+[[test]]
+name = "e2e"
+path = "tests/main.rs"
 
 # One list for the library and the binary. Which of these each layer may name is held by
 # a test, not by this file.

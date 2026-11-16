@@ -29,7 +29,7 @@ src/cli/tools/parse.rs           the `parse` output
 src/cli/tools/demo.rs            the `demo` tree
 src/cli/tools/gen_logs.rs        the generators - `hostile` (this file) and the log farm (gen_logs/farm.rs)
 src/cli/tools/bench_storage.rs   `kibbr bench-storage`
-tests/                           one file an area (load, query, compact, restart, compat, ...); data/ holds every test's data
+tests/                           one binary, `e2e` (main.rs): one file a topic (load, query, compact, restart, compat, ...), harness.rs for what they share, data/ for every test's data
 tests/fixture.rs                 outer-surface tests
 tests/serve.rs                   the HTTP contract of the binary, over a bare TcpStream
 crates/kibbr-devtools/           `kibbr-bench`, the speed bench: its own binary, never published; it measures the `kibbr` beside it
@@ -124,6 +124,7 @@ cargo test --workspace --all-features                                # the bench
 cargo test --lib                                                     # the engine's own tests
 cargo test --bin kibbr                                               # the server's and the command line's own tests
 cargo test --lib rows::                                              # one area: the module path is the filter
+cargo test --test e2e serve::                                        # one topic of the end-to-end tests
 cargo clippy --workspace --all-targets --all-features -- -D warnings # lints have to be clean
 ```
 

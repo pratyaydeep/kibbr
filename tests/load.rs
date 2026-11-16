@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::harness::{fnv1a, json, strings};
+
 /// Hostile lines for most tests: thirty days and a few hundred templates, so a load spans
 /// many day files and a partial commit has somewhere to show.
 const LINES: usize = 2_000;
@@ -470,19 +472,6 @@ fn request_with(port: u16, method: &str, path: &str, extra: &str, body: &[u8]) -
     )
 }
 
-fn json(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
-}
-
-/// A JSON array of strings as a set; anything else is the empty set.
-fn strings(v: &Value) -> BTreeSet<String> {
-    v.as_array()
-        .into_iter()
-        .flatten()
-        .map(|s| s.as_str().expect("an array of strings").to_string())
-        .collect()
-}
-
 // ── Inputs ─────────────────────────────────────────────────────────────────────────
 
 fn gen(args: &[&str]) -> Vec<u8> {
@@ -522,12 +511,6 @@ fn zstd(from: &Path, to: &Path) {
     fs::create_dir_all(to.parent().expect("a parent")).expect("create the zstd directory");
     let bytes = fs::read(from).expect("read the zstd input");
     fs::write(to, zstd::stream::encode_all(&bytes[..], 3).expect("zstd")).expect("write zstd");
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 
 /// The load id of one input: nothing about the compression or the directory

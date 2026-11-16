@@ -5,11 +5,9 @@
 //! `the_tree_is_stable_across_input_orderings`: re-running the same file passes without the
 //! type join, and feeding the same lines in a different order is what makes it observable.
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
+use crate::harness::kibbr;
 
 /// Feeds stdin from a separate thread. Writing inline deadlocks as soon as the input
 /// outgrows a pipe buffer: the child blocks writing stdout while we block writing stdin.

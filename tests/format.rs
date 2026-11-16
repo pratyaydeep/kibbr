@@ -5,15 +5,13 @@
 //! Something downstream parses this line by line, so a line that is not a record, or a
 //! record that is not a line, is the bug this file is watching for.
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 
-const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
+use crate::harness::kibbr;
 
-fn kibbr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kibbr"))
-}
+const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
 
 /// stdout and stderr apart, because for this format the difference between them is the
 /// point: "no such template" lives on stderr precisely so it stays out of stdout.

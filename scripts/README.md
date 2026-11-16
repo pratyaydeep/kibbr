@@ -30,7 +30,7 @@ seed of the generated lines.
 Three rules that were scripts here are a test now, `tests/source_rules.rs`, with the
 other rules of the layers: every `.rs` file starts with the licence lines, the server
 never names the engine's `internals`, and a production command never names the tools.
-`cargo test --test source_rules` runs it.
+`cargo test --test e2e source_rules` runs it.
 
 `store_agree.sh`, `two_doors.sh` and `roundtrip.sh` print `scan fan-outs ...`, and with
 `NEED_FAN_OUTS=1` fail at none.

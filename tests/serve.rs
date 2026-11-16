@@ -17,6 +17,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
+use crate::harness::json;
+
 /// Lines in the ingest body, and the three that are broken.
 const LINES: usize = 500;
 const BAD: [usize; 3] = [137, 400, 461];
@@ -239,10 +241,6 @@ fn request_with(
         None => panic!("no header/body split in response:\n{text}"),
     };
     (status, headers, body)
-}
-
-fn json(text: &str) -> serde_json::Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
 }
 
 // ── The corpus ─────────────────────────────────────────────────────────────────────
