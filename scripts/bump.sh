@@ -5,7 +5,7 @@
 #      bench's package inherit.
 #   2. Cargo.lock: the two packages' entries, by `cargo update --workspace`; CI publishes
 #      with --locked, so a lockfile left behind fails the release.
-#   3. docs/serve.md and docs/container.md: the version in the /health example.
+#   3. docs/serve.md and deploy/README.md: the version in the /health example.
 #   4. CHANGELOG.md: the `## Unreleased` section becomes `## VERSION — today`, with the
 #      notes that are under it. With no such section, and none for VERSION, a new one goes
 #      on top, holding a placeholder that scripts/publish.sh refuses to release.
@@ -18,7 +18,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=${1:?usage: scripts/bump.sh VERSION}
-DOCS=(docs/serve.md docs/container.md)
+DOCS=(docs/serve.md deploy/README.md)
 PLACEHOLDER="- TODO: what changed"
 
 fail() { echo "bump: $*" >&2; exit 1; }

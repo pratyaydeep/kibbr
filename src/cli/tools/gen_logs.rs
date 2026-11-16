@@ -1,6 +1,13 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The `kibbr gen-logs` command: logs made from a seed.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `gen_logs.rs` | the `hostile` profile: every case the parser must survive |
+//! | `gen_logs/farm.rs` | the `farm` profile: one day of a small estate's logs |
+//!
 //! The generator: hostile data on demand, reproducible from `--seed`.
 //! It produces what hand-written fixtures do not surface: nesting, optional fields,
 //! ten-digit integers that are and are not timestamps, unicode, empty strings, nulls,

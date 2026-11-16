@@ -1,6 +1,22 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The HTTP server of kibbr, over one `Database`.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `server.rs` | what the handlers share, and the table of load jobs |
+//! | `server/settings.rs` | `Settings`: every value a server runs on, plain data with a default |
+//! | `server/run.rs` | `run`: the runtime, the flush clock, signals, shutdown, the banner |
+//! | `server/routes.rs` | the router, the console at `/`, `/templates`, `/stats`, the request timeout |
+//! | `server/handlers.rs` | `/health`, the door of `/ingest`, `/query`, `/load` |
+//! | `server/receive.rs` | an `/ingest` body taken in: its lines through `Database::ingest`, and the counts |
+//! | `server/schedule.rs` | `/compact`, and the look for a day that is due |
+//! | `server/error.rs` | what stops a server, and what stops a body being taken in |
+//! | `server/viewer.html` | the console served at `/`: one file, built from `web/`, compiled in |
+//!
+//! kibbr's own words are in `docs/glossary.md`.
+//!
 //! The HTTP server of [kibbr](https://github.com/pratyaydeep/kibbr), a database for
 //! structured JSON logs, over one `Database`: it never reaches past the engine's public API.
 //! Internal to kibbr; no API stability promised.

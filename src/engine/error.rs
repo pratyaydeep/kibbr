@@ -1,6 +1,13 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The errors of the engine.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `error.rs` | `Error`, which stops a database from opening or closing cleanly or refuses a query, and `IngestError`, which stops a body being taken in |
+//! | `error/line.rs` | what is wrong with one line, and how any error is printed |
+//!
 //! What the database can fail with: `Error`, which stops one from opening or from closing
 //! cleanly or refuses a query, and `IngestError`, which stops the live door from taking a
 //! body.

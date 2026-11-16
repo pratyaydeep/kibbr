@@ -1,6 +1,17 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! What each fuzz target runs: one module for each target, each with one `run(data)`.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `fuzzing/trieql.rs` | the TrieQL parser: it never panics, and an error points inside the input |
+//! | `fuzzing/cursor.rs` | the `AFTER` cursor: a forged token, or one of another query, is refused |
+//! | `fuzzing/wal_record.rs` | the write-ahead log's reader, against a second reader written from the format |
+//! | `fuzzing/segment.rs` | a data file's bytes through every way the store reads one |
+//! | `fuzzing/record_log.rs` | the record reader under `catalog.log` and `manifest.log` |
+//! | `tests/fuzzing.rs` | every saved input replayed through its harness |
+//!
 //! What the fuzz targets hold their subject to, one module per target, each with one
 //! `run(data)`: a TrieQL string, an `AFTER` cursor, the log's records, a data file's
 //! segments, and the catalog's and the manifest's records. They live beside what they

@@ -1,6 +1,22 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! Where a template's rows are kept, and how they are read.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `rows.rs` | the store traits, and `StoreManager`, which holds a store for each leaf |
+//! | `rows/memory.rs` | the store in memory |
+//! | `rows/disk.rs` | the store on disk: one shared file for each UTC day |
+//! | `rows/disk/scan.rs` | one day of one leaf, read for a query |
+//! | `rows/disk/compact.rs` | compaction: a finished day rebuilt into full row groups |
+//! | `rows/manifest.rs` | `manifest.log`: which data files count |
+//! | `rows/filter.rs` | a query's terms and time window, put to a decoded column |
+//! | `rows/scan_threads.rs` | the threads that a disk scan is shared out over |
+//! | `rows/samples.rs` | the values that the filter's tests are run over |
+//!
+//! kibbr's own words are in `docs/glossary.md`.
+//!
 //! Leaf storage: the scan interface, the two implementations behind it, and the registry.
 //! `LeafStore` holds one leaf's rows and `Store` writes them out; neither has a clock, which
 //! lives in `serve`. No lock is over all of it: each leaf locks itself, and a flush

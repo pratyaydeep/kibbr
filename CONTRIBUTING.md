@@ -49,10 +49,16 @@ By making a contribution to this project, I certify that:
     this project or the open source license(s) involved.
 ```
 
-## Tests and checks
+## Build, test and checks
 
-The Rust version is the one in `rust-toolchain.toml`. Before a pull request, from the
-repository root:
+What you need:
+
+- **Rust**, the version in `rust-toolchain.toml`; `rustup` installs it for you.
+- **`bash`, `curl` and `python3`** for the scripts under `scripts/`.
+- **Node 20.19 or newer** only for the console under `web/`: `npm ci`, then
+  `npm run build`, which writes `src/server/viewer.html`. The Rust build needs no Node.
+
+Before a pull request, from the repository root:
 
 ```
 cargo build --release
@@ -67,10 +73,31 @@ on the build that ships, `cargo publish --dry-run --locked` and a check that the
 build. Without `--all-features` the fuzzing feature is off and the fuzz regressions are not
 replayed.
 
-The scripts run the release binary and need `bash`, `curl` and `python3`.
-[scripts/README.md](scripts/README.md) lists the rest of them and what each prints when it
-passes. A new `.rs` file starts with the two lines every other one starts with: the
-copyright line and `// SPDX-License-Identifier: AGPL-3.0-only`.
+The scripts run the release binary. [scripts/README.md](scripts/README.md) lists them and
+what each prints when it passes. A new `.rs` file starts with the two lines every other one
+starts with: the copyright line and `// SPDX-License-Identifier: AGPL-3.0-only`.
+
+## Where changes go
+
+[ARCHITECTURE.md](ARCHITECTURE.md) has the whole map and a longer table. The short one:
+
+| Area | Path | Tests to add |
+|---|---|---|
+| How a value's type is decided | `src/engine/model/infer.rs` | a line in `tests/data/fixture.ndjson` |
+| Compression: the encodings and row groups | `src/engine/format/build.rs`, `format/column.rs`, `format/read.rs`; `src/engine/rows/disk/compact.rs` | `src/engine/format/encodings.rs`; measure with `kibbr bench-storage` |
+| The on-disk format | `src/engine/format/` | a vector in `tests/data/format/`; `tests/compat.rs` |
+| Durability: the log, a start, a stop | `src/engine/wal.rs`, `src/engine/lifecycle.rs` | `tests/restart.rs`; `scripts/fault/crash_test.sh` |
+| The query language and the answers | `src/engine/query/` | `src/engine/query/tests/`, `tests/query.rs`, `tests/trieql.rs` |
+| An HTTP endpoint | `src/server/handlers.rs`, `src/server/routes.rs` | `src/tests/server.rs`, `tests/serve.rs` |
+| A command, a flag or a setting | `src/cli/` | the topic of that name under `tests/`; `docs/settings.md` |
+| The console | `web/src/` | CI's `web` job |
+
+Three rules that a change must keep, each held by `tests/source_rules.rs`:
+
+- The engine names no HTTP, no async runtime, and nothing of the server or the command
+  line.
+- A new dependency goes into a layer's list in that test, or the test fails.
+- The unit tests of `dir/x.rs` are `dir/tests/x.rs`.
 
 ## Releases
 

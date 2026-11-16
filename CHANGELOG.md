@@ -38,6 +38,13 @@ One entry per tag, newest first.
   The text log, the banner's target and every message are as they were.
 - No change to the on-disk format, to compression, to the HTTP API or to what any other
   command prints.
+- **Four docs pages moved.** `docs/ask.md` is now the last section of `docs/serve.md`;
+  `docs/things-to-try.md` is the last section of `docs/generate-and-parse.md`;
+  `docs/container.md` is the first section of `deploy/README.md`; and `docs/layout.md` is
+  replaced by `ARCHITECTURE.md`. New: `docs/README.md`, the index, and `docs/glossary.md`,
+  kibbr's own words. The README's install line is `cargo install --locked kibbr`.
+- **Where things are:** test data is in `tests/data/` (was `testdata/` and
+  `tests/fixtures/`), and the bench scripts and results in `scripts/bench/` (was `bench/`).
 - For contributors: `tests/source_rules.rs` holds the rules of the layers and replaces
   `scripts/check/spdx.sh`, `no_internals.sh` and `cmd_no_tools.sh`; `scripts/bump.sh` turns
   `## Unreleased` into the version's heading; `scripts/publish.sh` publishes one crate.

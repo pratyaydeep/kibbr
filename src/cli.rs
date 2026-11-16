@@ -4,10 +4,18 @@
 //! The command line of kibbr: the top-level clap type, the enum of the subcommands, and the
 //! dispatch to each. A subcommand's own flags are in its own file, as a `Flags` struct.
 //!
-//! The commands someone runs in production are one module each: `serve`, `load`,
-//! `compact`, `query` and `status`. What tries, measures or tests kibbr is in `tools`,
-//! which no production command names. `config`, `logging`, `http` and `error` are what
-//! the commands share.
+//! | File | What it holds |
+//! |---|---|
+//! | `cli/serve.rs` | `kibbr serve` |
+//! | `cli/load.rs` | `kibbr load` |
+//! | `cli/compact.rs` | `kibbr compact` |
+//! | `cli/query.rs` | `kibbr query` and `kibbr explain` |
+//! | `cli/status.rs` | `kibbr templates`, `kibbr stats` and `kibbr health` |
+//! | `cli/tools.rs` | what tries, measures or tests kibbr; no production command names it |
+//! | `cli/config.rs` | where a setting comes from: flag, variable, file, default |
+//! | `cli/logging.rs` | kibbr's own log, to stderr |
+//! | `cli/http.rs` | the small HTTP client the commands use to ask a server |
+//! | `cli/error.rs` | the errors every command shares |
 
 mod compact;
 mod config;

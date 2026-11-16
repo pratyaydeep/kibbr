@@ -1,6 +1,21 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! Answering a query: text to a query, to a plan, to an answer.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `query.rs` | `Query` and `QueryResult`: what is asked, and the one shape every answer has |
+//! | `query/trieql.rs` | TrieQL: a query string in, a `Query` out |
+//! | `query/plan.rs` | the plan: which templates a query must read, chosen without reading a row |
+//! | `query/execute.rs` | the scan: the rows of those templates, and the counts and groups made of them |
+//! | `query/buckets.rs` | `GROUP BY time(w)`: where a bucket starts, and how many a range makes |
+//! | `query/cursor.rs` | the paging cursor, and the guard that holds it to its query |
+//! | `query/limits.rs` | what a query may not exceed |
+//! | `query/answer.rs` | a query as it crosses the wire: a TrieQL string in, JSON out |
+//!
+//! kibbr's own words are in `docs/glossary.md`.
+//!
 //! The query engine: a plan, a scan, and the result shape every surface above reports.
 //!
 //! The plan chooses templates from the trie and touches no data. The scan opens only the

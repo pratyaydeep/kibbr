@@ -1,6 +1,15 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The trie of templates.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `templates/trie.rs` | the trie: finding a line's template, and adding one |
+//! | `templates/trie/keys.rs` | the key index a plan reads: for each key, the templates that have it |
+//!
+//! kibbr's own words are in `docs/glossary.md`.
+//!
 //! The trie: one token per edge, leaf at depth N, no truncation and no separate
 //! column list - the keys that did not branch are the tail of the path.
 //!

@@ -1,6 +1,22 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! How rows are laid out in a file: storage format version 3.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `format.rs` | the kinds of frame and section, the encodings' names, and `FormatError` |
+//! | `format/frame.rs` | the one record framing, and the append-only file built on it |
+//! | `format/build.rs` | the builder: rows of one template in, one encoded row group out |
+//! | `format/file.rs` | a whole file: writing it, sealing it, opening a sealed one, recovering an unsealed one |
+//! | `format/read.rs` | a row group's header and its chunks, decoded and checked |
+//! | `format/column.rs` | one chunk decoded for a filter, with no cell printed |
+//! | `format/encodings.rs` | tests: each encoding held to what it promises |
+//! | `format/vectors.rs` | tests: the format held to its test vectors in `tests/data/format/` |
+//! | `format/samples.rs` | the row groups that the tests are run over |
+//!
+//! kibbr's own words are in `docs/glossary.md`.
+//!
 //! Storage format v3: one shared file per day, row groups of one template each, a
 //! typed piece per column that prints every value back as it was ingested.
 //! This file holds the numbers, the forms and the print rules the writer's check and the

@@ -72,7 +72,7 @@ A release is usually a GitHub release; CONTRIBUTING.md has the steps. Publishing
 `viewer.html` and then runs `scripts/publish.sh` with the version from the tag.
 
 `scripts/bump.sh 0.1.0` sets the version: in Cargo.toml, in Cargo.lock, in the `/health`
-example of docs/serve.md and docs/container.md, and in CHANGELOG.md, where `## Unreleased`
+example of docs/serve.md and deploy/README.md, and in CHANGELOG.md, where `## Unreleased`
 becomes the version's heading with its notes under it. With no `## Unreleased` it makes a
 new section holding `- TODO: what changed`, which `scripts/publish.sh` refuses. It commits
 nothing.

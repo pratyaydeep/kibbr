@@ -1,6 +1,13 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The `kibbr query` and `kibbr explain` commands.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `query.rs` | the flags, the query they build, the table and the plan that are printed |
+//! | `query/oracle.rs` | the oracle: a second, brute-force way to answer, behind `--reference` |
+//!
 //! `kibbr query`. Flags or TrieQL in, `QueryResult` out. Both ways in build the one
 //! `Query`, which is what makes `--reference` and
 //! `scripts/check/parser_equivalence.sh` honest: a differential compares answers, not

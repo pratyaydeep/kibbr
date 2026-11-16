@@ -52,6 +52,28 @@
 //! TrieQL answered over them. The server and the command line each hold one `Database`,
 //! opened to serve, offline, or in memory.
 //!
+//! The modules, in the order a log line travels:
+//!
+//! | Group | Module | What it holds |
+//! |---|---|---|
+//! | A line before storage | [`model`] | the column types and typed values, the type ladder, a template's tokens, a row |
+//! | | [`parse`] | a line read under a byte limit, flattened to dotted keys, and its fingerprint |
+//! | Its shape | `templates` | the trie and its key index, `catalog.log`, `trie.json` |
+//! | Writing | `ingest` | the live door: one parsed line into the trie and its store |
+//! | | [`load`] | the bulk door: a closed day staged and committed in one record |
+//! | | `wal` | the write-ahead log: group commit, replay, the checkpoint |
+//! | Stored, and compressed | `rows` | the stores (memory, and the day files), the scan, the manifest, compaction |
+//! | | `format` | format version 3: frames, row groups, the column encodings, the file |
+//! | Asking | [`query`] | TrieQL, the plan, the scan, buckets, the cursor, the limits, the answer |
+//! | The handle and the rest | [`database`] | `Database` and `Options`: three ways to open, and everything asked of it |
+//! | | `lifecycle` | open (restore and replay), the checkpoint, the close order |
+//! | | [`compact`] | which days a compaction run takes, its report, one run at a time |
+//! | | `lock` | `LOCK`: one process owns a data directory |
+//! | | [`error`], [`fmt`], [`rng`] | the errors, how values are printed, a seeded random generator |
+//!
+//! kibbr's own words (template, leaf, live door, bulk door, checkpoint) are in
+//! `docs/glossary.md` in the repository.
+//!
 //! [`model`] and [`parse`] are what a line is before anything stores it: the parser that
 //! flattens nested JSON into dotted keys, the *type ladder* that decides whether a value
 //! is a `Datetime`, `Int64`, `Uuid`, `Ip`, `String` and so on, and the fingerprint a
@@ -81,7 +103,7 @@
 //! # Running it
 //!
 //! ```text
-//! cargo install kibbr
+//! cargo install --locked kibbr
 //! kibbr gen-logs --profile farm --lines 10000 --seed 42 > day.ndjson
 //! kibbr serve --data-dir kibbr-data
 //! curl -s -X POST --data-binary @day.ndjson http://127.0.0.1:7700/ingest
@@ -105,22 +127,35 @@
 //!
 //! Licensed AGPL-3.0-only; contributions under MIT.
 
+// A line before storage.
 pub mod model;
 pub mod parse;
-pub mod fmt;
-pub mod rng;
-pub mod error;
-pub(crate) mod lock;
-pub(crate) mod format;
+
+// Its shape.
 pub(crate) mod templates;
-pub(crate) mod rows;
+
+// Writing.
 pub(crate) mod ingest;
-pub(crate) mod wal;
 pub mod load;
-pub mod compact;
+pub(crate) mod wal;
+
+// Stored, and compressed.
+pub(crate) mod format;
+pub(crate) mod rows;
+
+// Asking.
 pub mod query;
-mod lifecycle;
+
+// The handle and the rest.
+pub mod compact;
 pub mod database;
+pub mod error;
+pub mod fmt;
+mod lifecycle;
+pub(crate) mod lock;
+pub mod rng;
+
+// Not shipped: the fuzz targets' harnesses.
 #[cfg(any(feature = "fuzzing", feature = "test-support"))]
 pub mod fuzzing;
 

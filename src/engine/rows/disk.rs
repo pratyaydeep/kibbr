@@ -1,6 +1,16 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! The store on disk.
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `rows/disk.rs` | the day files: opening, writing, flushing, sealing, and what a start finds |
+//! | `rows/disk/scan.rs` | one day of one leaf, read for a query |
+//! | `rows/disk/compact.rs` | compaction: a finished day rebuilt into full row groups |
+//!
+//! kibbr's own words are in `docs/glossary.md`.
+//!
 //! The disk store: one shared file per UTC day, named in `manifest.log`.
 //!
 //! One file per day because every cost of the per-template layout came from the file
