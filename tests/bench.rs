@@ -305,7 +305,7 @@ fn zstd_threads_change_zstd_alone_and_say_how_long_each_took() {
         let stdout = String::from_utf8(ran.stdout).expect("stdout was not utf-8");
         let lines: Vec<&str> = stdout.lines().collect();
 
-        // The line bench/compression.py's TIMES reads: gzip's seconds, zstd's threads and
+        // The line scripts/bench/compression.py's TIMES reads: gzip's seconds, zstd's threads and
         // seconds. Not a table row: it does not start with a compressor's name.
         let times = lines
             .iter()

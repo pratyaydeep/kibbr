@@ -1202,8 +1202,8 @@ mod tests {
             "kibbr-bench measures the farm profile only"
         );
         assert_eq!(
-            SpeedError::OutExists(PathBuf::from("testdata/bench/baseline.json")).to_string(),
-            "testdata/bench/baseline.json exists; a saved result is not written over"
+            SpeedError::OutExists(PathBuf::from("scripts/bench/results/baseline.json")).to_string(),
+            "scripts/bench/results/baseline.json exists; a saved result is not written over"
         );
         // True of a run, which saved its result, and of `--table`, which saves none.
         assert_eq!(

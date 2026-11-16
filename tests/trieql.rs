@@ -10,7 +10,7 @@ use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 
-const FIXTURE: &str = include_str!("../testdata/sample_logs.ndjson");
+const FIXTURE: &str = include_str!("data/sample_logs.ndjson");
 
 fn kibbr() -> Command {
     Command::new(env!("CARGO_BIN_EXE_kibbr"))

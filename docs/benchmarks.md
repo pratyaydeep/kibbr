@@ -8,11 +8,11 @@ Five public log datasets, measured with kibbr 0.4.0 on one AWS machine in Novemb
 
 | Dataset | Lines | Raw | kibbr | zstd -19 | gzip -9 | kibbr against zstd -19 |
 |---|---:|---:|---:|---:|---:|---|
-| [Elasticsearch server logs](../bench/results/compression/elasticsearch.md) | 14,001,234 | 8.57 GB | 206.7 : 1 (41.4 MB) | 109.6 : 1 (78.1 MB) | 53.9 : 1 (158.9 MB) | 47% smaller |
-| [MongoDB server logs](../bench/results/compression/mongodb.md) | 186,287,600 | 69.58 GB | 190.0 : 1 (366.3 MB) | 90.0 : 1 (772.8 MB) | 50.8 : 1 (1.37 GB) | 53% smaller |
-| [PostgreSQL jsonlog](../bench/results/compression/postgresql.md) | 1,000,000 | 0.41 GB | 43.2 : 1 (9.5 MB) | 36.7 : 1 (11.2 MB) | 29.5 : 1 (14.0 MB) | 15% smaller |
-| [HDFS logs](../bench/results/compression/hdfs-logs.md) | 20,000,000 | 7.19 GB | 33.2 : 1 (217.0 MB) | 33.8 : 1 (213.1 MB) | 17.2 : 1 (419.4 MB) | 2% larger |
-| [CockroachDB logs](../bench/results/compression/cockroachdb.md) | 16,520,377 | 10.51 GB | 30.6 : 1 (343.5 MB) | 36.1 : 1 (291.4 MB) | 20.4 : 1 (515.6 MB) | 18% larger |
+| [Elasticsearch server logs](../scripts/bench/results/compression/elasticsearch.md) | 14,001,234 | 8.57 GB | 206.7 : 1 (41.4 MB) | 109.6 : 1 (78.1 MB) | 53.9 : 1 (158.9 MB) | 47% smaller |
+| [MongoDB server logs](../scripts/bench/results/compression/mongodb.md) | 186,287,600 | 69.58 GB | 190.0 : 1 (366.3 MB) | 90.0 : 1 (772.8 MB) | 50.8 : 1 (1.37 GB) | 53% smaller |
+| [PostgreSQL jsonlog](../scripts/bench/results/compression/postgresql.md) | 1,000,000 | 0.41 GB | 43.2 : 1 (9.5 MB) | 36.7 : 1 (11.2 MB) | 29.5 : 1 (14.0 MB) | 15% smaller |
+| [HDFS logs](../scripts/bench/results/compression/hdfs-logs.md) | 20,000,000 | 7.19 GB | 33.2 : 1 (217.0 MB) | 33.8 : 1 (213.1 MB) | 17.2 : 1 (419.4 MB) | 2% larger |
+| [CockroachDB logs](../scripts/bench/results/compression/cockroachdb.md) | 16,520,377 | 10.51 GB | 30.6 : 1 (343.5 MB) | 36.1 : 1 (291.4 MB) | 20.4 : 1 (515.6 MB) | 18% larger |
 
 GB and MB are decimal. kibbr is smaller than gzip -9 on all five datasets and smaller than zstd -19 on three. Each dataset name links to its full table.
 
@@ -31,7 +31,7 @@ The other difference is what you are left with. A gzip or zstd file is an archiv
 - **kibbr's number.** Every line went in through the live ingest path as a day arriving over 24 hours (1,440 flushes), and the day was then compacted. That is the state a real deployment ends in. A bulk load lands within 3% of the same size, except on MongoDB, where it is 172 : 1.
 - **gzip and zstd.** gzip -9 ran on one thread and zstd -19 on 8 threads, which makes its output about 0.035% larger than one thread would. Sizes are file bytes, not disk blocks.
 - **Datasets.** MongoDB, PostgreSQL, CockroachDB and Elasticsearch are from [YScope's public CLP datasets](https://docs.yscope.com/clp/main/user-docs/resources-datasets.html) on Zenodo; MongoDB, CockroachDB and Elasticsearch were checked against their published checksums. The HDFS logs are Quickwit's tutorial dataset; Quickwit does not say where they come from.
-- **Reproduce it.** [`bench/compression.py`](../bench/compression.py) downloads each source listed in [`bench/compression.json`](../bench/compression.json) and runs `kibbr bench-storage` on it. [`bench/cloud/aws.sh`](../bench/cloud/aws.sh) does the same on a fresh EC2 machine. See [bench/README.md](../bench/README.md).
+- **Reproduce it.** [`scripts/bench/compression.py`](../scripts/bench/compression.py) downloads each source listed in [`scripts/bench/compression.json`](../scripts/bench/compression.json) and runs `kibbr bench-storage` on it. [`scripts/bench/cloud/aws.sh`](../scripts/bench/cloud/aws.sh) does the same on a fresh EC2 machine. See [scripts/bench/README.md](../scripts/bench/README.md).
 
 ## GitHub's event stream, an earlier run
 
@@ -52,7 +52,7 @@ Here kibbr loses to gzip, for three reasons:
 2. **Many shapes.** GitHub events produce 1,516 distinct key sets. Each one pays for its own catalog entry, schema and small row groups, which together are 19% of the total.
 3. **Nesting.** Columns like `repo.url` and `repo.name` repeat each other. kibbr encodes each column on its own and can't use that redundancy; zstd's long window can.
 
-This run measured storage only. Full write-up: [bench/results/gharchive-2026-10-14.md](../bench/results/gharchive-2026-10-14.md).
+This run measured storage only. Full write-up: [scripts/bench/results/gharchive-2026-10-14.md](../scripts/bench/results/gharchive-2026-10-14.md).
 
 ## Query times
 

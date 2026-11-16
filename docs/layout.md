@@ -29,14 +29,13 @@ src/cli/tools/parse.rs           the `parse` output
 src/cli/tools/demo.rs            the `demo` tree
 src/cli/tools/gen_logs.rs        the generators - `hostile` (this file) and the log farm (gen_logs/farm.rs)
 src/cli/tools/bench_storage.rs   `kibbr bench-storage`
-tests/                           one file an area (load, query, compact, restart, compat, ...); fixtures/ holds old-format data dirs
+tests/                           one file an area (load, query, compact, restart, compat, ...); data/ holds every test's data
 tests/fixture.rs                 outer-surface tests
 tests/serve.rs                   the HTTP contract of the binary, over a bare TcpStream
 crates/kibbr-devtools/           `kibbr-bench`, the speed bench: its own binary, never published; it measures the `kibbr` beside it
 Dockerfile                       the image: a static binary on distroless
-bench/                           the compression scripts, and bench/results/, what was measured
 deploy/                          the Kubernetes manifests, the IAM policies and the Vector sinks
-scripts/                         the check, fault and measure scripts, and bump.sh and publish.sh
+scripts/                         the check, fault and measure scripts, bump.sh and publish.sh, and bench/: the compression scripts and what was measured
 web/                             the console's ReScript source, built into viewer.html (docs/viewer.md)
 ```
 
@@ -104,7 +103,7 @@ lib.rs       the public names, `internals`, and `testing` behind `test-support`
   names it (`tests/source_rules.rs`).
 - **Features.** `test-support` gives the binary's tests their fixtures; `fuzzing` is
   off by default. Neither is for a build that runs in production.
-- The format's test vectors are in `testdata/format/`.
+- The format's test vectors are in `tests/data/format/`.
 - **Column encodings.** Each piece of a column chunk gets one encoding, by its type, and
   never several tried with the smallest kept (`format.rs`, `format/build.rs`):
   - a value stored once when every row of the piece holds it
@@ -134,4 +133,4 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings # lints hav
   reads day files through `internals`. There are no mocks.
 - The one that matters most in `tests/fixture.rs` is
   `every_fixture_value_gets_its_labelled_type`: every hand-labelled value in
-  `testdata/fixture.ndjson` must come out with the type its label says.
+  `tests/data/fixture.ndjson` must come out with the type its label says.

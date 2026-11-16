@@ -3973,14 +3973,14 @@ mod tests {
 
     fn baseline() -> Saved {
         Saved {
-            path: PathBuf::from("testdata/bench/baseline.json"),
+            path: PathBuf::from("scripts/bench/results/baseline.json"),
             file: result("baseline", BASELINE_SHA, &baseline_numbers()),
         }
     }
 
     fn columns() -> Saved {
         Saved {
-            path: PathBuf::from("testdata/bench/after-1.json"),
+            path: PathBuf::from("scripts/bench/results/after-1.json"),
             file: result(
                 "after 1 (columns)",
                 "77aa3e12ab77000000000000000000000000beef",
@@ -3991,7 +3991,7 @@ mod tests {
 
     fn parallel() -> Saved {
         Saved {
-            path: PathBuf::from("testdata/bench/after-2.json"),
+            path: PathBuf::from("scripts/bench/results/after-2.json"),
             file: result(
                 "after 2 (parallel)",
                 "9d0c3e12ab77000000000000000000000000beef",
@@ -4521,7 +4521,7 @@ mod tests {
         let refused = before(&flags, &machine, &server).expect_err("other work");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: flags.lines: \
+            "scripts/bench/results/baseline.json cannot be the baseline of this run: flags.lines: \
              1000000 in the baseline, 2000 in this run; flags.samples: 100 in the baseline, \
              2 in this run; server.argv: \"\" in the baseline, \"serve --scan-threads 4\" \
              in this run; machine.cpu: null in the baseline, \"Apple M3\" in this run; \
@@ -4601,7 +4601,7 @@ mod tests {
             comparable_data(&baseline, &data, &queries, &expect).expect_err("other bytes");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: data.files: \
+            "scripts/bench/results/baseline.json cannot be the baseline of this run: data.files: \
              data/2024-01-15/seg_0_000001.col is 36,212,480 bytes, crc32c b40d91f3 in the \
              baseline and 36,212,481 bytes, crc32c 00000000 in this run, manifest.log is in \
              the baseline and not in this run, manifest.log.bak is in this run and not in \
@@ -4648,7 +4648,7 @@ mod tests {
             .expect_err("a wrong answer");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: FAIL S2 counts \
+            "scripts/bench/results/baseline.json cannot be the baseline of this run: FAIL S2 counts \
              28,115 where the baseline counted 28,907: the same query over the same bytes \
              has another answer"
         );
@@ -5041,7 +5041,7 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
     fn a_server_environment_that_is_not_the_baseline_s_is_said_and_stops_nothing() {
         let base = baseline();
         let mut other = baseline();
-        other.path = PathBuf::from("testdata/bench/after-1.json");
+        other.path = PathBuf::from("scripts/bench/results/after-1.json");
         other.file.label = "four threads".to_string();
         // Two results that differ in nothing: no such line, and no other.
         assert_eq!(against_lines(&base.file, &other.file), Vec::<String>::new());
@@ -5301,7 +5301,7 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
     fn a_power_state_that_is_not_the_baseline_s_is_said_with_both() {
         let mains = powered(baseline(), "AC Power", false);
         let mut other = powered(baseline(), "AC Power", false);
-        other.path = PathBuf::from("testdata/bench/after-1.json");
+        other.path = PathBuf::from("scripts/bench/results/after-1.json");
         // The same state in both: no line.
         assert_eq!(
             against_lines(&mains.file, &other.file),
@@ -5500,9 +5500,9 @@ after 2 (parallel)   S4 under ingest: the buffer limit was reached in 291 of 300
         let refused = table(&[baseline(), other]).expect_err("other work");
         assert_eq!(
             refused.to_string(),
-            "testdata/bench/baseline.json cannot be the baseline of this run: \
-             flags.samples: 100 in the baseline, 2 in testdata/bench/after-1.json; \
-             machine.cores_logical: 0 in the baseline, 10 in testdata/bench/after-1.json"
+            "scripts/bench/results/baseline.json cannot be the baseline of this run: \
+             flags.samples: 100 in the baseline, 2 in scripts/bench/results/after-1.json; \
+             machine.cores_logical: 0 in the baseline, 10 in scripts/bench/results/after-1.json"
         );
         let mut wrong = columns();
         wrong.file.expect.s1.count = 7;
@@ -5884,7 +5884,7 @@ what is ms   a query's ms: this process's clock from the request's first byte wr
             .insert("RAYON_NUM_THREADS".to_string(), "4".to_string());
         file.expect.s3.truncated = Some(true);
         file.baseline = Some(BaselineRef {
-            file: "testdata/bench/baseline.json".to_string(),
+            file: "scripts/bench/results/baseline.json".to_string(),
             sha: Some(BASELINE_SHA.to_string()),
             label: "baseline".to_string(),
             same_bench: false,
@@ -5905,7 +5905,7 @@ what is ms   a query's ms: this process's clock from the request's first byte wr
         has("loaded       testdata/bench/farm-1000000-seed42  built by this invocation: 3 files, 36,423,735 bytes, each file's crc32c recorded in testdata/bench/farm-1000000-seed42.json");
         has("             not part of the loaded bytes, and not copied: LOCK");
         has("             not part of the loaded bytes, and not copied: data/.DS_Store");
-        has("baseline     testdata/bench/baseline.json  label: baseline; commit 1bfe096e45ef; NOT THE SAME BENCH: its bench code has another digest. The same flags, bytes, texts, answers, server arguments and machine");
+        has("baseline     scripts/bench/results/baseline.json  label: baseline; commit 1bfe096e45ef; NOT THE SAME BENCH: its bench code has another digest. The same flags, bytes, texts, answers, server arguments and machine");
         has("             p99 of 1 samples: p50, p99 are the 1st and 1st smallest of 1 (nearest rank)");
         assert!(lines
             .iter()
@@ -6265,7 +6265,7 @@ flush ms, before the run (not a row)            53.6         54.9         53.2  
         assert_eq!(
             same,
             BaselineRef {
-                file: "testdata/bench/baseline.json".to_string(),
+                file: "scripts/bench/results/baseline.json".to_string(),
                 sha: Some(BASELINE_SHA.to_string()),
                 label: "baseline".to_string(),
                 same_bench: true,

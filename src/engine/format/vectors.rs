@@ -21,7 +21,7 @@ use crate::parse::flatten::parse_line;
 /// files.
 fn vectors() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata")
+        .join("tests/data")
         .join("format")
 }
 

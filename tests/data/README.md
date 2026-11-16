@@ -1,4 +1,18 @@
-# `fixture.ndjson`
+# tests/data
+
+Every file a test reads. Nothing here is scratch: what a test or a script writes goes
+under `testdata/`, which git ignores.
+
+| Path | What it is |
+|---|---|
+| `fixture.ndjson` | the type ladder: one value a line, with the type it must get (below) |
+| `roundtrip.ndjson` | values that must come back as they went in (`scripts/check/roundtrip.sh`) |
+| `sample_logs.ndjson` | a small log the query and format tests load |
+| `format/` | test vectors of the on-disk format, version 3 |
+| `hostile/` | inputs the parser must survive |
+| `compat/<commit>/` | a data directory an older build wrote, and what that build answered on it |
+
+## `fixture.ndjson`
 
 Hand-written. Each line carries one value under `v` and the type the type ladder is
 required to give it under `expect`. `tests/fixture.rs` runs the real binary over the

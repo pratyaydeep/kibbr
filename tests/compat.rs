@@ -3,14 +3,14 @@
 
 //! What this build makes of a data directory another build wrote.
 //!
-//! `tests/fixtures/compat-ae7d8ca/data` is a data directory a kibbr built from commit
+//! `tests/data/compat/ae7d8ca/data` is a data directory a kibbr built from commit
 //! ae7d8ca left behind - before a time column read its own forms and before an epoch
 //! and an integer made a column of integers: row groups from a graceful stop, and lines
 //! that are only in its write-ahead log because the server was killed. `expected.json`
 //! is what that same build answered on it, after replaying its own log (`make.py`,
 //! beside them, wrote both). Every test starts this build on a copy.
 //!
-//! `tests/fixtures/compat-ca6d867` is the same of commit ca6d867, the last build that
+//! `tests/data/compat/ca6d867` is the same of commit ca6d867, the last build that
 //! stored an array as the string of its JSON text and gave an empty object no key: lines
 //! that hold arrays and empty objects, stored and logged.
 
@@ -26,12 +26,12 @@ use serde_json::{json, Value};
 // ── The fixture, and a server on a copy of it ──────────────────────────────────────
 
 /// The fixture a kibbr built from ae7d8ca wrote, and the one from ca6d867.
-const AE7D8CA: &str = "compat-ae7d8ca";
-const CA6D867: &str = "compat-ca6d867";
+const AE7D8CA: &str = "ae7d8ca";
+const CA6D867: &str = "ca6d867";
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
+        .join("tests/data/compat")
         .join(name)
 }
 
