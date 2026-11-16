@@ -770,6 +770,7 @@ impl Database {
     }
 
     /// One parsed line's template, and no row: a trie to plan on.
+    #[doc(hidden)]
     pub fn learn(&self, parsed: &ParsedLog, now: DateTime<Utc>) -> Result<(), TrieError> {
         self.trie.ingest(parsed, now).map(drop)
     }

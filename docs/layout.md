@@ -31,12 +31,12 @@ src/tools/parse.rs          the `parse` output
 src/tools/demo.rs           the `demo` tree
 src/tools/gen/              the generators - `hostile` (mod.rs) and the log farm (farm.rs)
 src/tools/bench_storage.rs  `kibbr bench-storage`
-src/tools/bench/            `kibbr bench`
 tests/                      one file an area (load, query, compact, restart, compat, ...); fixtures/ holds old-format data dirs
 tests/fixture.rs            outer-surface tests
 tests/serve.rs              the HTTP contract of the binary, over a bare TcpStream
-Dockerfile                  the image: a static binary on distroless, and the `bench` target
-bench/run.sh                `kibbr bench` in a container; bench/results/ holds what it measured
+crates/kibbr-devtools/      `kibbr-bench`, the speed bench: its own binary, never published; it measures the `kibbr` beside it
+Dockerfile                  the image: a static binary on distroless
+bench/                      the compression scripts, and bench/results/, what was measured
 deploy/                     the Kubernetes manifests, the IAM policies and the Vector sinks
 scripts/                    the check, fault and measure scripts, and bump.sh and publish.sh
 web/                        the console's ReScript source, built into viewer.html (docs/viewer.md)

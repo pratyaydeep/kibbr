@@ -1,84 +1,81 @@
 # bench
 
-`bench/run.sh` runs `kibbr bench` inside the image, on the farm day of seed 42. The bench
-itself is in the binary (`src/tools/bench/`); the script builds the image, runs the bench in
-a container, brings the result out and writes it as a table with a `shed` column - what was
-turned away while each row was measured.
+`kibbr-bench` measures how fast a build of kibbr is, on the farm day of seed 42. It is a
+binary of its own, in `crates/kibbr-devtools/`, and is not part of what is published. It
+measures the `kibbr` binary that is in its own directory: every server, load and
+`gen-logs` of a run is that file, started as a child. It runs natively; there is no bench
+image.
 
-## Two rules
+## Three rules
+
+**Build both binaries together.** Building `kibbr-bench` does not build `kibbr`, and the
+other way round.
+
+```
+cargo build --release --workspace
+```
+
+The bench stops when there is no `kibbr` beside it. When the `kibbr` there is older than
+the bench, it measures it and prints a `WARNING` under the table: if `kibbr`'s source
+changed in between, the number is an old build's. A result records the digest of both.
 
 **A laptop bench number is comparable only with one taken in the same session.** Day to
 day the p99s drift by about 20%, so a number from another day is not a baseline: take the
 "before" again, then the "after".
 
-**A Docker run passes `--threads 4` explicitly.** With no `--threads` each server takes the
-build's default - half the cores, at most 4 - and in Docker Desktop's 4-CPU VM that is 2.
+**A result is comparable only with one taken by the same bench.** A result records a
+digest of the bench's own source, and the table says `NOT THE SAME BENCH` of a baseline
+that has another. Every result saved while the bench was `kibbr bench`, a subcommand of
+the binary it measured, has another: the files under `testdata/bench/` among them.
 
-Docker results are their own series. They are this image's on this machine's Docker - on a
-laptop, a Linux VM with some of the cores and memory - and are not comparable with the
-native `testdata/bench/after-*.json` files, which were measured on macOS without one, and
-the bench says so if asked to compare them.
-
-## Here, on the laptop
+## Run it
 
 ```
-bench/run.sh --threads 4                 # 200,000 lines, the default
-bench/run.sh --threads 4 --unchecked     # not a measurement: for trying the script
+target/release/kibbr-bench --lines 1000000 --profile farm
+target/release/kibbr-bench --lines 1000000 --profile farm --baseline testdata/bench/after-3.json
+target/release/kibbr-bench --table testdata/bench/after-2.json testdata/bench/after-3.json
 ```
 
-On mains, Low Power Mode off, other applications closed. It needs a Docker daemon, `git`
-and `python3`.
+The first measures and saves a result. The second also prints each number's speed-up on a
+saved result. The third measures nothing: it prints saved results side by side.
 
-## On a cloud box
-
-```
-git clone https://github.com/pratyaydeep/kibbr && cd kibbr
-bench/run.sh --lines 1000000 --threads 8
-```
-
-`--threads` is at most the box's cores; say what the box is when quoting the number.
-
-To start a box that runs a job, uploads its results and terminates itself, with nothing
-to log in to, see [cloud/README.md](cloud/README.md): `bench/cloud/aws.sh launch`.
+On mains, Low Power Mode off, other applications closed. It needs `git`, `ps` and `df`.
+`--threads` is at most the machine's cores; say what the machine is when quoting a number.
+A `KIBBR__` variable does not reach the servers: the bench takes those out of its
+children.
 
 ## What it writes
 
-Under `bench/results/`, named for the UTC date (`-2`, `-3` for a second and third run of
-one day - a result is never written over):
+Under `--dir`, which is `testdata/bench/` unless given:
 
 ```
-<date>.md     the table, and what it was measured on
-<date>.json   the bench's own result, every sample in it
-<date>.log    the bench's raw log
+farm-<lines>-seed42/              the loaded day, kept, so a second run does not load it again
+results/<UTC time>-<commit>.json  the result, every sample in it
+results/<UTC time>-<commit>.log   the raw log
 ```
+
+`--out FILE` saves the result under a name of your own. A result is never written over.
 
 ## Flags
 
+`kibbr-bench --help` has every flag. The ones a comparison depends on:
+
 | flag | default | what it does |
 |---|---|---|
-| `--lines N` | 200000 | lines in the loaded day and in the live stream |
-| `--threads T` | none | `kibbr bench --threads T`: every server measured is started with `--scan-threads T` |
-| `--runs R` | 3 | as `kibbr bench --runs` |
-| `--samples K` | 100 | as `kibbr bench --samples` |
-| `--unchecked` | | as `kibbr bench --unchecked`: not a measurement |
-| `--image NAME` | `kibbr` | the deployed image's tag; the bench's is `NAME:bench` |
-| `--no-build` | | use the two images as they are |
-| `--volume NAME` | `kibbr-bench` | the Docker volume |
+| `--lines N` | none | lines in the loaded day and in the live stream; the measurement is 1000000 |
+| `--profile farm` | none | the only profile measured |
+| `--threads T` | none | every server measured is started with `--scan-threads T` |
+| `--runs R` | 3 | how many times the whole sequence is run; odd |
+| `--samples K` | 100 | timed asks of each query, and timed plans of each shape |
+| `--body-lines L` | 2000 | lines in one `/ingest` body |
+| `--unchecked` | | skips the checks and allows a debug build: not a measurement |
 
-- **Two images, one binary.** `kibbr` is the image that is deployed: distroless, with no
-  `ps` and no `df`, which the bench runs. `kibbr:bench` is the Dockerfile's `bench` target,
-  the same binary on a base that has them; the script checks the two hold the same bytes.
-- **A volume, not a bind mount.** On Docker Desktop a bind mount is a file server between
-  two kernels, and the number would be its speed. The volume keeps the loaded day, so a
-  second run does not load it again; `docker volume rm kibbr-bench` gives the space back.
-- `--threads` is refused if the bench in the image has no such flag (an older image under
-  `--no-build`): a result headed "8 threads" that used 4 is worse than none.
-- A `KIBBR__` variable does not reach the servers either way: the bench takes those out of
-  its children.
+## The earlier Docker results
 
-The native series is `kibbr bench` itself: `kibbr bench --help`, and
-`kibbr bench --table testdata/bench/after-2.json testdata/bench/after-3.json` to print saved
-results side by side without measuring anything.
+`bench/results/2026-10-11.{md,json,log}` were measured in a container by `bench/run.sh`,
+on the Dockerfile's `bench` target. Both are gone: the bench is not in the image's binary
+any more. Those results are a series of their own, and are not comparable with a native
+one.
 
 ## Compression on real corpora
 

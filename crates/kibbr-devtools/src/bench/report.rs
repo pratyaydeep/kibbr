@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::fmt::commas;
+use kibbr_engine::fmt::commas;
 
 use super::corpus::{BuiltBy, Corpus, FileDigest, InputDigest, LoadFacts};
 use super::phases::{median, percentile};
@@ -64,6 +64,7 @@ impl<T> Four<T> {
         [&self.s1, &self.s2, &self.s3, &self.s4]
     }
 
+    #[cfg(test)]
     pub fn each_mut(&mut self) -> [&mut T; 4] {
         [&mut self.s1, &mut self.s2, &mut self.s3, &mut self.s4]
     }
@@ -208,7 +209,8 @@ pub struct Commit {
     pub how: String,
 }
 
-/// The binary that measured, which is the binary measured.
+/// A binary of the run: the `kibbr` measured (`ResultFile::binary`), or the `kibbr-bench`
+/// that measured it (`BenchSource::binary`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Binary {
     pub path: String,
@@ -226,6 +228,10 @@ pub struct Binary {
 pub struct BenchSource {
     pub source_crc32c: String,
     pub source_files: usize,
+    /// The `kibbr-bench` that measured. Absent from a result saved while the bench was a
+    /// subcommand of the binary it measured: there the one binary was both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<Binary>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -817,6 +823,7 @@ pub fn source_digest() -> BenchSource {
     BenchSource {
         source_crc32c: crc_hex(digest_of(&SOURCES)),
         source_files: SOURCES.len(),
+        binary: None,
     }
 }
 
@@ -1771,6 +1778,29 @@ fn spin_moved(run: &Run) -> Option<String> {
     })
 }
 
+/// What a result says when the `kibbr` measured was built before the `kibbr-bench` that
+/// measured it.
+const KIBBR_OLDER: &str = "WARNING: kibbr was built before kibbr-bench was, and building one \
+     does not build the other. If kibbr's source changed in between, an old kibbr was \
+     measured: build both, `cargo build --release --workspace`, and measure again";
+
+/// Whether the `kibbr` measured was built before the `kibbr-bench` that measured it, by
+/// the two files' times. Not known, and so `false`, where a time is missing or the result
+/// names no bench binary.
+fn kibbr_older(file: &ResultFile) -> bool {
+    let built = |binary: &Binary| {
+        let at = binary.modified_at.as_deref()?;
+        chrono::DateTime::parse_from_rfc3339(at).ok()
+    };
+    let Some(bench) = &file.bench.binary else {
+        return false;
+    };
+    match (built(&file.binary), built(bench)) {
+        (Some(kibbr), Some(bench)) => kibbr < bench,
+        _ => false,
+    }
+}
+
 /// The lines that are true of one result whatever it is compared with.
 fn own_lines(file: &ResultFile) -> Vec<String> {
     let mut lines = Vec::new();
@@ -1792,6 +1822,9 @@ fn own_lines(file: &ResultFile) -> Vec<String> {
              ran, so the commit does not name the code measured"
                 .to_string(),
         );
+    }
+    if kibbr_older(file) {
+        lines.push(KIBBR_OLDER.to_string());
     }
     lines.extend(off_mains_lines(&file.runs));
     lines.extend(file.runs.iter().filter_map(spin_moved));
@@ -2561,6 +2594,19 @@ fn start_lines(file: &ResultFile, loaded: &Corpus) -> Vec<String> {
             file.bench.source_crc32c, file.bench.source_files
         ),
     ));
+    if let Some(bench) = &file.bench.binary {
+        let mut built = format!(
+            "{}  {} bytes  crc32c {}  built {}",
+            bench.path,
+            commas(bench.bytes),
+            bench.crc32c,
+            or_na(bench.modified_at.clone(), |at| at)
+        );
+        if kibbr_older(file) {
+            built.push_str("  - built after the kibbr above: see the WARNING under the table");
+        }
+        lines.push(fact("bench binary", &built));
+    }
 
     let machine = &file.machine;
     let cores = match (machine.cores_performance, machine.cores_efficiency) {
@@ -3603,7 +3649,7 @@ pub fn log_summary(log: &mut Log, file: &ResultFile) -> Result<(), SpeedError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::bench::{flags, plan, queries, Args};
+    use crate::bench::{flags, plan, queries, Args};
 
     #[test]
     fn a_result_is_written_under_the_names_a_reader_is_told_and_reads_back_the_same() {
@@ -3905,6 +3951,7 @@ mod tests {
             bench: BenchSource {
                 source_crc32c: "5d11e0aa".to_string(),
                 source_files: 8,
+                binary: None,
             },
             flags: flags(&the_args()),
             queries: queries("20834abd-1e3d-462e-b89b-fb1d4643e6bb"),
@@ -4680,7 +4727,7 @@ S4 under ingest: the buffer limit was reached in 291 of 300 baseline laps and 0 
 
     #[test]
     fn two_saved_files_print_the_table_their_results_did() {
-        // What `kibbr bench --table a.json b.json` does: the numbers go through JSON and
+        // What `kibbr-bench --table a.json b.json` does: the numbers go through JSON and
         // come back, and the table is the same to the character.
         let scratch = Scratch::new("table");
         let paths = [
@@ -4690,7 +4737,7 @@ S4 under ingest: the buffer limit was reached in 291 of 300 baseline laps and 0 
         write(&paths[0], &baseline().file, "").expect("saved");
         write(&paths[1], &columns().file, "").expect("saved");
         let mut out = Vec::new();
-        crate::tools::bench::table(&paths, &mut out).expect("no FAIL line");
+        crate::bench::table(&paths, &mut out).expect("no FAIL line");
         assert_eq!(String::from_utf8(out).expect("text"), format!("{TWO}\n"));
     }
 
@@ -6227,7 +6274,71 @@ flush ms, before the run (not a row)            53.6         54.9         53.2  
         let other = BenchSource {
             source_crc32c: "77c1f0b2".to_string(),
             source_files: 8,
+            binary: None,
         };
         assert!(!baseline_ref(&baseline, &other).same_bench);
+    }
+
+    #[test]
+    fn a_kibbr_built_before_the_bench_is_said_at_the_start_and_under_the_table() {
+        let (mut file, loaded) = at_the_start();
+        let bench_line = |file: &ResultFile| {
+            start_lines(file, &loaded)
+                .into_iter()
+                .find(|line| line.starts_with("bench binary "))
+        };
+        let warned = |file: &ResultFile| own_lines(file).iter().any(|line| line == KIBBR_OLDER);
+        // A result saved while the bench was a subcommand names no bench binary.
+        assert_eq!(bench_line(&file), None);
+        assert!(!warned(&file));
+        assert!(!serde_json::to_string(&file)
+            .expect("JSON")
+            .contains("kibbr-bench\""));
+
+        let bench = |built: &str| Binary {
+            path: "/repo/kibbr/target/release/kibbr-bench".to_string(),
+            bytes: 2_500_000,
+            crc32c: "0badc0de".to_string(),
+            modified_at: Some(built.to_string()),
+            build: "release".to_string(),
+            stale: Some(false),
+        };
+        file.binary.modified_at = Some("2026-10-07T02:44:11+05:30".to_string());
+
+        // Built in the same second as kibbr, or before it: the two are one build.
+        for built in ["2026-10-07T02:44:11+05:30", "2026-10-07T02:44:09+05:30"] {
+            file.bench.binary = Some(bench(built));
+            assert_eq!(
+                bench_line(&file),
+                Some(format!(
+                    "bench binary /repo/kibbr/target/release/kibbr-bench  2,500,000 bytes  \
+                     crc32c 0badc0de  built {built}"
+                ))
+            );
+            assert!(!warned(&file));
+        }
+
+        // Built after kibbr was, the same instant in another zone's words among them.
+        for built in ["2026-10-07T02:50:00+05:30", "2026-10-06T21:20:00+00:00"] {
+            file.bench.binary = Some(bench(built));
+            assert_eq!(
+                bench_line(&file),
+                Some(format!(
+                    "bench binary /repo/kibbr/target/release/kibbr-bench  2,500,000 bytes  \
+                     crc32c 0badc0de  built {built}  - built after the kibbr above: see the \
+                     WARNING under the table"
+                ))
+            );
+            assert!(warned(&file));
+        }
+
+        // The bench binary is saved, and read back.
+        let saved = serde_json::to_string(&file).expect("JSON");
+        let read: ResultFile = serde_json::from_str(&saved).expect("a result");
+        assert_eq!(read.bench.binary, file.bench.binary);
+
+        // A time that is missing is not a warning: nothing is known.
+        file.binary.modified_at = None;
+        assert!(!warned(&file));
     }
 }

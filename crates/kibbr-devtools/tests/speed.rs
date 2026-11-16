@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `kibbr bench`, from outside the process. Its numbers are a machine's, so nothing here
+//! `kibbr-bench`, from outside the process. Its numbers are a machine's, so nothing here
 //! holds a timing to more than "positive": what is held is what must be true on any machine.
 //! Every run is `--unchecked`: the test binary is a debug build, and other tests' servers
 //! are alive beside it, which a checked run would wait for and then be disturbed by.
@@ -41,10 +41,12 @@ impl Drop for Scratch {
     }
 }
 
-/// The binary, with no `KIBBR__` variable of the caller's: the bench takes them out of
-/// its children itself, and the test does not lean on that.
-fn kibbr() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr"));
+/// The bench, with no `KIBBR__` variable of the caller's: the bench takes them out of
+/// its children itself, and the test does not lean on that. It measures the `kibbr` in its
+/// own directory, which `cargo test --workspace` builds and `cargo test -p kibbr-devtools`
+/// does not.
+fn kibbr_bench() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kibbr-bench"));
     for (name, _) in std::env::vars_os() {
         if name.to_string_lossy().starts_with("KIBBR__") {
             command.env_remove(name);
@@ -53,11 +55,11 @@ fn kibbr() -> Command {
     command
 }
 
-/// `kibbr bench --lines 2000 --profile farm ... --unchecked --dir <dir>` with `more` after
+/// `kibbr-bench --lines 2000 --profile farm ... --unchecked --dir <dir>` with `more` after
 /// it.
 fn bench(dir: &Path, runs: usize, samples: usize, more: &[&str]) -> Output {
-    kibbr()
-        .args(["bench", "--profile", "farm", "--unchecked"])
+    kibbr_bench()
+        .args(["--profile", "farm", "--unchecked"])
         .args(["--lines", &LINES.to_string()])
         .args(["--body-lines", &BODY_LINES.to_string()])
         .args(["--runs", &runs.to_string()])
@@ -535,8 +537,8 @@ fn a_bench_run_prints_the_eight_rows_and_saves_every_sample_behind_them() {
     assert_eq!(log, stdout, "the saved log is what was printed");
 
     // ── A file against itself: every ratio is 1, and every one is said to be no difference ──
-    let printed = kibbr()
-        .args(["bench", "--table"])
+    let printed = kibbr_bench()
+        .arg("--table")
         .arg(&a)
         .arg(&a)
         .output()
@@ -700,8 +702,8 @@ fn a_bench_run_prints_the_eight_rows_and_saves_every_sample_behind_them() {
 fn a_profile_the_bench_does_not_measure_is_refused_by_name() {
     let scratch = Scratch::new("profile");
     let dir = scratch.0.join("bench");
-    let ran = kibbr()
-        .args(["bench", "--profile", "hostile", "--unchecked"])
+    let ran = kibbr_bench()
+        .args(["--profile", "hostile", "--unchecked"])
         .args(["--lines", &LINES.to_string()])
         .arg("--dir")
         .arg(&dir)

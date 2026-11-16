@@ -518,13 +518,10 @@ version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
- "crc32c",
  "flate2",
  "kibbr-engine",
  "kibbr-server",
- "libc",
  "mimalloc",
- "rayon",
  "serde",
  "serde_json",
  "thiserror",
@@ -532,6 +529,21 @@ dependencies = [
  "toml",
  "tracing",
  "zstd",
+]
+
+[[package]]
+name = "kibbr-devtools"
+version = "0.4.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "crc32c",
+ "kibbr-engine",
+ "libc",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

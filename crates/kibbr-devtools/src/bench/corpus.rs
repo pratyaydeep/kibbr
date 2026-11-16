@@ -17,7 +17,7 @@ use std::process::{Child, Command, Stdio};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::engine::fmt::commas;
+use kibbr_engine::fmt::commas;
 
 use super::server::scrub;
 use super::{
@@ -201,7 +201,7 @@ fn enough(dir: &Path, free: u64, lines: u64) -> Result<(), SpeedError> {
     let need = lines.saturating_mul(FREE_BYTES_PER_LINE);
     if free < need {
         return Err(SpeedError::Host(format!(
-            "the volume that holds {} has {} bytes free, and kibbr bench --lines {} needs {} \
+            "the volume that holds {} has {} bytes free, and kibbr-bench --lines {} needs {} \
              ({} a line) before it builds anything. Make room on it, or name a directory on \
              another volume with --dir",
             dir.display(),
@@ -1625,8 +1625,8 @@ mod tests {
             .to_string();
         assert_eq!(
             told,
-            "the volume that holds testdata/bench has 1,999,999,999 bytes free, and kibbr \
-             bench --lines 1,000,000 needs 2,000,000,000 (2,000 a line) before it builds \
+            "the volume that holds testdata/bench has 1,999,999,999 bytes free, and \
+             kibbr-bench --lines 1,000,000 needs 2,000,000,000 (2,000 a line) before it builds \
              anything. Make room on it, or name a directory on another volume with --dir"
         );
         assert!(

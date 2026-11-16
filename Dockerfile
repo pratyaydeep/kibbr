@@ -23,6 +23,8 @@ FROM rust:1.96-alpine AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+# The two library crates, and of crates/kibbr-devtools its manifest alone: .dockerignore
+# lets nothing else of the bench into the context, and Cargo asks for nothing else of it.
 COPY crates crates
 COPY src src
 # The registry and the target directory are cache mounts: they outlive the layer, so a
@@ -39,27 +41,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  # only when the image is run. `file` says which it is; this stops the build there.
  && file /out/kibbr | tee /dev/stderr | grep -Eq 'statically linked|static-pie linked' \
  && /out/kibbr --version
-
-# ── bench ──────────────────────────────────────────────────────────────────────────
-# `docker build --target bench`: what bench/run.sh runs `kibbr bench` in. Not the image
-# that is deployed, and the same binary, byte for byte.
-#
-# `kibbr bench` asks the system two things through programs - `ps -axo pid=,ppid=,comm=`
-# for another kibbr process, `df -Pk` for the room its work needs - and stops if either
-# cannot be run. The image below has neither, and BusyBox's `ps` does not take those
-# flags; these are procps' and coreutils'. There is no git here, so the bench records no
-# commit: bench/run.sh writes the checkout's beside the result.
-FROM debian:12-slim AS bench
-RUN apt-get update \
- && apt-get install -y --no-install-recommends procps \
- && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out/kibbr /usr/local/bin/kibbr
-COPY --from=build --chown=65532:65532 /out/var/lib/kibbr /var/lib/kibbr
-USER 65532:65532
-WORKDIR /var/lib/kibbr
-VOLUME /var/lib/kibbr
-ENTRYPOINT ["/usr/local/bin/kibbr"]
-CMD ["bench", "--help"]
 
 # ── run ────────────────────────────────────────────────────────────────────────────
 # The last stage, so `docker build .` with no --target is this one.

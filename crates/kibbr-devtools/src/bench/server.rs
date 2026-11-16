@@ -53,6 +53,9 @@ pub struct Server {
     pub start_s: f64,
     /// Copying the loaded directory and reading the copy back against the marker.
     pub copy_ms: f64,
+    // Kept beside `copy_bytes` and read by nothing: in a binary an unread field is a
+    // warning, which it was not while this was a module of a library.
+    #[allow(dead_code)]
     pub copy_files: u64,
     pub copy_bytes: u64,
     /// The server's standard error, a file and never a pipe: the farm widens columns on

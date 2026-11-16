@@ -1,8 +1,9 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `kibbr bench --lines N --profile farm`: this build's speed on one farm day, measured the
-//! same way every time, so that the number a change is held to is one command's.
+//! `kibbr-bench --lines N --profile farm`: the speed of the `kibbr` beside this binary on
+//! one farm day, measured the same way every time, so that the number a change is held to
+//! is one command's.
 //! A unit is one server's work on its own copy of the loaded bytes; no server is shared,
 //! and a unit disturbed by swap or another kibbr process is done again. Frozen once a
 //! result is saved as a baseline: the module's files are digested into every result.
@@ -25,7 +26,7 @@ use std::time::{Duration, Instant};
 use chrono::{SecondsFormat, Utc};
 use thiserror::Error;
 
-use crate::engine::fmt::commas;
+use kibbr_engine::fmt::commas;
 
 use corpus::{BuiltBy, Corpus};
 use host::Swap;
@@ -128,7 +129,7 @@ pub const KEY: &str = r#"COUNT LOG {"level": *}"#;
 pub const SCAN: &str = r#"COUNT LOG {"status":"200"}"#;
 pub const SCANKEY: &str = r#"COUNT LOG {"status": *}"#;
 
-/// What `kibbr bench --lines N --profile farm` was asked for; the profile is refused by
+/// What `kibbr-bench --lines N --profile farm` was asked for; the profile is refused by
 /// the command line before this is built.
 pub struct Args {
     pub lines: u64,
@@ -145,7 +146,7 @@ pub struct Args {
     pub unchecked: bool,
 }
 
-/// What stops `kibbr bench`, each sentence saying what was met and what to do about it:
+/// What stops `kibbr-bench`, each sentence saying what was met and what to do about it:
 /// the command is run rarely and by hand.
 #[derive(Debug, Error)]
 pub enum SpeedError {
@@ -165,6 +166,15 @@ pub enum SpeedError {
          its result as not a measurement"
     )]
     DebugBuild,
+
+    /// The binary measured is not this one: it is the `kibbr` in this one's directory, and
+    /// building `kibbr-bench` does not build it.
+    #[error(
+        "{} is not there. kibbr-bench measures the `kibbr` binary in its own directory, and \
+         building one does not build the other. Build both, `cargo build --release \
+         --workspace`, and run this again", .0.display()
+    )]
+    NoKibbr(PathBuf),
 
     #[error("{path}: {source}")]
     Io {
@@ -270,6 +280,36 @@ fn who(sender: &usize) -> String {
     } else {
         format!("the {SENDERS} ingest senders")
     }
+}
+
+/// The `kibbr` binary this bench measures: the one in the directory `own`, this binary,
+/// is in. Every server, load and `gen-logs` of a run is that file, started as a child.
+pub fn kibbr_beside(own: &Path) -> Result<PathBuf, SpeedError> {
+    let name = format!("kibbr{}", std::env::consts::EXE_SUFFIX);
+    let beside = own.with_file_name(name);
+    match beside.try_exists() {
+        Ok(true) => Ok(beside),
+        Ok(false) => Err(SpeedError::NoKibbr(beside)),
+        Err(source) => Err(SpeedError::Io {
+            path: beside,
+            source,
+        }),
+    }
+}
+
+/// The `kibbr` a unit test of this package runs. A test's binary is in `deps/`, one directory
+/// below where `cargo test --workspace` builds `kibbr`; `cargo test -p kibbr-devtools` builds
+/// none, and a test that needs one then stops on the sentence that says so.
+#[cfg(test)]
+pub fn kibbr_for_tests() -> PathBuf {
+    let own = own_path().expect("this test's own path");
+    let deps = own.parent().expect("the directory the test binary is in");
+    kibbr_beside(deps).unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// This binary's own path, which the plan step is run again from.
+fn own_path() -> Result<PathBuf, SpeedError> {
+    std::env::current_exe().map_err(io_at(Path::new("this binary's own path")))
 }
 
 /// A write to standard output that failed, as the error a file's failure is.
@@ -393,12 +433,17 @@ fn pids(pids: &[u32]) -> String {
 /// What is known before anything is made on disk: where the result will go, the baseline
 /// if there is one, and the commit, binary, machine and server arguments a result records.
 struct Start {
-    /// This binary. Every child is it, run again.
+    /// The `kibbr` beside this binary: what is measured. Every server, load and `gen-logs`
+    /// is it, started as a child.
     exe: PathBuf,
+    /// This binary. The plan step is it, run again.
+    own: PathBuf,
     out: PathBuf,
     baseline: Option<Saved>,
     commit: Commit,
     binary: Binary,
+    /// This binary, as a result records it beside the one measured.
+    bench_binary: Binary,
     machine: Machine,
     server: ServerFacts,
     flags: Flags,
@@ -436,8 +481,12 @@ fn start(args: &Args) -> Result<Start, SpeedError> {
         return Err(SpeedError::DebugBuild);
     }
 
-    let exe = std::env::current_exe().map_err(io_at(Path::new("this binary's own path")))?;
+    let own = own_path()?;
+    let exe = kibbr_beside(&own)?;
+    // `release` or `debug` is this binary's own answer, and is recorded of both: the two
+    // are in one directory of `target/`, which holds one profile's builds.
     let binary = host::binary(&exe, &commit)?;
+    let bench_binary = host::binary(&own, &commit)?;
     let mut machine = host::machine();
     // Now, and by the bench: `serve` refuses it too, but as a server that did not start.
     if let Some(threads) = args
@@ -467,10 +516,12 @@ fn start(args: &Args) -> Result<Start, SpeedError> {
     report::writable(&out)?;
     Ok(Start {
         exe,
+        own,
         out,
         baseline,
         commit,
         binary,
+        bench_binary,
         machine,
         server,
         flags,
@@ -674,7 +725,7 @@ fn one_run(
     report::log_checks(log, run, &checks, flags)?;
 
     let plan = watch.unit(log, "plan", || {
-        plan::child(work.exe, work.samples, work.work)
+        plan::child(&start.own, work.samples, work.work)
     })?;
     // One trie for every run of every result: the first run's is the result's, and a run
     // that planned on another has timed something else.
@@ -721,8 +772,9 @@ fn one_run(
         checks.power_after = host::power();
     }
     // A build beside the bench replaces the binary being measured; the servers of this
-    // run were then not all one build.
+    // run were then not all one build. The same of this binary, which each run's plan step is.
     host::binary_unchanged(&start.binary)?;
+    host::binary_unchanged(&start.bench_binary)?;
     // Every wait of the run, the ones after a disturbed unit among them.
     checks.waited_s = watch.waited_s;
     checks.waited_for = watch.waited_for;
@@ -883,7 +935,10 @@ fn measure(
         report::comparable_data(baseline, &data, &queries, &expect)?;
     }
 
-    let bench = report::source_digest();
+    let bench = report::BenchSource {
+        binary: Some(start.bench_binary.clone()),
+        ..report::source_digest()
+    };
     let mut file = ResultFile {
         schema: report::SCHEMA.to_string(),
         label: label(args),
@@ -1036,18 +1091,19 @@ pub fn table(files: &[PathBuf], out: &mut dyn Write) -> Result<(), SpeedError> {
 }
 
 /// What a run starts as a child: build the trie of 10,000 templates in this process, time
-/// the plans, and print them as one JSON line.
+/// the plans, and print them as one JSON line. The trie's lines are the `kibbr` beside
+/// this binary's.
 pub fn plan_only(samples: usize, out: &mut dyn Write) -> Result<(), SpeedError> {
-    let line = plan::measure(samples)?;
+    let line = plan::measure(&kibbr_beside(&own_path()?)?, samples)?;
     writeln!(out, "{}", serde_json::to_string(&line)?).map_err(on_stdout)
 }
 
-/// The `bench` arm of `main.rs`: `--plan-only`, `--table`, or the measurement.
+/// What `main.rs` calls: `--plan-only`, `--table`, or the measurement.
 #[allow(clippy::too_many_arguments)]
 pub fn cli(
     out: &mut dyn Write,
     lines: Option<u64>,
-    profile: Option<crate::tools::gen::Profile>,
+    profile: Option<crate::Profile>,
     save: Option<PathBuf>,
     baseline: Option<PathBuf>,
     label: Option<String>,
@@ -1059,14 +1115,14 @@ pub fn cli(
     unchecked: bool,
     table: Vec<PathBuf>,
     plan_only: bool,
-) -> Result<(), crate::error::CliError> {
-    let result = if plan_only {
+) -> Result<(), SpeedError> {
+    if plan_only {
         self::plan_only(samples, out)
     } else if !table.is_empty() {
         self::table(&table, out)
     } else {
         match (lines, profile) {
-            (Some(lines), Some(crate::tools::gen::Profile::Farm)) => run(
+            (Some(lines), Some(crate::Profile::Farm)) => run(
                 &Args {
                     lines,
                     out: save,
@@ -1085,8 +1141,7 @@ pub fn cli(
             // the other profile, refused before anything is made under `--dir`.
             _ => Err(SpeedError::Profile),
         }
-    };
-    result.map_err(crate::error::CliError::from)
+    }
 }
 
 #[cfg(test)]
@@ -1375,5 +1430,26 @@ mod tests {
         assert_eq!(label(&args), "this run");
         args.label = Some("after 1 (columns)".to_string());
         assert_eq!(label(&args), "after 1 (columns)");
+    }
+
+    #[test]
+    fn the_kibbr_measured_is_the_one_beside_this_binary_and_its_absence_is_said() {
+        let scratch = Scratch::new("beside");
+        let own = scratch.0.join("kibbr-bench");
+        let kibbr = scratch
+            .0
+            .join(format!("kibbr{}", std::env::consts::EXE_SUFFIX));
+        let told = kibbr_beside(&own).expect_err("no kibbr yet").to_string();
+        assert_eq!(
+            told,
+            format!(
+                "{} is not there. kibbr-bench measures the `kibbr` binary in its own \
+                 directory, and building one does not build the other. Build both, `cargo \
+                 build --release --workspace`, and run this again",
+                kibbr.display()
+            )
+        );
+        fs::write(&kibbr, b"a build").expect("write the stand-in");
+        assert_eq!(kibbr_beside(&own).expect("it is there"), kibbr);
     }
 }

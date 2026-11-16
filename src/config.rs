@@ -395,7 +395,7 @@ pub struct Log {
 
 impl Default for Log {
     /// `info`, as text - not the `json` of the design's sample file: the lines a
-    /// terminal, the scripts and `kibbr bench` read off a server's stderr are the text ones.
+    /// terminal, the scripts and `kibbr-bench` read off a server's stderr are the text ones.
     fn default() -> Self {
         Self {
             level: LogLevel::Info,

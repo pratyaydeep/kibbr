@@ -1,8 +1,11 @@
 [workspace]
 # Three crates: kibbr-engine, the whole database, and the two layers over it that name it,
-# kibbr-server (HTTP) and kibbr (the command line), which names both.
+# kibbr-server (HTTP) and kibbr (the command line), which names both. A fourth that is
+# never published, kibbr-devtools, holds the bench (`kibbr-bench`).
 # fuzz/ is a workspace of its own, so `cargo build` here never builds a fuzzer.
-members = ["crates/kibbr-engine", "crates/kibbr-server"]
+members = ["crates/kibbr-engine", "crates/kibbr-server", "crates/kibbr-devtools"]
+# Plain `cargo build` and `cargo test` are the `kibbr` package's, and never build the bench.
+default-members = ["."]
 exclude = ["fuzz", "lab-rs"]
 resolver = "2"
 
@@ -33,7 +36,7 @@ crc32c = "0.6.8"
 flate2 = "1.1"
 # The global allocator - why is at `#[global_allocator]` in src/main.rs.
 mimalloc = "0.1.52"
-# `statvfs` before a compaction writes, and a child's CPU time for `kibbr bench`: std has neither.
+# `statvfs` before a compaction writes, and a child's CPU time for `kibbr-bench`: std has neither.
 libc = "0.2"
 # `Frame` and `SizeHint`, for the body the server wraps a request's in to know it was read whole.
 http-body = "1"
@@ -74,11 +77,8 @@ kibbr-engine.workspace = true
 kibbr-server.workspace = true
 chrono.workspace = true
 clap.workspace = true
-crc32c.workspace = true
 flate2.workspace = true
 mimalloc.workspace = true
-libc.workspace = true
-rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

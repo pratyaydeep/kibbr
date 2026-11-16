@@ -6,7 +6,7 @@
 use kibbr::cmd::serve::{self, StorageKind};
 use kibbr::cmd::{compact, load, query, status};
 use kibbr::tools::gen::{self, Profile};
-use kibbr::tools::{bench, bench_storage, demo, parse};
+use kibbr::tools::{bench_storage, demo, parse};
 use kibbr::{config, error, logs};
 use kibbr::engine::model::infer;
 
@@ -301,93 +301,6 @@ enum Command {
         /// As `load --time-columns`. Overrides `KIBBR__SCHEMA__TIME_COLUMNS`.
         #[arg(long, value_name = "NAMES", value_delimiter = ',')]
         time_columns: Option<Vec<String>>,
-    },
-    /// Measure how fast this build is on one farm day: ingest lines a second, the four
-    /// standard queries idle and under ingest, scan rows per CPU-second, and the plan step.
-    Bench {
-        /// Lines in the farm day that is loaded (seed 42), and in the live stream sent to
-        /// the servers (seed 43). The measurement is `--lines 1000000`.
-        #[arg(
-            long,
-            value_parser = clap::value_parser!(u64).range(1..),
-            required_unless_present_any = ["table", "plan_only"]
-        )]
-        lines: Option<u64>,
-        /// Only `farm` is measured: the queries and their expected answers are the
-        /// farm's. `hostile` is refused.
-        #[arg(long, value_enum, required_unless_present_any = ["table", "plan_only"])]
-        profile: Option<Profile>,
-        /// Where the result is saved, the raw log beside it as `.log`; a file that exists is
-        /// refused. [default: <dir>/results/<UTC time>-<commit>.json]
-        #[arg(long, value_name = "FILE")]
-        out: Option<PathBuf>,
-        /// A saved result to compare with, held to be the same work before anything is measured;
-        /// each number is printed with its speed-up on it.
-        #[arg(long, value_name = "FILE")]
-        baseline: Option<PathBuf>,
-        /// The heading of this result's column, saved in the file.
-        /// [default: baseline, or `this run` with --baseline]
-        #[arg(long, value_name = "TEXT")]
-        label: Option<String>,
-        /// Holds the loaded directory, each server's copy of it, and the default results.
-        #[arg(long, value_name = "PATH", default_value = bench::DEFAULT_DIR)]
-        dir: PathBuf,
-        /// How many times the whole sequence is run; each printed number is the middle
-        /// one. Odd. Two results compare only at the same value.
-        #[arg(long, value_name = "R", default_value_t = bench::DEFAULT_RUNS, value_parser = odd)]
-        runs: usize,
-        /// Timed asks of each query, and timed plans of each shape. Two results compare only at
-        /// the same value.
-        #[arg(
-            long,
-            value_name = "K",
-            default_value_t = bench::DEFAULT_SAMPLES,
-            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-        )]
-        samples: usize,
-        /// Lines in one `/ingest` body. Two results compare only at the same value.
-        #[arg(
-            long,
-            value_name = "L",
-            default_value_t = bench::DEFAULT_BODY_LINES,
-            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-        )]
-        body_lines: usize,
-        /// Scan threads of every server measured: each is started with `--scan-threads T`.
-        /// Two results compare only at the same value.
-        #[arg(
-            long,
-            value_name = "T",
-            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-        )]
-        threads: Option<usize>,
-        /// Skip the checks that make a run a measurement, and allow a debug build; the result is
-        /// marked `UNCHECKED - not a measurement`. For tests.
-        #[arg(long)]
-        unchecked: bool,
-        /// Measure nothing: print the table from saved results, the first as the baseline
-        /// and one column a file, headed by its label.
-        #[arg(
-            long,
-            value_name = "FILE",
-            num_args = 2..,
-            conflicts_with_all = [
-                "lines", "profile", "out", "baseline", "label", "dir", "runs", "samples",
-                "body_lines", "unchecked", "plan_only"
-            ]
-        )]
-        table: Vec<PathBuf>,
-        // What a run starts as a child, once a run. Hidden, because its one JSON line is read
-        // by the bench and not by a person.
-        #[arg(
-            long,
-            hide = true,
-            conflicts_with_all = [
-                "lines", "profile", "out", "baseline", "label", "dir", "runs", "body_lines",
-                "unchecked"
-            ]
-        )]
-        plan_only: bool,
     },
     /// List every template a running server holds: its id, its rows, where its time
     /// comes from, and its path. What `GET /templates` answers, asked for you.
@@ -703,36 +616,6 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             config::schema(file, time_columns),
             &mut out,
         ),
-        Command::Bench {
-            lines,
-            profile,
-            out: save,
-            baseline,
-            label,
-            dir,
-            runs,
-            samples,
-            body_lines,
-            threads,
-            unchecked,
-            table,
-            plan_only,
-        } => bench::cli(
-            &mut out,
-            lines,
-            profile,
-            save,
-            baseline,
-            label,
-            dir,
-            runs,
-            samples,
-            body_lines,
-            threads,
-            unchecked,
-            table,
-            plan_only,
-        ),
         Command::Explain {
             query,
             max_rows,
@@ -810,18 +693,6 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(code),
         Err(e) => Err(CliError::Write(e)),
         Ok(()) => Ok(code),
-    }
-}
-
-/// `bench --runs`: an odd count, so that the median of the runs is one of them and not a
-/// number between two.
-fn odd(text: &str) -> Result<usize, String> {
-    match text.parse::<usize>() {
-        Ok(runs) if runs % 2 == 1 => Ok(runs),
-        Ok(runs) => Err(format!(
-            "{runs} is not odd; each printed number is the middle one of the runs"
-        )),
-        Err(e) => Err(e.to_string()),
     }
 }
 

@@ -136,7 +136,7 @@ stays `true`, since it is the liveness check and a restart does not empty a disk
   `/ingest` body is between the door and its answer - so a server under steady ingest
   answers each query on one thread.
 - It buys time and costs CPU: on eight cores, a count over 433,000 rows of a day in about
-  half the time for 14 to 34% more CPU, in replays of the bench's scan (`kibbr bench` has
+  half the time for 14 to 34% more CPU, in replays of the bench's scan (`kibbr-bench` has
   not yet taken that row). `/stats` has
   `queries.scan_fan_outs`, `queries.scan_threads` and `queries.scan_fan_rows`.
 

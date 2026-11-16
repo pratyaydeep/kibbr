@@ -16,7 +16,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::engine::fmt::commas;
+use kibbr_engine::fmt::commas;
 
 use super::corpus::{self, Corpus, LiveStream};
 use super::host::{self, Cpu};
@@ -1923,7 +1923,7 @@ mod tests {
             &mut conn,
             || "a listener of this test".to_string(),
             "S2",
-            &wire::query_request(crate::tools::bench::S2),
+            &wire::query_request(crate::bench::S2),
             limit,
         )
     }
