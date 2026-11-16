@@ -34,7 +34,7 @@ src/tools/bench_storage.rs  `kibbr bench-storage`
 src/tools/bench/            `kibbr bench`
 tests/                      one file an area (load, query, compact, restart, compat, ...); fixtures/ holds old-format data dirs
 tests/fixture.rs            outer-surface tests
-tests/serve.rs              the HTTP contract, over a bare TcpStream - in this process, or of the binary
+tests/serve.rs              the HTTP contract of the binary, over a bare TcpStream
 Dockerfile                  the image: a static binary on distroless, and the `bench` target
 bench/run.sh                `kibbr bench` in a container; bench/results/ holds what it measured
 deploy/                     the Kubernetes manifests, the IAM policies and the Vector sinks
@@ -130,9 +130,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings # lints hav
 
 - Without `--all-features`, the engine's `src/fuzzing/tests.rs` is not compiled and the
   committed crashers are not replayed.
-- Most tests under `tests/` run the real binary and read its stdout. `serve.rs` also runs
-  the server in this process, and `compact.rs` reads day files through `internals`. There
-  are no mocks.
+- Most tests under `tests/` run the real binary and read its stdout. `compact.rs` also
+  reads day files through `internals`. There are no mocks.
 - The one that matters most in `tests/fixture.rs` is
   `every_fixture_value_gets_its_labelled_type`: every hand-labelled value in
   `testdata/fixture.ndjson` must come out with the type its label says.
