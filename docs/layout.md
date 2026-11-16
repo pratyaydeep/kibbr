@@ -41,7 +41,7 @@ web/                             the console's ReScript source, built into viewe
 ```
 
 - **Traits only where there are two.** The engine's row stores are the one place with a
-  second implementation, and four traits in `rows/mod.rs`: `Store`, `LeafStore` and
+  second implementation, and four traits in `rows.rs`: `Store`, `LeafStore` and
   `Snapshot`, each implemented in memory (`rows/memory.rs`, whose snapshot is `Live`
   beside the traits) and on disk (`rows/disk.rs`), and `Visitor`, where a
   scan hands its rows - a count, a fetch, a group-by. Everything else has one
@@ -106,7 +106,7 @@ lib.rs       the public names, `internals`, and `testing` behind `test-support`
   off by default. Neither is for a build that runs in production.
 - The format's test vectors are in `testdata/format/`.
 - **Column encodings.** Each piece of a column chunk gets one encoding, by its type, and
-  never several tried with the smallest kept (`format/mod.rs`, `format/build.rs`):
+  never several tried with the smallest kept (`format.rs`, `format/build.rs`):
   - a value stored once when every row of the piece holds it
   - a dictionary for strings
   - varints for integers

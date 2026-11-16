@@ -113,6 +113,11 @@ test-support = []
 # off by default, so a build carries none of them.
 fuzzing = []
 
+# A module that has files of its own is `x.rs` beside the folder `x/`, never `x/mod.rs`:
+# every file's name then says what it is.
+[lints.clippy]
+mod_module_files = "deny"
+
 [dev-dependencies]
 # The package on itself: turns the test hooks on for tests, and only for tests.
 # Not `fuzzing`: the replay runs with `--all-features`.
