@@ -25,10 +25,12 @@ seed of the generated lines.
 | `date_forms.sh` | `one seal, then text; every value back as it arrived`: at most 2 segment files |
 | `received_at.sh` | `the system column is not a key`: 823 templates, as before the column existed |
 | `time_columns.sh` | `every row has a time`: the count equals the windowed count, no `undated` directory |
-| `spdx.sh` | `N files, 0 without the header`: every `.rs` file starts with the copyright and SPDX lines; `--fix` adds them |
-| `no_internals.sh` | `the server never names kibbr::internals`: neither `src/server.rs` nor a file under `src/server/` names the engine's doc-hidden module |
-| `cmd_no_tools.sh` | `src/cmd/ never names src/tools/`: what runs in production never names `bench-storage` or the generators |
 | `strip_comments.py` | not a check of the binary: prints Rust source without comments, to show a diff changed comments only |
+
+Three rules that were scripts here are a test now, `tests/source_rules.rs`, with the
+other rules of the layers: every `.rs` file starts with the licence lines, the server
+never names the engine's `internals`, and a production command never names the tools.
+`cargo test --test source_rules` runs it.
 
 `store_agree.sh`, `two_doors.sh` and `roundtrip.sh` print `scan fan-outs ...`, and with
 `NEED_FAN_OUTS=1` fail at none.

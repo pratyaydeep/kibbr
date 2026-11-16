@@ -102,8 +102,8 @@ src/lib.rs       the public names, `internals`, and `testing` behind `test-suppo
 - **Three ways to open.** To serve, `Database::claim` then `Claim::open`; offline,
   `Database::open_offline`; in memory, `Database::in_memory`.
 - **`internals`** is doc-hidden and has no stability promise. It holds what the command
-  line's diagnostics (`demo`, `bench-storage`) read past the handle. `kibbr-server` never
-  names it (`scripts/check/no_internals.sh`).
+  line's diagnostics (`demo`, `bench-storage`) read past the handle. The server never
+  names it (`tests/source_rules.rs`).
 - **Features.** `test-support` gives the tests of the crates above their fixtures;
   `fuzzing` is off by default.
 - The format's test vectors are in `testdata/format/`.
