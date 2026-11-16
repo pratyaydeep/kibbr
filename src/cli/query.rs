@@ -15,8 +15,8 @@ use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use serde_json::{Map, Value};
 
-use crate::config::{Limits, Schema};
-use crate::error::{CliError, QueryError};
+use crate::cli::config::{Limits, Schema};
+use crate::cli::error::{CliError, QueryError};
 // A TrieQL string into a `Query` and an answer into JSON are the server crate's, since
 // `POST /query` is their other caller: here under the names this module always had.
 use kibbr::query::answer::{self as wire, canonical, row_json};
@@ -88,7 +88,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     let result = if args.reference {
         let (lines, stats) = kibbr::load_lines(input)?;
         note(stats);
-        crate::cmd::oracle::run(&lines, &query, &schema.time_columns)?
+        crate::cli::query::oracle::run(&lines, &query, &schema.time_columns)?
     } else {
         let db = in_memory(schema);
         note(db.ingest_file(input, now, true)?);
@@ -810,10 +810,10 @@ fn dedup(mut items: Vec<String>) -> Vec<String> {
     items
 }
 
-/// The `query` arm of `main.rs`: the limits settled, the input opened, then `run`.
+/// The `query` arm of `cli.rs`: the limits settled, the input opened, then `run`.
 #[allow(clippy::too_many_arguments)]
 pub fn cli<W: Write>(
-    file: &crate::config::File,
+    file: &crate::cli::config::File,
     out: &mut W,
     input: &str,
     trieql: Option<String>,
@@ -834,7 +834,7 @@ pub fn cli<W: Write>(
     max_groups: Option<usize>,
     time_columns: Option<Vec<String>>,
 ) -> Result<(), CliError> {
-    let limits = crate::config::limits(file, max_rows, max_buckets, max_groups)?;
+    let limits = crate::cli::config::limits(file, max_rows, max_buckets, max_groups)?;
     let reader = super::open(input)?;
     let args = Args {
         trieql,
@@ -851,10 +851,12 @@ pub fn cli<W: Write>(
         limit,
         after,
         limits,
-        schema: crate::config::schema(file, time_columns),
+        schema: crate::cli::config::schema(file, time_columns),
     };
     run(reader, out, &args)
 }
+
+pub mod oracle;
 
 #[cfg(test)]
 mod tests;

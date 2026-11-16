@@ -104,7 +104,7 @@ pub enum CliError {
     Gen(#[from] GenError),
 
     #[error(transparent)]
-    Config(#[from] crate::config::ConfigError),
+    Config(#[from] crate::cli::config::ConfigError),
 
     #[error(transparent)]
     Trie(#[from] kibbr::TrieError),
@@ -135,11 +135,11 @@ pub enum CliError {
     #[error(transparent)]
     Serve(crate::server::Error),
     #[error(transparent)]
-    Load(#[from] crate::cmd::load::LoadError),
+    Load(#[from] crate::cli::load::LoadError),
     #[error(transparent)]
-    Compact(#[from] crate::cmd::compact::CompactError),
+    Compact(#[from] crate::cli::compact::CompactError),
     #[error(transparent)]
-    Ask(#[from] crate::cmd::status::AskError),
+    Ask(#[from] crate::cli::status::AskError),
 }
 
 impl From<crate::server::Error> for CliError {

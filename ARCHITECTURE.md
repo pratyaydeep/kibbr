@@ -4,8 +4,8 @@ kibbr is one published package. Inside it are two crates: a library and a binary
 
 - **The library is the engine**: the database, in `src/engine/`. It has no HTTP, no flags
   and no async runtime.
-- **The binary is the server and the command line**, in `src/main.rs` and the modules it
-  declares. It is built on the library.
+- **The binary is the server and the command line**: `src/main.rs`, which declares the
+  two modules `server` and `cli`. It is built on the library.
 
 A second package, `crates/kibbr-devtools`, holds the speed bench (`kibbr-bench`). It is
 never published.
@@ -50,30 +50,32 @@ values), the modules, and TrieQL. It is the front page on docs.rs.
 compactions it runs. Nothing there reads a flag or writes to stderr, and the flush clock
 is there, not in the store.
 
-The subcommands of the binary are in two halves.
+`src/cli.rs` is the command line: the clap types of every subcommand, and the dispatch.
+The subcommands are in two halves.
 
-- `src/cmd/` is what someone runs in production: `serve`, `load`, `compact`, `query`,
-  `explain`, `templates`, `stats` and `health`.
-- `src/tools/` is what someone runs to try, measure or test kibbr: `parse`, `demo`,
-  `gen-logs` and `bench-storage`. Nothing in `src/cmd/` names it.
+- `src/cli/` holds what someone runs in production, one file each: `serve.rs`,
+  `load.rs`, `compact.rs`, `query.rs` (with `explain`) and `status.rs` (`templates`,
+  `stats` and `health`).
+- `src/cli/tools/` holds what someone runs to try, measure or test kibbr: `parse`,
+  `demo`, `gen-logs` and `bench-storage`. No production command names it.
 
-`src/client.rs` is the small HTTP client that `load`, `compact`, the status commands and
-`bench-storage` use to talk to a server.
+`src/cli/http.rs` is the small HTTP client that `load`, `compact`, the status commands
+and `bench-storage` use to talk to a server.
 
 ## Generated logs and the oracle
 
-`src/tools/gen/` writes reproducible fake logs (`kibbr gen-logs --profile farm --seed
+`src/cli/tools/gen_logs.rs` writes reproducible fake logs (`kibbr gen-logs --profile farm --seed
 42`), the same lines on every machine, so a benchmark or a fault test means the same
-thing everywhere. `src/cmd/oracle.rs` is the oracle: every line, a closure, a counter.
+thing everywhere. `src/cli/query/oracle.rs` is the oracle: every line, a closure, a counter.
 Obviously correct and never shipped, it judges the real engine in `--reference` runs and
 differential tests.
 
 ## Settings and logging
 
-`src/config.rs` resolves every setting the same way: the flag, or else the `KIBBR__`
-variable, or else the file `--config` names, or else the default. `src/logs.rs` is
+`src/cli/config.rs` resolves every setting the same way: the flag, or else the `KIBBR__`
+variable, or else the file `--config` names, or else the default. `src/cli/logging.rs` is
 kibbr's own log, one `tracing` subscriber that writes text or JSON lines to stderr.
-`src/error.rs` is the errors every command shares.
+`src/cli/error.rs` is the errors every command shares.
 
 ## The two features
 
@@ -96,6 +98,6 @@ bytes lives in the engine.** That is query text, cursors and every file format.
 - The server's and the command line's own code is not fuzzed.
 - One check left the fuzz targets when the harnesses moved into the engine: "the flags of
   `kibbr query` and TrieQL build the same query". It is about operator input, so it is a
-  test of the binary now (`src/cmd/query/tests.rs`). It runs on the harness's own cursors
+  test of the binary now (`src/cli/query/tests.rs`). It runs on the harness's own cursors
   and on every file in `fuzz/regressions/cursor/`. It is no longer fuzzed with coverage
   guidance.

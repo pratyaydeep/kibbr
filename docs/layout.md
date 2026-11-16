@@ -11,33 +11,33 @@ depends on the library with `fuzzing` on, and `crates/kibbr-devtools/` holds the
 The command line over a `Database`. It opens a data directory no other way.
 
 ```
-Cargo.toml                  the workspace, and the `kibbr` package: the library and the binary
-src/main.rs                 the binary's root: the clap definitions and the dispatch
-src/config.rs               where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
-src/logs.rs                 the process's own log: `tracing` events as lines of text or of JSON
-src/error.rs                thiserror enums of the commands, and what ends one
-src/client.rs               the small HTTP client `load`, `compact`, the status commands and `bench-storage --es` speak
-src/cmd/                    what someone runs in production; it never names src/tools/
-src/cmd/serve.rs            `kibbr serve` - the server's settings made, the server run, the exit code
-src/cmd/load.rs             `kibbr load` - the command: alone, or asked of the server holding the directory
-src/cmd/compact.rs          `kibbr compact` - the command, the same two ways
-src/cmd/query.rs            the `query` command: the flags, the table, the plan
-src/cmd/oracle.rs           the brute-force oracle behind `query --reference`
-src/cmd/status.rs           `kibbr templates`, `kibbr stats` and `kibbr health`
-src/tools/                  what someone runs to try, measure or test kibbr
-src/tools/parse.rs          the `parse` output
-src/tools/demo.rs           the `demo` tree
-src/tools/gen/              the generators - `hostile` (mod.rs) and the log farm (farm.rs)
-src/tools/bench_storage.rs  `kibbr bench-storage`
-tests/                      one file an area (load, query, compact, restart, compat, ...); fixtures/ holds old-format data dirs
-tests/fixture.rs            outer-surface tests
-tests/serve.rs              the HTTP contract of the binary, over a bare TcpStream
-crates/kibbr-devtools/      `kibbr-bench`, the speed bench: its own binary, never published; it measures the `kibbr` beside it
-Dockerfile                  the image: a static binary on distroless
-bench/                      the compression scripts, and bench/results/, what was measured
-deploy/                     the Kubernetes manifests, the IAM policies and the Vector sinks
-scripts/                    the check, fault and measure scripts, and bump.sh and publish.sh
-web/                        the console's ReScript source, built into viewer.html (docs/viewer.md)
+Cargo.toml                       the workspace, and the `kibbr` package: the library and the binary
+src/main.rs                      the binary's root: the allocator, and the two modules `server` and `cli`
+src/cli.rs                       the command line: the clap definitions and the dispatch
+src/cli/config.rs                where a setting comes from: a flag, a `KIBBR__` variable, the `--config` file, a default
+src/cli/logging.rs               the process's own log: `tracing` events as lines of text or of JSON
+src/cli/error.rs                 thiserror enums of the commands, and what ends one
+src/cli/http.rs                  the small HTTP client `load`, `compact`, the status commands and `bench-storage --es` speak
+src/cli/serve.rs                 `kibbr serve` - the server's settings made, the server run, the exit code
+src/cli/load.rs                  `kibbr load` - the command: alone, or asked of the server holding the directory
+src/cli/compact.rs               `kibbr compact` - the command, the same two ways
+src/cli/query.rs                 the `query` command: the flags, the table, the plan
+src/cli/query/oracle.rs          the brute-force oracle behind `query --reference`
+src/cli/status.rs                `kibbr templates`, `kibbr stats` and `kibbr health`
+src/cli/tools/                   what someone runs to try, measure or test kibbr; no production command names it
+src/cli/tools/parse.rs           the `parse` output
+src/cli/tools/demo.rs            the `demo` tree
+src/cli/tools/gen_logs.rs        the generators - `hostile` (this file) and the log farm (gen_logs/farm.rs)
+src/cli/tools/bench_storage.rs   `kibbr bench-storage`
+tests/                           one file an area (load, query, compact, restart, compat, ...); fixtures/ holds old-format data dirs
+tests/fixture.rs                 outer-surface tests
+tests/serve.rs                   the HTTP contract of the binary, over a bare TcpStream
+crates/kibbr-devtools/           `kibbr-bench`, the speed bench: its own binary, never published; it measures the `kibbr` beside it
+Dockerfile                       the image: a static binary on distroless
+bench/                           the compression scripts, and bench/results/, what was measured
+deploy/                          the Kubernetes manifests, the IAM policies and the Vector sinks
+scripts/                         the check, fault and measure scripts, and bump.sh and publish.sh
+web/                             the console's ReScript source, built into viewer.html (docs/viewer.md)
 ```
 
 - **Traits only where there are two.** The engine's row stores are the one place with a

@@ -30,6 +30,10 @@ One entry per tag, newest first.
   | `kibbr_engine::rows::scan_threads` | `kibbr::rows::scan_threads` |
   | `kibbr_engine::templates::trie` | `kibbr::templates::trie` |
   | `kibbr_engine::templates::snapshot` | `kibbr::templates::snapshot` |
+  | `kibbr::cmd::load` | `kibbr::cli::load` |
+  | `kibbr::cmd::compact` | `kibbr::cli::compact` |
+  | `kibbr::tools::bench_storage` | `kibbr::cli::tools::bench_storage` |
+  | `kibbr::logs` | `kibbr::cli::logging` |
 
   The text log, the banner's target and every message are as they were.
 - No change to the on-disk format, to compression, to the HTTP API or to what any other

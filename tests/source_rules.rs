@@ -541,8 +541,16 @@ fn names_the_tools(line: &str) -> bool {
     false
 }
 
+/// A production command is a file under `src/cli/` that is not the tools: not under
+/// `src/cli/tools/`, and not `src/cli/tools.rs`, the tools' own root.
+fn is_a_production_command(path: &str) -> bool {
+    path.starts_with("src/cli/")
+        && !path.starts_with("src/cli/tools/")
+        && path != "src/cli/tools.rs"
+}
+
 fn command_names_the_tools(source: &Source) -> Vec<String> {
-    if !source.path.starts_with("src/cmd/") {
+    if !is_a_production_command(&source.path) {
         return Vec::new();
     }
     let mut found = Vec::new();
@@ -609,10 +617,7 @@ fn the_sources_keep_the_rules_the_compiler_does_not_hold() {
 
     // A test that read nothing would pass: hold it to having read what it is about.
     assert!(dependencies.len() >= 10, "{dependencies:?}");
-    assert!(
-        command_line.contains(&"cmd".to_string()),
-        "{command_line:?}"
-    );
+    assert_eq!(command_line, ["cli"], "the command line is one module");
     for (layer, least) in [
         (Layer::Engine, 60),
         (Layer::Server, 8),
@@ -667,9 +672,7 @@ mod planted {
     }
 
     fn cli() -> Vec<String> {
-        ["client", "cmd", "config", "error", "logs", "tools"]
-            .map(String::from)
-            .to_vec()
+        vec!["cli".to_string()]
     }
 
     /// How many lines of `body`, as the file `path`, break any rule.
@@ -692,11 +695,14 @@ mod planted {
         assert_eq!(caught("src/engine/wal.rs", "use tokio::sync::Notify;"), 1);
         assert_eq!(caught("src/engine/wal.rs", "let x = axum::Json(1);"), 1);
         assert_eq!(caught("src/server/run.rs", "use clap::Parser;"), 1);
-        assert_eq!(caught("src/config.rs", "use axum::Router;"), 1);
-        assert_eq!(caught("src/config.rs", "use tokio::time::sleep;"), 1);
+        assert_eq!(caught("src/cli/config.rs", "use axum::Router;"), 1);
+        assert_eq!(caught("src/cli/config.rs", "use tokio::time::sleep;"), 1);
         // `tokio-util` is not `tokio`, and is in the command line's list.
         assert_eq!(
-            caught("src/config.rs", "use tokio_util::sync::CancellationToken;"),
+            caught(
+                "src/cli/config.rs",
+                "use tokio_util::sync::CancellationToken;"
+            ),
             0
         );
         // In its own list, in a comment, or as a part of a longer name: not a use of it.
@@ -712,33 +718,30 @@ mod planted {
 
     #[test]
     fn rule_3_the_server_naming_the_command_line_or_internals_is_caught() {
-        assert_eq!(caught("src/server/run.rs", "use crate::cmd::serve;"), 1);
+        assert_eq!(caught("src/server/run.rs", "use crate::cli::serve;"), 1);
         assert_eq!(
             caught(
                 "src/server/run.rs",
-                "let e = crate::error::CliError::Write;"
+                "let e = crate::cli::error::CliError::Write;"
             ),
             1
         );
         assert_eq!(
-            caught(
-                "src/server/run.rs",
-                "use crate::{server::settings, config};"
-            ),
+            caught("src/server/run.rs", "use crate::{server::settings, cli};"),
             1
         );
         assert_eq!(
             caught(
                 "src/server/run.rs",
-                "use crate::{\n    server::settings,\n    logs,\n};"
+                "use crate::{\n    server::settings,\n    cli::config,\n};"
             ),
             1
         );
         assert_eq!(
-            caught("src/server/run.rs", "use super::super::config::File;"),
+            caught("src/server/run.rs", "use super::super::cli::config::File;"),
             1
         );
-        assert_eq!(caught("src/server.rs", "use super::config::File;"), 1);
+        assert_eq!(caught("src/server.rs", "use super::cli::config::File;"), 1);
         assert_eq!(
             caught(
                 "src/server/run.rs",
@@ -746,7 +749,7 @@ mod planted {
             ),
             1
         );
-        // Its own modules, one of them named as a command-line module is.
+        // Its own modules, and a longer word that starts as the command line's module does.
         assert_eq!(
             caught(
                 "src/server/run.rs",
@@ -766,10 +769,17 @@ mod planted {
             0
         );
         assert_eq!(caught("src/server/run.rs", "use super::error::Error;"), 0);
-        // The command line may name all of these.
-        assert_eq!(caught("src/cmd/serve.rs", "use crate::config::File;"), 0);
         assert_eq!(
-            caught("src/tools/demo.rs", "use kibbr::internals::parts;"),
+            caught("src/server/run.rs", "let n = crate::clients::count();"),
+            0
+        );
+        // The command line may name all of these.
+        assert_eq!(
+            caught("src/cli/serve.rs", "use crate::cli::config::File;"),
+            0
+        );
+        assert_eq!(
+            caught("src/cli/tools/demo.rs", "use kibbr::internals::parts;"),
             0
         );
     }
@@ -831,7 +841,7 @@ mod planted {
         // The binary writes `kibbr::`, and opens sockets.
         assert_eq!(
             caught(
-                "src/client.rs",
+                "src/cli/http.rs",
                 "use std::net::TcpStream;\nuse kibbr::Database;"
             ),
             0
@@ -902,37 +912,47 @@ mod planted {
 
     #[test]
     fn rule_8_a_production_command_that_names_the_tools_is_caught() {
-        assert_eq!(caught("src/cmd/load.rs", "use crate::tools::gen;"), 1);
-        assert_eq!(caught("src/cmd/load.rs", "use crate::{config, tools};"), 1);
-        assert_eq!(caught("src/cmd/load.rs", "use crate::{tools, config};"), 1);
         assert_eq!(
-            caught(
-                "src/cmd/load.rs",
-                "let p = super::super::tools::parse::cli;"
-            ),
+            caught("src/cli/load.rs", "use crate::cli::tools::gen_logs;"),
             1
         );
         assert_eq!(
-            caught(
-                "src/cmd/load.rs",
-                "#[path = \"../tools/demo.rs\"]\nmod demo;"
-            ),
+            caught("src/cli/load.rs", "use crate::cli::{config, tools};"),
             1
         );
-        // A comment, a longer word, and a file that is not a production command.
+        assert_eq!(caught("src/cli/load.rs", "use super::{tools, config};"), 1);
         assert_eq!(
-            caught("src/cmd/load.rs", "// the tools; never named here"),
+            caught("src/cli/load.rs", "let p = super::tools::parse::cli;"),
+            1
+        );
+        assert_eq!(
+            caught("src/cli/query/oracle.rs", "use super::super::tools::demo;"),
+            1
+        );
+        assert_eq!(
+            caught("src/cli/load.rs", "#[path = \"tools/demo.rs\"]\nmod demo;"),
+            1
+        );
+        // A comment, and a longer word.
+        assert_eq!(
+            caught("src/cli/load.rs", "// the tools; never named here"),
             0
         );
         assert_eq!(
             caught(
-                "src/cmd/load.rs",
+                "src/cli/load.rs",
                 "let tools_dir = 1;\nlet n = subtools::count();"
             ),
             0
         );
+        // The tools themselves, and the file that dispatches to every command.
         assert_eq!(
-            caught("src/main.rs", "use tools::{bench_storage, demo, parse};"),
+            caught("src/cli/tools/demo.rs", "use crate::cli::tools::gen_logs;"),
+            0
+        );
+        assert_eq!(caught("src/cli/tools.rs", "pub use self::tools::x;"), 0);
+        assert_eq!(
+            caught("src/cli.rs", "use tools::{bench_storage, demo, parse};"),
             0
         );
     }

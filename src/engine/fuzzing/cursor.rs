@@ -10,7 +10,7 @@
 //! One check is not made here: that `kibbr query`'s flags build the query its TrieQL
 //! builds. The flags are the command line's, which this crate cannot name, and they are an
 //! operator's input, not a client's. `run_with` hands each such query to a caller that
-//! has the flags (`Flagged`); `src/cmd/query/tests.rs` replays `fixtures` and
+//! has the flags (`Flagged`); `src/cli/query/tests.rs` replays `fixtures` and
 //! `fuzz/regressions/cursor/` through it, so the bytes of an input are read here and
 //! nowhere else. That is why this module, alone of the five, is also compiled with
 //! `test-support`.
