@@ -54,7 +54,7 @@ async fn serve(
     } = settings;
     // A data directory holding a segment from another format version is refused, and its
     // lock taken, before anything is written and before the port: see `Database::claim`.
-    let mut claim = Database::claim(engine::Options { storage, schema })?;
+    let mut claim = Database::claim(kibbr::Options { storage, schema })?;
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -171,7 +171,7 @@ async fn serve(
         log_warn(&format!(
             "shutdown deadline - {left} request(s) still in flight after {}; each is \
              answered 503 and let go",
-            crate::settings::duration_words(server.api.shutdown_deadline.unwrap_or_default())
+            crate::server::settings::duration_words(server.api.shutdown_deadline.unwrap_or_default())
         ));
         server.cut_off.cancel();
         match tokio::time::timeout(CUT_OFF_GRACE, &mut serving).await {
@@ -502,7 +502,7 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
                 "  requests    answered within {} or timed out: 408 for a body that has not\n\
                  \x20             arrived, 504 for a query, whose scan is stopped. Not an\n\
                  \x20             /ingest body read whole (--request-timeout).",
-                crate::settings::duration_words(timeout)
+                crate::server::settings::duration_words(timeout)
             ),
             None => "  requests    given as long as they take (--request-timeout 0s)."
                 .to_string(),
@@ -512,7 +512,7 @@ fn banner(addr: SocketAddr, server: &Server, how: Banner) {
             Some(deadline) => format!(
                 "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first; one\n\
                  \x20             still in flight {} later is answered 503 and let go.",
-                crate::settings::duration_words(deadline)
+                crate::server::settings::duration_words(deadline)
             ),
             None => "  shutdown    SIGINT (Ctrl-C) or SIGTERM. In-flight requests finish first,\n\
                      \x20             however long they take (--shutdown-deadline 0s)."

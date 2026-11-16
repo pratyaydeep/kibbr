@@ -23,9 +23,9 @@ FROM rust:1.96-alpine AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
-# The two library crates, and of crates/kibbr-devtools its manifest alone: .dockerignore
-# lets nothing else of the bench into the context, and Cargo asks for nothing else of it.
-COPY crates crates
+# Of the bench's package, its manifest alone: it is a member of the workspace, so Cargo
+# wants the manifest, and asks for nothing else of a member it does not build.
+COPY crates/kibbr-devtools/Cargo.toml crates/kibbr-devtools/Cargo.toml
 COPY src src
 # The registry and the target directory are cache mounts: they outlive the layer, so a
 # change to src/ compiles what changed and not every dependency again. The binary is

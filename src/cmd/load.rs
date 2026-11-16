@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! `kibbr load` - the command: who runs it and what it prints. The load itself is the
-//! engine's (`crate::engine::load`). Who holds `LOCK` decides where it runs, because
+//! engine's (`kibbr::load`). Who holds `LOCK` decides where it runs, because
 //! one process writes the catalog and the manifest: a server holding the directory is
 //! asked (`POST /load`) and polled; with none, the command takes the lock and runs alone.
 
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-pub use crate::engine::load::*;
+pub use kibbr::load::*;
 
 use crate::config::LoadStorage as _;
 
@@ -82,7 +82,7 @@ pub fn command(
     let replace_day = match args.replace_day.as_deref() {
         None => None,
         Some(text) => Some(
-            crate::engine::day_of_name(text).ok_or_else(|| {
+            kibbr::day_of_name(text).ok_or_else(|| {
                 LoadError::Input(format!("--replace-day {text}: not a YYYY-MM-DD day"))
             })?,
         ),
@@ -108,9 +108,9 @@ pub fn command(
     }
     let waited = Instant::now();
     loop {
-        let opened = crate::engine::Database::open_offline(
+        let opened = kibbr::Database::open_offline(
             crate::config::options(&storage, &schema),
-            crate::engine::Opener::Load,
+            kibbr::Opener::Load,
         );
         match opened {
             Ok(db) => {
@@ -126,9 +126,9 @@ pub fn command(
                 };
                 return alone(db, &args, opts, out);
             }
-            Err(crate::engine::Error::Lock(crate::engine::LockError::Held { path, holder })) => {
-                match crate::engine::holder(&base) {
-                    Some(crate::engine::Holder {
+            Err(kibbr::Error::Lock(kibbr::LockError::Held { path, holder })) => {
+                match kibbr::holder(&base) {
+                    Some(kibbr::Holder {
                         address: Some(address),
                         token,
                         ..
@@ -136,14 +136,14 @@ pub fn command(
                         let token = token.unwrap_or_default();
                         return client(&address, &token, &base, &args, share, out);
                     }
-                    Some(crate::engine::Holder { load: true, .. }) => {
-                        return Err(crate::engine::LockError::Held { path, holder }.into())
+                    Some(kibbr::Holder { load: true, .. }) => {
+                        return Err(kibbr::LockError::Held { path, holder }.into())
                     }
                     // A server still starting: it writes its address once it can answer.
                     _ if waited.elapsed() < SERVER_STARTING_WAIT => {
                         std::thread::sleep(POLL);
                     }
-                    _ => return Err(crate::engine::LockError::Held { path, holder }.into()),
+                    _ => return Err(kibbr::LockError::Held { path, holder }.into()),
                 }
             }
             Err(e) => return Err(opened_alone(e)),
@@ -163,17 +163,17 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
 
 /// What opening the directory alone failed with, as the command has always said it: the
 /// lock's and the version check's own errors, and the start's as the server's.
-fn opened_alone(e: crate::engine::Error) -> LoadError {
+fn opened_alone(e: kibbr::Error) -> LoadError {
     match e {
-        crate::engine::Error::Lock(e) => e.into(),
-        crate::engine::Error::Store(e) => e.into(),
+        kibbr::Error::Lock(e) => e.into(),
+        kibbr::Error::Store(e) => e.into(),
         e => crate::error::CliError::from(e).into(),
     }
 }
 
 /// The load in this process, holding the directory's lock.
 fn alone(
-    db: crate::engine::Database,
+    db: kibbr::Database,
     args: &Args,
     mut opts: Options,
     out: &mut dyn io::Write,
@@ -214,7 +214,7 @@ fn client(
     }
     // Spooled inside the data directory's `staging/`, which the server can read because it
     // owns it, and which its next start clears if this client is killed.
-    let staging = base.join(crate::engine::STAGING_DIR);
+    let staging = base.join(kibbr::STAGING_DIR);
     let spool = staging.join(format!(
         "stdin-{}-{}.spool",
         std::process::id(),

@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-pub use crate::engine::error::{chain, IngestError};
+pub use kibbr::error::{chain, IngestError};
 
 /// What stops a server from starting or from finishing cleanly, and, last, the engine's
 /// errors a request is refused with.
@@ -39,7 +39,7 @@ pub enum Error {
     /// What the database could not open or close with, or refused a TrieQL string with:
     /// transparent, so it prints as the engine's own sentence and no wrapper above it.
     #[error(transparent)]
-    Database(#[from] crate::engine::Error),
+    Database(#[from] kibbr::Error),
 }
 
 /// What this crate's functions return when they fail.

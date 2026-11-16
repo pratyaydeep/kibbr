@@ -145,7 +145,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             // The lines `kibbr` ends a failed command with: the error, then each cause.
-            kibbr_engine::error::report(&e);
+            kibbr::error::report(&e);
             ExitCode::FAILURE
         }
     }

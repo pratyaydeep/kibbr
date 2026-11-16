@@ -178,11 +178,11 @@ fn plain_text(values: &[&str]) -> Vec<u8> {
     out
 }
 
-/// At the workspace's root, two directories up: the binary crate's fuzz harness reads
-/// the same files.
+/// At the repository's root, which is this package's: the fuzz harness reads the same
+/// files.
 fn vectors_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../testdata")
+        .join("testdata")
         .join("format")
 }
 

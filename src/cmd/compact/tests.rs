@@ -49,22 +49,22 @@ fn a_compaction_alone_says_so_in_lock_and_a_second_command_is_refused_at_once() 
 
     // A directory with no day in it: the run is over at once, and what it wrote to
     // `LOCK` while it ran is still there to read.
-    let db = crate::engine::Database::open_offline(
+    let db = kibbr::Database::open_offline(
         crate::config::options(&storage, &schema),
-        crate::engine::Opener::Compact,
+        kibbr::Opener::Compact,
     )
     .expect("the directory, alone");
     let mut out = Vec::new();
     alone(db, &args(), None, &mut out).expect("compact alone");
     assert!(out.is_empty(), "no day was due, and it printed {out:?}");
-    let said = crate::engine::holder(&dir).expect("LOCK does not say who held it");
+    let said = kibbr::holder(&dir).expect("LOCK does not say who held it");
     assert!(
         said.compact && said.load && said.address.is_none(),
         "{said:?}"
     );
 
     // Those words under a lock that is held are a compaction still running.
-    let _held = crate::engine::internals::DataLock::acquire(&dir).expect("the lock");
+    let _held = kibbr::internals::DataLock::acquire(&dir).expect("the lock");
     let asked = Instant::now();
     match command(args(), None, storage, schema, &mut out) {
         Err(CompactError::Input(why)) => {

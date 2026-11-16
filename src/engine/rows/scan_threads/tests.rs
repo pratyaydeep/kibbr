@@ -30,9 +30,9 @@ fn sources(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
 /// neither can be written without one of these two words.
 #[test]
 fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
-    // Every crate's sources, named from the workspace's root: the handlers this is
-    // about are in the server crate, beside this one, and not in it.
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // Every crate's sources, named from the repository's root: the handlers this is
+    // about are in the binary's server module, beside this library, and not in it.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
     let mut files = Vec::new();
     sources(&root, &root.join("src"), &mut files);
     for entry in std::fs::read_dir(root.join("crates")).expect("the crates") {
@@ -44,7 +44,7 @@ fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
     }
     assert!(files.len() > 40, "{} source files", files.len());
     assert!(
-        files.iter().any(|(name, _)| name == "crates/kibbr-server/src/handlers.rs"),
+        files.iter().any(|(name, _)| name == "src/server/handlers.rs"),
         "the server's handlers are among the files read"
     );
     let holding = |word: &str| -> Vec<&str> {
@@ -61,16 +61,16 @@ fn rayon_is_named_in_this_file_alone_and_a_turn_is_taken_in_the_scan_alone() {
     assert_eq!(
         holding("rayon"),
         [
-            "crates/kibbr-engine/src/rows/scan_threads.rs",
-            "crates/kibbr-engine/src/rows/scan_threads/tests.rs"
+            "src/engine/rows/scan_threads.rs",
+            "src/engine/rows/scan_threads/tests.rs"
         ]
     );
     assert_eq!(
         holding(".turn("),
         [
-            "crates/kibbr-engine/src/rows/disk/scan.rs",
-            "crates/kibbr-engine/src/rows/disk/scan/tests.rs",
-            "crates/kibbr-engine/src/rows/scan_threads/tests.rs"
+            "src/engine/rows/disk/scan.rs",
+            "src/engine/rows/disk/scan/tests.rs",
+            "src/engine/rows/scan_threads/tests.rs"
         ]
     );
 }

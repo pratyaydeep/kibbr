@@ -5,7 +5,7 @@ use thiserror::Error;
 
 // What is wrong with one line is the flattener's to say, and it is two crates down; here
 // under the names every command already uses.
-pub use crate::engine::error::{chain, report, BadByte, DetectorError, DetectorErrorKind};
+pub use kibbr::error::{chain, report, DetectorError, DetectorErrorKind};
 
 /// Errors from the log generator.
 #[derive(Debug, Error)]
@@ -98,7 +98,7 @@ pub enum CliError {
 
     /// What ended a read of lines below any command: the read loop's own error (`db::ReadError`).
     #[error(transparent)]
-    Input(#[from] crate::engine::ReadError),
+    Input(#[from] kibbr::ReadError),
 
     #[error(transparent)]
     Gen(#[from] GenError),
@@ -107,7 +107,7 @@ pub enum CliError {
     Config(#[from] crate::config::ConfigError),
 
     #[error(transparent)]
-    Trie(#[from] crate::engine::TrieError),
+    Trie(#[from] kibbr::TrieError),
 
     #[error(transparent)]
     Query(#[from] QueryError),
@@ -115,20 +115,20 @@ pub enum CliError {
     // Transparent, not wrapped: `ParseError` says where it was and `report` walks the
     // source chain, so a wrapper would print the same sentence twice.
     #[error(transparent)]
-    Trieql(#[from] crate::engine::query::trieql::ParseError),
+    Trieql(#[from] kibbr::query::trieql::ParseError),
 
     // Transparent for the reason `Trieql` is. No `--after:` prefix either - the flag and
     // `AFTER` both land here, and naming one of them would be wrong half the time.
     #[error(transparent)]
-    Cursor(#[from] crate::engine::query::CursorError),
+    Cursor(#[from] kibbr::query::CursorError),
 
     #[error(transparent)]
-    Store(#[from] crate::engine::StoreError),
+    Store(#[from] kibbr::StoreError),
 
     // Transparent for the reason `Trieql` is - `BucketError`'s own sentence names the
     // requested and permitted counts, and a wrapper would print a vaguer one above it.
     #[error(transparent)]
-    Exec(#[from] crate::engine::query::ExecError),
+    Exec(#[from] kibbr::query::ExecError),
 
     /// What a server could not start or finish with, or refused a TrieQL string with: the
     /// server crate's own error.
@@ -153,11 +153,11 @@ impl From<crate::server::Error> for CliError {
     }
 }
 
-impl From<crate::engine::Error> for CliError {
+impl From<kibbr::Error> for CliError {
     /// As above, for the database's own error: a query's are their own variants, and the
     /// rest is what a server could not start or finish with, as it always printed.
-    fn from(e: crate::engine::Error) -> Self {
-        use crate::engine::Error;
+    fn from(e: kibbr::Error) -> Self {
+        use kibbr::Error;
         match e {
             Error::Trieql(e) => CliError::Trieql(e),
             Error::Cursor(e) => CliError::Cursor(e),

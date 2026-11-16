@@ -17,12 +17,12 @@ use std::time::{Duration, Instant};
 use crate::config::{LoadStorage as _, Schema, Storage};
 use crate::error::{CliError, DetectorErrorKind};
 use crate::cmd::load::{self, Asked, LoadError};
-use crate::engine::fmt::commas;
-use crate::engine::internals::{
+use kibbr::fmt::commas;
+use kibbr::internals::{
     self as raw, CompactOptions, FlushKind, SinkError, HEADER_LEN, KIND_FOOTER, KIND_ROW_GROUP,
     KIND_SCHEMA, TRAILER_LEN,
 };
-use crate::engine::{Database, FlushSummary, Opener, ReadError};
+use kibbr::{Database, FlushSummary, Opener, ReadError};
 
 pub struct Args {
     pub input: PathBuf,
@@ -164,7 +164,7 @@ fn held(data: &Path, block: u64) -> Result<Held, LoadError> {
         parts.other += p.other;
     }
     let catalog_path = raw::catalog_path(data);
-    let manifest_path = crate::engine::manifest_path(data);
+    let manifest_path = kibbr::manifest_path(data);
     let catalog = size_of(&catalog_path, block).map_err(io_at(&catalog_path))?;
     let manifest = size_of(&manifest_path, block).map_err(io_at(&manifest_path))?;
     let mut total = files;
@@ -296,8 +296,8 @@ fn run_inner(args: &Args, schema: Schema, out: &mut dyn Write) -> Result<(), Loa
 fn open(dir: &Path, storage: &Storage, schema: &Schema) -> Result<Database, LoadError> {
     let options = crate::config::options(storage, schema);
     Database::open_offline_locking(dir, options, Opener::Quiet).map_err(|e| match e {
-        crate::engine::Error::Lock(e) => e.into(),
-        crate::engine::Error::Store(e) => e.into(),
+        kibbr::Error::Lock(e) => e.into(),
+        kibbr::Error::Store(e) => e.into(),
         e => crate::error::CliError::from(e).into(),
     })
 }
@@ -686,7 +686,7 @@ fn live_day(
     };
     let started = Instant::now();
     for name in &before.1.days {
-        let day = crate::engine::day_of_name(name).ok_or_else(|| {
+        let day = kibbr::day_of_name(name).ok_or_else(|| {
             LoadError::Input(format!(
                 "{name}: a directory of data files that is not named for a day"
             ))
@@ -777,7 +777,7 @@ fn elasticsearch(url: &str, input: &Path) -> Result<(u64, u64), LoadError> {
                 path: input.to_path_buf(),
                 source,
             })?;
-            let line = crate::engine::parse::lines::strip_eol(&line);
+            let line = kibbr::parse::lines::strip_eol(&line);
             if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }

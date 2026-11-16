@@ -8,15 +8,15 @@
 
 use std::time::Duration;
 
-pub use crate::engine::query::limits::Limits;
+pub use kibbr::query::limits::Limits;
 // Where rows are kept is the database's to say, and is declared there; a server is
 // started with it all the same.
-pub use crate::engine::database::{
+pub use kibbr::database::{
     Schema, Storage, DEFAULT_COMPACT_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS,
     DEFAULT_ROW_GROUP_TIMEOUT_MS,
 };
 
-use crate::DEFAULT_PORT;
+use crate::server::DEFAULT_PORT;
 
 /// The largest `/ingest` body accepted off the wire, 10 MiB: above a shipper's routine
 /// batch, and bounded because the body is buffered whole.
@@ -24,7 +24,7 @@ pub const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// The largest an `/ingest` body may become once decompressed, capped at
 /// `lines::MAX_LINE_BYTES` so `LineTooLong` stays unreachable over HTTP.
-pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = crate::engine::MAX_LINE_BYTES;
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = kibbr::MAX_LINE_BYTES;
 
 /// How many `/ingest` bodies may be in the parse-and-walk at once: one per core, as the
 /// work is CPU-bound, and 1 where the core count is unknowable.

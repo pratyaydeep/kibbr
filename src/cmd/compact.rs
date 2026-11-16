@@ -3,7 +3,7 @@
 
 //! `kibbr compact` - the command: who runs it and what it prints. The rebuild is the
 //! store's (`rows::disk::compact`) and the run the engine's
-//! (`crate::engine::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
+//! (`kibbr::compact`). Who holds `LOCK` decides where it runs, as for `kibbr load`:
 //! one process writes the manifest, so a server holding the directory is asked
 //! (`POST /compact`), and with none the command takes the lock and compacts alone.
 
@@ -15,8 +15,8 @@ use thiserror::Error;
 
 use crate::config::LoadStorage as _;
 
-use crate::engine::compact::{line, Report, NO_DISK};
-use crate::engine::StoreError;
+use kibbr::compact::{line, Report, NO_DISK};
+use kibbr::StoreError;
 
 #[derive(Debug, Error)]
 pub enum CompactError {
@@ -48,8 +48,8 @@ impl From<crate::error::CliError> for CompactError {
     }
 }
 
-impl From<crate::engine::LockError> for CompactError {
-    fn from(e: crate::engine::LockError) -> Self {
+impl From<kibbr::LockError> for CompactError {
+    fn from(e: kibbr::LockError) -> Self {
         CompactError::Input(e.to_string())
     }
 }
@@ -74,12 +74,12 @@ pub fn precheck(day: Option<&str>, base: &Path) -> Result<Option<i64>, CompactEr
     let day =
         match day {
             None => None,
-            Some(text) => Some(crate::engine::day_of_name(text).ok_or_else(|| {
+            Some(text) => Some(kibbr::day_of_name(text).ok_or_else(|| {
                 CompactError::Input(format!("--day {text}: not a YYYY-MM-DD day"))
             })?),
         };
-    crate::engine::refuse_other_versions(base)?;
-    if !crate::engine::manifest_path(base).is_file() {
+    kibbr::refuse_other_versions(base)?;
+    if !kibbr::manifest_path(base).is_file() {
         return Err(CompactError::Input(format!(
             "{}: not a kibbr data directory (no manifest.log); nothing was compacted",
             base.display()
@@ -103,15 +103,15 @@ pub fn command(
         .ok_or_else(|| CompactError::Input("no data directory".to_string()))?;
     let waited = Instant::now();
     loop {
-        let opened = crate::engine::Database::open_offline(
+        let opened = kibbr::Database::open_offline(
             crate::config::options(&storage, &schema),
-            crate::engine::Opener::Compact,
+            kibbr::Opener::Compact,
         );
         match opened {
             Ok(db) => return alone(db, &args, day, out),
-            Err(crate::engine::Error::Lock(crate::engine::LockError::Held { path, holder })) => {
-                match crate::engine::holder(&base) {
-                    Some(crate::engine::Holder {
+            Err(kibbr::Error::Lock(kibbr::LockError::Held { path, holder })) => {
+                match kibbr::holder(&base) {
+                    Some(kibbr::Holder {
                         address: Some(address),
                         token,
                         ..
@@ -120,14 +120,14 @@ pub fn command(
                         return client(&address, &token, &base, &args, out);
                     }
                     // A load or another compaction running alone: no server to ask.
-                    Some(crate::engine::Holder { load: true, .. }) => {
-                        return Err(crate::engine::LockError::Held { path, holder }.into())
+                    Some(kibbr::Holder { load: true, .. }) => {
+                        return Err(kibbr::LockError::Held { path, holder }.into())
                     }
                     // A server still starting: it writes its address once it can answer.
                     _ if waited.elapsed() < crate::cmd::load::SERVER_STARTING_WAIT => {
                         std::thread::sleep(crate::cmd::load::POLL);
                     }
-                    _ => return Err(crate::engine::LockError::Held { path, holder }.into()),
+                    _ => return Err(kibbr::LockError::Held { path, holder }.into()),
                 }
             }
             Err(e) => return Err(opened_alone(e)),
@@ -154,17 +154,17 @@ fn print_report(report: &Report, json: bool, out: &mut dyn io::Write) -> Result<
 
 /// What opening the directory alone failed with, as the command has always said it: the
 /// lock's and the version check's own errors, and the start's as the server's.
-fn opened_alone(e: crate::engine::Error) -> CompactError {
+fn opened_alone(e: kibbr::Error) -> CompactError {
     match e {
-        crate::engine::Error::Lock(e) => e.into(),
-        crate::engine::Error::Store(e) => e.into(),
+        kibbr::Error::Lock(e) => e.into(),
+        kibbr::Error::Store(e) => e.into(),
         e => crate::error::CliError::from(e).into(),
     }
 }
 
 /// The compaction in this process, holding the directory's lock.
 fn alone(
-    db: crate::engine::Database,
+    db: kibbr::Database,
     args: &Args,
     day: Option<i64>,
     out: &mut dyn io::Write,

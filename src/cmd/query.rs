@@ -19,15 +19,15 @@ use crate::config::{Limits, Schema};
 use crate::error::{CliError, QueryError};
 // A TrieQL string into a `Query` and an answer into JSON are the server crate's, since
 // `POST /query` is their other caller: here under the names this module always had.
-use crate::engine::query::answer::{self as wire, canonical, row_json};
-pub use crate::engine::query::answer::{result_json, result_json_until};
-use crate::engine::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
-use crate::engine::query::{
+use kibbr::query::answer::{self as wire, canonical, row_json};
+pub use kibbr::query::answer::result_json;
+use kibbr::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
+use kibbr::query::{
     self as engine, Cursor, Group, GroupKey, LimitSource, Match, MatchValue, Plan, Query, QueryMode,
     QueryResult, TimeRange,
 };
-use crate::engine::query::trieql::{self, ago};
-use crate::engine::{system_time, Database, LoadStats, Row};
+use kibbr::query::trieql::{self, ago};
+use kibbr::{system_time, Database, LoadStats, Row};
 
 /// Blank columns between two cells of a rendered table.
 const GUTTER: usize = 2;
@@ -86,7 +86,7 @@ pub fn run<R: BufRead, W: Write>(input: R, out: &mut W, args: &Args) -> Result<(
     }
 
     let result = if args.reference {
-        let (lines, stats) = crate::engine::load_lines(input)?;
+        let (lines, stats) = kibbr::load_lines(input)?;
         note(stats);
         crate::cmd::oracle::run(&lines, &query, &schema.time_columns)?
     } else {
@@ -117,9 +117,9 @@ fn note(stats: LoadStats) {
 
 /// The database a file is read into: in memory, with no log, gone with the command.
 fn in_memory(schema: &Schema) -> Database {
-    Database::in_memory(crate::engine::Options {
+    Database::in_memory(kibbr::Options {
         schema: schema.clone(),
-        ..crate::engine::Options::default()
+        ..kibbr::Options::default()
     })
 }
 
@@ -679,7 +679,7 @@ fn render_rows<W: Write>(out: &mut W, rows: &[&Row]) -> Result<(), CliError> {
     let shown: Vec<BTreeMap<String, String>> = rows
         .iter()
         .map(|row| {
-            crate::engine::present(row)
+            kibbr::present(row)
                 .into_iter()
                 .map(|(name, key)| (name, cell_text(row, key)))
                 .collect()

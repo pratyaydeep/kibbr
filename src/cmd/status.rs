@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::config::{self, File};
 use crate::error::CliError;
-use crate::engine::fmt::commas;
+use kibbr::fmt::commas;
 
 /// How long a server is given to answer. Both answers are built from memory.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -84,10 +84,10 @@ pub fn server(
         });
     }
     let base = <config::Storage as config::LoadStorage>::base_named(file, data_dir);
-    if let Some(address) = crate::engine::holder(&base).and_then(|holder| holder.address) {
+    if let Some(address) = kibbr::holder(&base).and_then(|holder| holder.address) {
         return Ok(Server {
             address,
-            found: format!("from {}", base.join(crate::engine::LOCK_FILE).display()),
+            found: format!("from {}", base.join(kibbr::LOCK_FILE).display()),
         });
     }
     let (host, port) = config::listen(file, None, None)?;

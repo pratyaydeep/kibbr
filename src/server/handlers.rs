@@ -285,7 +285,7 @@ impl Server {
     /// The most bodies that may wait at the door at once: `None` at the default wait, which
     /// bounds itself, and the places once an operator has raised it.
     pub(super) fn line_max(&self) -> Option<usize> {
-        let default = Duration::from_millis(crate::settings::DEFAULT_INGEST_WAIT_MS as u64);
+        let default = Duration::from_millis(crate::server::settings::DEFAULT_INGEST_WAIT_MS as u64);
         (self.api.ingest_wait > default).then(|| ingest_bodies(&self.api))
     }
 
@@ -627,7 +627,7 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
         // stopped at, so a client can point at it without reading the message.
         Err(e) => {
             return match &e {
-                engine::Error::Trieql(parse) => {
+                kibbr::Error::Trieql(parse) => {
                     fail_at(StatusCode::BAD_REQUEST, &error::chain(&e), parse.pos)
                 }
                 _ => fail(StatusCode::BAD_REQUEST, &error::chain(&e)),
@@ -658,7 +658,7 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
         // The scan and then the answer put into JSON both ask the stop as they go.
         let body = held.db.answer_until(&query, &told)?;
         held.queries.fetch_add(1, Ordering::Relaxed);
-        Ok::<Value, engine::query::ExecError>(body)
+        Ok::<Value, kibbr::query::ExecError>(body)
     })
     .await;
     // The task has returned: there is no scan left to tell.
@@ -668,12 +668,12 @@ pub(super) async fn post_query(State(server): State<Arc<Server>>, body: Bytes) -
         Ok(Ok(body)) => (StatusCode::OK, Json(body)).into_response(),
         // Read by nobody, as a rule: what set the stop also dropped this future or has
         // answered in its place. Said all the same, for a caller that is not `track`.
-        Ok(Err(e @ engine::query::ExecError::Store(StoreError::Stopped))) => {
+        Ok(Err(e @ kibbr::query::ExecError::Store(StoreError::Stopped))) => {
             fail(StatusCode::SERVICE_UNAVAILABLE, &error::chain(&e))
         }
         // A bucket count over the cap is the client's to fix, so it is a 400 beside the parse
         // errors above; a storage failure is the server's and stays a 500.
-        Ok(Err(e @ engine::query::ExecError::Buckets(_))) => {
+        Ok(Err(e @ kibbr::query::ExecError::Buckets(_))) => {
             fail(StatusCode::BAD_REQUEST, &error::chain(&e))
         }
         Ok(Err(e)) => fail(StatusCode::INTERNAL_SERVER_ERROR, &error::chain(&e)),
@@ -772,7 +772,7 @@ fn load_options(request: LoadRequest) -> Result<load::Options, String> {
     let replace_day = match request.replace_day.as_deref() {
         None => None,
         Some(text) => Some(
-            crate::engine::day_of_name(text)
+            kibbr::day_of_name(text)
                 .ok_or_else(|| format!("replace_day `{text}` is not a YYYY-MM-DD day"))?,
         ),
     };
@@ -865,7 +865,7 @@ pub(super) async fn post_load(State(server): State<Arc<Server>>, headers: Header
                 options.inputs.len(),
                 options
                     .replace_day
-                    .map(|d| format!(", replacing {}", crate::engine::day_name(d)))
+                    .map(|d| format!(", replacing {}", kibbr::day_name(d)))
                     .unwrap_or_default()
             ));
             // A panic is a failed job and not a job running for ever, which would refuse every

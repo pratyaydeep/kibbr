@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `kibbr serve`: the command line of the server, which is a library (`kibbr_server`). Writes
+//! `kibbr serve`: the command line of the server, which is the `server` module. Writes
 //! nothing to standard output: the banner and the lifecycle log go to stderr through `logs`.
 
 use std::process::ExitCode;

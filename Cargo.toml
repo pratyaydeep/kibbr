@@ -1,9 +1,9 @@
 [workspace]
-# Three crates: kibbr-engine, the whole database, and the two layers over it that name it,
-# kibbr-server (HTTP) and kibbr (the command line), which names both. A fourth that is
-# never published, kibbr-devtools, holds the bench (`kibbr-bench`).
+# One published package, `kibbr`, at the root: its library is the engine (src/engine/), and
+# its binary is the server and the command line (src/main.rs). One more that is never
+# published, kibbr-devtools, holds the bench (`kibbr-bench`).
 # fuzz/ is a workspace of its own, so `cargo build` here never builds a fuzzer.
-members = ["crates/kibbr-engine", "crates/kibbr-server", "crates/kibbr-devtools"]
+members = ["crates/kibbr-devtools"]
 # Plain `cargo build` and `cargo test` are the `kibbr` package's, and never build the bench.
 default-members = ["."]
 exclude = ["fuzz", "lab-rs"]
@@ -20,13 +20,8 @@ rust-version = "1.96.1"
 keywords = ["logs", "logging", "database", "columnar", "observability"]
 
 # One version of each dependency for the whole workspace, and one place that says why it
-# is here; a crate takes what it calls with `workspace = true`.
+# is here; a package takes what it calls with `workspace = true`.
 [workspace.dependencies]
-# The two library crates by path here, and by exactly this version once published: `cargo
-# publish` wants both, and `internals` promises nothing, so the binary is never built against
-# an engine newer than the one it was released with.
-kibbr-engine = { path = "crates/kibbr-engine", version = "=0.4.0" }
-kibbr-server = { path = "crates/kibbr-server", version = "=0.4.0" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -70,30 +65,54 @@ rust-version.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories = ["database-implementations", "command-line-utilities"]
-exclude = ["/testdata/", "/bench/", "/deploy/", "/docs/", "/scripts/", "/fuzz/", "/.github/", "/lab/", "/lab-rs/", "/web/"]
+include = ["/src/", "/Cargo.toml", "/Cargo.lock", "/README.md", "/CHANGELOG.md",
+           "/LICENSE", "/LICENSE-CONTRIBUTOR", "/NOTICE", "/COMMERCIAL.md",
+           "/TRADEMARK.md", "/kibbr.toml.example"]
 
+# The library is the engine: the database, with no HTTP, no flags and no async runtime.
+[lib]
+path = "src/engine/lib.rs"
+
+# The binary is the server and the command line, over the library.
+[[bin]]
+name = "kibbr"
+path = "src/main.rs"
+
+# One list for the library and the binary. Which of these each layer may name is held by
+# a test, not by this file.
 [dependencies]
-kibbr-engine.workspace = true
-kibbr-server.workspace = true
+axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
+crc32c.workspace = true
 flate2.workspace = true
+http-body.workspace = true
+libc.workspace = true
 mimalloc.workspace = true
+rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
-tokio-util.workspace = true
 zstd.workspace = true
 
+# Both are for code that is not shipped. Never switch either on in a build that is run in
+# production.
 [features]
-# The engine's fuzz harnesses, which `--all-features` here builds too; off by default, so
-# the binary carries none of them.
-fuzzing = ["kibbr-engine/fuzzing"]
+# What a test of the binary builds its rows and files from, and reaches into a database
+# with: a `#[cfg(test)]` item of the library is not there for the binary's tests. It only
+# adds items.
+test-support = []
+# The fuzz targets' harnesses, for fuzz/ and for the replay in src/engine/fuzzing/tests.rs;
+# off by default, so a build carries none of them.
+fuzzing = []
 
 [dev-dependencies]
-# The engine's samples and failure hooks, for the tests here that hold a server to them.
-kibbr-engine = { workspace = true, features = ["test-support"] }
+# The package on itself: turns the test hooks on for tests, and only for tests.
+# Not `fuzzing`: the replay runs with `--all-features`.
+kibbr = { path = ".", features = ["test-support"] }
 # The `/ingest` tests build their own gzip bodies, the bomb included, not the machine's `gzip(1)`.
 flate2.workspace = true

@@ -87,7 +87,7 @@ pub(super) fn decode<'a>(
 /// What one `/ingest` body did.
 pub(super) struct IngestReport {
     ingested: u64,
-    pub(super) errors: Vec<engine::LineError>,
+    pub(super) errors: Vec<kibbr::LineError>,
     /// Rejections past `MAX_REPORTED_ERRORS`, counted but not described.
     omitted: u64,
     /// Of the lines rejected, those that parsed and were refused because the catalog could

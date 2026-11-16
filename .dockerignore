@@ -1,6 +1,6 @@
-# What the image is built from is Cargo.toml, Cargo.lock, src/ and the two library crates.
-# Everything else stays out of the build context: target/ and testdata/ are gigabytes, and
-# a context that changes when a test writes a file rebuilds the image for nothing.
+# What the image is built from is Cargo.toml, Cargo.lock and src/. Everything else stays
+# out of the build context: target/ and testdata/ are gigabytes, and a context that changes
+# when a test writes a file rebuilds the image for nothing.
 #
 # Of crates/kibbr-devtools only the manifest: Cargo will not build a workspace with a
 # member's manifest missing, and needs nothing else of a member it does not build. An edit
@@ -9,7 +9,5 @@
 !Cargo.toml
 !Cargo.lock
 !src
-!crates/kibbr-engine
-!crates/kibbr-server
 !crates/kibbr-devtools/Cargo.toml
 !LICENSE

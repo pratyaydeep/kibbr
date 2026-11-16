@@ -17,11 +17,11 @@ use crate::format::frame::Next;
 use crate::model::row::{effective_ts, Row};
 use crate::parse::flatten::parse_line;
 
-/// At the workspace's root, two directories up: the binary crate's fuzz harness reads
-/// the same files.
+/// At the repository's root, which is this package's: the fuzz harness reads the same
+/// files.
 fn vectors() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../testdata")
+        .join("testdata")
         .join("format")
 }
 

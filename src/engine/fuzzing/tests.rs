@@ -11,7 +11,7 @@ use std::path::Path;
 
 fn replay(target: &str, run: fn(&[u8])) {
     // Two directories up: the repository root, where `fuzz/` is.
-    let fuzz = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz");
+    let fuzz = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz");
     let mut replayed = 0;
     for dir in ["regressions", "corpus"] {
         let dir = fuzz.join(dir).join(target);

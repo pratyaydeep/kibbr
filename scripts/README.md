@@ -26,7 +26,7 @@ seed of the generated lines.
 | `received_at.sh` | `the system column is not a key`: 823 templates, as before the column existed |
 | `time_columns.sh` | `every row has a time`: the count equals the windowed count, no `undated` directory |
 | `spdx.sh` | `N files, 0 without the header`: every `.rs` file starts with the copyright and SPDX lines; `--fix` adds them |
-| `no_internals.sh` | `kibbr-server never names kibbr_engine::internals`: no file under `crates/kibbr-server/` names the engine's doc-hidden module |
+| `no_internals.sh` | `the server never names kibbr::internals`: neither `src/server.rs` nor a file under `src/server/` names the engine's doc-hidden module |
 | `cmd_no_tools.sh` | `src/cmd/ never names src/tools/`: what runs in production never names `bench-storage` or the generators |
 | `strip_comments.py` | not a check of the binary: prints Rust source without comments, to show a diff changed comments only |
 

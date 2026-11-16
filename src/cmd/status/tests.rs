@@ -65,7 +65,7 @@ fn the_server_is_addr_and_then_the_one_the_directory_names() {
     let held = std::env::temp_dir().join(format!("kibbr-ask-held-{}", std::process::id()));
     std::fs::create_dir_all(&held).expect("mkdir");
     std::fs::write(
-        held.join(crate::engine::LOCK_FILE),
+        held.join(kibbr::LOCK_FILE),
         r#"{"pid":1,"address":"127.0.0.1:40123"}"#,
     )
     .expect("a LOCK");

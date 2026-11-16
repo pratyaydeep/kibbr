@@ -13,14 +13,14 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::engine::parse::flatten::ParsedLog;
-use crate::engine::model::infer::in_epoch_window;
-use crate::engine::model::types::{ColValue, ColumnType, DtForm};
-use crate::engine::query::{
+use kibbr::parse::flatten::ParsedLog;
+use kibbr::model::infer::in_epoch_window;
+use kibbr::model::types::{ColValue, ColumnType, DtForm};
+use kibbr::query::{
     group_values, leaf_key, split_keys, value_matches, ExecError, Group, MatchValue, Query,
     QueryMeta, QueryMode, QueryResult,
 };
-use crate::engine::{row_of, Row};
+use kibbr::{row_of, Row};
 
 /// The system column, spelled out here rather than imported: a backslash and an
 /// underscore.
@@ -196,7 +196,7 @@ pub fn run(
                 (Some(ColumnType::Datetime), Some(ColumnType::Int64)) if all_counts => {
                     Some(ColumnType::Int64)
                 }
-                (have, incoming) => crate::engine::model::types::join(have, incoming),
+                (have, incoming) => kibbr::model::types::join(have, incoming),
             };
         }
     }

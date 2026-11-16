@@ -3,12 +3,19 @@
 
 //! Kibbr. Generate hostile logs, parse them, build the trie, query it.
 
-use kibbr::cmd::serve::{self, StorageKind};
-use kibbr::cmd::{compact, load, query, status};
-use kibbr::tools::gen::{self, Profile};
-use kibbr::tools::{bench_storage, demo, parse};
-use kibbr::{config, error, logs};
-use kibbr::engine::model::infer;
+mod client;
+mod cmd;
+mod config;
+mod error;
+mod logs;
+mod server;
+mod tools;
+
+use cmd::serve::{self, StorageKind};
+use cmd::{compact, load, query, status};
+use kibbr::model::infer;
+use tools::gen::{self, Profile};
+use tools::{bench_storage, demo, parse};
 
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
@@ -490,7 +497,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         .map_err(CliError::from),
         Command::Parse { input, limit, json } => parse::cli(&input, &mut out, limit, json),
         Command::Demo { input, full } => demo::cli(&input, &mut out, full),
-        // The server is a library (`kibbr_server`), and this arm is its command line. Writes
+        // The server is the `server` module, and this arm is its command line. Writes
         // nothing to `out`: the banner and the lifecycle log go to stderr through `logs`.
         Command::Serve {
             host,
@@ -700,7 +707,7 @@ fn is_broken_pipe(e: &CliError) -> bool {
     let io_error = match e {
         CliError::Write(inner) => Some(inner),
         CliError::Read { source, .. } => Some(source),
-        CliError::Input(kibbr::engine::ReadError::Read { source, .. }) => Some(source),
+        CliError::Input(kibbr::ReadError::Read { source, .. }) => Some(source),
         CliError::Gen(error::GenError::Write(inner)) => Some(inner),
         _ => None,
     };

@@ -14,14 +14,14 @@ use std::time::Instant;
 use chrono::Utc;
 
 use crate::error::{CliError, DetectorError, DetectorErrorKind};
-use crate::engine::parse::flatten::parse_line;
-use crate::engine::fmt::commas;
-use crate::engine::parse::lines::{
+use kibbr::parse::flatten::parse_line;
+use kibbr::fmt::commas;
+use kibbr::parse::lines::{
     read_line, skip_to_eol, strip_bom, strip_eol, Line, Resync, MAX_LINE_BYTES,
 };
-use crate::engine::model::types::ColumnType;
-use crate::engine::internals::{Node, Trie, ROOT_LABEL};
-use crate::engine::TrieError;
+use kibbr::model::types::ColumnType;
+use kibbr::internals::{Node, Trie, ROOT_LABEL};
+use kibbr::TrieError;
 
 const BRANCH_MID: &str = "├── ";
 const BRANCH_LAST: &str = "└── ";

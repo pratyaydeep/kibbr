@@ -13,17 +13,17 @@ use std::time::Duration;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::engine::model::infer::EpochWindow;
+use kibbr::model::infer::EpochWindow;
 
 // The two groups of settings the crates below this one read, declared where they are
 // read; this module is where they are loaded and what the commands name them by.
-pub use crate::engine::query::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
-pub use crate::engine::database::{Options, Schema, DEFAULT_TIME_COLUMNS};
+pub use kibbr::query::limits::{Limits, DEFAULT_MAX_BUCKETS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_ROWS};
+pub use kibbr::database::{Options, Schema};
 
-// What a server runs on is declared in the server crate, where it is read; this module
+// What a server runs on is declared in the server module, where it is read; this module
 // is where each is loaded and what the commands name them by.
 pub use crate::server::settings::{
-    default_ingest_concurrency, duration_words, ApiLimits, Banner, Settings, Storage,
+    default_ingest_concurrency, ApiLimits, Banner, Settings, Storage,
     DEFAULT_COMPACT_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS, DEFAULT_HOST,
     DEFAULT_INGEST_WAIT_MS, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_DECOMPRESSED_BYTES,
     DEFAULT_REQUEST_TIMEOUT, DEFAULT_ROW_GROUP_TIMEOUT_MS, DEFAULT_SHUTDOWN_DEADLINE,
@@ -591,7 +591,7 @@ impl LoadStorage for Storage {
             max_open_segments,
             MAX_OPEN_SEGMENTS_ENV,
             file.storage.max_open_segments,
-            crate::engine::database::DEFAULT_MAX_OPEN_SEGMENTS,
+            kibbr::database::DEFAULT_MAX_OPEN_SEGMENTS,
         )?;
         if max_open_segments == 0 {
             return Err(ConfigError::NoOpenSegments);
@@ -609,14 +609,14 @@ impl LoadStorage for Storage {
             segment_max_bytes,
             SEGMENT_MAX_BYTES_ENV,
             file.storage.segment_max_bytes,
-            crate::engine::database::DEFAULT_SEGMENT_MAX_BYTES,
+            kibbr::database::DEFAULT_SEGMENT_MAX_BYTES,
             "segment max bytes",
         )?;
         let max_buffer_bytes = bytes(
             max_buffer_bytes,
             MAX_BUFFER_BYTES_ENV,
             file.storage.max_buffer_bytes,
-            crate::engine::database::DEFAULT_MAX_BUFFER_BYTES,
+            kibbr::database::DEFAULT_MAX_BUFFER_BYTES,
             "max buffer bytes",
         )?;
         // The default here, and the variable not read: only `serve` looks for due days, and
@@ -625,14 +625,14 @@ impl LoadStorage for Storage {
 
         // The defaults here too, for the reason the compaction interval's is: only `serve`
         // writes a log, and it resolves its flags over the variables in `with_wal`.
-        let wal_segment_bytes = crate::engine::database::DEFAULT_WAL_SEGMENT_BYTES;
-        let wal_batch_lines = crate::engine::database::DEFAULT_WAL_BATCH_LINES;
-        let wal_queue_bytes = crate::engine::database::DEFAULT_WAL_QUEUE_BYTES;
+        let wal_segment_bytes = kibbr::database::DEFAULT_WAL_SEGMENT_BYTES;
+        let wal_batch_lines = kibbr::database::DEFAULT_WAL_BATCH_LINES;
+        let wal_queue_bytes = kibbr::database::DEFAULT_WAL_QUEUE_BYTES;
 
         // No scan threads here, for the same reason again: only `serve` answers a query from
         // a disk store, and it asks for its threads in `with_scan`.
         let scan_threads = 0;
-        let scan_fan_rows = crate::engine::database::DEFAULT_FAN_ROWS;
+        let scan_fan_rows = kibbr::database::DEFAULT_FAN_ROWS;
 
         if !durable {
             return Ok(Self {
@@ -718,7 +718,7 @@ impl LoadStorage for Storage {
             segment_bytes,
             WAL_SEGMENT_BYTES_ENV,
             file.storage.wal_segment_bytes,
-            crate::engine::database::DEFAULT_WAL_SEGMENT_BYTES as usize,
+            kibbr::database::DEFAULT_WAL_SEGMENT_BYTES as usize,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -731,7 +731,7 @@ impl LoadStorage for Storage {
             batch_lines,
             BATCH_SIZE_ENV,
             file.ingestor.batch_size,
-            crate::engine::database::DEFAULT_WAL_BATCH_LINES,
+            kibbr::database::DEFAULT_WAL_BATCH_LINES,
         )? {
             0 => return Err(ConfigError::NoBatch),
             n => n,
@@ -740,7 +740,7 @@ impl LoadStorage for Storage {
             queue_bytes,
             WAL_QUEUE_BYTES_ENV,
             file.storage.wal_queue_bytes,
-            crate::engine::database::DEFAULT_WAL_QUEUE_BYTES,
+            kibbr::database::DEFAULT_WAL_QUEUE_BYTES,
         )? {
             0 => {
                 return Err(ConfigError::NoBytes {
@@ -776,7 +776,7 @@ impl LoadStorage for Storage {
             fan_rows,
             SCAN_FAN_ROWS_ENV,
             file.query.scan_fan_rows,
-            crate::engine::database::DEFAULT_FAN_ROWS as usize,
+            kibbr::database::DEFAULT_FAN_ROWS as usize,
         )? as u64;
         Ok(self)
     }
@@ -858,10 +858,10 @@ impl LoadApiLimits for ApiLimits {
             file.api.max_decompressed_bytes,
             DEFAULT_MAX_DECOMPRESSED_BYTES,
         )?;
-        if max_decompressed_bytes > crate::engine::parse::lines::MAX_LINE_BYTES {
+        if max_decompressed_bytes > kibbr::parse::lines::MAX_LINE_BYTES {
             return Err(ConfigError::DecompressedAboveLineCap {
                 asked: max_decompressed_bytes,
-                limit: crate::engine::parse::lines::MAX_LINE_BYTES,
+                limit: kibbr::parse::lines::MAX_LINE_BYTES,
             });
         }
 

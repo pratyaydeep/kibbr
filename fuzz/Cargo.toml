@@ -14,8 +14,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.kibbr-engine]
-path = "../crates/kibbr-engine"
+# The library of the `kibbr` package, which is the engine: the harnesses are in it.
+[dependencies.kibbr]
+path = ".."
 features = ["fuzzing"]
 
 # Not a member of any workspace: `cargo build` at the root never builds the fuzzers.

@@ -1,7 +1,7 @@
 {
   "name": "kibbr-web",
   "private": true,
-  "description": "The kibbr web console, built into crates/kibbr-server/src/viewer.html",
+  "description": "The kibbr web console, built into src/server/viewer.html",
   "license": "AGPL-3.0-only",
   "type": "module",
   "engines": {
@@ -11,7 +11,7 @@
     "res": "rescript build",
     "res:watch": "rescript watch",
     "dev": "rescript build && vite",
-    "build": "rescript build && vite build && cp dist/viewer.html ../crates/kibbr-server/src/viewer.html",
+    "build": "rescript build && vite build && cp dist/viewer.html ../src/server/viewer.html",
     "screens": "node scripts/screens.mjs",
     "site": "node scripts/site.mjs"
   },

@@ -17,13 +17,13 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 
-use kibbr_engine::error;
-use kibbr_engine::fmt::commas;
-use kibbr_engine::parse::flatten;
-use kibbr_engine::query::answer as query;
-use kibbr_engine::query::limits::Limits;
-use kibbr_engine::query::Query;
-use kibbr_engine::{Database, Options, Schema};
+use kibbr::error;
+use kibbr::fmt::commas;
+use kibbr::parse::flatten;
+use kibbr::query::answer as query;
+use kibbr::query::limits::Limits;
+use kibbr::query::Query;
+use kibbr::{Database, Options, Schema};
 
 use super::phases::percentile;
 use super::report::{PlanRun, PlanShape, QueryText, Shapes};

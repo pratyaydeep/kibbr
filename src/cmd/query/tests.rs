@@ -13,9 +13,9 @@ use std::fs;
 use std::path::Path;
 
 use super::*;
-use crate::engine::fuzzing::cursor::{self as harness, Flagged};
-use crate::engine::query::CursorError;
-use crate::engine::Error;
+use kibbr::fuzzing::cursor::{self as harness, Flagged};
+use kibbr::query::CursorError;
+use kibbr::Error;
 
 /// The query as the flags say it: a term is `KEY=VALUE` with `*` for any value, and
 /// `--after` takes the token as it stands.

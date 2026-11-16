@@ -23,7 +23,9 @@ name = "speed"
 path = "tests/speed.rs"
 
 [dependencies]
-kibbr-engine.workspace = true
+# The library of the `kibbr` package: the engine. The `kibbr` binary cannot be depended on,
+# and the bench runs it as a child.
+kibbr = { path = "../.." }
 chrono.workspace = true
 clap.workspace = true
 crc32c.workspace = true

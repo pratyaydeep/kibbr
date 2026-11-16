@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use chrono::{SecondsFormat, Utc};
 use thiserror::Error;
 
-use kibbr_engine::fmt::commas;
+use kibbr::fmt::commas;
 
 use corpus::{BuiltBy, Corpus};
 use host::Swap;

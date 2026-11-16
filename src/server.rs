@@ -11,8 +11,6 @@
 //! Nothing here reads a flag or writes to stderr, and the flush clock lives here, not in
 //! the store: deciding when to write is a fact about the process lifecycle.
 
-use kibbr_engine as engine;
-
 use std::borrow::Cow;
 use std::future::IntoFuture;
 use std::io::{Cursor, Read};
@@ -41,10 +39,10 @@ use tokio_util::sync::CancellationToken;
 
 use std::path::Path;
 
-use crate::error::IngestError;
-use engine::fmt::{commas, rfc3339_at};
-use engine::query::answer;
-use engine::{compact, load, CompactRefused, Database, Fan, Stop, StoreError};
+use crate::server::error::IngestError;
+use kibbr::fmt::{commas, rfc3339_at};
+use kibbr::query::answer;
+use kibbr::{compact, load, CompactRefused, Database, Fan, Stop, StoreError};
 
 /// The default port this server listens on.
 pub const DEFAULT_PORT: u16 = 7700;
@@ -73,7 +71,7 @@ const RETRY_AFTER_SECONDS: u32 = 1;
 
 /// The web console, compiled in: the binary is the deployment unit, and the page cannot
 /// drift from the endpoints it calls. Built from `web/` (docs/viewer.md).
-const VIEWER: &str = include_str!("viewer.html");
+const VIEWER: &str = include_str!("server/viewer.html");
 
 /// Where the source of this build is: AGPL §13 has a server offer it to whoever uses it
 /// over a network, so `/health` and the console's Status page both carry it. A modified
@@ -312,11 +310,11 @@ impl Server {
         now: DateTime<Utc>,
         limits: Limits,
         api: ApiLimits,
-        storage: Storage,
-        schema: Schema,
+        storage: kibbr::Storage,
+        schema: kibbr::Schema,
         load_token: Option<String>,
     ) -> Result<Self, Error> {
-        let db = engine::Claim::unlocked(engine::Options { storage, schema }).open()?;
+        let db = kibbr::Claim::unlocked(kibbr::Options { storage, schema }).open()?;
         Ok(Self::with(db, now, limits, api, load_token))
     }
 }
@@ -338,24 +336,24 @@ impl Drop for InFlight {
     }
 }
 
-mod compaction;
+mod schedule;
 mod error;
 mod handlers;
-mod ingest;
-mod lifecycle;
+mod receive;
+mod run;
 mod routes;
 pub mod settings;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-use engine::database::MAX_REPORTED_ERRORS;
+use kibbr::database::MAX_REPORTED_ERRORS;
 
 pub use error::{Error, Result};
-pub use lifecycle::{run, Report};
-pub use settings::{ApiLimits, Banner, Limits, Schema, Settings, Storage, BANNER};
+pub use run::{run, Report};
+pub use settings::{ApiLimits, Banner, Limits, Settings, BANNER};
 
-use compaction::*;
+use schedule::*;
 use handlers::*;
-use ingest::*;
-use lifecycle::*;
+use receive::*;
+use run::*;
 use routes::*;

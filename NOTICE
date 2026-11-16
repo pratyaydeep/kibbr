@@ -1,7 +1,7 @@
 kibbr. Copyright (C) 2026 Pratyaydeep Ghanta. Licensed under AGPL-3.0-only; see
 LICENSE. Contributions are accepted under MIT; see CONTRIBUTING.md.
 
-The web console (crates/kibbr-server/src/viewer.html, built from web/) bundles:
+The web console (src/server/viewer.html, built from web/) bundles:
 
 - React, React DOM and scheduler. Copyright (c) Meta Platforms, Inc. and affiliates.
   MIT License.

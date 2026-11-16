@@ -1,7 +1,7 @@
 // The console builds to one self-contained HTML file - scripts, styles, fonts and icons
 // inlined - because the server compiles it in with `include_str!` and neither Docker nor
 // crates.io has Node: `npm run build` copies dist/viewer.html over
-// crates/kibbr-server/src/viewer.html, and CI fails when the two differ.
+// src/server/viewer.html, and CI fails when the two differ.
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";

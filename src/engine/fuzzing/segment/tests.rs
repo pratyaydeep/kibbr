@@ -13,7 +13,7 @@ use crate::rows::{effective_ts, Row};
 
 fn vector(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../testdata")
+        .join("testdata")
         .join("format")
         .join(name);
     std::fs::read(path).expect("a test vector")
@@ -728,12 +728,12 @@ fn every_cut_of_a_vector_reads_clean() {
     }
 }
 
-/// Writes the seed corpus: `cargo test -p kibbr-engine --features fuzzing --lib fuzzing::segment -- --ignored`.
+/// Writes the seed corpus: `cargo test --features fuzzing --lib fuzzing::segment -- --ignored`.
 #[test]
 #[ignore = "writes fuzz/corpus/segment"]
 fn write_the_seed_corpus() {
     let dir: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fuzz")
+        .join("fuzz")
         .join("corpus")
         .join("segment");
     std::fs::create_dir_all(&dir).expect("mkdir");
