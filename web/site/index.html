@@ -48,7 +48,7 @@
   <p class="kicker">kibbr · a log store for structured JSON logs</p>
   <h1>Keep months of logs. Use <span>a quarter</span> of the disk.</h1>
   <p>kibbr stores each log line's shape once, in a trie, and its values as typed columns. Queries come back in milliseconds, from one static binary written in Rust. Scroll to see how a line is stored.</p>
-  <button class="install" type="button" data-copy="cargo install kibbr"><span>cargo install kibbr</span><span class="cp">copy</span></button>
+  <button class="install" type="button" data-copy="cargo install --locked kibbr"><span>cargo install --locked kibbr</span><span class="cp">copy</span></button>
   <div class="scroll-hint"><i></i> how a log line is stored</div>
 </div></section>
 
@@ -170,15 +170,15 @@
 </div></section>
 
 <section class="end"><div class="wrap">
-  <p class="kicker">Measured, on an Apple M2</p>
-  <h2>Small on disk. Quick to answer. Honest about the rest.</h2>
+  <p class="kicker">Measured, on five public log datasets</p>
+  <h2>Small on disk. Still queryable. Honest about the rest.</h2>
   <div class="nums">
-    <div class="num o"><div class="v">7.6<small>%</small></div><p>of the original size on application logs, two thirds of gzip -9, and still queryable.</p></div>
-    <div class="num b"><div class="v">24.6<small>%</small></div><p>on 1.5 GB of real GitHub events. gzip is smaller there: prose and 1,516 shapes cost kibbr. You can't query a gzip file.</p></div>
-    <div class="num"><div class="v">0.16<small>ms</small></div><p>to count one event across a million lines. Structured JSON only; no full-text search.</p></div>
+    <div class="num o"><div class="v">207<small> : 1</small></div><p>on 8.57 GB of Elasticsearch server logs: 41.4 MB on disk, where zstd -19 takes 78.1 MB, and still queryable.</p></div>
+    <div class="num b"><div class="v">190<small> : 1</small></div><p>on 69.6 GB of MongoDB server logs: 366 MB on disk, where gzip -9 takes 1.37 GB.</p></div>
+    <div class="num"><div class="v">31<small> : 1</small></div><p>on 10.5 GB of CockroachDB logs. zstd -19 is 18% smaller there: long free-text messages cost kibbr. Structured JSON only; no full-text search.</p></div>
   </div>
   <div class="cta">
-    <button class="install" type="button" data-copy="cargo install kibbr"><span>cargo install kibbr</span><span class="cp">copy</span></button>
+    <button class="install" type="button" data-copy="cargo install --locked kibbr"><span>cargo install --locked kibbr</span><span class="cp">copy</span></button>
     <a class="btn" href="{{repo}}">Source and docs on GitHub</a>
     <a class="btn" href="https://crates.io/crates/kibbr">crates.io</a>
     <a class="btn" href="https://docs.rs/kibbr">docs.rs</a>
@@ -186,7 +186,7 @@
 </div></section>
 
 <footer class="foot"><div class="wrap">
-  <span>kibbr 0.2.2 · Rust · one program · AGPL-3.0-only · by <a href="https://pratyaydeep.github.io/">Pratyaydeep Ghanta</a></span>
+  <span>kibbr 0.5.1 · Rust · one program · AGPL-3.0-only · by <a href="https://pratyaydeep.github.io/">Pratyaydeep Ghanta</a></span>
   <span><a href="{{repo}}">github.com/pratyaydeep/kibbr</a></span>
 </div></footer>
 
