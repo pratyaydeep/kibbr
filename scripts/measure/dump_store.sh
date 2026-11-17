@@ -2,8 +2,8 @@
 # Materialise on disk what `kibbr query` builds in memory: the templates, and one file
 # per template holding that template's rows.
 #
-# Nothing persists yet (src/engine/ingest.rs) - every query rebuilds the trie and the leaf stores
-# from the file and throws them away. This writes that state down so it can be read:
+# `kibbr query <file>` keeps nothing: it builds the trie and the leaf stores from the file in
+# memory, answers, and throws them away. This writes that state down so it can be read:
 #
 #   <out>/templates.json          one entry per template: id, fingerprint, keys, types, rows
 #   <out>/rows/<template_id>.jsonl  that template's `Vec<Row>`, one Row per line, file order

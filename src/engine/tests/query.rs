@@ -1518,7 +1518,7 @@ struct Scratch(std::path::PathBuf);
 impl Scratch {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "kibbr-engine-{name}-{}-{:?}",
+            "kibbr-query-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -2851,7 +2851,7 @@ fn generated_pattern(rng: &mut Rng, held: &[String], seen: &[String]) -> Vec<Mat
 fn over_generated_tries(name: &str, seeds: u64, mut ask: impl FnMut(&Trie, &Query)) {
     let now = chrono::Utc::now();
     let dir =
-        std::env::temp_dir().join(format!("kibbr-engine-plans-{}-{name}", std::process::id()));
+        std::env::temp_dir().join(format!("kibbr-query-plans-{}-{name}", std::process::id()));
     let mut put = |trie: &Trie, rng: &mut Rng, seen: &[String]| {
         let mut held: Vec<String> = Vec::new();
         for leaf in trie.all_leaves() {
@@ -3109,7 +3109,7 @@ fn a_plan_holds_nothing_the_catalog_refused() {
     use crate::templates::catalog::{self, Catalog};
     use crate::templates::trie::TrieError;
     let dir = std::env::temp_dir().join(format!(
-        "kibbr-engine-plans-{}-failed-append",
+        "kibbr-query-plans-{}-failed-append",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);

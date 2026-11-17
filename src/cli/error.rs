@@ -131,7 +131,7 @@ pub enum CliError {
     Exec(#[from] kibbr::query::ExecError),
 
     /// What a server could not start or finish with, or refused a TrieQL string with: the
-    /// server crate's own error.
+    /// server's own error.
     #[error(transparent)]
     Serve(crate::server::Error),
     #[error(transparent)]
@@ -143,7 +143,7 @@ pub enum CliError {
 }
 
 impl From<crate::server::Error> for CliError {
-    /// The engine's errors the server crate carries through stay the variants they always
+    /// The engine's errors the server carries through stay the variants they always
     /// were, so a TrieQL string refused by `kibbr query` and by `POST /query` is one failure.
     fn from(e: crate::server::Error) -> Self {
         match e {

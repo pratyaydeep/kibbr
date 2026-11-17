@@ -519,7 +519,8 @@ pub fn epoch_window(file: &File) -> Result<EpochWindow, ConfigError> {
 }
 
 /// How `Storage` is loaded - flag > environment > file > default - as a trait because
-/// an inherent `impl` cannot be written here for the server crate's type.
+/// `Storage` is the engine's type, and an inherent `impl` cannot be written in the binary
+/// for a type of the library.
 pub trait LoadStorage: Sized {
     #[allow(clippy::too_many_arguments)]
     fn load(
@@ -823,7 +824,9 @@ pub fn limits(
     })
 }
 
-/// How `ApiLimits` is loaded: as `LoadStorage` is, and a trait for the same reason.
+/// How `ApiLimits` is loaded: as `LoadStorage` is. `ApiLimits` is the server's type, which
+/// is in this crate, so an inherent `impl` would do; it is a trait so that the two are
+/// loaded the same way.
 pub trait LoadApiLimits: Sized {
     fn load(
         file: &File,

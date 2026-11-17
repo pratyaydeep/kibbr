@@ -206,7 +206,7 @@ pub mod internals {
     }
 }
 
-/// What the tests of the crates above reach the database's parts with: not for anything
+/// What the tests of the binary above reach the database's parts with: not for anything
 /// but a test, and no promise of any kind.
 #[cfg(feature = "test-support")]
 #[doc(hidden)]

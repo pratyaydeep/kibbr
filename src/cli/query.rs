@@ -24,8 +24,9 @@ use serde_json::{Map, Value};
 
 use crate::cli::config::{Limits, Schema};
 use crate::cli::error::{CliError, QueryError};
-// A TrieQL string into a `Query` and an answer into JSON are the server crate's, since
-// `POST /query` is their other caller: here under the names this module always had.
+// A TrieQL string into a `Query` and an answer into JSON are the engine's
+// (`kibbr::query::answer`), since `POST /query` is their other caller: here under the
+// names this module always had.
 use kibbr::query::answer::{self as wire, canonical, row_json};
 pub use kibbr::query::answer::result_json;
 use kibbr::fmt::{col_text, commas, duration_text, millis, rfc3339, NULL_TEXT};
@@ -190,7 +191,7 @@ pub(crate) fn build(args: &Args, now: DateTime<Utc>) -> Result<Query, CliError> 
     ))
 }
 
-/// A TrieQL string to a `Query`: the server crate's `from_trieql`, which is what
+/// A TrieQL string to a `Query`: the engine's `from_trieql`, which is what
 /// `POST /query` accepts, with what it refuses said as this command's own error.
 pub fn from_trieql(text: &str, now: DateTime<Utc>, limits: Limits) -> Result<Query, CliError> {
     wire::from_trieql(text, now, limits).map_err(CliError::from)
@@ -202,7 +203,7 @@ fn cursor(text: Option<&str>) -> Result<Option<Cursor>, CliError> {
 }
 
 /// The last thing `build` does on either surface: does this cursor belong to this query,
-/// and may it bucket as it asks? The server crate's `finish`.
+/// and may it bucket as it asks? The engine's `finish`.
 fn finish(query: Query) -> Result<Query, CliError> {
     wire::finish(query).map_err(CliError::from)
 }

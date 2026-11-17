@@ -72,8 +72,8 @@ results/<UTC time>-<commit>.log   the raw log
 
 ## The earlier Docker results
 
-`scripts/bench/results/2026-10-11.{md,json,log}` were measured in a container by `scripts/bench/run.sh`,
-on the Dockerfile's `bench` target. Both are gone: the bench is not in the image's binary
+`scripts/bench/results/2026-10-11.{md,json,log}` were measured in a container by
+`bench/run.sh`, on the Dockerfile's `bench` target. Both are gone: the bench is not in the image's binary
 any more. Those results are a series of their own, and are not comparable with a native
 one.
 

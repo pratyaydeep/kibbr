@@ -14,7 +14,7 @@ One entry per tag, newest first.
   `cargo build --release --workspace`, then `target/release/kibbr-bench --lines 1000000
   --profile farm`. It takes no `--config`, `--log-level` or `--log-format`. With it go the
   Dockerfile's `bench` target and `bench/run.sh`: the bench runs natively
-  (`bench/README.md`).
+  (`scripts/bench/README.md`).
 - **A bench result saved before this release reads `NOT THE SAME BENCH`** beside a new one.
   The bench's digest of its own source changed with the move; take a new baseline.
 - **kibbr's own log targets changed,** because the module paths did. In the JSON log

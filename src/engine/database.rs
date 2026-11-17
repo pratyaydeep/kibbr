@@ -1143,7 +1143,7 @@ impl Database {
     }
 }
 
-/// What reaches into a database for a test of a crate above: its parts, and the
+/// What reaches into a database for a test of the binary above: its parts, and the
 /// compaction jobs as they stand. Not for anything but a test.
 #[cfg(feature = "test-support")]
 impl Database {
