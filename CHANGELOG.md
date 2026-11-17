@@ -2,6 +2,13 @@
 
 One entry per tag, newest first.
 
+## 0.5.1 — 2026-11-18
+
+- **The README's logo and console screenshot show on crates.io.** The page there turns a
+  path into a link for `<img src>` but not for `<source srcset>`, so the four `srcset`
+  values are full links now.
+- No change to the code: the binary is 0.5.0's, with the new version number.
+
 ## 0.5.0 — 2026-11-18
 
 - **One crate, from three.** The engine and the server are part of the `kibbr` crate now: its
