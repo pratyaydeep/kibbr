@@ -27,7 +27,7 @@ pub const SCHEMA: &str = "kibbr-bench/1";
 /// The bench's own source, in the order it is digested with ASCII white space left out:
 /// two results under two digests were measured by two instruments.
 pub const SOURCES: [(&str, &str); 8] = [
-    ("mod.rs", include_str!("mod.rs")),
+    ("bench.rs", include_str!("../bench.rs")),
     ("corpus.rs", include_str!("corpus.rs")),
     ("server.rs", include_str!("server.rs")),
     ("wire.rs", include_str!("wire.rs")),
@@ -4209,7 +4209,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "mod.rs",
+                "bench.rs",
                 "corpus.rs",
                 "server.rs",
                 "wire.rs",
