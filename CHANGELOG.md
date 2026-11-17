@@ -2,7 +2,7 @@
 
 One entry per tag, newest first.
 
-## Unreleased
+## 0.5.0 — 2026-11-18
 
 - **One crate, from three.** The engine and the server are part of the `kibbr` crate now: its
   library is the engine, and its binary is the server and the command line.
