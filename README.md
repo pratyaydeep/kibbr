@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/img/logo-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/pratyaydeep/kibbr/raw/HEAD/docs/img/logo-dark.svg?sanitize=true">
+    <source media="(prefers-color-scheme: light)" srcset="https://github.com/pratyaydeep/kibbr/raw/HEAD/docs/img/logo-light.svg?sanitize=true">
     <img alt="kibbr" src="docs/img/logo-light.svg" width="220">
   </picture>
 </p>
@@ -16,8 +16,8 @@
 For example, 69.6 GB of real MongoDB server logs take 366 MB.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/console-results.png">
-  <source media="(prefers-color-scheme: light)" srcset="docs/img/console-results-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/pratyaydeep/kibbr/raw/HEAD/docs/img/console-results.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/pratyaydeep/kibbr/raw/HEAD/docs/img/console-results-light.png">
   <img alt="The kibbr web console showing a query, its matches over time and the log rows" src="docs/img/console-results.png">
 </picture>
 
