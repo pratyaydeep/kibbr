@@ -1,6 +1,10 @@
 // Copyright (C) 2026 Pratyaydeep Ghanta
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//! **kibbr-storage is discontinued.** At 0.3.0 it became part of `kibbr-engine`, which is
+//! itself part of the `kibbr` crate from kibbr 0.5.0, and this crate gets no more releases. To
+//! run kibbr: `cargo install --locked kibbr`.
+//!
 //! The trie, catalog, day files and write-ahead log of
 //! [kibbr](https://github.com/pratyaydeep/kibbr), a database for structured JSON logs.
 //! Internal to kibbr; no API stability promised.

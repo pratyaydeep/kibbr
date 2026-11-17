@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "kibbr-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "serde",
@@ -580,7 +580,7 @@ dependencies = [
 
 [[package]]
 name = "kibbr-storage"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "crc32c",

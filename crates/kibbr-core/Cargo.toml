@@ -1,7 +1,7 @@
 [package]
 name = "kibbr-core"
-description = "The parser, type ladder and fingerprint of kibbr (https://github.com/pratyaydeep/kibbr); internal, no API stability promised."
-version.workspace = true
+description = "Discontinued: merged into the `kibbr` crate. The parser, type ladder and fingerprint of kibbr (https://github.com/pratyaydeep/kibbr); internal, no API stability promised."
+version = "0.2.4"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
