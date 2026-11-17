@@ -12,6 +12,15 @@ sample.ndjson
 # scripts/bench/results/.
 /testdata/
 
+# The six inputs tests/data/hostile/gen_large.py writes: several megabytes each, made again
+# by one command, and so not tracked. Every other file in that folder is.
+/tests/data/hostile/arr100k.ndjson
+/tests/data/hostile/bigline.ndjson
+/tests/data/hostile/escape_bomb.ndjson
+/tests/data/hostile/hugekey.ndjson
+/tests/data/hostile/manykeys.ndjson
+/tests/data/hostile/nest200k.ndjson
+
 /brag*
 
 # Claude Code's per-machine state: settings, worktrees.

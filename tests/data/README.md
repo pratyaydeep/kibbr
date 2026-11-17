@@ -2,8 +2,8 @@
 
 Every file a test reads. Nothing here is scratch: what a test or a script writes goes
 under `testdata/`, which git ignores. One exception: `hostile/gen_large.py` writes six
-inputs of several megabytes each into `hostile/`. They are too large to track, so do not
-commit them.
+inputs of several megabytes each into `hostile/`. They are too large to track, and
+`.gitignore` names them.
 
 | Path | What it is |
 |---|---|
